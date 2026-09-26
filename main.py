@@ -1071,14 +1071,33 @@ def _print_recent_messages(journal, args) -> int:
         status=args.status,
     )
 
+    # 标题里把筛选条件写出来 ——
+    # 否则「查不到东西」和「筛掉了所有东西」看起来一模一样。
+    filters = []
+    if args.agent:
+        filters.append(f"agent={args.agent}")
+    if args.status:
+        filters.append(f"status={args.status}")
+    title = "通信日志 —— 最近的消息"
+    if filters:
+        title += f"（筛选：{', '.join(filters)}）"
+
     print()
-    print("通信日志 —— 最近的消息")
+    print(title)
     print("-" * 96)
     print(f"  {'时间':<20} {'状态':<11} {'方向':<22} {'类型':<10} 消息 ID")
     print("-" * 96)
 
     if not rows:
-        print("  （还没有任何通信记录）")
+        # 【重要】区分两种「空」：
+        #     库里本来就没有记录   → 提示去做点什么
+        #     有记录但被筛掉了     → 提示换个条件，别让人以为日志坏了
+        if filters and journal.count_messages() > 0:
+            print(f"  （没有符合条件的消息，但库里有 {journal.count_messages()} 条）")
+            print("  换个条件试试：./dev.sh communication-log")
+        else:
+            print("  （还没有任何通信记录）")
+            print("  跑一次演示就会产生日志：./dev.sh communication-demo")
         print()
         return 0
 

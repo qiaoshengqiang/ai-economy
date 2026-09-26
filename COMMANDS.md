@@ -720,7 +720,7 @@ extra_body:
 ## 4. 跑测试
 
 ```bash
-# 全部测试（737 个，不含真实 API 测试）
+# 全部测试（739 个，不含真实 API 测试）
 ./dev.sh test
 
 # 详细输出，显示每个测试的名字
@@ -778,7 +778,7 @@ extra_body:
 |---|---|---|
 | `tests/test_address.py` | 身份与地址分离 / 解析 / 不可变性 | 28 |
 | `tests/test_brain.py` | Brain、Agent 接入、调用记录 | 34 |
-| `tests/test_cli.py` | 命令行命令（含通信日志查询） | 47 |
+| `tests/test_cli.py` | 命令行命令（含通信日志查询） | 49 |
 | `tests/test_communication.py` | 完整链路 / 去重 / 可替换传输 / 真 Agent | 44 |
 | `tests/test_communication_guards.py` | 通信层架构守卫（含日志边界） | 27 |
 | `tests/test_communication_recorder.py` | 通信日志 / 脱敏 / 去重 / 查询 | 86 |
@@ -794,7 +794,7 @@ extra_body:
 | `tests/test_startup.py` | 启动流程、重启不重复发钱 | 6 |
 | `tests/test_transfer.py` | 转账入口与各种拒绝情况 | 27 |
 | `tests/test_wallet.py` | 钱包、余额、扣款 | 15 |
-| | **合计** | **737** |
+| | **合计** | **739** |
 
 另有 `tests/test_real_api.py`（30 项）需要真实 API Key，
 默认不跑，见下面的「真实 API 测试」。

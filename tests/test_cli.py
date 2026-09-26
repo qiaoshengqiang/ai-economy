@@ -634,8 +634,37 @@ class TestCommunicationLogCommands:
         )
 
         assert "PROCESSED" in processed.stdout
-        # 演示里没有失败，所以失败的查询应该是空的
-        assert "FAILED" not in failed.stdout.split("提示")[0]
+        # 标题里要写出筛选条件，否则分不清「查不到」和「被筛掉了」
+        assert "status=PROCESSED" in processed.stdout
+        assert "status=FAILED" in failed.stdout
+
+    def test_log_empty_filter_result_is_explained(self, tmp_path):
+        """
+        筛选后没结果时，必须说清楚「是筛掉了」而不是「日志是空的」。
+
+        这两种情况对排查问题的人来说意义完全不同：
+            前者说明系统正常（本来就没有失败的）
+            后者说明日志坏了
+        """
+        db_file = tmp_path / "log8b.db"
+        run_cli("communication-demo", db_path=db_file)
+
+        result = run_cli(
+            "communication-log", "--status", "FAILED", db_path=db_file
+        )
+
+        assert result.returncode == EXIT_OK
+        assert "没有符合条件的消息" in result.stdout
+        assert "库里有" in result.stdout
+        # 不能误导成「根本没有记录」
+        assert "还没有任何通信记录" not in result.stdout
+
+    def test_log_truly_empty_database_says_so(self, tmp_path):
+        """确实是空库时，给一条「去看演示」的提示。"""
+        result = run_cli("communication-log", db_path=tmp_path / "log8c.db")
+
+        assert "还没有任何通信记录" in result.stdout
+        assert "communication-demo" in result.stdout
 
     def test_log_conversation(self, tmp_path):
         db_file = tmp_path / "log9.db"
