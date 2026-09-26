@@ -1024,6 +1024,16 @@ def cmd_communication_log(runtime: Runtime, args: argparse.Namespace) -> int:
     """
     按 message_id / trace_id / conversation_id 查通信日志。
 
+    支持两种写法（两种都是自然的输入习惯）：
+
+        ./dev.sh communication-log trc_abc123       ← 直接给 ID
+        ./dev.sh communication-log --trace trc_abc123
+
+    直接给 ID 时，靠前缀自动判断查什么：
+        trc_  → trace
+        conv_ → conversation
+        msg_  → message
+
     【这个命令的存在理由】
         需求里说「可以根据日志完整定位通信问题」。
         光把日志写进数据库还不算 ——
@@ -1036,6 +1046,21 @@ def cmd_communication_log(runtime: Runtime, args: argparse.Namespace) -> int:
         print("!! 本次运行没有启用通信日志 !!")
         print()
         return 1
+
+    # ---------------- 位置参数：靠前缀自动判断 ----------------
+    target = getattr(args, "id", None)
+    if target:
+        kind = _classify_id(target)
+
+        if kind == "message":
+            return _print_message_detail(journal, target)
+        if kind == "trace":
+            return _print_trace(journal, target)
+        if kind == "conversation":
+            return _print_conversation(journal, target)
+
+        # 前缀认不出来 —— 别猜，直接告诉他怎么写
+        return _print_unknown_id(target, journal)
 
     # ---------------- 按单条消息查 ----------------
     if args.message:
@@ -1055,6 +1080,67 @@ def cmd_communication_log(runtime: Runtime, args: argparse.Namespace) -> int:
 
     # ---------------- 默认：最近的消息 ----------------
     return _print_recent_messages(journal, args)
+
+
+# ID 前缀 → 类型
+# 这些前缀是 core.identity.new_message_id() 生成 ID 时用的，
+# 所以是可以依赖的约定。
+_ID_PREFIXES = (
+    ("trc_", "trace"),
+    ("conv_", "conversation"),
+    ("msg_", "message"),
+)
+
+
+def _classify_id(value: str) -> str:
+    """按前缀判断这个 ID 是什么。认不出来返回 "unknown"。"""
+    text = str(value or "").strip()
+    for prefix, kind in _ID_PREFIXES:
+        if text.startswith(prefix):
+            return kind
+    return "unknown"
+
+
+def _print_unknown_id(target: str, journal) -> int:
+    """
+    前缀认不出来时，尝试在所有可能的表里找一遍。
+
+    为什么不一上来就报错？
+        因为 ID 可能就是被人抄错了一个字母。
+        试着找一下，找到了就给出结果，
+        找不到再告诉他正确的写法 —— 这比直接拒绝有用。
+    """
+    for finder, kind in (
+        (journal.get_message, "message"),
+        (lambda x: journal.trace(x) or None, "trace"),
+        (lambda x: journal.conversation(x) or None, "conversation"),
+    ):
+        try:
+            found = finder(target)
+        except Exception:  # noqa: BLE001
+            found = None
+        if found:
+            print()
+            print(f"（这个 ID 没有标准前缀，但确实存在，按 {kind} 处理）")
+            if kind == "message":
+                return _print_message_detail(journal, target)
+            if kind == "trace":
+                return _print_trace(journal, target)
+            return _print_conversation(journal, target)
+
+    print()
+    print(f"认不出这个 ID：{target!r}")
+    print()
+    print("  ID 的前缀决定查什么：")
+    print("    trc_xxx   查一条链路（一次任务）的所有消息")
+    print("    conv_xxx  查一轮对话")
+    print("    msg_xxx   查一条消息的完整事件流")
+    print()
+    print("  不确定 ID 是什么？先看看有哪些：")
+    print("    ./dev.sh communication-log --traces")
+    print("    ./dev.sh communication-log")
+    print()
+    return 2
 
 
 def _short(text, width: int = 40) -> str:
@@ -1518,6 +1604,14 @@ def build_parser() -> argparse.ArgumentParser:
         parents=[shared],
         help="查询通信日志（按 message_id / trace_id / conversation_id）",
     )
+    # 位置参数：直接给 ID，靠前缀自动判断
+    log.add_argument(
+        "id",
+        nargs="?",
+        default=None,
+        metavar="ID",
+        help="trc_ / conv_ / msg_ 开头的 ID（前缀决定查什么）",
+    )
     log.add_argument("--message", default=None, help="看某条消息的完整事件流")
     log.add_argument("--trace", default=None, help="看某条链路（一次任务）的所有消息")
     log.add_argument("--conversation", default=None, help="看某一轮对话")
@@ -1535,7 +1629,35 @@ def build_parser() -> argparse.ArgumentParser:
 # ============================================================
 def main(argv: Optional[List[str]] = None) -> int:
     parser = build_parser()
-    args = parser.parse_args(argv)
+
+    # 【为什么这里要接住 argparse 的错误】
+    #
+    # argparse 默认遇到不认识的参数时，会打印一大段 usage 然后 exit(2)。
+    # 问题是：
+    #     1. 它只说一句「unrecognized arguments」，
+    #        不会告诉你「正确的写法是什么」——
+    #        用户看到的是一坨 usage，得自己去找
+    #     2. 它直接调 sys.exit()，越过本项目的统一收尾流程
+    #
+    # 而其它失败路径（经济规则拒绝、模型调用失败）都有清晰的提示，
+    # 参数写错不该成为一个例外。
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit as exc:
+        # --help 也会走到这里，但退出码是 0 —— 那是正常行为，放行
+        if exc.code == 0:
+            raise
+
+        print()
+        print("参数写错了。常见写法：")
+        print("    ./dev.sh communication-log                看最近的消息")
+        print("    ./dev.sh communication-log trc_xxx        看一条链路")
+        print("    ./dev.sh communication-log --traces       列出所有链路")
+        print("    ./dev.sh communication-log --help         看这个命令的全部参数")
+        print()
+        print("    ./dev.sh                                 看所有可用命令")
+        print()
+        return 2
 
     # 不加任何命令时，默认执行 start（保持 `python main.py` 可用）
     if getattr(args, "command", None) is None:

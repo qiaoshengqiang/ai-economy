@@ -650,13 +650,30 @@ extra_body:
 **看某条链路（一次任务）的全部消息：**
 
 ```bash
-./dev.sh communication-log --trace trc_0b327e83
+./dev.sh communication-log trc_0b327e83          # 直接给 ID
+./dev.sh communication-log --trace trc_0b327e83  # 显式写法，等价
+```
+
+**直接给 ID 时会按前缀自动判断查什么：**
+
+| 前缀 | 查什么 |
+|---|---|
+| `trc_` | 一条链路（一次任务）的所有消息 |
+| `conv_` | 一轮对话 |
+| `msg_` | 一条消息的完整事件流 |
+
+所以这三种都能直接用：
+
+```bash
+./dev.sh communication-log trc_0b327e83
+./dev.sh communication-log conv_64be7b6c
+./dev.sh communication-log msg_4ad6a166
 ```
 
 **看某条消息的完整事件流：**
 
 ```bash
-./dev.sh communication-log --message msg_4ad6a166
+./dev.sh communication-log msg_4ad6a166
 ```
 
 ```
@@ -694,6 +711,14 @@ extra_body:
 ./dev.sh communication-log --agent b          # 只看和 B 相关的
 ```
 
+**不确定有哪些 ID？** 默认列表显示的是**消息**（`msg_`），
+要看**链路**用 `--traces`：
+
+```bash
+./dev.sh communication-log --traces           # 列出所有链路
+./dev.sh communication-log                    # 列出最近的消息
+```
+
 **怎么知道卡在哪一步？** 看哪一列时间戳是空的：
 
 | 现象 | 含义 |
@@ -720,7 +745,7 @@ extra_body:
 ## 4. 跑测试
 
 ```bash
-# 全部测试（739 个，不含真实 API 测试）
+# 全部测试（748 个，不含真实 API 测试）
 ./dev.sh test
 
 # 详细输出，显示每个测试的名字
@@ -778,7 +803,7 @@ extra_body:
 |---|---|---|
 | `tests/test_address.py` | 身份与地址分离 / 解析 / 不可变性 | 28 |
 | `tests/test_brain.py` | Brain、Agent 接入、调用记录 | 34 |
-| `tests/test_cli.py` | 命令行命令（含通信日志查询） | 49 |
+| `tests/test_cli.py` | 命令行命令（含日志查询、位置参数、参数报错） | 58 |
 | `tests/test_communication.py` | 完整链路 / 去重 / 可替换传输 / 真 Agent | 44 |
 | `tests/test_communication_guards.py` | 通信层架构守卫（含日志边界） | 27 |
 | `tests/test_communication_recorder.py` | 通信日志 / 脱敏 / 去重 / 查询 | 86 |
@@ -789,12 +814,12 @@ extra_body:
 | `tests/test_llm_provider.py` | LLM 契约 / MockProvider / 注册表 / Router / 架构守卫 | 72 |
 | `tests/test_local_transport.py` | Transport 抽象 / 收发 / 失败路径 | 33 |
 | `tests/test_message.py` | Message 创建 / 校验 / 序列化 / 前向兼容 | 51 |
-| `tests/test_provider_contract.py` | 两家共用的契约（同一批断言参数化跑两遍） | 80 |
+| `tests/test_provider_contract.py` | 两家共用的契约（同一批参数断言参数化跑两遍） | 80 |
 | `tests/test_registry.py` | 注册表纯数据 / 本地远端 / 状态分离 | 34 |
 | `tests/test_startup.py` | 启动流程、重启不重复发钱 | 6 |
 | `tests/test_transfer.py` | 转账入口与各种拒绝情况 | 27 |
 | `tests/test_wallet.py` | 钱包、余额、扣款 | 15 |
-| | **合计** | **739** |
+| | **合计** | **748** |
 
 另有 `tests/test_real_api.py`（30 项）需要真实 API Key，
 默认不跑，见下面的「真实 API 测试」。

@@ -709,3 +709,169 @@ class TestCommunicationLogCommands:
 
         assert not re.search(r"sk-[A-Za-z0-9]{20,}", result.stdout)
         assert not re.search(r"ark-[A-Za-z0-9]{20,}", result.stdout)
+
+
+# ============================================================
+# 位置参数形式的 ID 查询
+# ============================================================
+class TestPositionalIdLookup:
+    """
+    用户会自然地敲 `communication-log trc_xxx`。
+
+    最初只实现了 `--trace trc_xxx`，结果这种写法直接报
+    「unrecognized arguments」—— 而且只打了一大段 usage，
+    没告诉他正确的写法。这一组测试锁住修好之后的行为。
+    """
+
+    @staticmethod
+    def _demo(db_file):
+        run_cli("communication-demo", db_path=db_file)
+
+    @classmethod
+    def _message_id(cls, db_file):
+        """从默认列表里取一个 message_id。"""
+        import re
+
+        listing = run_cli("communication-log", db_path=db_file)
+        match = re.search(r"msg_[0-9a-f]+", listing.stdout)
+        return match.group(0) if match else None
+
+    @classmethod
+    def _trace_id(cls, db_file):
+        """
+        从 --traces 里取一个 trace_id。
+
+        【注意】默认列表【不显示】trace_id —— 它列的是消息。
+        要找 trace 必须用 --traces（或从某条消息详情的 trace_id 字段拿）。
+        这一点正是最初让人困惑的地方，所以测试要照着真实行为写。
+        """
+        import re
+
+        listing = run_cli("communication-log", "--traces", db_path=db_file)
+        match = re.search(r"trc_[0-9a-f]+", listing.stdout)
+        return match.group(0) if match else None
+
+    @classmethod
+    def _conversation_id(cls, db_file, message_id):
+        import re
+
+        detail = run_cli("communication-log", message_id, db_path=db_file)
+        match = re.search(r"conv_[0-9a-f]+", detail.stdout)
+        return match.group(0) if match else None
+
+    def test_positional_trace_id(self, tmp_path):
+        db_file = tmp_path / "pos1.db"
+        self._demo(db_file)
+        trace_id = self._trace_id(db_file)
+        assert trace_id
+
+        result = run_cli("communication-log", trace_id, db_path=db_file)
+
+        assert result.returncode == EXIT_OK
+        assert "链路" in result.stdout
+        assert trace_id in result.stdout
+        assert "状态汇总" in result.stdout
+
+    def test_positional_message_id(self, tmp_path):
+        db_file = tmp_path / "pos2.db"
+        self._demo(db_file)
+        message_id = self._message_id(db_file)
+        assert message_id
+
+        result = run_cli("communication-log", message_id, db_path=db_file)
+
+        assert result.returncode == EXIT_OK
+        assert "消息" in result.stdout
+        assert message_id in result.stdout
+        assert "CREATED" in result.stdout
+
+    def test_positional_conversation_id(self, tmp_path):
+        db_file = tmp_path / "pos3.db"
+        self._demo(db_file)
+        message_id = self._message_id(db_file)
+        assert message_id
+
+        detail = run_cli("communication-log", message_id, db_path=db_file)
+        import re
+
+        conv = re.search(r"conv_[0-9a-f]+", detail.stdout)
+        assert conv
+
+        result = run_cli("communication-log", conv.group(0), db_path=db_file)
+
+        assert result.returncode == EXIT_OK
+        assert "对话" in result.stdout
+
+    def test_positional_and_flag_are_equivalent(self, tmp_path):
+        """两种写法必须给出同样的结果。"""
+        db_file = tmp_path / "pos4.db"
+        self._demo(db_file)
+        trace_id = self._trace_id(db_file)
+
+        positional = run_cli("communication-log", trace_id, db_path=db_file)
+        flagged = run_cli(
+            "communication-log", "--trace", trace_id, db_path=db_file
+        )
+
+        assert positional.stdout == flagged.stdout
+
+    def test_unknown_prefix_gives_guidance(self, tmp_path):
+        """
+        认不出的 ID 要给「怎么写才对」，而不是报一句 unrecognized。
+        """
+        result = run_cli(
+            "communication-log", "随便写的ID", db_path=tmp_path / "pos5.db"
+        )
+
+        assert result.returncode == EXIT_REJECTED
+        assert "认不出" in result.stdout
+        assert "trc_" in result.stdout          # 告诉他前缀规则
+        assert "communication-log --traces" in result.stdout
+
+    def test_missing_id_gives_suggestions(self, tmp_path):
+        """
+        ID 抄错一个字母时的兜底：先在库里找一遍，
+        找不到再说「不确定就去看有哪些」。
+        """
+        db_file = tmp_path / "pos6.db"
+        self._demo(db_file)
+        trace_id = self._trace_id(db_file)
+
+        # 去掉前缀，让它认不出来
+        wrong = trace_id.replace("trc_", "")
+
+        result = run_cli("communication-log", wrong, db_path=db_file)
+
+        assert result.returncode == EXIT_REJECTED
+        assert "认不出" in result.stdout
+
+
+class TestArgumentErrors:
+    def test_unknown_flag_gives_hint(self, tmp_path):
+        """
+        参数写错时不能只甩一段 usage。
+
+        argparse 默认行为是打印 usage 然后 exit(2)，
+        用户得自己从里面找答案。现在会补一段「常见写法」。
+        """
+        result = run_cli(
+            "communication-log", "--根本不存在", db_path=tmp_path / "arg1.db"
+        )
+
+        assert result.returncode == EXIT_REJECTED
+        combined = result.stdout + result.stderr
+        assert "参数写错了" in combined
+        assert "./dev.sh" in combined
+
+    def test_help_still_works(self, tmp_path):
+        """--help 是正常退出（0），不该被当成错误。"""
+        result = run_cli("communication-log", "--help")
+
+        assert result.returncode == EXIT_OK
+        assert "usage" in result.stdout.lower()
+
+    def test_log_help_shows_positional_id(self):
+        result = run_cli("communication-log", "--help")
+
+        assert "ID" in result.stdout
+        assert "trc_" in result.stdout
