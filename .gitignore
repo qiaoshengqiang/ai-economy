@@ -1,0 +1,56 @@
+# ============================================================
+# AI Economy OS v0.1
+# ============================================================
+
+# --- 机密：绝对不要提交 ---
+.env
+*.key
+secrets/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# --- 虚拟环境 ---
+.venv/
+venv/
+env/
+
+# --- 测试 / 缓存 ---
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# --- 运行时数据 ---
+# 数据库是「运行产物」，不是源码。删掉可以用 seed 重新生成。
+data/*.db
+data/*.db-journal
+data/*.db-wal
+data/*.db-shm
+logs/*.log
+
+# --- Agent 的私有记忆与工作产物 ---
+# 注意：这里只忽略「生成出来的文件」，不忽略目录本身的 .gitkeep，
+#       这样目录结构（也就是 Agent 的边界）依然保留在仓库里。
+agents/*/memory/*
+agents/*/workspace/*
+!agents/*/memory/.gitkeep
+!agents/*/workspace/.gitkeep
+
+# --- macOS ---
+.DS_Store
+._*
+
+# --- 编辑器 ---
+.vscode/settings.json
+.idea/
+*.swp
