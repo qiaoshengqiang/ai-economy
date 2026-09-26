@@ -91,6 +91,48 @@ def code_without_docstrings(path: Path) -> str:
     return ast.unparse(tree)
 
 
+def registered_message_types(path: Path) -> list:
+    """
+    找出一个文件里**真正调用**了 register_type_handler 的地方。
+
+    【为什么必须用 AST 而不是正则】
+        communication/manager.py 里有这个方法**定义**：
+
+            def register_type_handler(self, message_type, handler):
+
+        正则会把 `register_type_handler(self` 当成一次「注册 self 类型」——
+        实际上那只是定义。这个坑刚才真的踩到了。
+
+        AST 只看 Call 节点，定义不会被误判。
+    """
+    tree = parse(path)
+    found = []
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        name = ""
+        if isinstance(func, ast.Name):
+            name = func.id
+        elif isinstance(func, ast.Attribute):
+            name = func.attr
+
+        if name != "register_type_handler":
+            continue
+        if not node.args:
+            continue
+
+        first = node.args[0]
+        # 可能是 "TASK_OFFER" 字符串，也可能是 MessageType.TASK_OFFER
+        if isinstance(first, ast.Constant) and isinstance(first.value, str):
+            found.append(first.value)
+        elif isinstance(first, ast.Attribute):
+            found.append(first.attr)
+
+    return found
+
+
 def name_segments(name: str) -> set:
     """
     把一个标识符切成「词」，用于匹配。
@@ -360,8 +402,14 @@ class TestWorkspaceIdGrantsNothing:
     def test_task_has_no_workspace_access_methods(self):
         from core.task import Task
 
-        forbidden = ("open_workspace", "grant", "permission", "capability",
-                     "read_file", "write_file", "list_files", "access",
+        # 【为什么这里没有 "capability"】
+        #     Step 4B 引入了 Capability（能力）这个正式概念，
+        #     Task 上出现了 has_capability_requirements() 这样的方法。
+        #     而"capability"作为子串太通用了，会误报。
+        #     所以改用更精确的 Workspace 授权类词。
+        forbidden = ("open_workspace", "workspace_capability",
+                     "check_capability", "grant", "permission",
+                     "read_file", "write_file", "list_files",
                      "authorize", "mount", "checkout")
 
         found = [
@@ -411,51 +459,111 @@ class TestWorkspaceIdGrantsNothing:
 # ============================================================
 # 6. 不把经济消息接入 Communication（Step 4A 的明确禁止项）
 # ============================================================
-class TestNotWiredIntoCommunication:
+class TestEconomicMessagesAreWiredCorrectly:
     """
-    【需求原文】
+    【这一组守卫随 Step 4B 演进过，值得说明】
 
-        「不要为了测试 Task 而直接把 TASK_OFFER / COUNTER_OFFER / ACCEPT
-          全部接入 Communication。STEP 4A 首先测试 Task Core 本身。」
+        Step 4A 的原文要求：
+            「不要为了测试 Task 而直接把 TASK_OFFER / COUNTER_OFFER / ACCEPT
+              全部接入 Communication。STEP 4A 首先测试 Task Core 本身。」
 
-    这一组守卫盯着这条线。
+        所以 Step 4A 的守卫是「一个都不许接」。
+
+        Step 4B 的任务恰恰就是接线 —— 但要**有控制地接**：
+            ✅ TASK_OFFER     接入（经 services 适配层）
+            ✅ COUNTER_OFFER  接入（含预算校验）
+            ❌ ACCEPT / REJECT / SUBMIT / VERIFY / PAYMENT_*
+               仍然禁止接入（属于后续步骤）
+
+        守卫因此从「一个都不许」变成「只许这两个，且只能从组合根接」——
+        保护力没有降低，反而更精确了。
     """
 
-    def test_no_type_handlers_registered_for_economic_messages(self):
+    #: Step 4B 允许接入通信层的经济消息
+    WIRED = ("TASK_OFFER", "COUNTER_OFFER")
+
+    #: 仍然禁止接入的（属于后续步骤）
+    STILL_UNWIRED = (
+        "ACCEPT", "REJECT", "SUBMIT", "VERIFY",
+        "PAYMENT_REQUEST", "PAYMENT_RESULT",
+    )
+
+    def test_future_message_types_are_still_not_wired(self):
         """
-        通信层不能注册 TASK_OFFER / COUNTER_OFFER / ACCEPT 的处理器。
+        【仍然禁止】ACCEPT / REJECT / SUBMIT / VERIFY / PAYMENT_*
+        一个都不能接入 —— 它们属于 Step 4C 及以后。
         """
         violations = []
 
         for source in sorted(PROJECT_ROOT.rglob("*.py")):
             if ".venv" in source.parts or "tests" in source.parts:
                 continue
-            code = code_without_docstrings(source)
-
-            for match in re.finditer(
-                r"register_type_handler\(\s*[\"']?(TASK_OFFER|COUNTER_OFFER|ACCEPT)",
-                code,
-            ):
-                violations.append(
-                    f"{source.relative_to(PROJECT_ROOT)}: {match.group(1)}"
-                )
+            for message_type in registered_message_types(source):
+                if message_type in self.STILL_UNWIRED:
+                    violations.append(
+                        f"{source.relative_to(PROJECT_ROOT)}: {message_type}"
+                    )
 
         assert not violations, (
-            "Step 4A 不该把经济消息接入通信层：\n"
+            "这些消息类型还不该接入通信层：\n"
             + "\n".join(f"  {v}" for v in violations)
         )
 
-    def test_main_does_not_register_task_handlers(self):
-        """组合根里也不能把 Task 接到通信上。"""
-        code = code_without_docstrings(PROJECT_ROOT / "main.py")
+    def test_only_the_approved_types_are_wired(self):
+        """
+        【只许这两个】接入了的类型必须正好是 TASK_OFFER / COUNTER_OFFER。
 
-        assert "register_type_handler" not in code or (
-            "TASK_OFFER" not in code and "COUNTER_OFFER" not in code
-        ), "main.py 把经济消息接到了通信层"
+        多接一个都会让这条测试变红 —— 从而被迫先想清楚那属于哪一步。
+        """
+        wired = set()
+
+        for source in sorted(PROJECT_ROOT.rglob("*.py")):
+            if ".venv" in source.parts or "tests" in source.parts:
+                continue
+            wired.update(registered_message_types(source))
+
+        assert wired == set(self.WIRED), (
+            f"接入通信层的类型是 {sorted(wired)}，"
+            f"期望正好是 {sorted(self.WIRED)}"
+        )
+
+    def test_handlers_are_wired_only_from_the_composition_root(self):
+        """
+        【接线只能发生在组合根】
+
+        core/ communication/ services/ 里都不许**调用** register_type_handler ——
+        否则「谁来组装」这件事就散了。
+
+        （manager.py 里可以有这个方法**定义**，那不是接线。）
+        """
+        violations = []
+
+        for base in ("core", "communication", "services"):
+            for source in sorted((PROJECT_ROOT / base).rglob("*.py")):
+                if registered_message_types(source):
+                    violations.append(str(source.relative_to(PROJECT_ROOT)))
+
+        assert not violations, (
+            "只有 main.py（组合根）能注册消息处理器，但发现：\n"
+            + "\n".join(f"  {v}" for v in violations)
+        )
+
+    def test_manager_still_offers_the_registration_api(self):
+        """
+        但通信层必须**提供**这个能力 —— 只是自己不调用。
+
+        组装的职责在组合根，能力在通信层。
+        """
+        from communication import CommunicationManager
+
+        assert hasattr(CommunicationManager, "register_type_handler")
 
     def test_communication_layer_does_not_know_about_tasks(self):
         """
-        反过来，通信层也不该知道 Task 的存在。
+        【关键】接线之后，通信层仍然不知道 Task 的存在。
+
+        这就是为什么适配层要放在 services/ 而不是 communication/handlers/ ——
+        通信层必须能被单独使用、单独测试、单独替换。
         """
         violations = []
 
@@ -468,6 +576,17 @@ class TestNotWiredIntoCommunication:
             "communication/ 不该依赖 Task：\n"
             + "\n".join(f"  {v}" for v in violations)
         )
+
+    def test_communication_layer_does_not_know_about_services(self):
+        """通信层也不该知道适配层。"""
+        violations = []
+
+        for source in sorted((PROJECT_ROOT / "communication").rglob("*.py")):
+            for module in imported_modules(parse(source)):
+                if module.startswith("services"):
+                    violations.append(f"{source.name} 导入了 {module}")
+
+        assert not violations
 
     def test_task_store_does_not_send_messages(self):
         """TaskStore 不发消息。"""
@@ -557,6 +676,10 @@ class TestDependencyDirection:
         """
         allowed = {
             "core.identity", "core.money", "core.task_workspace", "core.task",
+            # Step 4B：Task 声明「需要什么能力」，所以要依赖能力值类型。
+            # 注意只依赖 core.capability（最底层的名字集合），
+            # **不**依赖 core.agent_directory（那才是「找 Agent」）。
+            "core.capability",
             "__future__",
         }
         violations = []

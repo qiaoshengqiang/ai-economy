@@ -150,7 +150,7 @@ LLM 只能**提出意图**，永远不能**直接改账**。
 - [x] SQLite 数据库（4 张表）
 - [x] 启动横幅
 - [x] **命令行经济操作**（转账 / 余额 / 流水 / 对账）
-- [x] 1168 个 pytest 测试全绿（另有 30 个真实 API 测试单独跑）
+- [x] 1475 个 pytest 测试全绿（另有 30 个真实 API 测试单独跑）
 
 **验收标准**（已达成）：
 
@@ -944,11 +944,160 @@ task_offers   -- 报价历史（append-only）
 | `test_task_guards.py` | 41 | 7 类架构守卫（已用 9 项反向测试验证） |
 | `test_cli.py` | +14 | `task-demo` / `task-log` |
 
+### ✅ Step 4B：Agent Capability 与自主协作（已完成）
+
+**一句话目标**：让一个 Task Initiator Agent 能根据任务所需能力**发现**潜在合作 Agent，
+并**自行决定**是否发起邀约；系统提供发现基础设施，但**不建立中央 Task Manager**，
+也**不替 Agent 做经济决策**。
+
+#### 完整链路
+
+```
+Agent A（Task Initiator）
+  │  创建 Task + 声明需要什么能力
+  ↓
+required_capabilities
+  │
+  ↓
+AgentDirectory.find_capable()      ← 只回答「谁声明了这些能力」
+  │
+  ↓
+候选列表 [B, C, D]                  ← 全部返回，不排序、不推荐
+  │
+  ↓
+**Agent A 自己决定用谁**             ← 这一步属于 Agent，不属于系统
+  │
+  ↓
+TASK_OFFER  →  Communication  →  Agent B
+                                    │
+                                    ↓
+                              TaskService（适配层）
+                                    │  校验 + 关联
+                                    ↓
+                              Task Core（状态 = OFFERED）
+                                    │
+                                    ↓
+                              B 自己判断：ACCEPT / COUNTER_OFFER / REJECT
+```
+
+#### 三条刻意守住的边界
+
+| 边界 | 含义 |
+|---|---|
+| **Capability ≠ Permission** | B 声明 `python_coding` **不代表**它能访问 `WS-001` |
+| **Capability ≠ Economy** | 能力匹配**不产生任何账目** |
+| **发现 ≠ 决策** | Directory 给候选，**选谁是 Agent 的决定** |
+
+#### Capability：只有名字和集合运算
+
+```python
+profile = CapabilityProfile.of(["python_coding", "data_analysis"])
+profile.supports("python_coding")        # True
+profile.covers(["python_coding"])        # True（全部满足才算）
+profile.missing(["python", "rust"])      # {"rust"} —— 说清差什么
+```
+
+**刻意没有的东西**（有守卫 + 反向测试）：分数、等级、排名、信誉、推荐、`best_agent()`。
+
+> **声明 ≠ 认证**：Agent 说自己会 `postgresql`，只表示它**声称**会。
+> 系统没有（也不该在 4B）证明这件事。
+
+#### Agent Directory：可替换的发现接口
+
+```python
+directory.register_agent("agent_b", ["python_coding", "data_analysis"])
+directory.find_capable(["python_coding"])   # → [entry, ...] 全部候选
+```
+
+**为一个未来实现留的接口**：`AgentDirectory` 是抽象类，
+`LocalAgentDirectory` 只是当前实现。将来换 `NetworkAgentDirectory` / P2P 发现时，
+**调用方代码一行都不用改**（有测试用一个「假想的远端目录」验证了这一点）。
+
+**地址是字符串，不是 `communication.Address`** —— 这样 `core/` 不必依赖 `communication/`，
+避免循环依赖。
+
+#### TaskService：消息 → 领域 的适配层
+
+**为什么放在新的 `services/` 包，而不是 `communication/handlers/`：**
+
+```
+services/  →  core/ + communication/ + storage/
+core/      →  不依赖任何上层
+communication/  →  不依赖 services/
+```
+
+`communication/` 必须能**在完全不知道 Task 存在的情况下**工作 ——
+否则它就不能被单独使用、单独测试、单独替换。有守卫盯着这条线。
+
+| 方法 | 做什么 |
+|---|---|
+| `candidates_for(task)` | 找候选（**不选人**） |
+| `handle_offer(message)` | 校验 + 建立/关联本地任务 + 记 `message_id` + 对齐 `trace_id` |
+| `handle_counter_offer(message)` | 同上 + **预算校验** |
+
+**业务校验放在 Task 层**（`budget.currency == AIC`、`price <= budget`）——
+通信层继续只搬运消息（有守卫禁止 `communication/` 出现 `budget` 这个词）。
+
+#### 四个 ID 缝成一条链
+
+```
+Task (task_xxx)
+  └── offers[].message_id ──→ Communication Journal
+                                 └── trace_id / conversation_id
+```
+
+收到消息时，`TaskService` 把任务的 `current_trace_id` **对齐**到消息的 `trace_id`。
+于是从任务能查到通信日志，反之亦然（有测试验证这条链是通的）。
+
+> **重跑场景**：新执行带新 `trace_id`，但 `task_id` **不变** ——
+> 这正是 Step 4A 把两个字段分开的用途。
+
+#### 一个必须说清楚的实现局限
+
+`capability-demo` 里 A 和 B 跑在**同一个进程、共用同一个数据库**，
+所以 Handler 走的是「**关联**到已有任务」而不是「**新建**本地任务」。
+
+真实部署中每个 Agent 有**自己的**存储，那时 B 会新建一条记录，但 `task_id` 相同 ——
+因为它就是同一个业务任务。**Handler 两条路径都实现并测试了**（`result.action` 是 `created` 还是 `linked`）。
+
+#### 验收结果
+
+| 要求 | 状态 |
+|---|---|
+| Capability 声明与匹配（无评分/无排名/无信誉） | ✅ |
+| AgentDirectory 接口 + 本地实现 | ✅ |
+| Task 声明 `required_capabilities`，**自己不查找 Agent** | ✅ 有守卫 |
+| TASK_OFFER / COUNTER_OFFER 经 Handler 进入 Task 层 | ✅ |
+| `budget.currency == AIC` / `price <= budget` 校验 | ✅ Task 层 |
+| B **不自动接单**（处理完状态是 `OFFERED`） | ✅ 有测试 |
+| 四个 ID 可互相关联 | ✅ 有测试 |
+| 不写死 `agent_b` | ✅ 有守卫（注入 `agent_b` 会被抓到） |
+| 不实现 Task Manager / Coordinator / 自动分配 / 选最佳 / Reputation / Ranking / 价格优化 / Workspace Permission / Gateway / Git / Payment / Escrow / P2P | ✅ 有守卫 |
+| 旧测试继续通过 | ✅ |
+
+**测试：1168 → 1475（新增 307）**
+
+| 新增 / 修改 | 数量 |
+|---|---|
+| `test_capability.py` | 77 |
+| `test_agent_directory.py` | 84 |
+| `test_task_service.py` | 57 |
+| `test_capability_guards.py` | 56 |
+| `test_task.py`（required_capabilities） | +18 |
+| `test_cli.py`（capability-demo） | +12 |
+| `test_task_guards.py`（**随 4B 演进**） | +3 |
+
+> **关于 `test_task_guards.py` 的演进**：Step 4A 的守卫写着「一个都不许接入通信层」，
+> 因为那时还没到接线的时候。Step 4B 的任务恰恰是接线，所以守卫**有控制地放宽**了：
+> 只许 `TASK_OFFER` / `COUNTER_OFFER`，且只能从组合根接；
+> `ACCEPT` / `REJECT` / `SUBMIT` / `VERIFY` / `PAYMENT_*` 仍然禁止。
+> **保护力没有降低，反而更精确** —— 多接一个类型就会红。
+
 ### ⏳ 后续阶段
 
 | 阶段 | 内容 | 状态 |
 |---|---|---|
-| Step 4B | Task ↔ Communication 接线、Capability | 待开始 |
+| Step 4C | ACCEPT / REJECT 接入、议价流程闭环 | 待开始 |
 | Step 5 | 完整经济交易 Demo（A 外包给 B，结算） | 待开始 |
 | Step 6 | Cost Calculator（把 token 用量接到经济系统） | 待开始 |
 
@@ -1167,6 +1316,8 @@ ai-economy/
 │   ├── ledger.py              ← 交易账本（唯一真相来源）
 │   ├── wallet.py              ← 钱包 + 钱包仓库
 │   ├── money.py               ←   金额值类型（Step 4A）
+│   ├── capability.py          ←   能力声明与匹配（Step 4B）
+│   ├── agent_directory.py     ←   能力发现目录（Step 4B）
 │   ├── task.py                ←   Task 领域对象 + 状态机（Step 4A）
 │   ├── task_store.py          ←   Task 持久化（Step 4A）
 │   ├── task_workspace.py      ←   Task Workspace 逻辑引用（Step 4A）
@@ -1192,6 +1343,9 @@ ai-economy/
 │   ├── router.py              ←   ProviderRegistry + LLMRouter
 │   └── recorder.py            ←   调用记录（token 用量）
 │
+├── services/                  ← 消息 → 领域 适配层（Step 4B）
+│   └── task_service.py        ←   TASK_OFFER / COUNTER_OFFER 处理器
+│
 ├── communication/             ← Agent-to-Agent 通信（Step 3 已完成）
 │   ├── message.py             ←   Message（可序列化、可扩展）
 │   ├── address.py             ←   Address（与身份分离）
@@ -1206,7 +1360,7 @@ ai-economy/
 │   ├── database.py            ← SQLite 连接、事务、迁移
 │   └── models.py              ← 表结构定义
 │
-├── tests/                     ← 1168 个测试 + 30 个真实 API 测试
+├── tests/                     ← 1475 个测试 + 30 个真实 API 测试
 └── data/
     └── economy.db             ← SQLite 数据库（运行产物，不进 git）
 ```

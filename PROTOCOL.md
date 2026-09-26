@@ -473,6 +473,7 @@ AIC = AI Coin
       "amount": 100,
       "currency": "AIC"
     },
+    "required_capabilities": ["python_coding", "data_analysis"],
     "base_commit": "abc123",
     "acceptance": {
       "type": "tests"
@@ -488,11 +489,59 @@ AIC = AI Coin
 | `workspace_id` | ❌ | Task Workspace 引用（**不是权限**，见 [11](#11-task-workspace-的协议边界)） |
 | `description` | ✅ | 人类可读的任务描述 |
 | `budget` | ✅ | **金额对象**：预算**上限**（不是成交价，见 7.7） |
+| `required_capabilities` | ❌ | 承接方需要具备的能力（Step 4B 新增，见下） |
 | `base_commit` | ❌ | 🔒 工作基线版本（见 7.6） |
 | `acceptance` | ❌ | 🔒 验收条件（见 7.6） |
 | `expires_at` | ❌ | 🔒 报价有效期（见 7.6） |
 
 **第一条消息不需要 `reply_to`**（它不在回复任何东西）。
+
+#### `required_capabilities`（Step 4B 新增）
+
+```json
+"required_capabilities": ["python_coding", "data_analysis"]
+```
+
+| 性质 | 说明 |
+|---|---|
+| 可选 | 不传表示「没有特定能力要求」 |
+| 语义 | 发起方认为这个任务**需要**哪些能力 |
+| **不是** | 权限、认证、或「已找到承接方」的证明 |
+
+**三个必须分清的点：**
+
+1. **它是声明，不是认证**
+   发起方说「需要 python_coding」，不代表谁会做；
+   承接方声明「我会 python_coding」，也只是**声称**。
+
+2. **它不产生任何权限**
+   ```
+   Agent 声明 python_coding  ≠  它能访问 WS-001
+   ```
+   能力（能不能做）和 Workspace 权限（被不被允许做）是两个维度。
+
+3. **匹配是集合运算，不是评分**
+   判断标准只有一个：`required ⊆ declared`。
+   没有分数、没有排名、没有「最佳人选」。
+
+**谁来做匹配？** 不是通信层，也不是 Task：
+
+```
+Task（只声明需要什么）
+  ↓
+AgentDirectory（谁声明了这些能力？）
+  ↓
+候选列表（可能是 B、C、D）
+  ↓
+发起方 Agent **自己决定**用谁
+  ↓
+TASK_OFFER
+  ↓
+Communication
+```
+
+> 通信层**不解释** `required_capabilities` —— 它只搬运。
+> 有测试守着这条线（`communication/` 里不许出现这个字段名）。
 
 ### 7.3 `COUNTER_OFFER`
 
@@ -529,6 +578,16 @@ AIC = AI Coin
 
 **这条消息的 `message_id` 就是这次报价的标识**（见 [10.4](#104-当前版本用-message_id-标识一次报价)）——
 当前版本不引入独立的 `offer_id`。
+
+**业务校验（Step 4B 起在 Task 层执行）：**
+
+| 规则 | 在哪一层 |
+|---|---|
+| `price.currency == AIC` | Task 层 |
+| `price <= TASK_OFFER.budget` | **Task 层**（预算就是上限） |
+
+> 注意第二条**不是**通信规则。通信层继续只负责把消息送到，
+> 它不知道「预算」是什么（有守卫测试禁止 `communication/` 出现 `budget` 这个词）。
 
 > **绝不要用 `TEXT` 表达议价。**
 >

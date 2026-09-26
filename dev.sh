@@ -28,6 +28,7 @@
 #   ./dev.sh communication-log           Step 3.5 查询通信日志
 #   ./dev.sh task-demo                   Step 4A Task Core 演示
 #   ./dev.sh task-log                    查看任务
+#   ./dev.sh capability-demo             Step 4B 能力发现与自主委派演示
 #   ./dev.sh communication-log --traces  列出最近的通信链路
 #   ./dev.sh balances                    查看余额
 #   ./dev.sh transfer agent_a agent_b 20 让 A 付 20 AI 给 B
@@ -175,6 +176,7 @@ case "$COMMAND" in
         echo "    ./dev.sh task-demo                         Step 4A Task Core 演示"
         echo "    ./dev.sh task-log                          看任务列表"
         echo "    ./dev.sh task-log <task_id>                看某个任务详情"
+        echo "    ./dev.sh capability-demo                   能力发现与自主委派演示"
         echo
         echo "LLM（透传给 main.py）："
         echo "    ./dev.sh demo [--prompt 文字] [--agent a]  Step 2 链路演示"
@@ -194,6 +196,7 @@ case "$COMMAND" in
         echo "    ./dev.sh communication-demo                Agent 间通信演示"
         echo "    ./dev.sh communication-log --traces        看通信链路"
         echo "    ./dev.sh task-demo                         Task Core 演示"
+        echo "    ./dev.sh capability-demo                   能力发现演示"
         echo "    ./dev.sh ask \"你好\"                        问 Agent A"
         echo "    ./dev.sh transfer agent_a agent_b 20       A 付 20 AI 给 B"
         echo "    ./dev.sh transfer a b 20 --reason 任务定金  简写 + 原因"

@@ -82,9 +82,9 @@ class TaskStore:
                     participants, status, description, workspace_id,
                     budget_amount, budget_currency,
                     agreed_price_amount, agreed_price_currency,
-                    acceptance, expires_at,
+                    acceptance, required_capabilities, expires_at,
                     created_at, updated_at, note
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(task_id) DO UPDATE SET
                     current_trace_id      = excluded.current_trace_id,
                     contractor            = excluded.contractor,
@@ -97,6 +97,7 @@ class TaskStore:
                     agreed_price_amount   = excluded.agreed_price_amount,
                     agreed_price_currency = excluded.agreed_price_currency,
                     acceptance            = excluded.acceptance,
+                    required_capabilities = excluded.required_capabilities,
                     expires_at            = excluded.expires_at,
                     updated_at            = excluded.updated_at,
                     note                  = excluded.note
@@ -117,6 +118,9 @@ class TaskStore:
                     (
                         json.dumps(task.acceptance, ensure_ascii=False)
                         if task.acceptance else None
+                    ),
+                    json.dumps(
+                        task.required_capabilities.to_list(), ensure_ascii=False
                     ),
                     task.expires_at,
                     task.created_at,
@@ -323,6 +327,9 @@ class TaskStore:
             contractor=row["contractor"],
             participants=self._json_or(row["participants"], []),
             acceptance=self._json_or(row["acceptance"], None),
+            required_capabilities=self._json_or(
+                row["required_capabilities"], []
+            ),
             expires_at=row["expires_at"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],

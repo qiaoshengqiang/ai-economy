@@ -53,6 +53,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Optional
 
+from core.capability import CapabilityProfile
 from core.identity import new_message_id, utc_now_iso
 from core.money import Money
 from core.task_workspace import TaskWorkspaceRef
@@ -387,6 +388,7 @@ class Task:
         contractor: Optional[str] = None,
         participants: Optional[List[str]] = None,
         acceptance: Optional[Mapping[str, Any]] = None,
+        required_capabilities: Optional[Any] = None,
         expires_at: Optional[str] = None,
         created_at: Optional[str] = None,
         updated_at: Optional[str] = None,
@@ -439,6 +441,17 @@ class Task:
         self.contractor = contractor
         self.participants = list(participants or [])
         self.acceptance = dict(acceptance) if acceptance else None
+
+        # 【任务需要什么能力】—— 这只是**声明**。
+        #
+        # 注意 Task 到此为止：它描述「需要什么」，
+        # 但**不负责**「去找谁会」。寻找候选 Agent 是 AgentDirectory 的事，
+        # 而决定用谁是 Task Initiator Agent 的事。
+        #
+        # 这条边界很重要：如果 Task 自己会 discover agents，
+        # 那它就从「业务对象」变成了「调度器」。
+        self.required_capabilities = CapabilityProfile.of(required_capabilities)
+
         self.expires_at = expires_at
 
         now = utc_now_iso()
@@ -461,6 +474,7 @@ class Task:
         budget: Optional[Money] = None,
         workspace_id: Optional[str] = None,
         acceptance: Optional[Mapping[str, Any]] = None,
+        required_capabilities: Optional[Any] = None,
         expires_at: Optional[str] = None,
         task_id: Optional[str] = None,
         trace_id: Optional[str] = None,
@@ -484,6 +498,7 @@ class Task:
             workspace_id=workspace_id,
             budget=budget,
             acceptance=acceptance,
+            required_capabilities=required_capabilities,
             expires_at=expires_at,
             participants=participants,
             note=note,
@@ -682,6 +697,16 @@ class Task:
         return self.transition_to(TaskStatus.FAILED)
 
     # ------------------------------------------------------------
+    # 能力要求
+    # ------------------------------------------------------------
+    def requires(self, capability: Any) -> bool:
+        """这个任务是否要求某个能力。"""
+        return self.required_capabilities.supports(capability)
+
+    def has_capability_requirements(self) -> bool:
+        return not self.required_capabilities.is_empty()
+
+    # ------------------------------------------------------------
     # 报价历史
     # ------------------------------------------------------------
     def record_offer(
@@ -744,6 +769,8 @@ class Task:
                 self.agreed_price.to_dict() if self.agreed_price else None
             ),
             "acceptance": dict(self.acceptance) if self.acceptance else None,
+            # 只是「需要什么能力」的声明，不是「找到了谁」
+            "required_capabilities": self.required_capabilities.to_list(),
             "expires_at": self.expires_at,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
@@ -778,6 +805,7 @@ class Task:
             contractor=data.get("contractor"),
             participants=data.get("participants"),
             acceptance=data.get("acceptance"),
+            required_capabilities=data.get("required_capabilities"),
             expires_at=data.get("expires_at"),
             created_at=data.get("created_at"),
             updated_at=data.get("updated_at"),
@@ -800,6 +828,7 @@ class Task:
                 str(self.agreed_price) if self.agreed_price else None
             ),
             "workspace_id": self.workspace_id,
+            "required_capabilities": self.required_capabilities.names,
             "offers": len(self.offers),
             "tracing": self.current_trace_id,
         }

@@ -57,9 +57,11 @@ from core.config import load_global_config                     # noqa: E402
 from core.economy import AgentNotFoundError, Economy, EconomyError  # noqa: E402
 from core.ledger import LedgerError, format_amount              # noqa: E402
 from core.logging_setup import get_logger, setup_logging        # noqa: E402
+from core.agent_directory import AgentDirectory, LocalAgentDirectory  # noqa: E402
 from core.money import Money                                    # noqa: E402
 from core.task import OfferType, Task, TaskStatus               # noqa: E402
 from core.task_store import TaskStore                           # noqa: E402
+from services import TaskService                                # noqa: E402
 from core.paths import ensure_runtime_dirs                      # noqa: E402
 from llm import LLMCallRecorder, LLMRouter, LLMError            # noqa: E402
 from communication import (                                     # noqa: E402
@@ -99,6 +101,8 @@ class Runtime:
             Transport            通信实现     ← Step 3（当前是 LocalTransport）
             CommunicationRecorder 通信日志    ← Step 3.5
             TaskStore            任务持久化     ← Step 4A（Task Core）
+            AgentDirectory       能力发现       ← Step 4B
+            TaskService          消息→领域适配  ← Step 4B
 
         这些部件由 main.py（组合根）装配好，再交给各个命令。
 
@@ -120,6 +124,8 @@ class Runtime:
     transport: Transport
     journal: CommunicationRecorder
     tasks: TaskStore
+    directory: AgentDirectory
+    task_service: TaskService
 
     def agent(self, agent_id: str):
         return self.economy.agent(agent_id)
@@ -217,6 +223,58 @@ def print_status(economy: Economy) -> None:
 # ============================================================
 # 经济系统构建
 # ============================================================
+def _address_hint(communication: CommunicationManager,
+                  agent_id: str) -> Optional[str]:
+    """
+    从通信层的注册表里取一个 Agent 的地址（字符串形式）。
+
+    【为什么要从注册表读，而不是自己拼字符串】
+        因为「消息实际会送到哪里」是通信层的事实。
+        如果这里自己拼一个 "local://agent_b"，而通信层用的是别的地址，
+        两者就会不一致 —— 而这种不一致极难排查。
+
+        返回 None 表示通信层也不知道它在哪 —— 这完全可以接受，
+        因为能力目录里的地址只是一个**提示**，不是投递依据。
+    """
+    info = communication.registry.find(agent_id)
+    return str(info.address) if info is not None else None
+
+
+def _wire_task_handlers(
+    communication: CommunicationManager,
+    task_service: TaskService,
+) -> None:
+    """
+    把 TaskService 的业务处理器接到通信层。
+
+    【为什么需要这一层薄薄的适配】
+        TaskService 返回的是 HandlerResult（业务结果对象），
+        而通信层只认识「回复内容」（Message / dict / str / None）。
+
+        两者之间的翻译必须发生在**组合根**：
+            · 通信层不该知道 HandlerResult 是什么
+              （那会让 communication/ 依赖 services/，方向就反了）
+            · TaskService 也不该知道「怎么把消息发出去」
+              （那它就没法脱离通信层测试了）
+
+    【注意这里没有做任何业务判断】
+        它只是把 to_reply() 的结果转交给通信层。
+        接不接任务、报什么价 —— 那些决定都在 TaskService 和 Agent 那边。
+    """
+    def adapt(method):
+        def handler(message):
+            result = method(message)
+            return result.to_reply(message)
+        return handler
+
+    communication.register_type_handler(
+        MessageType.TASK_OFFER, adapt(task_service.handle_offer)
+    )
+    communication.register_type_handler(
+        MessageType.COUNTER_OFFER, adapt(task_service.handle_counter_offer)
+    )
+
+
 def build_runtime(db_path: Optional[str] = None) -> Runtime:
     """
     组装一次运行的完整环境：经济系统 + LLM 路由 + 调用记录 + 给 Agent 装大脑。
@@ -304,6 +362,40 @@ def build_runtime(db_path: Optional[str] = None) -> Runtime:
     #     真实结算属于后续步骤。
     tasks = TaskStore(db=economy.db)
 
+    # 能力目录（Step 4B）。
+    #
+    # 【为什么在这里建、而不是让 Agent 自己建】
+    #     因为「有哪些 Agent 可用」是**部署环境**的事实，
+    #     不是某个 Agent 的属性。组合根负责装配。
+    #
+    # 【为什么现在只有一个本机实现】
+    #     LocalAgentDirectory 只是 AgentDirectory 的一种实现。
+    #     将来换成 NetworkAgentDirectory / P2P Discovery 时，
+    #     调用方（TaskService / Agent）的代码一行都不用改。
+    directory = LocalAgentDirectory()
+    for agent in economy.all_agents():
+        directory.register_agent(
+            agent_id=agent.agent_id,
+            capabilities=agent.config.skills,
+            # 位置提示用字符串 —— 这样 core/ 不必依赖 communication/。
+            #
+            # 地址从**通信层的注册表**里读，而不是自己拼 ——
+            # 因为那才是真正会用于投递的地址（可能是本机的，
+            # 也可能是将来登记的远端地址）。
+            address=_address_hint(communication, agent.agent_id),
+        )
+
+    # 消息 → 领域 的适配层
+    task_service = TaskService(store=tasks, directory=directory)
+
+    # 把 Task 的业务处理器接到通信层的类型处理器上。
+    #
+    # 这是 Step 4B 第一次把 Task + Capability + Communication 连起来。
+    # 但注意方向：是**组合根**把它们接起来，
+    # 而不是让 Task 去 import communication，也不是让
+    # communication 去 import Task。
+    _wire_task_handlers(communication, task_service)
+
     return Runtime(
         economy=economy,
         router=router,
@@ -312,6 +404,8 @@ def build_runtime(db_path: Optional[str] = None) -> Runtime:
         transport=transport,
         journal=journal,
         tasks=tasks,
+        directory=directory,
+        task_service=task_service,
     )
 
 
@@ -1685,6 +1779,254 @@ def _print_task_detail(store, task_id: str) -> int:
 
 
 # ============================================================
+# 命令：capability-demo（Step 4B）
+# ============================================================
+def cmd_capability_demo(runtime: Runtime, args: argparse.Namespace) -> int:
+    """
+    能力发现 + 自主委派演示。
+
+    【这个演示要证明的事】
+
+        ✅ 系统能根据任务需要的能力**找出候选 Agent**
+        ✅ 选谁由发起方 Agent 自己决定 —— 系统不代劳
+        ✅ 能力匹配 ≠ 自动接单（B 收到邀约后状态仍是 OFFERED）
+        ❌ 不转账、不授权 Workspace、不调模型、不碰 Git
+
+    【刻意不证明的事】
+        这里没有「最佳 Agent」排名、没有信誉分、没有价格优化 ——
+        那些都不属于 Step 4B。
+    """
+    directory = runtime.directory
+    service = runtime.task_service
+    manager = runtime.communication
+    economy = runtime.economy
+
+    print()
+    print("=" * 66)
+    print("        AI Economy OS v0.1")
+    print("        Step 4B — Capability & Delegation Demo")
+    print("=" * 66)
+    print()
+
+    ledger_before = economy.ledger.count()
+
+    # ---------------- 1) 目录里有什么 ----------------
+    print("① Agent 能力目录")
+    print("-" * 66)
+    print("  （这些是 Agent **自己声明**的能力，不是系统认证的能力）")
+    print()
+    for entry in directory.all():
+        print(f"    {entry.agent_id:<10} {', '.join(entry.capabilities.names)}")
+    print()
+    print(f"  目录统计: {directory.stats()['agents']} 个 Agent，"
+          f"{len(directory.stats()['capabilities'])} 种能力")
+    print()
+
+    # ---------------- 2) 任务需要什么能力 ----------------
+    print("② Agent A 创建任务，并声明需要什么能力")
+    print("-" * 66)
+
+    required = ["python_coding", "data_analysis"]
+    task = Task.create(
+        creator="agent_a",
+        description="写一个 CSV 分析程序",
+        budget=Money(100),
+        workspace_id="WS-001",
+        required_capabilities=required,
+        acceptance={"type": "tests"},
+    )
+    runtime.tasks.save(task)
+
+    print(f"  task_id              : {task.task_id}")
+    print(f"  description          : {task.description}")
+    print(f"  budget               : {task.budget}")
+    print(f"  workspace_id         : {task.workspace_id}")
+    print(f"  required_capabilities: {task.required_capabilities.names}")
+    print()
+    print("  注意 Task 到此为止 —— 它只**声明需要什么**，")
+    print("  它自己不会去找 Agent，也不会发消息。")
+    print()
+
+    # A 决定要招标了 —— 把任务推进到 OFFERED。
+    # 这个动作是 A 做的（不是系统替它做的）。
+    task.offer()
+    runtime.tasks.save(task)
+
+    # ---------------- 3) 查候选（系统提供信息）----------------
+    print("③ 查询候选 Agent（AgentDirectory）")
+    print("-" * 66)
+    explanation = service.explain_candidates(task)
+
+    print(f"  任务要求: {', '.join(explanation['required'])}")
+    print()
+    print("  候选 Agent:")
+    if explanation["candidates"]:
+        for item in explanation["candidates"]:
+            print(f"    ✅ {item['agent_id']:<10} {', '.join(item['capabilities'])}")
+    else:
+        print("    （没有匹配的 Agent）")
+    print()
+    print("  被排除的 Agent:")
+    for item in explanation["excluded"]:
+        missing = ", ".join(item["missing"])
+        print(f"    ❌ {item['agent_id']:<10} 缺少: {missing}")
+    print()
+    print("  【注意】目录只回答「谁声明了这些能力」。")
+    print("         它没有排序、没有打分、没有推荐「最佳人选」。")
+    print()
+
+    # ---------------- 4) A 自己做决定 ----------------
+    print("④ Agent A 自己做决定")
+    print("-" * 66)
+
+    candidates = service.candidates_for(task)
+    if not candidates:
+        print("  没有候选，无法委派。")
+        print()
+        return 0
+
+    # 【这一行就是「A 的决定」】
+    # 演示里用「取第一个候选」代替真正的决策过程 ——
+    # 未来这里会是 Agent Brain 根据成本、信誉、风险做出的判断。
+    # 关键是：**这个决定发生在 Agent 侧，不在 Directory 里，也不在 Task 里。**
+    chosen = candidates[0]
+
+    print(f"  候选列表: {[e.agent_id for e in candidates]}")
+    print(f"  A 决定选: {chosen.agent_id}")
+    print()
+    print("  【这一步的边界很重要】")
+    print("    系统帮 A 找到了候选人，但**没有**替 A 决定用谁。")
+    print("    Task 不知道 Directory，Directory 也不知道 Task。")
+    print("    做决定的是 Agent A 自己。")
+    print()
+
+    # ---------------- 5) 发 TASK_OFFER ----------------
+    print("⑤ A 通过 Communication 发出 TASK_OFFER")
+    print("-" * 66)
+
+    async def send_offer():
+        return await manager.send(
+            "agent_a",
+            chosen.agent_id,
+            message_type=MessageType.TASK_OFFER,
+            trace_id=task.current_trace_id,
+            payload={
+                "task_id": task.task_id,
+                "workspace_id": task.workspace_id,
+                "description": task.description,
+                "budget": task.budget.to_dict(),
+                "required_capabilities": task.required_capabilities.names,
+                "acceptance": task.acceptance,
+            },
+        )
+
+    sent = asyncio.run(send_offer())
+
+    print(f"  message_id      : {sent.message_id}")
+    print(f"  message_type    : {sent.message_type}")
+    print(f"  from → to       : {sent.from_agent} → {sent.to_agent}")
+    print(f"  trace_id        : {sent.trace_id}")
+    print(f"  conversation_id : {sent.conversation_id}")
+    print(f"  budget          : {sent.payload['budget']}")
+    print()
+
+    # ---------------- 6) B 收到并处理 ----------------
+    print("⑥ Agent B 收到邀约（经 Handler 进入 Task 层）")
+    print("-" * 66)
+
+    async def receive():
+        return await manager.receive(chosen.agent_id, timeout=2.0)
+
+    inbound = asyncio.run(receive())
+
+    print(f"  接收状态: {inbound.status}")
+    if inbound.message is None:
+        print("  没有收到消息。")
+        print()
+        return 1
+
+    received = inbound.message
+    print(f"  收到的消息: {received.message_id} ({received.message_type})")
+    print()
+
+    # B 侧的本地任务（同一个 task_id，但是 B 自己的记录）
+    b_task = runtime.tasks.get(task.task_id)
+    print(f"  任务状态 : {b_task.status}")
+    print(f"    ↑ 是 OFFERED 而不是 ACCEPTED")
+    print(f"      「收到了邀约」和「接受邀约」是两件事 ——")
+    print(f"      B 自己判断之后才能决定接不接（这是 AI Economy 的核心行为）。")
+    print()
+    print("  【本演示的一个真实局限，必须说清楚】")
+    print("    A 和 B 跑在同一个进程、共用同一个数据库。")
+    print("    所以 Handler 走的是「关联到已有任务」，而不是「新建本地任务」。")
+    print("    真实部署里每个 Agent 有**自己的**存储，那时 B 会新建一条记录，")
+    print("    但 task_id 相同 —— 因为它是同一个业务任务。")
+    print("    （Handler 两种路径都实现并测试了，见 handle_offer 的 action 字段）")
+    print()
+
+    # ---------------- 7) 完整链路 ----------------
+    print("⑦ 可追踪链路（这是 Step 4B 第一次把三个系统缝起来）")
+    print("-" * 66)
+
+    # 【注意】这里重新从存储读一次，而不是用 A 的内存对象 ——
+    # 因为状态是 Handler 在服务端改的，A 手里那个对象可能已经过期。
+    # 这本身就是一个好例子：内存对象不等于事实来源。
+    stored = runtime.tasks.get(task.task_id)
+    offers = runtime.tasks.offers_for(task.task_id)
+    print(f"  Task ({task.task_id})")
+    print(f"    └── status           : {stored.status}")
+    print(f"    └── current_trace_id : {stored.current_trace_id}")
+    print(f"    └── Offers ({len(offers)} 条)")
+    for offer in offers:
+        print(f"          └── {offer.offer_type} {offer.amount}")
+        print(f"                message_id : {offer.message_id}")
+
+    print()
+    print(f"  这四条 ID 现在可以互相查到：")
+    print(f"    task_id         : {stored.task_id}")
+    print(f"    message_id      : {sent.message_id}")
+    print(f"    trace_id        : {stored.current_trace_id}")
+    print(f"    conversation_id : {sent.conversation_id}")
+    print()
+
+    # 从 message_id 查回通信日志，证明链路是通的
+    journal = runtime.journal
+    if journal is not None and sent.message_id:
+        row = journal.get_message(sent.message_id)
+        if row is not None:
+            print("  验证：从 message_id 查通信日志")
+            print(f"    trace_id        : {row['trace_id']}")
+            print(f"    conversation_id : {row['conversation_id']}")
+            print(f"    status          : {row['status']}")
+            print(f"    ✅ 与任务的 trace_id 一致: "
+                  f"{row['trace_id'] == stored.current_trace_id}")
+            print()
+
+    # ---------------- 8) 边界证明 ----------------
+    ledger_after = economy.ledger.count()
+
+    print("⑧ 边界证明")
+    print("-" * 66)
+    print(f"  账本记录数 : {ledger_before} → {ledger_after}   "
+          f"{'✅ 没有产生任何账目' if ledger_after == ledger_before else '❌ 账本被改了'}")
+    print(f"  B 的任务状态: {b_task.status}   "
+          f"{'✅ B 没有自动接单' if b_task.status != TaskStatus.ACCEPTED else '❌ B 被自动接了单'}")
+    print(f"  A 的余额   : {format_amount(economy.agent('agent_a').balance)} "
+          f"{economy.currency}   ✅ 没有付款")
+    print()
+    print("  · 能力匹配没有转账          —— Capability ≠ Economy")
+    print("  · 能力匹配没有授予 Workspace 权限 —— Capability ≠ Permission")
+    print("  · 没有调用任何模型          —— 匹配是纯集合运算")
+    print("  · B 收到邀约但没有自动接单   —— Agent 自主决定")
+    print("  · 没有实现 P2P / Git / Escrow")
+    print()
+
+    print(f"  查询方式：./dev.sh task-log {task.task_id}")
+    print()
+    return 0
+
+
+# ============================================================
 # 命令行参数
 # ============================================================
 def build_parser() -> argparse.ArgumentParser:
@@ -1941,6 +2283,14 @@ def build_parser() -> argparse.ArgumentParser:
     task_log.add_argument("--status", default=None, help="只看某个状态")
     task_log.add_argument("--limit", type=int, default=20, help="最多显示几条")
     task_log.set_defaults(func=cmd_task_log)
+
+    # --- capability-demo（Step 4B）---
+    cap_demo = subparsers.add_parser(
+        "capability-demo",
+        parents=[shared],
+        help="能力发现与自主委派演示（不转账、不授权、不调模型）",
+    )
+    cap_demo.set_defaults(func=cmd_capability_demo)
 
     return parser
 

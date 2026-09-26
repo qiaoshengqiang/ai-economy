@@ -980,3 +980,164 @@ class TestRepr:
         assert summary["agreed_price"] == "25 AIC"
         assert summary["workspace_id"] == "WS-001"
         assert summary["tracing"] == accepted_task.current_trace_id
+
+
+# ============================================================
+# 9. required_capabilities（Step 4B）
+# ============================================================
+class TestRequiredCapabilities:
+    """
+    Task 只**声明**需要什么能力。
+
+    它不负责寻找 Agent —— 那是 AgentDirectory 的事，
+    而决定用谁是 Task Initiator Agent 的事。
+    """
+
+    def test_default_empty(self):
+        assert Task.create(creator="a").required_capabilities.is_empty()
+
+    def test_declared_at_creation(self):
+        task = Task.create(
+            creator="a", required_capabilities=["python", "data_analysis"]
+        )
+
+        assert task.required_capabilities.names == ["data_analysis", "python"]
+
+    def test_requires(self):
+        task = Task.create(creator="a", required_capabilities=["python"])
+
+        assert task.requires("python") is True
+        assert task.requires("Python") is True
+        assert task.requires("rust") is False
+
+    def test_has_capability_requirements(self):
+        assert Task.create(creator="a").has_capability_requirements() is False
+        assert Task.create(
+            creator="a", required_capabilities=["python"]
+        ).has_capability_requirements() is True
+
+    def test_accepts_none(self):
+        assert Task.create(
+            creator="a", required_capabilities=None
+        ).required_capabilities.is_empty()
+
+    def test_accepts_empty_list(self):
+        assert Task.create(
+            creator="a", required_capabilities=[]
+        ).required_capabilities.is_empty()
+
+    def test_duplicates_collapse(self):
+        task = Task.create(
+            creator="a", required_capabilities=["python", "Python", "python"]
+        )
+
+        assert task.required_capabilities.count() == 1
+
+    def test_is_a_capability_profile(self):
+        from core.capability import CapabilityProfile
+
+        task = Task.create(creator="a", required_capabilities=["python"])
+
+        assert isinstance(task.required_capabilities, CapabilityProfile)
+
+    def test_serialized(self):
+        task = Task.create(creator="a", required_capabilities=["python", "csv"])
+
+        assert task.to_dict()["required_capabilities"] == ["csv", "python"]
+
+    def test_roundtrip(self):
+        task = Task.create(
+            creator="a", required_capabilities=["python", "data_analysis"]
+        )
+        restored = Task.from_dict(task.to_dict())
+
+        assert restored.required_capabilities == task.required_capabilities
+
+    def test_missing_from_dict_is_empty(self):
+        task = Task.from_dict({"task_id": "t", "creator": "a"})
+
+        assert task.required_capabilities.is_empty()
+
+    def test_summary_includes_it(self):
+        task = Task.create(creator="a", required_capabilities=["python"])
+
+        assert task.summary()["required_capabilities"] == ["python"]
+
+    def test_requirements_do_not_change_with_status(self, negotiating_task):
+        """能力要求是任务的固有属性，不随状态变化。"""
+        negotiating_task.required_capabilities = (
+            negotiating_task.required_capabilities
+        )
+        before = negotiating_task.required_capabilities.names
+
+        negotiating_task.accept(Money(25))
+
+        assert negotiating_task.required_capabilities.names == before
+
+    def test_task_cannot_find_agents_itself(self):
+        """
+        【§9 的核心边界】Task 不会自己去找 Agent。
+
+        它既不 import AgentDirectory，也没有 discover / find 类方法。
+        """
+        from core.task import Task as TaskClass
+
+        for forbidden in ("find_agents", "discover", "candidates",
+                          "find_capable", "match_agents"):
+            assert not hasattr(TaskClass, forbidden), (
+                f"Task 不该有 {forbidden!r} —— "
+                f"寻找候选 Agent 属于 AgentDirectory"
+            )
+
+    def test_task_does_not_know_about_directory(self):
+        import ast
+        from pathlib import Path
+
+        source = Path(__file__).resolve().parent.parent / "core" / "task.py"
+        tree = ast.parse(source.read_text(encoding="utf-8"))
+
+        modules = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                modules.extend(a.name for a in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                modules.append(node.module)
+
+        for module in modules:
+            assert not module.startswith("core.agent_directory"), (
+                f"core/task.py 导入了 {module}"
+            )
+
+
+class TestRequiredCapabilitiesPersistence:
+    def test_persisted(self, db):
+        from core.task_store import TaskStore
+
+        store = TaskStore(db)
+        task = Task.create(
+            creator="a", required_capabilities=["python", "csv"]
+        )
+        store.save(task)
+
+        assert store.get(task.task_id).required_capabilities.names == [
+            "csv", "python"
+        ]
+
+    def test_empty_persisted(self, db):
+        from core.task_store import TaskStore
+
+        store = TaskStore(db)
+        task = Task.create(creator="a")
+        store.save(task)
+
+        assert store.get(task.task_id).required_capabilities.is_empty()
+
+    def test_queryable_by_sql(self, db):
+        """能力要求存在一列里，可以直接查。"""
+        from core.task_store import TaskStore
+
+        store = TaskStore(db)
+        store.save(Task.create(creator="a", required_capabilities=["python"]))
+
+        row = db.fetchone("SELECT required_capabilities FROM tasks LIMIT 1")
+        assert "python" in row["required_capabilities"]

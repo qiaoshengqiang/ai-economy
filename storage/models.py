@@ -406,6 +406,14 @@ SCHEMA_STATEMENTS: Final[tuple[str, ...]] = (
         -- JSON：验收条件，如 {"type": "tests"}
         acceptance          TEXT,
 
+        -- JSON 数组：任务**需要**哪些能力（Step 4B）
+        --
+        -- 【注意这只是声明】
+        --     它描述「这个任务需要什么」，
+        --     不表示「已经找到了谁」，也不产生任何权限。
+        --     候选 Agent 由 AgentDirectory 查找，选择由发起方 Agent 决定。
+        required_capabilities TEXT,
+
         expires_at          TEXT,
         created_at          TEXT NOT NULL,
         updated_at          TEXT NOT NULL,
@@ -476,6 +484,12 @@ COLUMN_MIGRATIONS: Final[dict] = {
         ("latency_ms", "REAL NOT NULL DEFAULT 0"),
         ("simulated", "INTEGER NOT NULL DEFAULT 0"),
         ("token_source", "TEXT NOT NULL DEFAULT 'unknown'"),
+    ],
+    # Step 4B 给 tasks 加了「需要什么能力」。
+    # 老库里的任务是 NULL（表示「没有声明能力要求」），这是合理的默认值，
+    # 所以只需要加列，不需要回填数据。
+    "tasks": [
+        ("required_capabilities", "TEXT"),
     ],
 }
 

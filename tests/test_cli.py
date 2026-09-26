@@ -1015,3 +1015,113 @@ class TestTaskCommands:
 
         assert "调用记录" not in result.stdout
         assert "没有调用任何模型" in result.stdout
+
+
+# ============================================================
+# Step 4B：capability-demo
+# ============================================================
+class TestCapabilityDemo:
+    def test_runs(self, tmp_path):
+        result = run_cli("capability-demo", db_path=tmp_path / "cap1.db")
+
+        assert result.returncode == EXIT_OK
+        assert "Capability & Delegation Demo" in result.stdout
+
+    def test_shows_directory(self, tmp_path):
+        result = run_cli("capability-demo", db_path=tmp_path / "cap2.db")
+
+        assert "agent_a" in result.stdout
+        assert "agent_b" in result.stdout
+        assert "python_coding" in result.stdout
+        assert "data_analysis" in result.stdout
+
+    def test_shows_required_capabilities(self, tmp_path):
+        result = run_cli("capability-demo", db_path=tmp_path / "cap3.db")
+
+        assert "required_capabilities" in result.stdout
+
+    def test_finds_only_agent_b(self, tmp_path):
+        """
+        任务要求 python_coding + data_analysis，只有 B 满足。
+        A 被排除（缺少这两项）。
+        """
+        result = run_cli("capability-demo", db_path=tmp_path / "cap4.db")
+
+        assert "候选 Agent" in result.stdout
+        assert "被排除的 Agent" in result.stdout
+        # B 是候选
+        assert "✅ agent_b" in result.stdout
+        # A 被排除
+        assert "❌ agent_a" in result.stdout
+
+    def test_shows_agent_decides(self, tmp_path):
+        """必须明确显示「做决定的是 Agent，不是系统」。"""
+        result = run_cli("capability-demo", db_path=tmp_path / "cap5.db")
+
+        assert "A 自己做决定" in result.stdout
+        assert "没有**替 A 决定" in result.stdout or "没有" in result.stdout
+
+    def test_no_auto_accept(self, tmp_path):
+        """必须证明 B 没有自动接单。"""
+        result = run_cli("capability-demo", db_path=tmp_path / "cap6.db")
+
+        assert "B 没有自动接单" in result.stdout
+        assert "OFFERED" in result.stdout
+
+    def test_no_money_moved(self, tmp_path):
+        result = run_cli("capability-demo", db_path=tmp_path / "cap7.db")
+
+        assert "没有产生任何账目" in result.stdout
+        assert "没有付款" in result.stdout
+
+    def test_links_all_four_ids(self, tmp_path):
+        """
+        §29：task_id / message_id / trace_id / conversation_id
+        必须能互相关联。
+        """
+        import re
+
+        result = run_cli("capability-demo", db_path=tmp_path / "cap8.db")
+        out = result.stdout
+
+        assert re.search(r"task_[0-9a-f]{8}", out)
+        assert re.search(r"msg_[0-9a-f]{8}", out)
+        assert re.search(r"trc_[0-9a-f]{8}", out)
+        assert re.search(r"conv_[0-9a-f]{8}", out)
+        assert "与任务的 trace_id 一致: True" in out
+
+    def test_writes_task_to_store(self, tmp_path):
+        db_file = tmp_path / "cap9.db"
+        run_cli("capability-demo", db_path=db_file)
+
+        result = run_cli("task-log", db_path=db_file)
+
+        assert "OFFERED" in result.stdout
+        assert "agent_a" in result.stdout          # 发起方
+        # 【注意】task-log 里不出现 agent_b —— 因为 B 还没接受，
+        # 所以没有 contractor。这本身就是「B 没有自动接单」的又一个证据。
+        assert "agent_b" not in result.stdout
+
+    def test_no_llm_calls(self, tmp_path):
+        result = run_cli("capability-demo", db_path=tmp_path / "cap10.db")
+
+        assert "没有调用任何模型" in result.stdout
+        assert "调用记录" not in result.stdout
+
+    def test_states_boundaries(self, tmp_path):
+        result = run_cli("capability-demo", db_path=tmp_path / "cap11.db")
+        out = result.stdout
+
+        assert "Capability ≠ Economy" in out
+        assert "Capability ≠ Permission" in out
+        assert "Agent 自主决定" in out
+
+    def test_no_ranking_or_reputation(self, tmp_path):
+        """演示里不该出现评分 / 排名。"""
+        result = run_cli("capability-demo", db_path=tmp_path / "cap12.db")
+        out = result.stdout.lower()
+
+        for forbidden in ("评分", "排名", "最佳人选", "信誉分"):
+            assert forbidden not in out or "没有" in out, (
+                f"演示里出现了 {forbidden}"
+            )
