@@ -1,0 +1,603 @@
+"""
+CommunicationManager —— Agent 之间的通信层
+============================================================
+
+【它在整条链路里的位置】
+
+    Agent
+     ↓   agent.send(to="agent_b", text="hi")
+    CommunicationManager          ← 这个文件
+     ↓   造 Message / 查地址 / 校验 / 去重
+    Transport（抽象）
+     ↓
+    LocalTransport                ← 当前实现（未来换 P2PTransport）
+
+【它负责什么】
+
+    · 创建消息（补 message_id、timestamp）
+    · 校验消息字段
+    · 把 agent_id 解析成 Address
+    · 调用 Transport 投递
+    · 从 Transport 收消息
+    · 去重
+    · 把消息交给目标 Agent 处理
+    · 如果 Agent 回了东西，把回复也发出去
+
+【它坚决不负责什么】
+
+    ❌ 调用 LLM          → 那是 Brain 的事
+    ❌ 碰钱包 / 扣钱      → 那是 Economy 的事
+    ❌ 解释经济含义       → TASK_OFFER 里的钱归 Economy 管
+    ❌ 读写文件 / 操作 Git
+
+    为什么这条边界这么重要？
+        因为通信是「信道」，经济是「规则」。
+        如果通信层开始理解「这条 TASK_OFFER 里的报价合不合理」，
+        那么以后加一种新消息类型就要改通信层，
+        而且通信层会被迫依赖 Economy —— 两个层次就糊在一起了。
+
+        正确的分工：
+            Communication  只负责「把消息送到」
+            Economy        负责「解释消息里的经济含义」
+
+【本地绑定 vs 注册表数据：为什么分开放】
+
+    registry : agent_id → AgentInfo（纯数据，可序列化）
+               ← 本地和远端 Agent 都存在这里，长得一样
+
+    _handlers: agent_id → 处理函数（活的 Python 对象）
+               ← 只有【本进程】的 Agent 才有
+
+    分开之后，"远端 Agent" 才可能出现得自然：
+        它在 registry 里有条目，但在 _handlers 里没有 ——
+        因为它根本不在这个进程里。
+
+    如果混成一个字典，将来就只能存本地对象，
+    「跨机器」这件事在数据结构上就被堵死了。
+"""
+
+from __future__ import annotations
+
+import inspect
+from dataclasses import dataclass, field
+from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple, Union
+
+from core.identity import utc_now_iso
+from core.logging_setup import get_logger
+from communication.address import Address
+from communication.dedup import DEFAULT_MEMORY_SIZE, SeenMessageTracker
+from communication.errors import (
+    AgentNotFoundError,
+    DuplicateMessageError,
+    MessageValidationError,
+)
+from communication.message import Message, MessageType
+from communication.registry import AgentInfo, AgentRegistry, PresenceStatus
+from communication.transport import DeliveryReceipt, Transport
+
+logger = get_logger(__name__)
+
+# 一个处理函数可以是同步的，也可以是异步的
+MessageHandler = Callable[[Message], Any]
+
+
+# ============================================================
+# 收件结果
+# ============================================================
+class ReceiveStatus:
+    """一次 receive() 的结果状态。"""
+
+    DELIVERED = "delivered"    # 成功交给 Agent 处理了
+    DUPLICATE = "duplicate"    # 重复消息，已跳过
+    TIMEOUT = "timeout"        # 等超时了，没有消息
+    NO_HANDLER = "no_handler"  # 收到了，但这个 Agent 没有处理函数
+
+
+@dataclass
+class InboundResult:
+    """
+    receive() 的返回值。
+
+    【为什么不是直接返回 Message 或 None】
+        因为「没收到」和「收到了但是重复」是完全不同的两种情况，
+        调用方需要区分它们：
+            · 重复 → 什么都不用做（而且不该算异常）
+            · 超时 → 可以再等一会儿，或者做别的事
+        只返回 None 的话，这两者就分不开了。
+    """
+
+    status: str
+    message: Optional[Message] = None
+    reply: Optional[Message] = None
+    detail: str = ""
+
+    @property
+    def delivered(self) -> bool:
+        return self.status == ReceiveStatus.DELIVERED
+
+    @property
+    def is_duplicate(self) -> bool:
+        return self.status == ReceiveStatus.DUPLICATE
+
+    @property
+    def is_timeout(self) -> bool:
+        return self.status == ReceiveStatus.TIMEOUT
+
+    def __str__(self) -> str:
+        base = f"<{self.status}"
+        if self.message is not None:
+            base += f" {self.message.message_id}"
+        if self.reply is not None:
+            base += f" 回复={self.reply.message_id}"
+        return base + ">"
+
+
+# ============================================================
+# Communication Manager
+# ============================================================
+class CommunicationManager:
+    """
+    Agent 之间通信的统一入口。
+
+    用法：
+        transport = LocalTransport()
+        manager = CommunicationManager(transport)
+
+        manager.register(agent_a, capabilities=["python"])
+        manager.register(agent_b, capabilities=["testing"])
+
+        await agent_a.send(to="agent_b", text="Hello")
+        result = await manager.receive("agent_b", timeout=1.0)
+    """
+
+    def __init__(
+        self,
+        transport: Transport,
+        registry: Optional[AgentRegistry] = None,
+        seen_memory_size: int = DEFAULT_MEMORY_SIZE,
+    ):
+        self.transport = transport
+        self.registry = registry or AgentRegistry()
+
+        # 本进程内 agent_id → 处理函数。
+        # 注意：这里【只放本地 Agent】。
+        self._handlers: Dict[str, MessageHandler] = {}
+
+        # 按消息类型注册的处理器（可选的扩展点，见 register_type_handler）
+        self._type_handlers: Dict[str, MessageHandler] = {}
+
+        # 去重：每个 Agent 一份
+        self._seen: Dict[str, SeenMessageTracker] = {}
+        self.seen_memory_size = int(seen_memory_size)
+
+        # 统计
+        self.sent_count = 0
+        self.delivered_count = 0
+        self.duplicate_count = 0
+        self.timeout_count = 0
+
+    # ------------------------------------------------------------
+    # 生命周期
+    # ------------------------------------------------------------
+    async def start(self) -> None:
+        """启动底层传输（本地是空操作，网络传输会在这里 listen）。"""
+        await self.transport.start()
+
+    async def close(self) -> None:
+        await self.transport.close()
+        self._handlers.clear()
+
+    # ------------------------------------------------------------
+    # 注册
+    # ------------------------------------------------------------
+    def register(
+        self,
+        agent: Any,
+        capabilities: Optional[Union[str, Tuple[str, ...], List[str]]] = None,
+        address: Optional[Address] = None,
+        presence: str = PresenceStatus.ONLINE,
+        metadata: Optional[Mapping[str, Any]] = None,
+    ) -> AgentInfo:
+        """
+        把一个 Agent 接入通信层。
+
+        【参数 agent 是鸭子类型】
+            只需要它有 .agent_id；如果有 .name 和 .handle_message 会更好用。
+            这里刻意【不做类型检查】要求它必须是 BaseAgent ——
+            否则 communication 层就要 import agents 层，
+            依赖方向就反了（通信层应该能被独立测试）。
+
+        做三件事：
+            1. 往 registry 登记【纯数据】
+            2. 在 transport 开一个信箱
+            3. 把 alive 的处理函数记到本地绑定表
+        """
+        agent_id = getattr(agent, "agent_id", None) or str(agent)
+        agent_id = str(agent_id).strip()
+        if not agent_id:
+            raise MessageValidationError("注册的 Agent 缺少 agent_id")
+
+        display_name = str(getattr(agent, "name", "") or agent_id)
+
+        info = AgentInfo(
+            agent_id=agent_id,
+            address=address or self.transport.address_for(agent_id),
+            display_name=display_name,
+            capabilities=tuple(capabilities or ()),
+            presence=presence,
+            is_local=True,
+            metadata=dict(metadata or {}),
+        )
+
+        self.registry.register(info)
+        self.transport.open_mailbox(agent_id)
+
+        handler = getattr(agent, "handle_message", None)
+        if callable(handler):
+            self._handlers[agent_id] = handler
+        else:
+            logger.debug("%s 没有 handle_message，收到的消息会被标记为 no_handler", agent_id)
+
+        self._seen[agent_id] = SeenMessageTracker(self.seen_memory_size)
+
+        logger.debug("已接入通信层：%s @ %s", agent_id, info.address)
+        return info
+
+    def register_remote(
+        self,
+        agent_id: str,
+        address: Address,
+        capabilities: Optional[Union[str, Tuple[str, ...], List[str]]] = None,
+        presence: str = PresenceStatus.UNKNOWN,
+        node: str = "remote",
+        metadata: Optional[Mapping[str, Any]] = None,
+    ) -> AgentInfo:
+        """
+        登记一个【远端】Agent —— 只有地址，没有本地处理函数。
+
+        【本步骤不真的用这条路径收发消息】
+            它的存在是为了证明数据模型是对的：
+            远端 Agent 能作为一条普通记录存在于同一个注册表里，
+            只是没有本地信箱。
+
+            将来接上 P2PTransport 之后，往这里登记地址，
+            通信就走网络了 —— 而上层代码看不到差别。
+        """
+        info = AgentInfo(
+            agent_id=agent_id,
+            address=address,
+            display_name=agent_id,
+            capabilities=tuple(capabilities or ()),
+            presence=presence,
+            node=node,
+            is_local=False,
+            metadata=dict(metadata or {}),
+        )
+        self.registry.register(info)
+        return info
+
+    def unregister(self, agent_id: str) -> bool:
+        key = str(agent_id).strip()
+        self._handlers.pop(key, None)
+        self._seen.pop(key, None)
+        self.transport.close_mailbox(key)
+        return self.registry.unregister(key)
+
+    # ------------------------------------------------------------
+    # 发送
+    # ------------------------------------------------------------
+    async def send(
+        self,
+        from_agent: str,
+        to: str,
+        text: Optional[str] = None,
+        payload: Optional[Mapping[str, Any]] = None,
+        message_type: str = MessageType.TEXT,
+        reply_to: Optional[str] = None,
+    ) -> Message:
+        """
+        发一条消息。返回实际发出的 Message（含 message_id）。
+
+        返回 Message 而不是回执，是因为调用方通常更关心
+        「我发出去的那条消息」——尤其是要拿它的 message_id 去等回复。
+        投递细节可以通过 send_message() 拿到。
+        """
+        sender = str(from_agent).strip()
+        recipient = str(to).strip()
+
+        # --- 校验发送方：必须是已登记的 Agent ---
+        # 为什么必须查？
+        #   否则任何代码都能随便编一个 from_agent 发消息 ——
+        #   那样「身份」这个概念就失去了意义。
+        if not self.registry.exists(sender):
+            raise AgentNotFoundError(
+                f"发送方 {sender!r} 没有接入通信层，不能发消息。\n"
+                f"已登记的 Agent：{self.registry.ids() or '（无）'}"
+            )
+
+        body: Dict[str, Any] = dict(payload or {})
+        if text is not None:
+            body["text"] = text
+
+        message = Message(
+            from_agent=sender,
+            to_agent=recipient,
+            message_type=message_type,
+            payload=body,
+            reply_to=reply_to,
+        )
+
+        await self.send_message(message)
+        return message
+
+    async def send_message(self, message: Message) -> DeliveryReceipt:
+        """
+        把一条已经构造好的 Message 投出去。
+
+        这个方法给「需要完全控制消息内容」的场景用
+        （比如测试里指定 message_id 造重复消息）。
+        """
+        if not isinstance(message, Message):
+            raise MessageValidationError(
+                f"send_message 需要 Message，收到 {type(message).__name__}"
+            )
+
+        address = await self.resolve_address(message.to_agent)
+        receipt = await self.transport.send(message, address)
+
+        self.sent_count += 1
+        logger.debug("发出 %s", message)
+
+        return receipt
+
+    # ------------------------------------------------------------
+    # 地址解析
+    # ------------------------------------------------------------
+    async def resolve_address(self, agent_id: str) -> Address:
+        """
+        把 agent_id 解析成可以投递的地址。
+
+        【这里的查找顺序是为 P2P 提前设计好的】
+
+            1. 注册表里有 → 直接用它的地址
+            2. 注册表里没有 → 问传输层「你能发现它吗」
+                               （本地返回 None；未来 P2P 会去查网络）
+            3. 还是找不到 → AgentNotFoundError
+
+        第 2 步就是为 P2PTransport 留的口子。
+        有了它，将来接网络时这个方法的代码一行都不用改。
+        """
+        key = str(agent_id).strip()
+
+        info = self.registry.find(key)
+        if info is not None:
+            return info.address
+
+        discovered = await self.transport.discover(key)
+        if discovered is not None:
+            # 发现成功 → 登记成远端条目，下次就不用再找了
+            self.register_remote(key, discovered)
+            logger.info("通过 %s 发现了远端 Agent：%s", self.transport.scheme, key)
+            return discovered
+
+        raise AgentNotFoundError(
+            f"找不到收件人 {key!r}。\n"
+            f"  注册表里已登记：{self.registry.ids() or '（无）'}\n"
+            f"  当前传输方式：{self.transport.scheme}\n"
+            f"（本地传输只能送到本进程；跨进程要等 P2PTransport）"
+        )
+
+    # ------------------------------------------------------------
+    # 接收
+    # ------------------------------------------------------------
+    async def receive(
+        self,
+        agent_id: str,
+        timeout: Optional[float] = None,
+        strict_dedup: bool = False,
+    ) -> InboundResult:
+        """
+        取一条消息，交给对应 Agent 处理。
+
+        返回 InboundResult（见上面的说明：为什么不是 Message 或 None）。
+
+        strict_dedup=True 时，重复消息会抛 DuplicateMessageError
+        而不是被静默跳过 —— 调试和测试时很有用。
+        """
+        key = str(agent_id).strip()
+
+        message = await self.transport.receive(key, timeout=timeout)
+        if message is None:
+            self.timeout_count += 1
+            return InboundResult(status=ReceiveStatus.TIMEOUT, detail="没有等到消息")
+
+        # --- 防御性检查：确认没有投递错人 ---
+        if message.to_agent != key:
+            logger.warning(
+                "投递异常：%s 的信箱里收到了发给 %s 的消息 %s",
+                key, message.to_agent, message.message_id,
+            )
+            return InboundResult(
+                status=ReceiveStatus.NO_HANDLER,
+                message=message,
+                detail=f"消息的收件人是 {message.to_agent}，不是 {key}",
+            )
+
+        # --- 去重 ---
+        tracker = self._seen.get(key)
+        if tracker is None:
+            tracker = SeenMessageTracker(self.seen_memory_size)
+            self._seen[key] = tracker
+
+        if not tracker.check_and_add(message.message_id):
+            self.duplicate_count += 1
+            logger.debug("跳过重复消息 %s", message.message_id)
+
+            if strict_dedup:
+                raise DuplicateMessageError(
+                    f"重复消息：{message.message_id}（来自 {message.from_agent}）"
+                )
+
+            return InboundResult(
+                status=ReceiveStatus.DUPLICATE,
+                message=message,
+                detail="这条消息以前处理过，已跳过",
+            )
+
+        # --- 找处理函数 ---
+        handler = self._type_handlers.get(message.message_type)
+        if handler is None:
+            handler = self._handlers.get(key)
+
+        if handler is None:
+            logger.debug("%s 没有处理函数，消息 %s 被搁置", key, message.message_id)
+            return InboundResult(
+                status=ReceiveStatus.NO_HANDLER,
+                message=message,
+                detail=f"{key} 没有注册消息处理函数",
+            )
+
+        # --- 处理 ---
+        outcome = handler(message)
+        if inspect.isawaitable(outcome):
+            outcome = await outcome
+
+        self.delivered_count += 1
+        logger.debug("%s 处理了 %s", key, message)
+
+        # --- 处理函数可能返回一条回复 ---
+        reply = self._coerce_reply(message, outcome)
+        if reply is not None:
+            await self.send_message(reply)
+            logger.debug("%s 回复了 %s", key, reply)
+
+        return InboundResult(
+            status=ReceiveStatus.DELIVERED,
+            message=message,
+            reply=reply,
+            detail=f"已交给 {key} 处理",
+        )
+
+    # ------------------------------------------------------------
+    # 类型路由（扩展点）
+    # ------------------------------------------------------------
+    def register_type_handler(
+        self, message_type: str, handler: MessageHandler
+    ) -> None:
+        """
+        给某种消息类型注册专门的处理函数。
+
+        【为什么要有这个，而不是在 Agent 里写 if/elif】
+
+            ❌ Agent.handle_message 里长成：
+                if msg.message_type == "TEXT": ...
+                elif msg.message_type == "PING": ...
+                elif msg.message_type == "TASK_OFFER": ...
+                # 每加一种消息类型，就要改 Agent
+
+            ✅ 现在：
+                manager.register_type_handler("TASK_OFFER", task_manager.on_offer)
+
+            这样 Step 4 接任务系统时，
+            只需要注册一个新函数，Agent 和通信层都不用改。
+
+        【注意】类型处理器优先级【高于】Agent 的通用处理器。
+        """
+        key = str(message_type).strip().upper()
+        if not key:
+            raise MessageValidationError("message_type 不能为空")
+        if not callable(handler):
+            raise MessageValidationError(
+                f"handler 必须可调用，收到 {type(handler).__name__}"
+            )
+        self._type_handlers[key] = handler
+
+    # ------------------------------------------------------------
+    # 内部
+    # ------------------------------------------------------------
+    @staticmethod
+    def _coerce_reply(
+        original: Message, outcome: Any
+    ) -> Optional[Message]:
+        """
+        把处理函数的返回值统一成一条回复消息。
+
+        允许处理函数返回：
+            Message   → 原样发出（高级用法）
+            str       → 包成 {"text": "..."} 的回复
+            dict      → 包成 payload 回复
+            None      → 不回复（最常见）
+
+        为什么要放宽这个？
+            因为在 Step 4 里会到处出现这种写法：
+
+                def on_ping(msg):
+                    return "PONG"
+
+            逼他写完整的 Message(...) 只会制造噪音。
+        """
+        if outcome is None:
+            return None
+
+        if isinstance(outcome, Message):
+            return outcome
+
+        if isinstance(outcome, str):
+            return original.reply(text=outcome)
+
+        if isinstance(outcome, Mapping):
+            return original.reply(payload=outcome)
+
+        # 其它类型：当成「没回复」，但要留下痕迹
+        logger.warning(
+            "处理函数返回了无法理解的类型 %s，已忽略",
+            type(outcome).__name__,
+        )
+        return None
+
+    # ------------------------------------------------------------
+    # 查询
+    # ------------------------------------------------------------
+    def lookup(self, agent_id: str) -> AgentInfo:
+        return self.registry.lookup(agent_id)
+
+    def find(self, agent_id: str) -> Optional[AgentInfo]:
+        return self.registry.find(agent_id)
+
+    def has_local_handler(self, agent_id: str) -> bool:
+        """
+        这个 Agent 在本进程内有处理函数吗？
+
+        对本地 Agent 是 True，对远端登记的 Agent 是 False。
+        将来这个判断就是「直投还是走网络」的分岔点。
+        """
+        return str(agent_id).strip() in self._handlers
+
+    def seen_tracker(self, agent_id: str) -> Optional[SeenMessageTracker]:
+        return self._seen.get(str(agent_id).strip())
+
+    def stats(self) -> Dict[str, Any]:
+        return {
+            "sent": self.sent_count,
+            "delivered": self.delivered_count,
+            "duplicates": self.duplicate_count,
+            "timeouts": self.timeout_count,
+            "registry": self.registry.stats(),
+            "transport": self.transport.describe(),
+            "type_handlers": sorted(self._type_handlers),
+        }
+
+    def describe(self) -> Dict[str, Any]:
+        return {
+            "transport": type(self.transport).__name__,
+            "scheme": self.transport.scheme,
+            "registered": self.registry.ids(),
+            "local_handlers": sorted(self._handlers),
+            "remote_agents": [i.agent_id for i in self.registry.remote_agents()],
+        }
+
+    def __repr__(self) -> str:
+        return (
+            f"CommunicationManager(transport={self.transport.scheme!r}, "
+            f"agents={self.registry.ids()})"
+        )

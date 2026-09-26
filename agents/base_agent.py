@@ -143,6 +143,18 @@ class BaseAgent:
         # 而不是塞一个假的进去掩盖问题。
         self.brain: Optional[Any] = None
 
+        # 通信（Step 3）。
+        # 注意这里存的是 CommunicationManager，不是 Transport。
+        # Agent 永远看不到 LocalTransport —— 它只知道「我能给人发消息」，
+        # 不知道消息是怎么过去的。这和 brain 的处理方式完全一致：
+        # 都是「拿到一个抽象门面，不关心底层实现」。
+        self.communication: Optional[Any] = None
+
+        # 收到过的消息（短期备忘）。
+        # 真正的消息去重和持久化在通信层，这里只是 Agent 自己的记录。
+        self._received_messages: List[Any] = []
+        self._message_handler: Optional[Any] = None
+
         # 记忆（Step 3 之后会变成更结构化的东西）
         self._short_term_memory: List[Dict[str, Any]] = []
 
@@ -277,6 +289,126 @@ class BaseAgent:
         请直接用 generate()。
         """
         return self.generate(messages=prompt, **kwargs).content
+
+    # ------------------------------------------------------------
+    # 通信（Step 3）
+    # ------------------------------------------------------------
+    def attach_communication(self, manager: Any) -> None:
+        """
+        给 Agent 接上通信能力。
+
+        【为什么注入的是 manager，而不是 transport】
+
+            如果 Agent 拿到的是 LocalTransport，那么：
+                · 它就能直接操作信箱，绕过所有校验和去重
+                · 换 P2PTransport 时它必须改
+                · 「谁在本地、谁在远端」这种信息会漏到 Agent 里
+
+            拿到 CommunicationManager 就没有这些问题：
+            Agent 只会说「发给 agent_b」，剩下的不归它管。
+
+        组装这件事由 Runtime（组合根）负责，Agent 自己不创建任何东西。
+        """
+        self.communication = manager
+        logger.debug("%s 已接入通信层", self.name)
+
+    @property
+    def has_communication(self) -> bool:
+        return self.communication is not None
+
+    async def send(
+        self,
+        to: str,
+        text: Optional[str] = None,
+        payload: Optional[Dict[str, Any]] = None,
+        message_type: str = "TEXT",
+        reply_to: Optional[str] = None,
+    ) -> Any:
+        """
+        给另一个 Agent 发消息。
+
+            await agent_a.send("agent_b", text="你好")
+
+        【为什么这个方法是 async，而 generate() 是同步的】
+            generate() 最终是一次阻塞的 HTTP 调用，同步最自然。
+            而消息投递的未来形态是网络 I/O —— 天然异步。
+            现在就把签名定成 async，将来换成 P2PTransport 时
+            调用方一个字都不用改。
+
+        【注意这里没有「本地/远端」的判断】
+            Agent 不需要知道 agent_b 在哪台机器上。
+            那是通信层的工作，而且未来会由 Transport 决定。
+        """
+        if self.communication is None:
+            raise RuntimeError(
+                f"{self.name} 还没有接入通信层，无法发消息。\n"
+                f"请先由 Runtime 调用 attach_communication(manager)。"
+            )
+
+        return await self.communication.send(
+            from_agent=self.agent_id,
+            to=to,
+            text=text,
+            payload=payload,
+            message_type=message_type,
+            reply_to=reply_to,
+        )
+
+    def on_message(self, handler: Any) -> None:
+        """
+        注册一个消息处理函数。
+
+        处理函数可以返回：
+            None        不回复
+            str         自动包成文本回复
+            dict        自动包成 payload 回复
+            Message     直接回复这条消息
+
+        可以同步，也可以 async —— 通信层两种都支持。
+        """
+        if handler is not None and not callable(handler):
+            raise ValueError(
+                f"消息处理函数必须可调用，收到 {type(handler).__name__}"
+            )
+        self._message_handler = handler
+
+    def handle_message(self, message: Any) -> Any:
+        """
+        收到一条消息时的默认行为。
+
+        默认【不回复】，只记录下来。
+        为什么默认不回复？
+            因为「收到消息就自动回一句」是很危险的行为 ——
+            将来两条 Agent 互相自动回复会形成无限循环，
+            每次循环都要花钱调模型。
+
+        需要回复的场景，请显式设置处理函数：
+
+            agent.on_message(lambda msg: f"收到：{msg.text}")
+        """
+        if message is not None:
+            self._received_messages.append(message)
+
+            self.remember(
+                "message_received",
+                message_id=getattr(message, "message_id", None),
+                from_agent=getattr(message, "from_agent", None),
+                message_type=getattr(message, "message_type", None),
+            )
+
+        if self._message_handler is not None:
+            return self._message_handler(message)
+
+        return None
+
+    @property
+    def received_messages(self) -> List[Any]:
+        """收到过的消息（只读副本）。"""
+        return list(self._received_messages)
+
+    def clear_received_messages(self) -> None:
+        """清空收件记录（测试用）。"""
+        self._received_messages.clear()
 
     # ------------------------------------------------------------
     # 状态变化

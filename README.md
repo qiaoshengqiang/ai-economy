@@ -150,7 +150,7 @@ LLM 只能**提出意图**，永远不能**直接改账**。
 - [x] SQLite 数据库（4 张表）
 - [x] 启动横幅
 - [x] **命令行经济操作**（转账 / 余额 / 流水 / 对账）
-- [x] 422 个 pytest 测试全绿（另有 30 个真实 API 测试单独跑）
+- [x] 633 个 pytest 测试全绿（另有 30 个真实 API 测试单独跑）
 
 **验收标准**（已达成）：
 
@@ -428,12 +428,76 @@ $ ./dev.sh test-real doubao        15 passed
 这种「依赖用户本机状态」的测试是假信号。现在 `conftest.py` 加了
 自动夹具，让单元测试与 `.env` 隔离（`real_api` 测试除外，它们就是要用真实 Key）。
 
+### ✅ Step 3：Agent-to-Agent 通信（已完成）
+
+**唯一目标：让两个独立 Agent 通过统一抽象互相收发消息。**
+
+```
+Agent A → CommunicationManager → Message → Transport → LocalTransport → Agent B
+                                                                          ↓
+Agent A ← CommunicationManager ← Message ← Transport ←────────────── 回复
+```
+
+**六条关键设计**
+
+| # | 设计 | 为什么 |
+|---|---|---|
+| 1 | `Agent 身份 ≠ 通信地址` | 同一个 Agent 可以在本地也可以用 p2p 地址；搬机器时账本/合同/声誉不受影响 |
+| 2 | `Transport` 是抽象接口 | 换 P2P 时 Agent / Manager 一行都不用改 |
+| 3 | 注册表**只存数据**，不存活对象 | 远端 Agent 才能作为普通记录存在（你没有对方的 Python 对象） |
+| 4 | 本地绑定表在 Manager，不在 Registry | 「谁是本地的」是通信信息，不是身份信息 |
+| 5 | 通信层不依赖 LLM / Economy | 回一个 PONG 不需要加载模型；TASK_OFFER 里的钱归 Economy 管 |
+| 6 | 默认**不自动回复** | 两边都自动回复会形成无限往返，每轮都可能花钱 |
+
+**为未来留下的接口（本步骤都不实现）**
+
+| 接口 | 留给谁 |
+|---|---|
+| `Transport.discover()` | P2P 节点发现 —— 注册表查不到时去问传输层 |
+| `AgentRegistry.register_remote()` | 远端 Agent 目录 |
+| `MessageType.TASK_OFFER` 等 8 个类型 | Step 4/5 的经济消息（现在只有名字） |
+| `Message.payload` 的 `task_id` / `workspace_id` | Task Workspace 接口 |
+| `Message.extensions` | 签名 / nonce / TTL 等安全字段（前向兼容，转发不丢） |
+
+**验收结果**
+
+| 要求 | 状态 |
+|---|---|
+| Agent A ↔ Agent B 双向通信 | ✅ |
+| Message 可 JSON 序列化/反序列化（无损） | ✅ |
+| Agent ID 与 Address 分离 | ✅ |
+| Transport 是抽象接口 | ✅ 不能直接实例化 |
+| LocalTransport 是当前唯一实现 | ✅ |
+| Agent 不依赖 LocalTransport | ✅ 连 `communication` 都不 import |
+| Communication 不依赖 LLM | ✅ 由 AST 守卫强制 |
+| Communication 不依赖 Economy | ✅ 由 AST 守卫强制 |
+| 支持 message_id + 重复检测 | ✅ 重复消息只处理一次 |
+| Runtime 组装通信依赖 | ✅ |
+| 未来可加 P2PTransport 而不改 Agent | ✅ 有测试现场定义一个 P2PTransport 验证 |
+| 不实现 P2P / 支付 / Task Market / Wallet | ✅ |
+
+**测试：422 → 633（新增 211）**
+
+| 新增文件 | 数量 | 测什么 |
+|---|---|---|
+| `test_message.py` | 51 | 创建/校验/序列化/前向兼容/回复 |
+| `test_address.py` | 28 | 身份与地址分离、解析、不可变性 |
+| `test_local_transport.py` | 33 | 抽象契约、收发、失败路径、信箱隔离 |
+| `test_registry.py` | 34 | 纯数据、本地/远端、通信状态≠经济状态 |
+| `test_communication.py` | 44 | 完整链路、去重、可替换传输、真 Agent 集成 |
+| `test_communication_guards.py` | 21 | 7 条架构守卫（已用反向测试验证非空转） |
+
+**顺手发现并修掉的一个真 bug**
+
+`Address.parse("ws://h:8080/agent_b")` 原本只取 `netloc`，
+把路径丢掉了 —— 于是同一台机器上的不同 Agent 会解析成同一个地址。
+现在 netloc 和 path 一起保留。
+
 ### ⏳ 后续阶段
 
 | 阶段 | 内容 | 状态 |
 |---|---|---|
-| Step 3 | Agent-to-Agent 通信（Message + Transport） | 待开始 |
-| Step 4 | Task / Bid / Contract / Escrow | 待开始 |
+| Step 4 | Task / Bid / Contract / Task Workspace | 待开始 |
 | Step 5 | 完整经济交易 Demo（A 外包给 B，结算） | 待开始 |
 | Step 6 | Cost Calculator（把 token 用量接到经济系统） | 待开始 |
 
@@ -670,12 +734,20 @@ ai-economy/
 │   ├── router.py              ←   ProviderRegistry + LLMRouter
 │   └── recorder.py            ←   调用记录（token 用量）
 │
-├── communication/             ← (Step 3) Agent-to-Agent 通信
+├── communication/             ← Agent-to-Agent 通信（Step 3 已完成）
+│   ├── message.py             ←   Message（可序列化、可扩展）
+│   ├── address.py             ←   Address（与身份分离）
+│   ├── transport.py           ←   Transport 抽象接口
+│   ├── local_transport.py     ←   LocalTransport（同进程内存）
+│   ├── registry.py            ←   AgentRegistry（只存数据）
+│   ├── manager.py             ←   CommunicationManager
+│   ├── dedup.py               ←   重复消息检测
+│   └── errors.py              ←   通信异常体系
 ├── storage/
 │   ├── database.py            ← SQLite 连接、事务、迁移
 │   └── models.py              ← 表结构定义
 │
-├── tests/                     ← 422 个测试 + 30 个真实 API 测试
+├── tests/                     ← 633 个测试 + 30 个真实 API 测试
 └── data/
     └── economy.db             ← SQLite 数据库（运行产物，不进 git）
 ```

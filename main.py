@@ -34,6 +34,7 @@ AI Economy OS v0.1 —— 启动入口 & 命令行工具
 from __future__ import annotations
 
 import argparse
+import asyncio
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -58,6 +59,13 @@ from core.ledger import LedgerError, format_amount              # noqa: E402
 from core.logging_setup import get_logger, setup_logging        # noqa: E402
 from core.paths import ensure_runtime_dirs                      # noqa: E402
 from llm import LLMCallRecorder, LLMRouter, LLMError            # noqa: E402
+from communication import (                                     # noqa: E402
+    CommunicationManager,
+    LocalTransport,
+    MessageType,
+    ReceiveStatus,
+    Transport,
+)
 
 logger = get_logger(__name__)
 
@@ -77,31 +85,56 @@ class Runtime:
 
     【为什么要有这个容器】
 
-        程序启动时要组装三样东西：
+        程序启动时要组装这些部件：
 
-            Economy   经济系统（钱包、账本）
-            LLMRouter 智力资源路由
-            Recorder  调用记录
+            Economy              经济系统（钱包、账本）
+            LLMRouter            智力资源路由
+            Recorder             调用记录
+            CommunicationManager 通信门面    ← Step 3
+            Transport            通信实现     ← Step 3（当前是 LocalTransport）
 
-        这三样由 main.py（组合根）装配好，再交给各个命令。
+        这些部件由 main.py（组合根）装配好，再交给各个命令。
 
-        为什么要显式装起来，而不是让 Agent 自己去 new 一个？
+        为什么要显式装起来，而不是让 Agent 自己去创建？
             因为「谁来组装」这件事很重要。
-            Agent 不该知道 Router 是怎么来的、用的哪个 Provider。
-            它只应该拿到一个已经装好的 Brain。
-            组装是组合根的职责 —— 这样以后换 Provider、
-            换记录方式，都只改 main.py 一处。
+            Agent 不该知道 Router 是怎么来的、用的哪个 Provider，
+            更不该知道消息是走内存还是走网络。
+
+            组装是组合根的职责 —— 这样以后：
+                · 换模型 → 只改 main.py
+                · 换传输 → 只改 main.py（LocalTransport → P2PTransport）
+            而 Agent / Brain / Economy 全都不用动。
     """
 
     economy: Economy
     router: LLMRouter
     recorder: LLMCallRecorder
+    communication: CommunicationManager
+    transport: Transport
 
     def agent(self, agent_id: str):
         return self.economy.agent(agent_id)
 
     def close(self) -> None:
+        """
+        关掉所有资源。
+
+        为什么这里是同步的？
+            因为 main() 的 finally 块是同步的。
+            本地传输不持有任何需要释放的系统资源（没有 socket、没有文件句柄），
+            所以用 asyncio.run 跑一下它的 close() 就够了。
+
+            等将来接入 P2PTransport（真的持有连接）时，
+            应该改成显式的 async 关闭流程，而不是硬塞进同步方法里。
+        """
         self.economy.close()
+
+        try:
+            asyncio.run(self.communication.close())
+        except RuntimeError:
+            # 已经处在事件循环里，或循环已关闭 —— 两种情况都不该崩。
+            # 本地传输没有系统资源要释放，跳过是安全的。
+            logger.debug("跳过异步关闭（当前处于事件循环中）")
 
 
 # ============================================================
@@ -207,11 +240,19 @@ def build_runtime(db_path: Optional[str] = None) -> Runtime:
         tokens_per_ai_coin=economy.tokens_per_ai_coin,
     )
 
-    # --- 创建 Agent 并给每个装上自己的大脑 ---
+    # --- 通信层（Step 3）---
+    #
+    # 注意这里创建的是 LocalTransport 这个【具体实现】。
+    # 它是整个项目里唯一一处写死传输方式的地方 ——
+    # 将来换成 P2PTransport 只需要改这一行。
+    transport = LocalTransport()
+    communication = CommunicationManager(transport=transport)
+
+    # --- 创建 Agent，给每个装上大脑，并接入通信层 ---
     for agent_id in DEFAULT_AGENTS:
         agent = economy.create_agent(agent_id)
 
-        # 每个 Agent 的大脑海报来自它自己的 config.yaml，
+        # 每个 Agent 的大脑配置来自它自己的 config.yaml，
         # 所以 A 和 B 可以用不同的 provider，
         # 而 Agent 的代码里一行厂商名字都不会出现。
         brain = Brain(
@@ -221,7 +262,25 @@ def build_runtime(db_path: Optional[str] = None) -> Runtime:
         )
         agent.attach_brain(brain)
 
-    return Runtime(economy=economy, router=router, recorder=recorder)
+        # 把 Agent 接入通信层。
+        # capabilities 直接取自配置里的技能标签 ——
+        # 本步骤只是把它存进注册表，Step 4 的「按能力找人」会用到。
+        communication.register(
+            agent,
+            capabilities=tuple(agent.config.skills),
+        )
+
+        # Agent 拿到的是【门面】，不是 Transport。
+        # 它因此永远不知道消息是走内存还是走网络。
+        agent.attach_communication(communication)
+
+    return Runtime(
+        economy=economy,
+        router=router,
+        recorder=recorder,
+        communication=communication,
+        transport=transport,
+    )
 
 
 def build_economy(db_path: Optional[str] = None) -> Economy:
@@ -765,6 +824,156 @@ def resolve_provider_option(runtime: Runtime, requested: Optional[str]) -> Optio
 
 
 # ============================================================
+# 命令：communication-demo（Step 3 通信链路演示）
+# ============================================================
+def cmd_communication_demo(runtime: Runtime, args: argparse.Namespace) -> int:
+    """
+    跑一遍 Step 3 的完整通信链路。
+
+        Agent A → CommunicationManager → Message
+                → Transport → LocalTransport → Agent B
+        Agent B → 回复 → Agent A
+
+    【这个 Demo 刻意不做的事】
+        · 不涉及任何 AI 币
+        · 不涉及任何交易
+        · 不调用任何模型
+
+        因为通信层和这些都无关。它能单独跑通，
+        正说明这层抽象是干净的。
+    """
+    return asyncio.run(_communication_demo_async(runtime, args))
+
+
+async def _communication_demo_async(
+    runtime: Runtime, args: argparse.Namespace
+) -> int:
+    economy = runtime.economy
+    manager = runtime.communication
+    transport = runtime.transport
+
+    sender_id = economy.resolve_agent_id(args.sender)
+    receiver_id = economy.resolve_agent_id(args.receiver)
+
+    sender = economy.agent(sender_id)
+    receiver = economy.agent(receiver_id)
+
+    banner_name = str(economy.config.get("system.name", "AI Economy OS"))
+    version = str(economy.config.get("system.version", "0.1"))
+
+    print()
+    print("=" * BANNER_WIDTH)
+    print(f"  {banner_name} v{version}".center(BANNER_WIDTH))
+    print("Step 3 Communication Demo".center(BANNER_WIDTH))
+    print("=" * BANNER_WIDTH)
+    print()
+
+    # ---------------- 链路结构 ----------------
+    print("通信链路")
+    print("-" * 46)
+    print(f"  {sender.name}")
+    print(f"    ↓  send {MessageType.TEXT}")
+    print("  CommunicationManager")
+    print("    ↓  造 Message / 查地址 / 去重")
+    print(f"  Transport（{type(transport).__name__}, scheme={transport.scheme}）")
+    print("    ↓  投递到信箱")
+    print(f"  {receiver.name}")
+    print()
+
+    # ---------------- 让 B 会回复 ----------------
+    #
+    # 注意：这个处理函数【没有调用任何模型】。
+    # 通信本身不需要智力 —— 这正是通信层与 LLM 解耦的体现。
+    def receiver_handler(message):
+        return f"{receiver.name} 收到了：「{message.text}」"
+
+    receiver.on_message(receiver_handler)
+
+    # ---------------- ① A → B ----------------
+    print("① 发送")
+    print("-" * 46)
+    sent = await sender.send(receiver_id, text=args.text)
+    for key, value in sent.summary().items():
+        print(f"  {key:<12}: {value}")
+    print(f"  {'scheme':<12}: {transport.scheme}")
+    print()
+
+    # ---------------- ② B 接收 ----------------
+    result = await manager.receive(receiver_id, timeout=args.timeout)
+
+    print("② 接收")
+    print("-" * 46)
+    print(f"  状态        : {result.status}")
+    if result.message is not None:
+        print(f"  {receiver.name} 收到: {result.message.text}")
+    if result.reply is not None:
+        print(
+            f"  自动回复    : {result.reply.message_id} "
+            f"→ {result.reply.to_agent}"
+        )
+    print()
+
+    if not result.delivered:
+        print(f"  ⚠️  没有正常投递：{result.detail}")
+        print()
+        return 1
+
+    # ---------------- ③ 回复到达发送方 ----------------
+    print("③ 回复到达发送方")
+    print("-" * 46)
+    reply_result = await manager.receive(sender_id, timeout=args.timeout)
+
+    if reply_result.delivered and reply_result.message is not None:
+        reply = reply_result.message
+        print(f"  {sender.name} 收到: {reply.text}")
+        print(f"  这是对哪条消息的回复 : {reply.reply_to}")
+        print(f"  与原始消息 ID 一致   : {reply.reply_to == sent.message_id}")
+    else:
+        print(f"  ⚠️  没有收到回复：{reply_result.status} {reply_result.detail}")
+    print()
+
+    # ---------------- 往返记录 ----------------
+    print("往返消息")
+    print("-" * 46)
+    print(f"  {'方向':<24} {'类型':<8} 消息 ID")
+    print(
+        f"  {sent.from_agent + ' → ' + sent.to_agent:<24} "
+        f"{sent.message_type:<8} {sent.message_id}"
+    )
+    if reply_result.message is not None:
+        reply = reply_result.message
+        print(
+            f"  {reply.from_agent + ' → ' + reply.to_agent:<24} "
+            f"{reply.message_type:<8} {reply.message_id}"
+        )
+    print()
+
+    # ---------------- 统计 ----------------
+    print("统计")
+    print("-" * 46)
+    stats = manager.stats()
+    print(f"  发出      : {stats['sent']}")
+    print(f"  已处理    : {stats['delivered']}")
+    print(f"  重复跳过  : {stats['duplicates']}")
+    print(f"  超时      : {stats['timeouts']}")
+    print(f"  注册表    : {stats['registry']['agents']}")
+    print(
+        f"  传输层    : {stats['transport']['transport']} "
+        f"（信箱 {stats['transport']['mailboxes']}）"
+    )
+    print()
+
+    print("说明")
+    print("-" * 46)
+    print("  · 全程没有调用任何模型 —— 通信层与 LLM 完全解耦")
+    print("  · 全程没有涉及任何 AI 币 —— 通信层与 Economy 完全解耦")
+    print("  · 收发双方只认识 CommunicationManager，不认识 LocalTransport")
+    print()
+
+    return 0
+
+
+# ============================================================
 # 命令行参数
 # ============================================================
 def build_parser() -> argparse.ArgumentParser:
@@ -810,6 +1019,7 @@ def build_parser() -> argparse.ArgumentParser:
   python3 main.py ask "你好"                       问 Agent A 一句话
   python3 main.py ask "你好" --provider deepseek    用真实 DeepSeek 问一句
   python3 main.py providers                        看有哪些 LLM provider
+  python3 main.py communication-demo               跑一遍 Agent 间通信
   python3 main.py transfer agent_a agent_b 20      让 A 付 20 AI 给 B
   python3 main.py transfer a b 20 --reason 定金     简写，带原因
   python3 main.py balances                         查看余额
@@ -946,6 +1156,35 @@ def build_parser() -> argparse.ArgumentParser:
         help="临时指定 LLM provider（默认用 Agent 配置里的，例如 deepseek）",
     )
     demo.set_defaults(func=cmd_demo)
+
+    # --- communication-demo（Step 3）---
+    comm = subparsers.add_parser(
+        "communication-demo",
+        parents=[shared],
+        help="跑一遍 Step 3 的 Agent 间通信链路",
+    )
+    comm.add_argument(
+        "--sender",
+        default="agent_a",
+        help="发送方（默认 agent_a）",
+    )
+    comm.add_argument(
+        "--receiver",
+        default="agent_b",
+        help="接收方（默认 agent_b）",
+    )
+    comm.add_argument(
+        "--text",
+        default="Hello Agent B",
+        help="要发送的内容",
+    )
+    comm.add_argument(
+        "--timeout",
+        type=float,
+        default=2.0,
+        help="等待接收的超时秒数（默认 2.0）",
+    )
+    comm.set_defaults(func=cmd_communication_demo)
 
     return parser
 

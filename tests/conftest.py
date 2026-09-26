@@ -174,3 +174,65 @@ def configured_initial_balance() -> float:
     from core.config import load_agent_config
 
     return load_agent_config("agent_a").initial_balance
+
+
+# ============================================================
+# Step 3：通信层夹具
+# ============================================================
+# 【为什么需要 run_async】
+#
+#     通信层是 async 的（因为未来的网络传输天然是异步的），
+#     但整个项目其余部分是同步的，测试也是同步写的。
+#
+#     为了不引入 pytest-asyncio 这个额外依赖，
+#     这里提供一个「把协程跑完」的小工具：
+#
+#         def test_something(run_async):
+#             async def scenario():
+#                 ...
+#                 return value
+#             result = run_async(scenario())
+#             assert result == ...
+#
+#     为什么每个测试只跑一次 asyncio.run？
+#         因为每次 asyncio.run 都会新建一个事件循环。
+#         如果同一个队列横跨两个循环使用，
+#         内部的等待者（future）就会绑到已关闭的循环上，
+#         报出很难懂的错。一次跑完就没这个问题。
+@pytest.fixture
+def run_async():
+    """把 async 协程跑到底，返回结果。"""
+    import asyncio
+
+    def _run(coro):
+        return asyncio.run(coro)
+
+    return _run
+
+
+@pytest.fixture
+def transport():
+    """一个空的本地传输层。"""
+    from communication import LocalTransport
+
+    return LocalTransport()
+
+
+@pytest.fixture
+def comm_manager(transport):
+    """一个绑定了空传输层的通信管理器。"""
+    from communication import CommunicationManager
+
+    return CommunicationManager(transport)
+
+
+@pytest.fixture
+def fake_agents():
+    """
+    两个鸭子类型的假 Agent（不碰数据库，跑得快）。
+
+    真实 Agent 的集成测试在 tests/test_communication.py 里。
+    """
+    from tests.communication_helpers import FakeAgent
+
+    return FakeAgent("agent_a", "Agent A"), FakeAgent("agent_b", "Agent B")

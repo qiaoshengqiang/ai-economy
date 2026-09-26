@@ -535,10 +535,97 @@ extra_body:
 
 ---
 
+## 3.8 通信命令（Step 3）
+
+### 跑一遍 Agent 间通信演示
+
+```bash
+./dev.sh communication-demo
+```
+
+它会完整显示消息从 A 到 B 再回到 A 的全过程：
+
+```
+================================
+        AI Economy OS v0.1
+   Step 3 Communication Demo
+================================
+
+通信链路
+----------------------------------------------
+  Agent A
+    ↓  send TEXT
+  CommunicationManager
+    ↓  造 Message / 查地址 / 去重
+  Transport（LocalTransport, scheme=local）
+    ↓  投递到信箱
+  Agent B
+
+① 发送
+----------------------------------------------
+  message_id  : msg_02246ca1
+  from        : agent_a
+  to          : agent_b
+  type        : TEXT
+  timestamp   : 2026-09-26T07:44:20.365360+00:00
+  reply_to    : None
+  scheme      : local
+
+② 接收
+----------------------------------------------
+  状态        : delivered
+  Agent B 收到: Hello Agent B
+  自动回复    : msg_e334900c → agent_a
+
+③ 回复到达发送方
+----------------------------------------------
+  Agent A 收到: Agent B 收到了：「Hello Agent B」
+  这是对哪条消息的回复 : msg_02246ca1
+  与原始消息 ID 一致   : True
+
+往返消息
+----------------------------------------------
+  方向                       类型       消息 ID
+  agent_a → agent_b        TEXT     msg_02246ca1
+  agent_b → agent_a        TEXT     msg_e334900c
+
+统计
+----------------------------------------------
+  发出      : 2
+  已处理    : 2
+  重复跳过  : 0
+  超时      : 0
+  注册表    : ['agent_a', 'agent_b']
+  传输层    : LocalTransport （信箱 ['agent_a', 'agent_b']）
+```
+
+**注意输出里的最后三行**：全程没有调用任何模型，
+也没有涉及任何 AI 币 —— 这正是通信层干净的证据。
+
+可以换发送方、接收方和内容：
+
+```bash
+./dev.sh communication-demo --text "任务来了"
+./dev.sh communication-demo --sender b --receiver a
+./dev.sh communication-demo --timeout 5
+```
+
+### 通信层能做什么 / 不能做什么
+
+| 能做 | 不能做 |
+|---|---|
+| ✅ 两个 Agent 互相发消息 | ❌ 跨进程 / 跨机器（要等 `P2PTransport`） |
+| ✅ 自动回复（返回 str/dict/Message） | ❌ 支付、转账 |
+| ✅ 重复消息只处理一次 | ❌ 任务、议价、合同 |
+| ✅ 按消息类型注册专门处理器 | ❌ 消息签名 / 加密 |
+| ✅ 远端 Agent 登记（只有地址） | ❌ 自动发现节点 |
+
+---
+
 ## 4. 跑测试
 
 ```bash
-# 全部测试（422 个，不含真实 API 测试）
+# 全部测试（633 个，不含真实 API 测试）
 ./dev.sh test
 
 # 详细输出，显示每个测试的名字
@@ -605,7 +692,13 @@ extra_body:
 | `tests/test_deepseek_provider.py` | DeepSeek 请求序列化 / 响应解析 / 错误翻译 / Key 安全 | 72 |
 | `tests/test_doubao_provider.py` | 豆包特有：模型名两种写法 / 404 / 401 / 429 的含义 | 28 |
 | `tests/test_provider_contract.py` | 两家共用的契约（同一批断言参数化跑两遍） | 80 |
-| | **合计** | **422** |
+| `tests/test_message.py` | Message 创建 / 校验 / 序列化 / 前向兼容 | 51 |
+| `tests/test_address.py` | 身份与地址分离 / 解析 / 不可变性 | 28 |
+| `tests/test_local_transport.py` | Transport 抽象 / 收发 / 失败路径 | 33 |
+| `tests/test_registry.py` | 注册表纯数据 / 本地远端 / 状态分离 | 34 |
+| `tests/test_communication.py` | 完整链路 / 去重 / 可替换传输 / 真 Agent | 44 |
+| `tests/test_communication_guards.py` | 通信层架构守卫 | 21 |
+| | **合计** | **633** |
 
 另有 `tests/test_real_api.py`（30 项）需要真实 API Key，
 默认不跑，见下面的「真实 API 测试」。
@@ -904,6 +997,7 @@ economy:
 | `demo` | **Step 2** 完整 LLM 链路演示 |
 | `ask <内容>` | **Step 2** 问某个 Agent 一句话 |
 | `providers` | **Step 2** 列出所有 LLM provider |
+| `communication-demo` | **Step 3** Agent 间通信链路演示 |
 | `transfer <付款方> <收款方> <金额>` | 转钱 |
 | `balances` | 看余额 |
 | `ledger` | 看流水 |
@@ -936,7 +1030,17 @@ economy:
 | 参数 | 默认值 | 作用 |
 |---|---|---|
 | `--agent <Agent>` | `agent_a` | 用哪个 Agent |
+| `--provider <名字>` | 用 Agent 配置 | 临时指定 LLM provider |
 | `--prompt <文字>` | `Hello, who are you?` | 只属于 `demo`，要发的内容 |
+
+**`communication-demo` 的专属参数：**
+
+| 参数 | 默认值 | 作用 |
+|---|---|---|
+| `--sender <Agent>` | `agent_a` | 发送方 |
+| `--receiver <Agent>` | `agent_b` | 接收方 |
+| `--text <文字>` | `Hello Agent B` | 要发的内容 |
+| `--timeout <秒>` | `2.0` | 等待接收的超时 |
 
 ### 退出码（写脚本时用）
 
@@ -1024,5 +1128,6 @@ initial_balance: 100             # 新 Agent 出生拿多少钱
 |---|---|
 | `README.md` | 项目介绍、架构、设计原则、经济模型、未来方向 |
 | `COMMANDS.md` | 本文件，命令速查 |
+| `communication/*.py` | Step 3 通信层，每个文件顶部都有设计说明 |
 | `core/*.py` | 每个文件顶部都有大段中文注释解释「为什么这样设计」 |
 | `tests/*.py` | 每个测试都有中文说明，是了解系统行为最快的地方 |
