@@ -223,3 +223,59 @@ def test_system_treasury_is_tracked(ledger):
 
     assert ledger.balance_of(SYSTEM_TREASURY) == 10
     assert ledger.balance_of("agent_a") == 90
+
+
+# ============================================================
+# 金额显示格式
+# ============================================================
+class TestFormatAmount:
+    """
+    金额格式化的测试。
+
+    为什么这件事值得专门测？
+        因为「钱显示成 1e+05」这种事一旦发生，用户是完全看不懂的。
+        Python 的 %g 格式化在大数时会自动切成科学计数法，
+        这是个很容易忽略但后果很难看的坑。
+    """
+
+    def test_no_scientific_notation_for_large_numbers(self):
+        from core.ledger import format_amount
+
+        assert format_amount(100000) == "100000"
+        assert format_amount(75000) == "75000"
+        assert format_amount(125000) == "125000"
+        assert format_amount(1000000) == "1000000"
+        assert format_amount(1000000000) == "1000000000"
+
+        for value in (100000, 75000, 125000, 1000000, 1000000000):
+            assert "e" not in format_amount(value).lower()
+
+    def test_trims_trailing_zeros(self):
+        from core.ledger import format_amount
+
+        assert format_amount(100.0) == "100"
+        assert format_amount(100.5) == "100.5"
+        assert format_amount(2.8) == "2.8"
+        assert format_amount(0.0001) == "0.0001"
+
+    def test_zero(self):
+        from core.ledger import format_amount
+
+        assert format_amount(0) == "0"
+        assert format_amount(0.0) == "0"
+
+    def test_rounds_to_precision(self):
+        from core.ledger import format_amount
+
+        # 超过精度的部分会被四舍五入
+        assert format_amount(1.23456789, precision=4) == "1.2346"
+        assert format_amount(1.23456789, precision=2) == "1.23"
+
+    def test_small_amounts_keep_their_value(self):
+        """
+        小额不能被四舍五入成 0 —— 否则 LLM 成本的零头就看不出来了。
+        """
+        from core.ledger import format_amount
+
+        assert format_amount(0.0001) == "0.0001"
+        assert format_amount(0.5) == "0.5"

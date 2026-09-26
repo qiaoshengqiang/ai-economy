@@ -157,7 +157,13 @@ SCHEMA_STATEMENTS: Final[tuple[str, ...]] = (
         output_tokens   INTEGER NOT NULL DEFAULT 0,
         total_tokens    INTEGER NOT NULL DEFAULT 0,
 
-        tokens_per_ai_coin INTEGER NOT NULL DEFAULT 10000,
+        -- 这次调用发生时，系统用的兑换比例快照。
+        -- 为什么要存下来？
+        --     如果以后你调整了兑换比例，历史记录仍然能按
+        --     当时的比例复核。账本必须永远可追溯。
+        -- 注意这里【不给 DEFAULT】：经济参数只允许来自
+        --     config/config.yaml，不允许在表结构里藏一个数字。
+        tokens_per_ai_coin INTEGER NOT NULL,
         cost_ai         REAL NOT NULL DEFAULT 0,   -- 折算成 AI 币的成本
         api_cost_usd    REAL NOT NULL DEFAULT 0,   -- 真实美元成本
 

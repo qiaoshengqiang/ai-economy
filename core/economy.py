@@ -41,7 +41,14 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 from agents.base_agent import AgentStatus, BaseAgent, Reputation
-from core.config import AgentConfig, Config, load_agent_config, load_global_config
+from core.config import (
+    TOKENS_PER_AI_COIN_EXAMPLE,
+    AgentConfig,
+    Config,
+    load_agent_config,
+    load_global_config,
+    require_positive_int,
+)
 from core.identity import AgentIdentity, utc_now_iso
 from core.ledger import Ledger, Transaction
 from core.logging_setup import get_logger
@@ -86,9 +93,16 @@ class Economy:
 
         # --- 经济参数（全部来自配置，没有一个硬编码）---
         self.currency: str = str(self.config.get("economy.currency", "AI"))
-        self.tokens_per_ai_coin: int = int(
-            self.config.get("economy.tokens_per_ai_coin", 10000)
+
+        # 兑换比例是核心经济模型参数，配置里没有就直接报错。
+        # 用一个函数统一取值，保证「配置 → Economy → AgentConfig」
+        # 三处看到的是同一个数字、同一套校验规则。
+        self.tokens_per_ai_coin: int = require_positive_int(
+            self.config,
+            "economy.tokens_per_ai_coin",
+            example=TOKENS_PER_AI_COIN_EXAMPLE,
         )
+
         self.amount_precision: int = int(
             self.config.get("economy.amount_precision", 4)
         )

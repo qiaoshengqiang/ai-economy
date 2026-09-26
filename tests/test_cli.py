@@ -25,6 +25,8 @@ from pathlib import Path
 
 import pytest
 
+from core.ledger import format_amount
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 # 退出码约定（写在这里方便以后统一改）
@@ -53,10 +55,49 @@ def run_cli(*args, db_path=None, timeout=60):
     )
 
 
+@pytest.fixture(scope="module")
+def balance0() -> float:
+    """
+    从真实配置里读出的初始余额。
+
+    为什么不在断言里直接写 100？
+        因为 initial_balance 是 config/config.yaml 里的可调参数。
+        如果测试写死 100，你把它改成 200 做实验时测试就会假报警。
+        所以这里读取配置，断言里用 f-string 拼出【期望的数字】。
+    """
+    from core.config import load_agent_config
+
+    return load_agent_config("agent_a").initial_balance
+
+
+@pytest.fixture(scope="module")
+def amount(balance0) -> float:
+    """
+    测试用的转账金额 = 初始余额的 1/4。
+
+    为什么不写死 20？
+        因为如果你把 initial_balance 调成 7（想看看 Agent 破产），
+        写死的 20 就超过余额了，测试会因为「余额不足」而失败 ——
+        但那是你的配置改对了，测试不该报错。
+        用余额的比例来定金额，任何正数余额都够用。
+    """
+    return balance0 / 4
+
+
+@pytest.fixture(scope="module")
+def too_much(balance0) -> float:
+    """
+    一个「肯定超过余额」的金额，用来测试余额不足被拒绝。
+
+    用余额的 1000 倍加 1，保证无论你怎么调初始余额都必然超出。
+    """
+    return balance0 * 1000 + 1
+
+
 # ============================================================
 # 向后兼容：裸命令仍然是启动横幅
 # ============================================================
-def test_bare_command_still_prints_banner(tmp_path):
+def test_bare_command_still_prints_banner(tmp_path, balance0):
     """
     Step 1 的验收标准不能被破坏：
     `python main.py` 必须还是启动横幅。
@@ -67,34 +108,36 @@ def test_bare_command_still_prints_banner(tmp_path):
     assert "AI Economy OS" in result.stdout
     assert "Agent A" in result.stdout
     assert "Agent B" in result.stdout
-    assert "100 AI" in result.stdout
+    assert f"{format_amount(balance0)} AI" in result.stdout
     assert "READY" in result.stdout
 
 
-def test_quiet_flag_still_works(tmp_path):
+def test_quiet_flag_still_works(tmp_path, balance0):
     result = run_cli("--quiet", db_path=tmp_path / "quiet.db")
 
     assert result.returncode == EXIT_OK
-    assert "Agent A: 100 AI" in result.stdout
-    assert "Agent B: 100 AI" in result.stdout
+    assert f"Agent A: {format_amount(balance0)} AI" in result.stdout
+    assert f"Agent B: {format_amount(balance0)} AI" in result.stdout
 
 
 # ============================================================
 # transfer
 # ============================================================
-def test_cli_transfer_moves_money(tmp_path):
+def test_cli_transfer_moves_money(tmp_path, balance0, amount):
     db_file = tmp_path / "transfer.db"
 
-    result = run_cli("transfer", "agent_a", "agent_b", "20", db_path=db_file)
+    result = run_cli(
+        "transfer", "agent_a", "agent_b", format_amount(amount), db_path=db_file
+    )
 
     assert result.returncode == EXIT_OK, result.stdout + result.stderr
     assert "转账成功" in result.stdout
-    assert "20" in result.stdout
-    assert "100 -> 80" in result.stdout or "100 -> 80 AI" in result.stdout
-    assert "100 -> 120" in result.stdout or "100 -> 120 AI" in result.stdout
+    # 期望的余额变化用配置值算出来，而不是写死
+    assert f"{format_amount(balance0)} -> {format_amount(balance0 - amount)}" in result.stdout
+    assert f"{format_amount(balance0)} -> {format_amount(balance0 + amount)}" in result.stdout
 
 
-def test_cli_transfer_persists_across_invocations(tmp_path):
+def test_cli_transfer_persists_across_invocations(tmp_path, balance0, amount):
     """
     转账之后重新启动，余额必须还是改过的。
 
@@ -102,36 +145,40 @@ def test_cli_transfer_persists_across_invocations(tmp_path):
     """
     db_file = tmp_path / "persist.db"
 
-    run_cli("transfer", "agent_a", "agent_b", "20", db_path=db_file)
+    run_cli("transfer", "agent_a", "agent_b", format_amount(amount), db_path=db_file)
     result = run_cli("balances", db_path=db_file)
 
     assert result.returncode == EXIT_OK
-    # balances 输出是表格，直接断言数字出现在输出里
-    assert "80" in result.stdout
-    assert "120" in result.stdout
+    # balances 输出是表格，直接断言期望的数字出现在输出里。
+    # 期望值由配置算出来，不写死。
+    assert format_amount(balance0 - amount) in result.stdout
+    assert format_amount(balance0 + amount) in result.stdout
 
 
-def test_cli_transfer_accepts_shorthand(tmp_path):
+def test_cli_transfer_accepts_shorthand(tmp_path, amount):
     """简写 a / b 应该能用。"""
-    result = run_cli("transfer", "a", "b", "15", db_path=tmp_path / "short.db")
-
-    assert result.returncode == EXIT_OK
-    assert "转账成功" in result.stdout
-
-
-def test_cli_transfer_accepts_name(tmp_path):
-    """也可以用显示名 "Agent A"。"""
     result = run_cli(
-        "transfer", "Agent A", "Agent B", "15", db_path=tmp_path / "name.db"
+        "transfer", "a", "b", format_amount(amount), db_path=tmp_path / "short.db"
     )
 
     assert result.returncode == EXIT_OK
     assert "转账成功" in result.stdout
 
 
-def test_cli_transfer_with_reason_and_task(tmp_path):
+def test_cli_transfer_accepts_name(tmp_path, amount):
+    """也可以用显示名 "Agent A"。"""
     result = run_cli(
-        "transfer", "agent_a", "agent_b", "20",
+        "transfer", "Agent A", "Agent B", format_amount(amount),
+        db_path=tmp_path / "name.db",
+    )
+
+    assert result.returncode == EXIT_OK
+    assert "转账成功" in result.stdout
+
+
+def test_cli_transfer_with_reason_and_task(tmp_path, amount):
+    result = run_cli(
+        "transfer", "agent_a", "agent_b", format_amount(amount),
         "--reason", "task_payment",
         "--task-id", "task_001",
         db_path=tmp_path / "reason.db",
@@ -145,14 +192,15 @@ def test_cli_transfer_with_reason_and_task(tmp_path):
 # ============================================================
 # 被拒绝的经济操作
 # ============================================================
-def test_cli_rejects_overspend_with_exit_code_2(tmp_path):
+def test_cli_rejects_overspend_with_exit_code_2(tmp_path, too_much):
     """
     余额不足时：
         - 退出码必须是 2（「被经济规则拒绝」，不是程序崩溃）
         - 输出必须是友好的中文提示，不能是 Python 堆栈
     """
     result = run_cli(
-        "transfer", "agent_a", "agent_b", "99999", db_path=tmp_path / "over.db"
+        "transfer", "agent_a", "agent_b", format_amount(too_much),
+        db_path=tmp_path / "over.db",
     )
 
     assert result.returncode == EXIT_REJECTED
@@ -190,17 +238,17 @@ def test_cli_rejects_unknown_agent(tmp_path):
     assert "找不到 Agent" in result.stdout
 
 
-def test_rejected_cli_transfer_changes_nothing(tmp_path):
+def test_rejected_cli_transfer_changes_nothing(tmp_path, balance0, too_much):
     """
     被拒绝之后，余额必须完全没变。这是最重要的安全性质。
     """
     db_file = tmp_path / "nochange.db"
 
-    run_cli("transfer", "agent_a", "agent_b", "99999", db_path=db_file)
+    run_cli("transfer", "agent_a", "agent_b", format_amount(too_much), db_path=db_file)
     result = run_cli("balances", db_path=db_file)
 
-    assert "100 AI" in result.stdout
-    assert "200" in result.stdout   # 合计仍是 200
+    assert f"{format_amount(balance0)} AI" in result.stdout
+    assert format_amount(balance0 * 2) in result.stdout   # 合计没变
 
 
 # ============================================================
@@ -223,10 +271,10 @@ def test_cli_ledger_shows_genesis(tmp_path):
     assert "agent_a" in result.stdout
 
 
-def test_cli_ledger_filters_by_agent(tmp_path):
+def test_cli_ledger_filters_by_agent(tmp_path, amount):
     db_file = tmp_path / "ledfilter.db"
 
-    run_cli("transfer", "agent_a", "agent_b", "20", db_path=db_file)
+    run_cli("transfer", "agent_a", "agent_b", format_amount(amount), db_path=db_file)
     result = run_cli("ledger", "--agent", "a", db_path=db_file)
 
     assert result.returncode == EXIT_OK
@@ -242,16 +290,19 @@ def test_cli_audit_passes(tmp_path):
     assert "差额:          0" in result.stdout or "差额: 0" in result.stdout
 
 
-def test_cli_audit_still_passes_after_transfers(tmp_path):
+def test_cli_audit_still_passes_after_transfers(tmp_path, balance0, amount):
     db_file = tmp_path / "audit2.db"
 
-    run_cli("transfer", "agent_a", "agent_b", "20", db_path=db_file)
-    run_cli("transfer", "agent_b", "agent_a", "7.5", db_path=db_file)
+    run_cli("transfer", "agent_a", "agent_b", format_amount(amount), db_path=db_file)
+    run_cli(
+        "transfer", "agent_b", "agent_a", format_amount(amount / 2), db_path=db_file
+    )
     result = run_cli("audit", db_path=db_file)
 
     assert result.returncode == EXIT_OK
     assert "OK" in result.stdout
-    assert "200" in result.stdout   # 总量不变
+    # 转账不改变货币总量，所以还是两倍的初始余额
+    assert format_amount(balance0 * 2) in result.stdout
 
 
 # ============================================================

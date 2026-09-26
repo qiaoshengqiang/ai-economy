@@ -118,6 +118,76 @@ def _safe_float(value: Any, default: float) -> float:
         return default
 
 
+# ============================================================
+# 错误类型
+# ============================================================
+class ConfigError(Exception):
+    """配置缺失或者格式错误。"""
+
+
+# 缺少兑换比例时，给用户看的填写示例。
+#
+# 注意这里【故意不写具体数字】。
+# 因为具体数字只应该存在于 config/config.yaml 里 ——
+# 连错误提示里的举例都不带数字，就不会给以后的人
+# 「这里好像有个可以照抄的默认值」的错觉。
+# 有一条测试（test_exchange_rate_is_not_hardcoded_in_source）
+# 会强制保证这一点。
+TOKENS_PER_AI_COIN_EXAMPLE = (
+    "economy:\n"
+    "  tokens_per_ai_coin: <整数>    # 1 AI币 = 多少个 token"
+)
+
+
+# ============================================================
+# 严格取参数（不给默认值）
+# ============================================================
+def require_positive_int(
+    holder: Any,
+    dotted_key: str,
+    example: str = "",
+) -> int:
+    """
+    从配置里取一个【必须存在】且必须为正整数的参数。
+
+    为什么有些参数必须存在、不许有默认值？
+
+        因为「给个默认值」等于在代码里偷偷写死了一个参数。
+        一旦配置文件和代码里的值不一致，就没人说得清
+        系统到底用的是哪一个 —— 这是经济系统里非常危险的模糊地带。
+
+        所以像「AI币 ↔ token 兑换比例」这种核心经济模型参数，
+        如果配置里没有，就应该在启动时立刻报错，
+        而不是悄悄用一个代码里写死的数字继续跑。
+
+        holder 可以是 Config 或 AgentConfig（它们都有 .get 方法）。
+    """
+    value = holder.get(dotted_key)
+
+    if value is None:
+        message = (
+            f"配置缺少必需参数：{dotted_key}\n"
+            f"请在 config/config.yaml 里补上它。"
+        )
+        if example:
+            message += f"\n\n例如：\n{example}"
+        raise ConfigError(message)
+
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        raise ConfigError(
+            f"{dotted_key} 必须是整数，收到：{value!r}"
+        )
+
+    if number <= 0:
+        raise ConfigError(
+            f"{dotted_key} 必须大于 0，收到：{number}"
+        )
+
+    return number
+
+
 def deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
     """
     递归合并两个字典，override 覆盖 base。
@@ -238,7 +308,18 @@ class AgentConfig:
 
     @property
     def tokens_per_ai_coin(self) -> int:
-        return int(self.get("economy.tokens_per_ai_coin", 10000))
+        """
+        【核心经济模型参数】1 AI币 = 多少 token。
+
+        这里【故意不给默认值】：配置里没有就报错。
+        因为给默认值等于把经济参数偷偷写死在代码里，
+        那样你就无法确定系统实际用的是配置里的数还是代码里的数。
+        """
+        return require_positive_int(
+            self,
+            "economy.tokens_per_ai_coin",
+            example=TOKENS_PER_AI_COIN_EXAMPLE,
+        )
 
     @property
     def amount_precision(self) -> int:

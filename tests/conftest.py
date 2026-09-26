@@ -69,13 +69,50 @@ def economy(config) -> Economy:
     eco.close()
 
 
+# ============================================================
+# 测试里使用的固定初始余额
+# ============================================================
+# 【为什么要单独定一个常量，而不是直接读 config/config.yaml？】
+#
+# 因为配置是【用户随时可以改的运行参数】。
+# 如果测试断言依赖配置文件里的数字，那么你只要把 initial_balance
+# 从 100 改成 200 做实验，就会有一堆测试变红 ——
+# 但代码其实完全没坏。那种「假警报」会让人不敢动配置，
+# 也分不清「我真的改坏了」和「我只是调了个参数」。
+#
+# 所以测试自己指定明确的初始余额，与用户配置解耦。
+# 至于「配置到底有没有生效」，由专门的测试
+# （test_config_controls_initial_balance）单独验证。
+TEST_INITIAL_BALANCE = 100.0
+
+
 @pytest.fixture
 def funded_agents(economy):
     """
-    创建两个各带 100 AI 的 Agent，返回 (economy, agent_a, agent_b)。
+    创建两个各带 TEST_INITIAL_BALANCE (100) AI 的 Agent。
 
+    返回 (economy, agent_a, agent_b)。
     这是测试经济行为最常用的起点。
+
+    注意 initial_balance 是显式传进去的，不依赖 config/config.yaml。
     """
-    agent_a = economy.create_agent("agent_a")
-    agent_b = economy.create_agent("agent_b")
+    agent_a = economy.create_agent(
+        "agent_a", initial_balance=TEST_INITIAL_BALANCE
+    )
+    agent_b = economy.create_agent(
+        "agent_b", initial_balance=TEST_INITIAL_BALANCE
+    )
     return economy, agent_a, agent_b
+
+
+@pytest.fixture
+def configured_initial_balance() -> float:
+    """
+    从【真实配置】里读出 Agent A 的初始余额。
+
+    给那些必须跑真实配置的测试用（比如启动 main.py 的子进程测试），
+    这样它们就不需要把数字硬编码进断言。
+    """
+    from core.config import load_agent_config
+
+    return load_agent_config("agent_a").initial_balance

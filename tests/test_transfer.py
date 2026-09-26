@@ -217,8 +217,12 @@ def test_insolvent_agent_can_receive_money(economy):
     """
     破产的 Agent 不能付钱，但可以收钱。
     而且收到钱后应该从 INSOLVENT 复活成 ACTIVE。
+
+    注意这里给 agent_a 显式指定初始余额，这样测试不受
+    config/config.yaml 里 initial_balance 的影响 ——
+    否则你把余额调成 7，这个测试就会因为「付不起 50」而失败。
     """
-    economy.create_agent("agent_a")
+    economy.create_agent("agent_a", initial_balance=100)
     economy.create_agent("agent_broke", mint=False)
 
     broke = economy.agent("agent_broke")

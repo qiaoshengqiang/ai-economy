@@ -52,7 +52,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from core.config import load_global_config                     # noqa: E402
 from core.economy import AgentNotFoundError, Economy, EconomyError  # noqa: E402
-from core.ledger import LedgerError                             # noqa: E402
+from core.ledger import LedgerError, format_amount              # noqa: E402
 from core.logging_setup import get_logger, setup_logging        # noqa: E402
 from core.paths import ensure_runtime_dirs                      # noqa: E402
 
@@ -65,9 +65,14 @@ DEFAULT_AGENTS = ["agent_a", "agent_b"]
 
 
 # ============================================================
-# 横幅
+# 金额格式化
 # ============================================================
 BANNER_WIDTH = 32
+
+
+def fmt(value) -> str:
+    """格式化金额。统一入口，保证显示风格一致，且永远不会变成科学计数法。"""
+    return format_amount(value)
 
 
 def print_banner(name: str, version: str) -> None:
@@ -83,7 +88,7 @@ def print_agents(economy: Economy) -> None:
     """打印每个 Agent 的钱包状况（启动横幅用）。"""
     for agent in economy.all_agents():
         print(agent.name)
-        print(f"Wallet: {agent.balance:g} {economy.currency}")
+        print(f"Wallet: {fmt(agent.balance)} {economy.currency}")
         print()
 
 
@@ -107,8 +112,8 @@ def print_status(economy: Economy) -> None:
     print(f"Ledger:    {audit['transactions']} transactions")
     print(
         f"Audit:     {'OK' if audit['balanced'] else 'FAILED'} "
-        f"(supply={audit['total_supply']:g}, "
-        f"wallets={audit['wallets_total']:g})"
+        f"(supply={fmt(audit['total_supply'])}, "
+        f"wallets={fmt(audit['wallets_total'])})"
     )
     print("-" * BANNER_WIDTH)
     print()
@@ -145,7 +150,7 @@ def cmd_start(economy: Economy, args: argparse.Namespace) -> int:
     """打印启动横幅。这是不加任何参数时的默认行为。"""
     if getattr(args, "quiet", False):
         for agent in economy.all_agents():
-            print(f"{agent.name}: {agent.balance:g} {economy.currency}")
+            print(f"{agent.name}: {fmt(agent.balance)} {economy.currency}")
         return 0
 
     system_name = str(economy.config.get("system.name", "AI Economy OS"))
@@ -197,7 +202,7 @@ def cmd_transfer(economy: Economy, args: argparse.Namespace) -> int:
     print("-" * 46)
     print(f"  付款方:  {from_agent.name} ({from_id})")
     print(f"  收款方:  {to_agent.name} ({to_id})")
-    print(f"  金额:    {tx.amount:g} {currency}")
+    print(f"  金额:    {fmt(tx.amount)} {currency}")
     print(f"  原因:    {tx.reason}")
     if tx.task_id:
         print(f"  任务:    {tx.task_id}")
@@ -206,8 +211,14 @@ def cmd_transfer(economy: Economy, args: argparse.Namespace) -> int:
     print()
     print("余额变化")
     print("-" * 46)
-    print(f"  {from_agent.name}:  {before_from:g} -> {after_from:g} {currency}")
-    print(f"  {to_agent.name}:  {before_to:g} -> {after_to:g} {currency}")
+    print(
+        f"  {from_agent.name}:  "
+        f"{fmt(before_from)} -> {fmt(after_from)} {currency}"
+    )
+    print(
+        f"  {to_agent.name}:  "
+        f"{fmt(before_to)} -> {fmt(after_to)} {currency}"
+    )
     print()
 
     # 每次经济动作后都对一次账。做错了立刻能发现。
@@ -215,7 +226,7 @@ def cmd_transfer(economy: Economy, args: argparse.Namespace) -> int:
     audit_text = "OK" if audit["balanced"] else "FAILED"
     print(
         f"账本审计: {audit_text}   "
-        f"(货币总量 {audit['total_supply']:g} {currency}, "
+        f"(货币总量 {fmt(audit['total_supply'])} {currency}, "
         f"共 {audit['transactions']} 笔交易)"
     )
     print()
@@ -242,11 +253,11 @@ def cmd_balances(economy: Economy, args: argparse.Namespace) -> int:
         total += agent.balance
         print(
             f"  {agent.name:<14} {agent.agent_id:<12} "
-            f"{agent.balance:>10.4g} {currency}  {agent.status}"
+            f"{fmt(agent.balance):>12} {currency}  {agent.status}"
         )
 
     print("-" * 56)
-    print(f"  {'合计':<28} {total:>10.4g} {currency}")
+    print(f"  {'合计':<28} {fmt(total):>12} {currency}")
     print()
 
     return 0
@@ -286,7 +297,7 @@ def cmd_ledger(economy: Economy, args: argparse.Namespace) -> int:
 
         print(
             f"  {time_short:<20} {tx.tx_type:<14} "
-            f"{flow:<26} {tx.amount:>8.4g} {tx.asset}"
+            f"{flow:<26} {fmt(tx.amount):>10} {tx.asset}"
         )
         if tx.reason:
             print(f"      原因: {tx.reason}   交易号: {tx.tx_id}")
@@ -315,10 +326,10 @@ def cmd_audit(economy: Economy, args: argparse.Namespace) -> int:
     print("账本对账")
     print("-" * 46)
     print(f"  交易笔数:      {audit['transactions']}")
-    print(f"  货币总量:      {audit['total_supply']:g} {currency}")
-    print(f"  Agent 钱包合计: {audit['wallets_total']:g} {currency}")
-    print(f"  系统金库:      {audit['treasury']:g} {currency}")
-    print(f"  差额:          {audit['difference']:g} {currency}")
+    print(f"  货币总量:      {fmt(audit['total_supply'])} {currency}")
+    print(f"  Agent 钱包合计: {fmt(audit['wallets_total'])} {currency}")
+    print(f"  系统金库:      {fmt(audit['treasury'])} {currency}")
+    print(f"  差额:          {fmt(audit['difference'])} {currency}")
     print("-" * 46)
 
     if audit["balanced"]:

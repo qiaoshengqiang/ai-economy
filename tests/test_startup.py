@@ -12,7 +12,7 @@ Test: 启动流程（Step 1 的验收测试）
         ↓
     创建各自钱包
         ↓
-    读取余额（各 100 AI）
+    读取余额（各等于配置里的 initial_balance）
         ↓
     System status: READY
 
@@ -27,7 +27,22 @@ from pathlib import Path
 
 import pytest
 
+from core.ledger import format_amount
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+def configured_initial_balance() -> float:
+    """
+    从真实配置里读出 Agent 的初始余额。
+
+    为什么不直接写 100？
+        因为 initial_balance 是 config/config.yaml 里的可调参数。
+        测试写死数字的话，你一改配置就会假报警。
+    """
+    from core.config import load_agent_config
+
+    return load_agent_config("agent_a").initial_balance
 
 
 # ============================================================
@@ -47,7 +62,8 @@ def test_build_economy_creates_two_agents(tmp_path):
         assert len(agents) == 2
 
         balances = {a.agent_id: a.balance for a in agents}
-        assert balances == {"agent_a": 100, "agent_b": 100}
+        expected = configured_initial_balance()
+        assert balances == {"agent_a": expected, "agent_b": expected}
 
         assert economy.is_ready() is True
         assert db_file.exists()
@@ -73,7 +89,7 @@ def test_restart_does_not_duplicate_money(tmp_path):
     """
     【重要】程序重启不能重新发钱。
 
-    跑两次 build_economy，余额必须还是 100，
+    跑两次 build_economy，余额必须还是初始值，
     而不是变成 200。这是账本持久化是否正确的关键验证。
     """
     from main import build_economy
@@ -87,7 +103,8 @@ def test_restart_does_not_duplicate_money(tmp_path):
     economy2 = build_economy(db_path=str(db_file))
     second = {a.agent_id: a.balance for a in economy2.all_agents()}
 
-    assert first == second == {"agent_a": 100, "agent_b": 100}
+    expected = configured_initial_balance()
+    assert first == second == {"agent_a": expected, "agent_b": expected}
 
     # 账本里应该只有 2 笔铸币
     assert economy2.ledger.count() == 2
@@ -123,7 +140,7 @@ def test_main_runs_as_script(tmp_path):
     assert "AI Economy OS" in output
     assert "Agent A" in output
     assert "Agent B" in output
-    assert "100 AI" in output
+    assert f"{format_amount(configured_initial_balance())} AI" in output
     assert "READY" in output
 
 
@@ -142,8 +159,9 @@ def test_main_quiet_mode(tmp_path):
     assert result.returncode == 0
     lines = [line for line in result.stdout.strip().splitlines() if line]
 
-    assert "Agent A: 100 AI" in lines
-    assert "Agent B: 100 AI" in lines
+    expected = configured_initial_balance()
+    assert f"Agent A: {format_amount(expected)} AI" in lines
+    assert f"Agent B: {format_amount(expected)} AI" in lines
 
 
 def test_main_reports_not_ready_when_only_one_agent(tmp_path):
