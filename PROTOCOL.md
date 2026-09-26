@@ -1229,7 +1229,17 @@ Remote Agent → 凭 workspace_id 换到路径    ❌
 > 就自动获得本机文件系统权限。权限必须由 Task 显式授予，
 > 并且经过 Gateway 检查。
 
-🔒 **以上全部未实现。** 本步骤只保证协议不再把 `workspace_id` 误当成权限。
+🔒 **以上全部未实现。** 协议只保证 `workspace_id` 不被误当成权限。
+
+> **Step 4A 的进展（协议未变）**
+>
+> Step 4A 实现了上面这条边界的**引用侧**：
+> [`core/task_workspace.py`](core/task_workspace.py) 的 `TaskWorkspaceRef`
+> 只是一个逻辑标识 —— 没有路径、没有 I/O、没有任何权限方法，
+> 并且有架构守卫锁住这一点。
+>
+> Workspace Manager / Gateway / Capability **仍然全部未实现**。
+> 协议本身在 Step 4A 里**没有任何改动**。
 
 ---
 

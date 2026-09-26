@@ -875,3 +875,143 @@ class TestArgumentErrors:
 
         assert "ID" in result.stdout
         assert "trc_" in result.stdout
+
+
+# ============================================================
+# Step 4A：Task 命令
+# ============================================================
+class TestTaskCommands:
+    def test_task_demo_runs(self, tmp_path):
+        result = run_cli("task-demo", db_path=tmp_path / "task1.db")
+
+        assert result.returncode == EXIT_OK
+        assert "Task Core Demo" in result.stdout
+
+    def test_task_demo_walks_the_lifecycle(self, tmp_path):
+        result = run_cli("task-demo", db_path=tmp_path / "task2.db")
+
+        for status in ("CREATED", "OFFERED", "NEGOTIATING", "ACCEPTED",
+                       "IN_PROGRESS", "SUBMITTED", "VERIFIED", "COMPLETED"):
+            assert status in result.stdout, f"演示里缺少状态 {status}"
+
+    def test_task_demo_shows_budget_and_agreed_price_separately(self, tmp_path):
+        """演示必须同时显示预算和成交价，且两个数不一样。"""
+        result = run_cli("task-demo", db_path=tmp_path / "task3.db")
+
+        assert "100 AIC" in result.stdout      # budget
+        assert "25 AIC" in result.stdout       # agreed_price
+        assert "预算" in result.stdout
+        assert "成交" in result.stdout
+
+    def test_task_demo_proves_no_money_moved(self, tmp_path):
+        """演示里必须明确显示「一分钱没动」。"""
+        result = run_cli("task-demo", db_path=tmp_path / "task4.db")
+
+        assert "没有产生任何账目" in result.stdout
+        assert "一分钱没动" in result.stdout
+
+    def test_task_demo_proves_no_workspace_created(self, tmp_path):
+        result = run_cli("task-demo", db_path=tmp_path / "task5.db")
+
+        assert "没有创建 Workspace" in result.stdout
+
+    def test_task_demo_shows_offer_chain(self, tmp_path):
+        result = run_cli("task-demo", db_path=tmp_path / "task6.db")
+
+        assert "TASK_OFFER" in result.stdout
+        assert "COUNTER_OFFER" in result.stdout
+        assert "ACCEPT" in result.stdout
+
+    def test_task_log_empty_is_friendly(self, tmp_path):
+        result = run_cli("task-log", db_path=tmp_path / "task7.db")
+
+        assert result.returncode == EXIT_OK
+        assert "还没有任何任务" in result.stdout
+        assert "task-demo" in result.stdout
+
+    def test_task_log_lists_tasks(self, tmp_path):
+        db_file = tmp_path / "task8.db"
+        run_cli("task-demo", db_path=db_file)
+
+        result = run_cli("task-log", db_path=db_file)
+
+        assert result.returncode == EXIT_OK
+        assert "task_" in result.stdout
+        assert "COMPLETED" in result.stdout
+        assert "WS-001" in result.stdout
+
+    def test_task_log_detail(self, tmp_path):
+        import re
+
+        db_file = tmp_path / "task9.db"
+        run_cli("task-demo", db_path=db_file)
+        listing = run_cli("task-log", db_path=db_file)
+        task_id = re.search(r"task_[0-9a-f]+", listing.stdout).group(0)
+
+        result = run_cli("task-log", task_id, db_path=db_file)
+
+        assert result.returncode == EXIT_OK
+        assert task_id in result.stdout
+        assert "budget" in result.stdout
+        assert "agreed_price" in result.stdout
+        assert "报价历史" in result.stdout
+
+    def test_task_log_detail_shows_workspace_is_not_accessible(self, tmp_path):
+        """
+        详情里必须明确显示 workspace 是不可访问的 ——
+        这是 Step 4A 的核心承诺。
+        """
+        import re
+
+        db_file = tmp_path / "task10.db"
+        run_cli("task-demo", db_path=db_file)
+        listing = run_cli("task-log", db_path=db_file)
+        task_id = re.search(r"task_[0-9a-f]+", listing.stdout).group(0)
+
+        result = run_cli("task-log", task_id, db_path=db_file)
+
+        assert "'accessible': False" in result.stdout
+
+    def test_task_log_unknown_task(self, tmp_path):
+        result = run_cli(
+            "task-log", "task_不存在", db_path=tmp_path / "task11.db"
+        )
+
+        assert result.returncode == EXIT_REJECTED
+        assert "找不到任务" in result.stdout
+
+    def test_task_log_filter_by_status(self, tmp_path):
+        db_file = tmp_path / "task12.db"
+        run_cli("task-demo", db_path=db_file)
+
+        completed = run_cli(
+            "task-log", "--status", "COMPLETED", db_path=db_file
+        )
+        created = run_cli("task-log", "--status", "CREATED", db_path=db_file)
+
+        assert "COMPLETED" in completed.stdout
+        assert "还没有任何任务" in created.stdout
+
+    def test_task_demo_does_not_touch_wallet(self, tmp_path):
+        """
+        跑完演示后，余额必须还是初始值。
+        """
+        db_file = tmp_path / "task13.db"
+        run_cli("task-demo", db_path=db_file)
+
+        balances = run_cli("balances", db_path=db_file)
+
+        # 演示里显示的「一分钱没动」是最直接的证据
+        assert "一分钱没动" in run_cli(
+            "task-demo", db_path=tmp_path / "task13b.db"
+        ).stdout
+        assert "100 AIC" in balances.stdout
+
+    def test_task_demo_does_not_call_llm(self, tmp_path):
+        """
+        演示输出里不该出现任何模型调用记录。
+        """
+        result = run_cli("task-demo", db_path=tmp_path / "task14.db")
+
+        assert "调用记录" not in result.stdout
+        assert "没有调用任何模型" in result.stdout

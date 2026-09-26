@@ -150,7 +150,7 @@ LLM 只能**提出意图**，永远不能**直接改账**。
 - [x] SQLite 数据库（4 张表）
 - [x] 启动横幅
 - [x] **命令行经济操作**（转账 / 余额 / 流水 / 对账）
-- [x] 857 个 pytest 测试全绿（另有 30 个真实 API 测试单独跑）
+- [x] 1168 个 pytest 测试全绿（另有 30 个真实 API 测试单独跑）
 
 **验收标准**（已达成）：
 
@@ -824,11 +824,131 @@ ACCEPT                     price  =  30   reply_to = offer-003
 **代码改动说明**：`core/` 只有**默认值字符串和注释**，`communication/` 只有**一行注释**，
 **零逻辑改动**（`git diff` 可验证）。
 
+### ✅ Step 4A：Task Core + Task Workspace 架构铺垫（已完成）
+
+**目标不是「任务市场」，而是建立一个稳定、独立、可持久化、可测试的 Task Core，
+同时正式把 Task Workspace 纳入架构模型。**
+
+#### 两种 Workspace（从此必须分清）
+
+| | Agent Private Workspace | Task Workspace |
+|---|---|---|
+| 文件 | [`core/workspace.py`](core/workspace.py) | [`core/task_workspace.py`](core/task_workspace.py) |
+| 归属 | 每个 **Agent** 一个 | 每个 **Task** 一个 |
+| 可见性 | **默认不对别人开放** | 任务级共享，可多 Agent 参与 |
+| 文件 I/O | ✅ 有（带路径边界检查） | ❌ **完全没有** |
+| 例子 | `agents/agent_a/workspace/` | `WS-001`（只是一个标识） |
+
+> `private` 是「我的东西」，`task` 是「这件事的东西」。
+
+#### Task 数据结构
+
+```python
+Task(
+    task_id           = "task_a1b2c3d4"     # 任务身份（稳定）
+    current_trace_id  = "trc_e5f6a7b8"      # 这一次执行（会变）
+    creator           = "agent_a"
+    contractor        = "agent_b"
+    participants      = ["agent_a", "agent_b"]
+    status            = "ACCEPTED"
+    description       = "..."
+    workspace_id      = "WS-001"            # 只是逻辑引用
+    budget            = Money(100)          # 预算【上限】
+    agreed_price      = Money(25)           # 实际【成交】价
+    acceptance        = {"type": "tests"}
+    expires_at        = None
+    offers            = [Offer, Offer, ...] # 完整报价链
+    created_at / updated_at
+)
+```
+
+**两组「绝不能合并」的概念**：
+
+| 字段 | 含义 | 为什么不能合并 |
+|---|---|---|
+| `task_id` | 任务身份 | 重跑时它不变；合并了就变成「另一个任务」，历史无法归并 |
+| `current_trace_id` | 这一次执行 | 失败重跑会换新 trace |
+| `budget` | 我愿意付的**上限** | 合并了账本会凭空多计（预算 100、成交 25 → 多记 75） |
+| `agreed_price` | **实际谈成**的数 | |
+
+#### Task 状态机（独立于通信状态机）
+
+```
+CREATED → OFFERED → NEGOTIATING → ACCEPTED
+       → IN_PROGRESS → SUBMITTED → VERIFIED → COMPLETED
+
+异常终态：REJECTED · CANCELLED · EXPIRED · FAILED
+```
+
+两条值得注意的边：
+
+- `NEGOTIATING → NEGOTIATING`（**唯一允许的自转换**）—— 一轮谈判能还价多次
+- `SUBMITTED → IN_PROGRESS`（**返工**）—— 验收不通过就打回重做，比直接判死更符合实际
+
+**状态不能被直接赋值**：
+
+```python
+task.status = "COMPLETED"     # ❌ AttributeError
+task.complete()               # ✅ 走状态机，会校验
+```
+
+#### 三条业务规则已变成代码保证
+
+| 规则 | 实现 |
+|---|---|
+| 成交价不能超过预算 | `task.accept(Money(150))` 在预算 100 时抛 `BudgetExceededError` |
+| 状态只能按状态机走 | `status` 是只读 property，没有 setter |
+| 报价历史必须保留 | `task.offers` + `task_offers` 表，不是只存 `agreed_price` |
+
+#### 四条边界（都有架构守卫 + 反向测试）
+
+| Task Core 不依赖 | 守卫方式 |
+|---|---|
+| `llm/*` | AST 检查 import + 模型厂商名 |
+| `communication/*` | AST 检查 import + `Message`/`MessageStatus` 引用 |
+| `wallet` / `ledger` | AST 检查 import + 方法名分词匹配 |
+| 文件系统 | AST 检查 import + `open()` 调用 + `mkdir` |
+
+**持久化单独一个文件**（[`core/task_store.py`](core/task_store.py)）就是为了让
+「Task Core 是纯的」这件事**可验证** —— 否则它只是一句口号。
+
+#### 数据库
+
+```sql
+tasks         -- 任务当前状态（budget_* 与 agreed_price_* 各两列）
+task_offers   -- 报价历史（append-only）
+```
+
+**没有** `workspace_members` / `workspace_permissions` / `workspace_files` ——
+建空表会让人以为系统已经有那个能力。
+
+#### 验收结果（对照 Step 4A 的 21 条）
+
+| # | 要求 | 状态 |
+|---|---|---|
+| 1–5 | 清晰的 Task Core / 稳定 task_id / task_id 与 trace_id 分离 / budget 与 agreed_price 分离 / 货币用 AIC | ✅ |
+| 6–7 | 可引用 workspace_id / 不产生权限 | ✅ 有守卫 |
+| 8–11 | 独立状态机 / 与 Message 状态分离 / 不依赖 LLM / 不操作 Wallet-Ledger | ✅ 有守卫 |
+| 12–16 | 不操作文件系统 / 两种 Workspace 分离 / Task-specific / 未来支持多 Agent / 不实现权限 | ✅ |
+| 17–19 | 不实现 Git / Payment / P2P | ✅ 有守卫 |
+| 20–21 | 旧测试继续通过 / 新增 Task 测试通过 | ✅ 857 → 1168 |
+
+**测试：857 → 1168（新增 311）**
+
+| 新增文件 | 数量 | 测什么 |
+|---|---|---|
+| `test_money.py` | 40 | 金额值类型、跨货币不可比、与配置一致 |
+| `test_task_workspace.py` | 55 | 无 I/O、无权限、两种 Workspace 分离 |
+| `test_task.py` | 114 | 身份、状态机、budget≠price、报价链、边界 |
+| `test_task_store.py` | 47 | 持久化往返、两个概念分开存、报价历史 |
+| `test_task_guards.py` | 41 | 7 类架构守卫（已用 9 项反向测试验证） |
+| `test_cli.py` | +14 | `task-demo` / `task-log` |
+
 ### ⏳ 后续阶段
 
 | 阶段 | 内容 | 状态 |
 |---|---|---|
-| Step 4 | Task / Bid / Contract / Task Workspace | 待开始 |
+| Step 4B | Task ↔ Communication 接线、Capability | 待开始 |
 | Step 5 | 完整经济交易 Demo（A 外包给 B，结算） | 待开始 |
 | Step 6 | Cost Calculator（把 token 用量接到经济系统） | 待开始 |
 
@@ -1046,6 +1166,11 @@ ai-economy/
 │   ├── workspace.py           ← 工作空间 + 隔离边界
 │   ├── ledger.py              ← 交易账本（唯一真相来源）
 │   ├── wallet.py              ← 钱包 + 钱包仓库
+│   ├── money.py               ←   金额值类型（Step 4A）
+│   ├── task.py                ←   Task 领域对象 + 状态机（Step 4A）
+│   ├── task_store.py          ←   Task 持久化（Step 4A）
+│   ├── task_workspace.py      ←   Task Workspace 逻辑引用（Step 4A）
+│   ├── workspace.py           ←   Agent 私有工作空间（有真实文件 I/O）
 │   ├── economy.py             ← 经济系统核心 + transfer() 执行入口
 │   └── logging_setup.py       ← 日志
 │
@@ -1081,7 +1206,7 @@ ai-economy/
 │   ├── database.py            ← SQLite 连接、事务、迁移
 │   └── models.py              ← 表结构定义
 │
-├── tests/                     ← 857 个测试 + 30 个真实 API 测试
+├── tests/                     ← 1168 个测试 + 30 个真实 API 测试
 └── data/
     └── economy.db             ← SQLite 数据库（运行产物，不进 git）
 ```

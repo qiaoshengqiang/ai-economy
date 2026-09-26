@@ -16,7 +16,9 @@ v0.1 建这些表：
     llm_calls           —— 每次调用模型的 token 用量与成本
     communication_messages —— 通信日志：每条消息的当前状态
     communication_events   —— 通信日志：状态事件流（append-only）
-                      （tasks/bids/contracts/escrows
+    tasks                —— 任务主体（当前状态）
+    task_offers          —— 任务的报价历史（append-only）
+                      （bids/contracts/escrows/workspace_*
                         留给后续步骤，现在不建，避免过度设计）
 """
 
@@ -34,6 +36,8 @@ TABLE_LEDGER: Final = "ledger_transactions"
 TABLE_LLM_CALLS: Final = "llm_calls"
 TABLE_COMM_MESSAGES: Final = "communication_messages"
 TABLE_COMM_EVENTS: Final = "communication_events"
+TABLE_TASKS: Final = "tasks"
+TABLE_TASK_OFFERS: Final = "task_offers"
 
 
 # ============================================================
@@ -344,6 +348,116 @@ SCHEMA_STATEMENTS: Final[tuple[str, ...]] = (
     "CREATE INDEX IF NOT EXISTS idx_comm_evt_conv    ON communication_events (conversation_id)",
     "CREATE INDEX IF NOT EXISTS idx_comm_evt_status  ON communication_events (status)",
     "CREATE INDEX IF NOT EXISTS idx_comm_evt_time    ON communication_events (created_at)",
+    # --------------------------------------------------------
+    # tasks —— 任务主体
+    #
+    # 【注意这里的字段设计反映了两组「不能合并」的概念】
+    #
+    #   1) task_id 与 current_trace_id 分开
+    #         task_id            任务的稳定身份（跨执行不变）
+    #         current_trace_id   「这一次执行」的链路
+    #
+    #         同一个任务失败重跑时，trace 会换，task_id 不变。
+    #         如果合成一个字段，重跑就会变成「另一个任务」，
+    #         历史没法归并，也算不出「这个任务一共花了多少」。
+    #
+    #   2) budget_* 与 agreed_price_* 分开
+    #         budget        发起方愿意付的**上限**
+    #         agreed_price  谈成的**实际价格**
+    #
+    #         用同一个字段表示两个概念，会导致账本凭空多计
+    #         （预算 100、成交 25，混用就会多记 75）。
+    #
+    # 【为什么金额拆成两列而不是一列 JSON】
+    #     拆开才能用 SQL 做聚合，比如「所有任务的成交总额」。
+    #     JSON 列没法直接 SUM。
+    #
+    # 【为什么没有 workspace_permissions / workspace_members】
+    #     因为本步骤不实现 Workspace 权限。
+    #     workspace_id 只是一个逻辑引用，不产生任何权限。
+    #     建空表会让人误以为系统已经有那个能力。
+    # --------------------------------------------------------
+    """
+    CREATE TABLE IF NOT EXISTS tasks (
+        task_id             TEXT PRIMARY KEY,
+
+        -- 这一次执行的链路（和 task_id 是两回事，见上）
+        current_trace_id    TEXT,
+
+        creator             TEXT NOT NULL,
+        contractor          TEXT,
+
+        -- JSON 数组：未来一个任务可以有多个参与 Agent
+        participants        TEXT,
+
+        status              TEXT NOT NULL DEFAULT 'CREATED',
+        description         TEXT,
+
+        -- 【只是逻辑标识，不是路径、不是权限】
+        -- 真正的 Workspace 访问要经过未来的 Workspace Gateway
+        workspace_id        TEXT,
+
+        -- 经济约定（不是真实账目）
+        budget_amount         REAL,
+        budget_currency       TEXT,
+        agreed_price_amount   REAL,
+        agreed_price_currency TEXT,
+
+        -- JSON：验收条件，如 {"type": "tests"}
+        acceptance          TEXT,
+
+        expires_at          TEXT,
+        created_at          TEXT NOT NULL,
+        updated_at          TEXT NOT NULL,
+        note                TEXT
+    )
+    """,
+
+    "CREATE INDEX IF NOT EXISTS idx_tasks_status    ON tasks (status)",
+    "CREATE INDEX IF NOT EXISTS idx_tasks_creator   ON tasks (creator)",
+    "CREATE INDEX IF NOT EXISTS idx_tasks_contractor ON tasks (contractor)",
+    "CREATE INDEX IF NOT EXISTS idx_tasks_workspace ON tasks (workspace_id)",
+    "CREATE INDEX IF NOT EXISTS idx_tasks_trace     ON tasks (current_trace_id)",
+
+    # --------------------------------------------------------
+    # task_offers —— 报价历史（append-only）
+    #
+    # 【为什么要单独一张表，而不是把报价塞进 tasks 的 JSON 列】
+    #     因为报价是**历史事件**：只追加，不改写。
+    #     而且将来要能查询，比如：
+    #         「这个任务被还了几次价？」
+    #         「平均压价幅度是多少？」
+    #     单列一个表才能做这些聚合。
+    #
+    # 【message_id 可以为空】
+    #     因为 Task Core 不依赖通信层。
+    #     将来把报价接到通信上之后，这里会填那条消息的 ID，
+    #     于是就能从任务一路查到通信日志。
+    # --------------------------------------------------------
+    """
+    CREATE TABLE IF NOT EXISTS task_offers (
+        offer_id    TEXT PRIMARY KEY,
+
+        task_id     TEXT NOT NULL,
+
+        -- TASK_OFFER / COUNTER_OFFER / ACCEPT
+        offer_type  TEXT NOT NULL,
+
+        amount      REAL NOT NULL,
+        currency    TEXT NOT NULL,
+
+        -- 关联的通信消息（可空 —— Task Core 不依赖通信层）
+        message_id  TEXT,
+
+        note        TEXT,
+        created_at  TEXT NOT NULL,
+
+        FOREIGN KEY (task_id) REFERENCES tasks (task_id)
+    )
+    """,
+
+    "CREATE INDEX IF NOT EXISTS idx_task_offers_task ON task_offers (task_id)",
+    "CREATE INDEX IF NOT EXISTS idx_task_offers_type ON task_offers (offer_type)",
 )
 
 

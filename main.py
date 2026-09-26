@@ -57,6 +57,9 @@ from core.config import load_global_config                     # noqa: E402
 from core.economy import AgentNotFoundError, Economy, EconomyError  # noqa: E402
 from core.ledger import LedgerError, format_amount              # noqa: E402
 from core.logging_setup import get_logger, setup_logging        # noqa: E402
+from core.money import Money                                    # noqa: E402
+from core.task import OfferType, Task, TaskStatus               # noqa: E402
+from core.task_store import TaskStore                           # noqa: E402
 from core.paths import ensure_runtime_dirs                      # noqa: E402
 from llm import LLMCallRecorder, LLMRouter, LLMError            # noqa: E402
 from communication import (                                     # noqa: E402
@@ -95,6 +98,7 @@ class Runtime:
             CommunicationManager 通信门面    ← Step 3
             Transport            通信实现     ← Step 3（当前是 LocalTransport）
             CommunicationRecorder 通信日志    ← Step 3.5
+            TaskStore            任务持久化     ← Step 4A（Task Core）
 
         这些部件由 main.py（组合根）装配好，再交给各个命令。
 
@@ -115,6 +119,7 @@ class Runtime:
     communication: CommunicationManager
     transport: Transport
     journal: CommunicationRecorder
+    tasks: TaskStore
 
     def agent(self, agent_id: str):
         return self.economy.agent(agent_id)
@@ -290,6 +295,15 @@ def build_runtime(db_path: Optional[str] = None) -> Runtime:
         # 它因此永远不知道消息是走内存还是走网络。
         agent.attach_communication(communication)
 
+    # Task Core 的持久化（Step 4A）。
+    #
+    # 【注意 Task 和 Economy 的关系】
+    #     TaskStore 用的是同一个数据库，但 Task Core **不碰钱包和账本**。
+    #     Task 里的 budget / agreed_price 只是「经济约定」，
+    #     记录它们不会产生任何一行账本记录。
+    #     真实结算属于后续步骤。
+    tasks = TaskStore(db=economy.db)
+
     return Runtime(
         economy=economy,
         router=router,
@@ -297,6 +311,7 @@ def build_runtime(db_path: Optional[str] = None) -> Runtime:
         communication=communication,
         transport=transport,
         journal=journal,
+        tasks=tasks,
     )
 
 
@@ -1384,6 +1399,292 @@ def _print_trace_list(journal, limit: int) -> int:
 
 
 # ============================================================
+# 命令：task-demo（Step 4A）
+# ============================================================
+def cmd_task_demo(runtime: Runtime, args: argparse.Namespace) -> int:
+    """
+    Task Core 演示。
+
+    【这个演示刻意不做什么】
+        ❌ 不转账（agreed_price 只是约定，不是账目）
+        ❌ 不创建 Workspace（workspace_id 只是标识）
+        ❌ 不碰 Git
+        ❌ 不调用任何模型
+        ❌ 不发任何网络消息
+
+    它只证明一件事：Task Core 能正确地走完自己的状态机。
+    """
+    store = runtime.tasks
+    economy = runtime.economy
+
+    print()
+    print("=" * 64)
+    print("        AI Economy OS v0.1")
+    print("        Step 4A — Task Core Demo")
+    print("=" * 64)
+    print()
+
+    # ---------------- 记账前的经济状态 ----------------
+    ledger_before = economy.ledger.count()
+    balance_before = economy.agent("agent_a").balance
+
+    print("开始前的经济状态")
+    print("-" * 64)
+    print(f"  账本记录数        : {ledger_before}")
+    print(f"  agent_a 余额      : {format_amount(balance_before)} {economy.currency}")
+    print()
+
+    # ---------------- 1) 创建任务 ----------------
+    print("① 创建任务")
+    print("-" * 64)
+    task = Task.create(
+        creator="agent_a",
+        description="写一个 CSV 分析程序",
+        budget=Money(100),
+        workspace_id="WS-001",
+        acceptance={"type": "tests"},
+    )
+    store.save(task)
+
+    print(f"  task_id          : {task.task_id}")
+    print(f"  current_trace_id : {task.current_trace_id}   ← 这一次执行")
+    print(f"  status           : {task.status}")
+    print(f"  budget           : {task.budget}                ← 预算上限")
+    print(f"  agreed_price     : {task.agreed_price or chr(8212)}                  ← 还没谈成")
+    print(f"  workspace_id     : {task.workspace_id}")
+    print(f"  workspace 种类   : {task.workspace.kind}")
+    print()
+
+    print("  关于 workspace_id：")
+    print(f"    它只是一个逻辑引用：{task.workspace}")
+    print("    它【不是】文件路径，也【不是】权限凭证。")
+    print("    知道 WS-001 不等于能访问 WS-001。")
+    print()
+
+    # ---------------- 2) 发出邀约 ----------------
+    print("② 发出邀约（offer）")
+    print("-" * 64)
+    task.offer()
+    task.record_offer(OfferType.TASK_OFFER, Money(100), note="初始报价")
+    store.save(task)
+    print(f"  status           : {task.status}")
+    print(f"  报价历史         : {[str(o) for o in task.offers]}")
+    print()
+
+    # ---------------- 3) 议价 ----------------
+    print("③ 议价（negotiating）")
+    print("-" * 64)
+    task.negotiate()
+    task.record_offer(OfferType.COUNTER_OFFER, Money(60), note="B 还价")
+    store.save(task)
+    print(f"  agent_b 还价 60 AIC  →  status = {task.status}")
+
+    task.negotiate()
+    task.record_offer(OfferType.COUNTER_OFFER, Money(25), note="B 再还价")
+    store.save(task)
+    print(f"  agent_b 再还 25 AIC  →  status = {task.status}")
+    print(f"  （NEGOTIATING 可以重复进入 —— 一轮谈判里能还价多次）")
+    print()
+
+    # ---------------- 4) 成交 ----------------
+    print("④ 接受报价（accept）")
+    print("-" * 64)
+    task.accept(Money(25), contractor="agent_b")
+    task.record_offer(OfferType.ACCEPT, Money(25), note="成交")
+    store.save(task)
+
+    print(f"  status           : {task.status}")
+    print(f"  budget           : {task.budget}     ← 预算（上限，没变）")
+    print(f"  agreed_price     : {task.agreed_price}      ← 成交价")
+    print(f"  contractor       : {task.contractor}")
+    print()
+    print("  【注意这两个数不一样】")
+    print(f"    预算 100 AIC 是「我愿意付的上限」")
+    print(f"    成交  25 AIC 是「实际谈成的数」")
+    print(f"    它们必须分别保存 —— 混用一个字段就说不清是压价还是按预算成交。")
+    print()
+
+    # ---------------- 5) 执行 ----------------
+    print("⑤ 执行与验收")
+    print("-" * 64)
+    for action, label in (
+        (task.start, "开工"),
+        (task.submit, "提交成果"),
+    ):
+        action()
+        store.save(task)
+        print(f"  {label:<12} →  status = {task.status}")
+
+    print(f"  {'验收不通过':<12} →  status = ", end="")
+    task.verify(passed=False)
+    store.save(task)
+    print(f"{task.status}   ← 打回重做")
+
+    task.submit()
+    store.save(task)
+    print(f"  {'重新提交':<12} →  status = {task.status}")
+
+    task.verify(passed=True)
+    store.save(task)
+    print(f"  {'验收通过':<12} →  status = {task.status}")
+
+    task.complete()
+    store.save(task)
+    print(f"  {'结项':<12} →  status = {task.status}  终态={task.is_terminal}")
+    print()
+
+    # ---------------- 6) 完整报价链 ----------------
+    print("⑥ 完整报价链（从数据库读回来）")
+    print("-" * 64)
+    offers = store.offers_for(task.task_id)
+    for index, offer in enumerate(offers, 1):
+        print(f"  {index}. {offer.offer_type:<15} {offer.amount}")
+    print()
+    print(f"  最终 agreed_price = {task.agreed_price}")
+    print(f"  （来自最后一条 ACCEPT，而不是 budget）")
+    print()
+
+    # ---------------- 7) 状态机 ----------------
+    print("⑦ Task 状态机")
+    print("-" * 64)
+    print("  CREATED → OFFERED → NEGOTIATING → ACCEPTED")
+    print("         → IN_PROGRESS → SUBMITTED → VERIFIED → COMPLETED")
+    print()
+    print("  本次实际路径：")
+    print("    CREATED → OFFERED → NEGOTIATING ⇄ NEGOTIATING")
+    print("           → ACCEPTED → IN_PROGRESS → SUBMITTED")
+    print("           → IN_PROGRESS（返工）→ SUBMITTED → VERIFIED → COMPLETED")
+    print()
+
+    # ---------------- 8) 边界证明 ----------------
+    ledger_after = economy.ledger.count()
+    balance_after = economy.agent("agent_a").balance
+
+    print("⑧ 边界证明")
+    print("-" * 64)
+    print(f"  账本记录数   : {ledger_before} → {ledger_after}   "
+          f"{'✅ 没有产生任何账目' if ledger_after == ledger_before else '❌ 账本被改了！'}")
+    print(f"  agent_a 余额 : {format_amount(balance_before)} → "
+          f"{format_amount(balance_after)} {economy.currency}   "
+          f"{'✅ 一分钱没动' if balance_after == balance_before else '❌ 余额被改了！'}")
+    print()
+    print("  · 全程没有调用任何模型    —— Task Core 与 LLM 解耦")
+    print("  · 全程没有转账            —— Task 只记录经济约定")
+    print("  · 全程没有创建 Workspace  —— workspace_id 只是逻辑标识")
+    print("  · 全程没有碰 Git / 文件系统")
+    print()
+
+    # ---------------- 9) 持久化 ----------------
+    print("⑨ 持久化")
+    print("-" * 64)
+    stats = store.stats()
+    print(f"  任务总数 : {stats['tasks']}")
+    print(f"  报价记录 : {stats['offers']}")
+    print(f"  按状态   : {stats['by_status']}")
+    print(f"  涉及工作空间 : {stats['workspaces']}")
+    print()
+    print(f"  查询方式：./dev.sh task-log")
+    print()
+    return 0
+
+
+# ============================================================
+# 命令：task-log（查看任务）
+# ============================================================
+def cmd_task_log(runtime: Runtime, args: argparse.Namespace) -> int:
+    """列出任务 / 看某个任务的详情。"""
+    store = runtime.tasks
+
+    if args.task:
+        return _print_task_detail(store, args.task)
+
+    rows = store.list_tasks(status=args.status, limit=args.limit)
+
+    print()
+    print("任务列表")
+    print("-" * 104)
+    print(f"  {'状态':<12} {'task_id':<16} {'发起':<9} {'承接':<9} "
+          f"{'预算':>10} {'成交':>10}  工作空间")
+    print("-" * 104)
+
+    if not rows:
+        print("  （还没有任何任务）")
+        print("  跑一次演示就会产生任务：./dev.sh task-demo")
+        print()
+        return 0
+
+    for task in rows:
+        budget = str(task.budget) if task.budget else "—"
+        price = str(task.agreed_price) if task.agreed_price else "—"
+        print(
+            f"  {task.status:<12} {task.task_id:<16} {task.creator:<9} "
+            f"{(task.contractor or '—'):<9} {budget:>10} {price:>10}  "
+            f"{task.workspace_id or '—'}"
+        )
+
+    print("-" * 104)
+    print(f"  共 {len(rows)} 个任务")
+    print()
+    print("  看详情：./dev.sh task-log <task_id>")
+    print()
+    return 0
+
+
+def _print_task_detail(store, task_id: str) -> int:
+    task = store.get(task_id)
+    if task is None:
+        print()
+        print(f"找不到任务：{task_id}")
+        print("（用 ./dev.sh task-log 看有哪些）")
+        print()
+        return 2
+
+    print()
+    print(f"任务 {task.task_id}")
+    print("-" * 72)
+
+    fields = [
+        ("status", task.status),
+        ("current_trace_id", task.current_trace_id),
+        ("creator", task.creator),
+        ("contractor", task.contractor),
+        ("participants", task.participants or "—"),
+        ("description", task.description or "—"),
+        ("workspace_id", task.workspace_id or "—"),
+        ("budget", task.budget or "—"),
+        ("agreed_price", task.agreed_price or "—"),
+        ("acceptance", task.acceptance or "—"),
+        ("expires_at", task.expires_at or "—"),
+        ("created_at", task.created_at[:19]),
+        ("updated_at", task.updated_at[:19]),
+    ]
+    for key, value in fields:
+        print(f"  {key:<18}: {value}")
+
+    if task.workspace is not None:
+        print()
+        print("  workspace 引用")
+        print(f"    {task.workspace.describe()}")
+
+    print()
+    print("  报价历史")
+    offers = store.offers_for(task.task_id)
+    if offers:
+        for index, offer in enumerate(offers, 1):
+            note = f"   {offer.note}" if offer.note else ""
+            print(f"    {index}. {offer.offer_type:<15} {offer.amount}{note}")
+    else:
+        print("    （没有报价记录）")
+
+    print()
+    print("  允许的下一步状态")
+    allowed = task.allowed_transitions()
+    print(f"    {allowed or '（已是终态）'}")
+    print()
+    return 0
+
+
+# ============================================================
 # 命令行参数
 # ============================================================
 def build_parser() -> argparse.ArgumentParser:
@@ -1620,6 +1921,26 @@ def build_parser() -> argparse.ArgumentParser:
     log.add_argument("--status", default=None, help="只看某个状态（如 FAILED）")
     log.add_argument("--limit", type=int, default=20, help="最多显示几条（默认 20）")
     log.set_defaults(func=cmd_communication_log)
+
+    # --- task-demo（Step 4A）---
+    task_demo = subparsers.add_parser(
+        "task-demo",
+        parents=[shared],
+        help="Task Core 演示（不转账、不创建 Workspace、不调用模型）",
+    )
+    task_demo.set_defaults(func=cmd_task_demo)
+
+    # --- task-log（Step 4A）---
+    task_log = subparsers.add_parser(
+        "task-log",
+        parents=[shared],
+        help="查看任务",
+    )
+    task_log.add_argument("task", nargs="?", default=None, metavar="TASK_ID",
+                          help="看某个任务的详情")
+    task_log.add_argument("--status", default=None, help="只看某个状态")
+    task_log.add_argument("--limit", type=int, default=20, help="最多显示几条")
+    task_log.set_defaults(func=cmd_task_log)
 
     return parser
 
