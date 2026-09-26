@@ -356,11 +356,10 @@ class TestProviderCommands:
         """已实现的要列出来；未实现的要显示「需要新建哪个文件」，而不是藏起来。"""
         result = run_cli("providers", db_path=tmp_path / "prov2.db")
 
-        # Step 2.5 之后 deepseek 已实现
+        # deepseek 和 doubao 现在都实现了
         assert "deepseek" in result.stdout
-        # 未实现的仍然要给出明确的下一步
         assert "doubao" in result.stdout
-        assert "llm/doubao.py" in result.stdout
+        # 未实现的仍然要给出明确的下一步
         assert "grok" in result.stdout
         assert "llm/grok.py" in result.stdout
 

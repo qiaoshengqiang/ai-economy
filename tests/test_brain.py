@@ -193,12 +193,12 @@ class TestBrain:
         如果 Brain 把异常吞掉返回一句空话，Agent 会以为
         任务完成了，然后在经济上做出错误决策。
 
-        这里用 doubao 来触发错误 —— 它还没实现。
-        （deepseek 在 Step 2.5 已经实现了，不再会抛这个错。）
+        这里用 grok 来触发错误 —— 目前只剩它还没实现。
+        （deepseek 和 doubao 都已经实现了，不再会抛这个错。）
         """
         brain = Brain(
             router=router,
-            settings=BrainSettings(agent_id="agent_a", provider="doubao"),
+            settings=BrainSettings(agent_id="agent_a", provider="grok"),
             recorder=recorder,
         )
 
@@ -432,8 +432,8 @@ class TestCallRecording:
         agent.attach_brain(
             Brain(
                 router=router,
-                # doubao 还没实现 —— 用它来制造一次失败
-                settings=BrainSettings(agent_id="agent_a", provider="doubao"),
+                # grok 还没实现 —— 用它来制造一次失败
+                settings=BrainSettings(agent_id="agent_a", provider="grok"),
                 recorder=recorder,
             )
         )

@@ -1,0 +1,704 @@
+"""
+OpenAI 兼容 Provider 基类
+============================================================
+
+【为什么需要这个文件】
+
+    在加豆包的时候发现一件事：
+
+        DeepSeek        POST /chat/completions   Bearer
+        豆包（火山方舟）  POST /chat/completions   Bearer
+        Grok (xAI)      POST /chat/completions   Bearer
+
+    三家的「形状」完全一样 —— 这是业界事实标准（OpenAI 兼容格式）。
+    请求体都是 model/messages/temperature/max_tokens，
+    响应体都是 choices[0].message.content + usage.{prompt,completion,total}_tokens。
+
+    如果每家都复制一份，就会有 3 份几乎相同的 HTTP、解析、错误翻译代码。
+    改一个 bug 要改三处，而且迟早会改漏其中一处。
+
+    所以把「形状」抽到这里，「身份」留给子类。
+
+【子类只需要回答这几个问题】
+
+    · 我叫什么名字？                    name / PROVIDER_LABEL
+    · 我的 base_url 默认是什么？         DEFAULT_BASE_URL
+    · 我的默认模型是什么？               DEFAULT_MODEL
+    · 我读哪个环境变量拿 Key？           DEFAULT_API_KEY_ENV
+    · 我的错误码有没有特殊含义？          _extra_status_hint()
+
+    就这些。DeepSeek 和豆包各自只需要 100 行左右。
+
+【这里的名字里为什么带 openai】
+
+    这是【协议名】，不是【厂商名】。
+    就像「HTTP」不等于某一家公司 ——
+    OpenAI 兼容格式已经是行业通用协议，用它的厂商远不止 OpenAI。
+
+    所以这个类的存在不代表我们接了 OpenAI。
+    Agent 层依然不认识任何厂商，包括 OpenAI。
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import socket
+import time
+import urllib.error
+import urllib.request
+from dataclasses import dataclass, field
+from typing import Any, Callable, Dict, Mapping, Optional, Sequence, Union
+
+from llm.base import (
+    TOKEN_SOURCE_API,
+    TOKEN_SOURCE_UNKNOWN,
+    AuthenticationError,
+    InvalidResponseError,
+    LLMHTTPError,
+    LLMProvider,
+    LLMRequestError,
+    LLMResponse,
+    LLMTimeoutError,
+    Message,
+    RateLimitError,
+    normalize_messages,
+)
+
+
+# ============================================================
+# HTTP 层
+# ============================================================
+@dataclass
+class HTTPResult:
+    """
+    一次 HTTP 调用的结果。
+
+    注意：4xx / 5xx 也走这个结构，不算「异常」。
+    因为「服务器返回了 401」和「网络断了」是两件不同的事：
+        前者我们拿到了明确的答案，应该按状态码分门别类地翻译；
+        后者我们什么都没拿到。
+    """
+
+    status: int
+    body: str = ""
+    headers: Dict[str, str] = field(default_factory=dict)
+
+    @property
+    def ok(self) -> bool:
+        return 200 <= self.status < 300
+
+    def json(self) -> Any:
+        """把 body 解析成 JSON。解析不了就抛 InvalidResponseError。"""
+        try:
+            return json.loads(self.body)
+        except (json.JSONDecodeError, TypeError) as exc:
+            preview = (self.body or "")[:200].replace("\n", " ")
+            raise InvalidResponseError(
+                f"返回体不是合法 JSON：{exc}\n"
+                f"HTTP 状态：{self.status}\n"
+                f"返回体开头：{preview!r}"
+            ) from exc
+
+
+# HTTP 调用的函数签名。
+# 换成别的实现（比如以后换成 httpx）只要满足这个签名即可。
+HTTPPost = Callable[
+    [str, Mapping[str, Any], Mapping[str, str], float],
+    HTTPResult,
+]
+
+
+def default_http_post(
+    url: str,
+    payload: Mapping[str, Any],
+    headers: Mapping[str, str],
+    timeout: float,
+) -> HTTPResult:
+    """
+    用标准库发一个 JSON POST。
+
+    约定（很重要，因为测试会照着这个约定来伪造）：
+        · 拿到了 HTTP 响应（含 4xx/5xx）  → 返回 HTTPResult
+        · 根本没拿到响应（超时/断网）      → 抛 LLMTimeoutError / LLMRequestError
+
+    为什么用标准库而不是 requests / httpx？
+        这个项目的原则是「能用标准库就不引第三方库」。
+        一次 HTTPS POST 加 JSON 解析，urllib 完全够用。
+        代价是代码稍微啰嗦，换来的是运行时第三方依赖为 0。
+    """
+    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    request = urllib.request.Request(
+        url,
+        data=data,
+        headers=dict(headers),
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            body = response.read().decode("utf-8", errors="replace")
+            return HTTPResult(
+                status=int(response.status),
+                body=body,
+                headers={k: v for k, v in response.headers.items()},
+            )
+
+    except urllib.error.HTTPError as exc:
+        # 服务端返回了错误状态码。把 body 读出来，方便翻译成有用的话。
+        try:
+            body = exc.read().decode("utf-8", errors="replace")
+        except Exception:  # noqa: BLE001 - 读不出来就算了，不掩盖原始错误
+            body = ""
+        return HTTPResult(
+            status=int(exc.code),
+            body=body,
+            headers={k: v for k, v in (exc.headers or {}).items()},
+        )
+
+    except urllib.error.URLError as exc:
+        # URLError 常常把真正的超时包在 reason 里
+        if isinstance(exc.reason, (socket.timeout, TimeoutError)):
+            raise LLMTimeoutError(f"请求超时（{timeout} 秒）") from exc
+        raise LLMRequestError(f"网络错误：{exc.reason}") from exc
+
+    except (socket.timeout, TimeoutError) as exc:
+        raise LLMTimeoutError(f"请求超时（{timeout} 秒）") from exc
+
+    except OSError as exc:
+        raise LLMRequestError(f"网络错误：{exc}") from exc
+
+
+# ============================================================
+# 基类
+# ============================================================
+class OpenAICompatibleProvider(LLMProvider):
+    """
+    OpenAI 兼容格式的 Provider 基类。
+
+    子类必须覆盖：
+        name                 配置里用的名字，比如 "deepseek"
+        DEFAULT_BASE_URL     比如 "https://api.deepseek.com"
+        DEFAULT_API_KEY_ENV  比如 "DEEPSEEK_API_KEY"
+
+    子类通常还要覆盖：
+        DEFAULT_MODEL
+        PROVIDER_LABEL       错误信息里给人看的名字
+    """
+
+    name = "openai_compatible"
+    requires_api_key = True
+
+    # 给人看的名字，只用在错误提示里
+    PROVIDER_LABEL = "这个模型服务"
+
+    # 各家不同的默认值（子类覆盖）
+    DEFAULT_BASE_URL = ""
+    DEFAULT_MODEL = ""
+    DEFAULT_API_KEY_ENV = "OPENAI_API_KEY"
+    DEFAULT_BASE_URL_ENV = "OPENAI_BASE_URL"
+    DEFAULT_MODEL_ENV = "OPENAI_MODEL"
+    DEFAULT_CHAT_PATH = "/chat/completions"
+    DEFAULT_TIMEOUT = 60.0
+
+    # 模型名是不是必须由用户显式指定（没有合理的默认值）
+    requires_explicit_model = False
+
+    def __init__(
+        self,
+        provider_config: Optional[Mapping[str, Any]] = None,
+        default_model: str = "",
+        http_post: Optional[HTTPPost] = None,
+    ):
+        """
+        参数：
+            provider_config: config.yaml 里该 provider 那一段
+            default_model:   兜底模型名
+            http_post:       注入自定义 HTTP 实现（测试用）
+        """
+        super().__init__(provider_config=provider_config, default_model=default_model)
+
+        cfg = self.config
+
+        # --- Key：只从环境变量读，绝不从配置文件读 ---
+        # 存的是「环境变量的名字」，不是 key 本身。
+        self.api_key_env = str(cfg.get("api_key_env") or self.DEFAULT_API_KEY_ENV)
+        self._api_key = os.environ.get(self.api_key_env, "").strip()
+
+        # --- base_url：环境变量 > 配置 > 类默认值 ---
+        self.base_url_env = str(cfg.get("base_url_env") or self.DEFAULT_BASE_URL_ENV)
+        self.base_url = (
+            os.environ.get(self.base_url_env, "").strip()
+            or str(cfg.get("base_url") or self.DEFAULT_BASE_URL)
+        ).rstrip("/")
+
+        # --- model：环境变量 > 配置 > 构造参数 > 类默认值 ---
+        self.model_env = str(cfg.get("model_env") or self.DEFAULT_MODEL_ENV)
+        env_model = os.environ.get(self.model_env, "").strip()
+        if env_model:
+            self.default_model = env_model
+        elif not self.default_model:
+            self.default_model = self.DEFAULT_MODEL
+
+        # --- 其它 ---
+        # chat_path 做成可配置：万一某家的路径不一样，
+        # 改配置就行，不用改代码。
+        self.chat_path = str(cfg.get("chat_path") or self.DEFAULT_CHAT_PATH)
+        self.timeout = float(cfg.get("timeout_seconds") or self.DEFAULT_TIMEOUT)
+
+        # 请求体里 max_tokens 这个字段的名字。
+        # 为什么要做成可配置？
+        #     因为 OpenAI 新接口推出了 max_completion_tokens，
+        #     有些模型只认新名字。这属于「会变的东西」，不该硬编码。
+        self.max_tokens_field = str(
+            cfg.get("max_tokens_field") or "max_tokens"
+        )
+
+        # 额外塞进请求体的字段（各家的小差异兜底用）
+        extra_body = cfg.get("extra_body")
+        self.extra_body: Dict[str, Any] = (
+            dict(extra_body) if isinstance(extra_body, Mapping) else {}
+        )
+
+        # 可替换的 HTTP 层
+        self._http_post: HTTPPost = http_post or default_http_post
+
+        self.call_count = 0
+        self.error_count = 0
+
+    # ------------------------------------------------------------
+    # 可用性
+    # ------------------------------------------------------------
+    @property
+    def endpoint(self) -> str:
+        """完整的请求地址。"""
+        if not self.base_url:
+            return ""
+        return f"{self.base_url}{self.chat_path}"
+
+    def is_available(self) -> bool:
+        return bool(self._api_key) and bool(self.endpoint) and bool(self.default_model)
+
+    def unavailable_reason(self) -> Optional[str]:
+        """
+        说明为什么不能用。
+
+        【安全提醒】绝对不要把 key 的值打出来。
+        只说「哪个环境变量没设置」就足够了。
+        """
+        if not self._api_key:
+            return self._missing_key_message()
+
+        if not self.default_model:
+            return self._missing_model_message()
+
+        if not self.endpoint:
+            return "base_url 为空"
+
+        return None
+
+    def _missing_key_message(self) -> str:
+        return (
+            f"环境变量 {self.api_key_env} 未设置或为空。\n"
+            f"请复制 .env.example 为 .env，然后填入你的 Key：\n"
+            f"    cp .env.example .env\n"
+            f"    # 编辑 .env，填入 {self.api_key_env}=<你的Key>\n"
+            f"\n"
+            f"（提示里故意不写 Key 的示例前缀 —— "
+            f"否则密钥扫描工具会把提示文案误报成泄露。）"
+        )
+
+    def _missing_model_message(self) -> str:
+        return (
+            f"{self.PROVIDER_LABEL} 没有配置模型名。\n"
+            f"请设置 config/config.yaml 的 llm.providers.{self.name}.model，"
+            f"或环境变量 {self.model_env}。"
+        )
+
+    # ------------------------------------------------------------
+    # 请求构造
+    # ------------------------------------------------------------
+    def build_payload(
+        self,
+        messages: Sequence[Mapping[str, str]],
+        model: str,
+        temperature: float,
+        max_tokens: int,
+        **extra: Any,
+    ) -> Dict[str, Any]:
+        """
+        把统一格式的 messages 变成厂商要的 JSON。
+
+        单独抽成方法，是为了能被测试直接调用 ——
+        不用真的发请求就能验证序列化对不对。
+        """
+        payload: Dict[str, Any] = {
+            "model": model,
+            "messages": [dict(m) for m in messages],
+            "temperature": temperature,
+            self.max_tokens_field: max_tokens,
+            # 明确不开流式：流式会让 usage 出现在最后一个 chunk 里，
+            # 解析复杂得多，而本项目目前不需要。
+            "stream": False,
+        }
+
+        # 配置里的额外字段（各家小差异的兜底）
+        payload.update(self.extra_body)
+        # 调用时传进来的额外字段优先级最高
+        payload.update(extra)
+
+        return payload
+
+    def build_headers(self) -> Dict[str, str]:
+        """构造请求头。Key 只在这里出现，不会进日志。"""
+        return {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "Authorization": f"Bearer {self._api_key}",
+        }
+
+    # ------------------------------------------------------------
+    # 响应解析
+    # ------------------------------------------------------------
+    @staticmethod
+    def _read_usage(
+        raw_usage: Any,
+    ) -> tuple[Optional[int], Optional[int], Optional[int], Dict[str, Any]]:
+        """
+        从 usage 字段里读 token 数。
+
+        返回值：(输入, 输出, 总计, 备注)
+
+        【核心规则】API 没给的字段就返回 None，绝不瞎猜。
+            因为 token 在这个项目里要换钱，
+            把猜测当事实会让账永远对不上。
+
+        唯一允许的「推导」：如果 API 给了输入和输出但没给总计，
+        那总计 = 输入 + 输出。这是精确算术，不是估算。
+        """
+        notes: Dict[str, Any] = {}
+
+        if not isinstance(raw_usage, Mapping):
+            notes["usage_missing"] = True
+            return None, None, None, notes
+
+        def _as_int(value: Any) -> Optional[int]:
+            if value is None or isinstance(value, bool):
+                return None
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return None
+
+        input_tokens = _as_int(raw_usage.get("prompt_tokens"))
+        output_tokens = _as_int(raw_usage.get("completion_tokens"))
+        total_tokens = _as_int(raw_usage.get("total_tokens"))
+
+        if (
+            total_tokens is None
+            and input_tokens is not None
+            and output_tokens is not None
+        ):
+            total_tokens = input_tokens + output_tokens
+            notes["total_derived"] = "total_tokens 由 输入+输出 精确相加得出"
+
+        if input_tokens is None and output_tokens is None and total_tokens is None:
+            notes["usage_missing"] = True
+
+        return input_tokens, output_tokens, total_tokens, notes
+
+    def parse_response(
+        self,
+        result: HTTPResult,
+        model: str,
+        latency_ms: float,
+    ) -> LLMResponse:
+        """
+        把厂商的返回 JSON 转成统一的 LLMResponse。
+
+        这是「厂商适配」第二处，也是最重要的一处。
+        上游（Brain / Agent）永远不会看到厂商的 JSON 结构。
+        """
+        data = result.json()
+
+        if not isinstance(data, Mapping):
+            raise InvalidResponseError(
+                f"返回体顶层必须是对象，实际是 {type(data).__name__}"
+            )
+
+        # --- 有些网关会把错误塞在 HTTP 200 里 ---
+        if "error" in data and not data.get("choices"):
+            raise LLMRequestError(self._describe_api_error(data.get("error")))
+
+        # --- choices ---
+        choices = data.get("choices")
+        if not isinstance(choices, list) or not choices:
+            raise InvalidResponseError(
+                "返回体里没有 choices，或 choices 是空的。\n"
+                f"实际返回的顶层字段：{sorted(data.keys())}"
+            )
+
+        first_choice = choices[0]
+        if not isinstance(first_choice, Mapping):
+            raise InvalidResponseError("choices[0] 不是对象")
+
+        message = first_choice.get("message")
+        if not isinstance(message, Mapping):
+            raise InvalidResponseError("choices[0].message 缺失或不是对象")
+
+        content = message.get("content")
+        if content is None:
+            # 注意：content 是空字符串是合法的（模型可能什么都没说），
+            #       但字段本身缺失说明结构不对。
+            raise InvalidResponseError(
+                "choices[0].message.content 缺失。\n"
+                f"message 里实际有的字段：{sorted(message.keys())}"
+            )
+
+        # --- usage ---
+        input_tokens, output_tokens, total_tokens, notes = self._read_usage(
+            data.get("usage")
+        )
+        token_source = (
+            TOKEN_SOURCE_API if total_tokens is not None else TOKEN_SOURCE_UNKNOWN
+        )
+
+        if notes.get("usage_missing"):
+            notes["warning"] = (
+                "API 没有返回 usage，因此 token 用量标记为 unknown。"
+                "这里【没有】用估算值顶替 —— 请以 None 为准。"
+            )
+
+        return LLMResponse(
+            content=str(content),
+            provider=self.name,
+            model=str(data.get("model") or model),
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total_tokens,
+            token_source=token_source,
+            latency_ms=latency_ms,
+            raw_response=dict(data),
+            finish_reason=(
+                str(first_choice.get("finish_reason"))
+                if first_choice.get("finish_reason") is not None
+                else None
+            ),
+            simulated=False,
+            metadata={
+                "endpoint": self.endpoint,
+                "usage_notes": notes,
+            },
+        )
+
+    # ------------------------------------------------------------
+    # 错误翻译
+    # ------------------------------------------------------------
+    @staticmethod
+    def _describe_api_error(error: Any) -> str:
+        """把返回体里的 error 字段拼成一句人话。"""
+        if isinstance(error, Mapping):
+            message = error.get("message") or error.get("msg") or str(dict(error))
+            code = error.get("code") or error.get("type")
+            return f"API 返回错误：{message}" + (f"（code={code}）" if code else "")
+        return f"API 返回错误：{error}"
+
+    def _extra_status_hint(self, status: int) -> str:
+        """
+        子类可以覆盖这个方法，给某个状态码补充「人话解释」。
+
+        为什么需要这个钩子？
+            同一个状态码在不同厂商那里含义不完全一样，
+            而且对用户来说「下一步该做什么」也不一样。
+
+            比如 404：
+                DeepSeek  → 请求路径不对（多半是我们自己的问题）
+                豆包      → 推理接入点不存在（多半是用户 model 填错了）
+
+            后者要给出「去哪儿找正确的接入点 ID」，前者不用。
+        """
+        return ""
+
+    def _scrub(self, text: str) -> str:
+        """
+        把文本里的 API Key 抹掉。
+
+        【为什么必须有这个】
+
+            错误信息会被写进日志、写进数据库、甚至显示给用户。
+            如果某一天某个环节不小心把请求头或 key 拼进了消息里，
+            没有这一层，key 就会永久留在日志和 llm_calls 表里。
+
+            这是防御性的 —— 正常情况下 key 根本不会出现在错误文本里。
+            但泄露一次就够麻烦了，宁可多这一道。
+        """
+        if not text:
+            return text
+
+        scrubbed = text
+
+        if self._api_key:
+            scrubbed = scrubbed.replace(self._api_key, "***REDACTED***")
+            scrubbed = scrubbed.replace(
+                f"Bearer {self._api_key}", "Bearer ***REDACTED***"
+            )
+
+        return scrubbed
+
+    def _raise_for_status(self, result: HTTPResult) -> None:
+        """把 HTTP 错误码翻译成项目统一的异常体系。"""
+        status = result.status
+        snippet = self._scrub((result.body or "")[:300].replace("\n", " "))
+        extra = self._extra_status_hint(status)
+        label = self.PROVIDER_LABEL
+        tail = f"\n{extra}" if extra else ""
+
+        if status in (401, 403):
+            raise AuthenticationError(
+                f"{label} 鉴权失败（HTTP {status}）。\n"
+                f"通常是这几种原因：\n"
+                f"  · {self.api_key_env} 的值不对或已失效\n"
+                f"  · Key 前后有空格或换行\n"
+                f"  · Key 被撤销了\n"
+                f"重试没有意义，请检查环境变量。{tail}\n"
+                f"返回体：{snippet}"
+            )
+
+        if status == 429:
+            raise RateLimitError(
+                f"{label} 限流或配额用尽（HTTP 429）。\n"
+                f"稍等一会儿再试通常有效。{tail}\n"
+                f"返回体：{snippet}"
+            )
+
+        if status == 402:
+            raise LLMHTTPError(
+                f"{label} 账户余额不足（HTTP 402）。\n"
+                f"请去对应平台充值。{tail}\n"
+                f"返回体：{snippet}",
+                status_code=status,
+            )
+
+        if status == 400:
+            raise LLMHTTPError(
+                f"请求被 {label} 拒绝（HTTP 400）。\n"
+                f"常见原因：上下文超长、参数非法、模型名不对。{tail}\n"
+                f"返回体：{snippet}",
+                status_code=status,
+            )
+
+        if status == 404:
+            raise LLMHTTPError(
+                f"{label} 说找不到资源（HTTP 404）。\n"
+                f"常见原因：模型名/接入点 ID 写错、base_url 不对。{tail}\n"
+                f"返回体：{snippet}",
+                status_code=status,
+            )
+
+        if 500 <= status < 600:
+            raise LLMHTTPError(
+                f"{label} 服务端错误（HTTP {status}）。\n"
+                f"这是对方的问题，稍后重试通常有效。{tail}\n"
+                f"返回体：{snippet}",
+                status_code=status,
+            )
+
+        raise LLMHTTPError(
+            f"{label} 返回了意外的状态码（HTTP {status}）。{tail}\n"
+            f"返回体：{snippet}",
+            status_code=status,
+        )
+
+    # ------------------------------------------------------------
+    # 生成
+    # ------------------------------------------------------------
+    def generate(
+        self,
+        messages: Union[str, Sequence[Message], None] = None,
+        system: Optional[str] = None,
+        model: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 2048,
+        **kwargs: Any,
+    ) -> LLMResponse:
+        """
+        调一次 API，返回统一的 LLMResponse。
+
+        签名和 LLMProvider 基类完全一致 ——
+        所以 Brain 和 Agent 完全不知道这次调用是哪一家。
+        """
+        if not self._api_key:
+            raise AuthenticationError(self.unavailable_reason() or "缺少 API Key")
+
+        resolved_model = self.resolve_model(model)
+        if not resolved_model:
+            raise LLMRequestError(self._missing_model_message())
+
+        normalized = normalize_messages(messages, system=system)
+        payload = self.build_payload(
+            messages=normalized,
+            model=resolved_model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            **kwargs,
+        )
+        headers = self.build_headers()
+
+        started = time.perf_counter()
+        try:
+            result = self._http_post(self.endpoint, payload, headers, self.timeout)
+        except LLMRequestError:
+            self.error_count += 1
+            raise
+        except Exception as exc:  # noqa: BLE001
+            # 任何没预料到的异常也统一进异常体系，
+            # 免得 Agent 层看到 urllib / socket 这种东西。
+            self.error_count += 1
+            raise LLMRequestError(
+                f"调用 {self.PROVIDER_LABEL} 时发生未预期的错误："
+                f"{type(exc).__name__}: {self._scrub(str(exc))}"
+            ) from exc
+
+        latency_ms = (time.perf_counter() - started) * 1000.0
+
+        if not result.ok:
+            self.error_count += 1
+            self._raise_for_status(result)
+
+        try:
+            response = self.parse_response(result, resolved_model, latency_ms)
+        except LLMRequestError:
+            self.error_count += 1
+            raise
+        except Exception as exc:  # noqa: BLE001
+            self.error_count += 1
+            raise InvalidResponseError(
+                f"解析 {self.PROVIDER_LABEL} 返回时出错：{type(exc).__name__}: "
+                f"{self._scrub(str(exc))}"
+            ) from exc
+
+        self.call_count += 1
+        return response
+
+    # ------------------------------------------------------------
+    def describe(self) -> Dict[str, Any]:
+        """
+        自述。
+
+        【安全】这里【只报告 key 是否存在】，绝不报告 key 的内容。
+        """
+        info = super().describe()
+        info.update(
+            {
+                "base_url": self.base_url,
+                "endpoint": self.endpoint,
+                "api_key_env": self.api_key_env,
+                "api_key_configured": bool(self._api_key),
+                "timeout_seconds": self.timeout,
+                "max_tokens_field": self.max_tokens_field,
+                "calls": self.call_count,
+                "errors": self.error_count,
+                "real_http": self._http_post is default_http_post,
+            }
+        )
+        return info

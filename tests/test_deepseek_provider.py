@@ -1003,12 +1003,20 @@ class TestArchitectureAfterRealProvider:
 
     def test_no_provider_branching_anywhere_outside_providers(self):
         """
-        core/ 和 agents/ 里不能出现针对某个 provider 的分支判断。
+        core/ 和 agents/ 里不能出现针对【任何】provider 的分支判断。
 
         允许出现 provider 名字的只有两个地方：
             · llm/ 目录（Provider 自己的实现）
             · tests/ 目录（测试需要点名）
+
+        注意这里检查的是【所有】已知 provider 名字，
+        而不是只有 deepseek —— 否则加了豆包之后，
+        `if provider == "doubao"` 就能溜进 core/ 而没人发现。
         """
+        known_providers = {
+            "mock", "deepseek", "doubao", "grok",
+        }
+
         forbidden_roots = [PROJECT_ROOT / "core", PROJECT_ROOT / "agents"]
 
         for root in forbidden_roots:
@@ -1022,8 +1030,9 @@ class TestArchitectureAfterRealProvider:
                     for comparator in node.comparators:
                         if (isinstance(comparator, ast.Constant)
                                 and isinstance(comparator.value, str)):
-                            assert comparator.value.lower() != "deepseek", (
-                                f"{source.name} 里出现了和 'deepseek' 的比较，"
+                            value = comparator.value.lower()
+                            assert value not in known_providers, (
+                                f"{source.name} 里出现了和 {value!r} 的比较，"
                                 f"这是厂商绑定"
                             )
 
@@ -1044,21 +1053,35 @@ class TestArchitectureAfterRealProvider:
                     f"llm/deepseek.py 导入了 {module} —— Provider 不该碰数据库"
                 )
 
-    def test_deepseek_provider_uses_only_stdlib_for_http(self):
+    def test_llm_layer_uses_only_stdlib_for_http(self):
         """
         真实 HTTP 只用标准库，没有引入 requests / httpx。
 
         这是项目原则：能用标准库就不引第三方库。
+
+        注意：HTTP 实现现在住在 llm/openai_compatible.py
+        （因为豆包 / DeepSeek / Grok 共用同一套形状），
+        所以这条检查要扫整个 llm/ 目录，而不是只看某一个文件 ——
+        否则把代码挪个位置就能绕过检查。
         """
-        source = PROJECT_ROOT / "llm" / "deepseek.py"
-        text = source.read_text(encoding="utf-8")
+        llm_dir = PROJECT_ROOT / "llm"
+        third_party = (
+            "import requests",
+            "import httpx",
+            "from requests",
+            "from httpx",
+        )
 
-        for third_party in ("import requests", "import httpx", "from requests", "from httpx"):
-            assert third_party not in text, (
-                f"llm/deepseek.py 引入了第三方 HTTP 库：{third_party}"
-            )
+        combined = ""
+        for source in sorted(llm_dir.rglob("*.py")):
+            text = source.read_text(encoding="utf-8")
+            combined += text
+            for bad in third_party:
+                assert bad not in text, (
+                    f"{source.name} 引入了第三方 HTTP 库：{bad}"
+                )
 
-        assert "urllib" in text
+        assert "urllib" in combined, "HTTP 实现应该用标准库 urllib"
 
 
 # ============================================================

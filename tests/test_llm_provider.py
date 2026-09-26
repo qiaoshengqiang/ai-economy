@@ -396,13 +396,13 @@ class TestProviderRegistry:
 
     def test_default_registry_declares_future_providers(self):
         """
-        doubao / grok 要「已登记但未实现」，而不是「不存在」。
+        grok 要「已登记但未实现」，而不是「不存在」。
 
-        （deepseek 在 Step 2.5 已经实现，所以不在这份清单里。）
+        （deepseek 和 doubao 都已经实现了，所以不在这份清单里。）
         """
         registry = build_default_registry()
 
-        for name in ("doubao", "grok"):
+        for name in ("grok",):
             assert name in registry.unimplemented
             assert registry.is_known(name)
             assert not registry.is_registered(name)
@@ -425,7 +425,7 @@ class TestProviderRegistry:
 
     def test_unimplemented_provider_raises_not_implemented(self):
         with pytest.raises(ProviderNotImplementedError):
-            build_default_registry().create("doubao", {}, "")
+            build_default_registry().create("grok", {}, "")
 
     def test_unimplemented_error_tells_you_what_to_do(self):
         """
@@ -478,14 +478,14 @@ class TestProviderRegistry:
     def test_register_clears_unimplemented_mark(self):
         """先登记为未实现，后来实现了，就不该再报「未实现」。"""
         registry = build_default_registry()
-        assert "doubao" in registry.unimplemented
+        assert "grok" in registry.unimplemented
 
-        registry.register("doubao", MockProvider)
+        registry.register("grok", MockProvider)
 
-        assert "doubao" in registry.implemented
-        assert "doubao" not in registry.unimplemented
+        assert "grok" in registry.implemented
+        assert "grok" not in registry.unimplemented
         # 真的能造出来了
-        assert isinstance(registry.create("doubao", {}, ""), MockProvider)
+        assert isinstance(registry.create("grok", {}, ""), MockProvider)
 
     def test_create_rejects_non_provider(self):
         registry = ProviderRegistry()
@@ -576,7 +576,7 @@ class TestLLMRouter:
     def test_unimplemented_error_reaches_caller(self, config):
         """走 Router 调用未实现的 provider，要抛出正确的异常类型。"""
         with pytest.raises(ProviderNotImplementedError):
-            LLMRouter(config).generate(provider="doubao", messages="hi")
+            LLMRouter(config).generate(provider="grok", messages="hi")
 
     def test_available_providers(self, config):
         """
@@ -590,8 +590,8 @@ class TestLLMRouter:
 
         assert "mock" in available
         assert "deepseek" in available
+        assert "doubao" in available
         # 未实现的不能出现在可用列表里
-        assert "doubao" not in available
         assert "grok" not in available
 
     def test_describe(self, config):
@@ -600,7 +600,8 @@ class TestLLMRouter:
         assert info["default_provider"] == "mock"
         assert "mock" in info["implemented"]
         assert "deepseek" in info["implemented"]
-        assert "doubao" in info["unimplemented"]
+        assert "doubao" in info["implemented"]
+        assert "grok" in info["unimplemented"]
 
     def test_passes_all_parameters_through(self, config):
         """system / temperature / max_tokens / model 都要真的传下去。"""
@@ -810,11 +811,12 @@ class TestArchitectureGuards:
         已实现的 provider 清单。
 
         Step 2 时只有 mock；
-        Step 2.5 接入了真实的 deepseek。
+        Step 2.5 接入了真实的 deepseek；
+        之后又接入了豆包。
         以后每接一家，这里就多一项。
         """
         registry = build_default_registry()
-        assert registry.implemented == ["deepseek", "mock"]
+        assert registry.implemented == ["deepseek", "doubao", "mock"]
 
     def test_no_vendor_names_in_agents_after_real_provider(self):
         """

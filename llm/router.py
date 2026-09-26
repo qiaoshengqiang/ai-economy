@@ -229,9 +229,9 @@ def build_default_registry() -> ProviderRegistry:
     """
     建好系统自带的注册表。
 
-    目前 mock 和 deepseek 是真正实现的，
-    doubao / grok 先登记为「已知但未实现」，
-    这样用户一旦在配置里写它们，会得到一条
+    目前 mock / deepseek / doubao 是真正实现的，
+    grok 先登记为「已知但未实现」，
+    这样用户一旦在配置里写它，会得到一条
     明确告诉他「去建哪个文件」的提示，而不是一句「找不到」。
 
     未实现提示的写法，就是「怎么加一个厂商」的说明书。
@@ -255,6 +255,12 @@ def build_default_registry() -> ProviderRegistry:
 
     registry.register("deepseek", DeepSeekProvider)
 
+    # 豆包走同一套 OpenAI 兼容基类，所以注册方式一模一样。
+    # 注意它【没有默认模型】—— 必须先配好模型名才能用。
+    from llm.doubao import DoubaoProvider
+
+    registry.register("doubao", DoubaoProvider)
+
     # ---- 已登记，未实现 ----
     #
     # 每个提示都精确到「建哪个文件、写什么类、去哪里注册」，
@@ -272,7 +278,6 @@ def build_default_registry() -> ProviderRegistry:
     )
 
     for name, cls_name in (
-        ("doubao", "DoubaoProvider"),
         ("grok", "GrokProvider"),
     ):
         registry.register_unimplemented(

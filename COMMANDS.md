@@ -295,10 +295,10 @@ LLM Providers
 
   可直接使用
     deepseek   启用   model=deepseek-chat
+    doubao     启用   model=doubao-seed-evolving-latest-version
     mock       启用   model=mock-model-v1  ← 当前默认
 
   已登记但尚未实现
-    doubao     需要新建 llm/doubao.py
     grok       需要新建 llm/grok.py
 
 ----------------------------------------------------------
@@ -308,7 +308,7 @@ LLM Providers
 ```
 
 注意 `可直接使用` 只表示「代码已实现、配置没关掉」。
-DeepSeek 能不能真的调通，还取决于你有没有配 `DEEPSEEK_API_KEY`。
+能不能真的调通，还取决于你有没有配对应的 API Key 和模型名。
 
 ### 查看模型的调用记录
 
@@ -424,9 +424,92 @@ Token usage
 重试没有意义，请检查环境变量。
 ```
 
-### 换成 Doubao / Grok？
+### 用真实的豆包
 
-这两个**还没实现**。改了会得到明确的「怎么做」提示：
+**第一步：配 Key 和模型名**
+
+```bash
+cp .env.example .env
+open -e .env
+```
+
+豆包要填**两项**（`DOUBAO_API_KEY` 和 `DOUBAO_MODEL`），因为豆包没有固定模型名。
+
+**`DOUBAO_MODEL` 有两种写法，必须二选一：**
+
+| 写法 | 形态 | 说明 |
+|---|---|---|
+| 模型名称（推荐） | `doubao-seed-1-6-250615` | 直接用，无需创建接入点 |
+| 推理接入点 ID | `ep-2024xxxxxxxxx-xxxxx` | 需要先在火山方舟控制台创建并部署 |
+
+在火山方舟控制台的「模型广场」能看到当前可用的模型名。
+
+**第二步：调用**
+
+```bash
+./dev.sh ask "你好" --provider doubao
+./dev.sh demo --provider doubao
+./dev.sh test-real doubao          # 跑完整的真实集成测试
+```
+
+**没填模型名时的提示：**
+
+```
+模型调用失败
+  豆包（火山方舟） 没有配置模型。
+
+豆包需要你指定以下两种之一：
+
+  ① 模型名称（推荐，直接用）
+     形如 doubao-seed-1-6-250615、doubao-1-5-pro-32k-250115
+     在火山方舟控制台的「模型广场」可以看到当前可用的模型名。
+
+  ② 推理接入点 ID（较老的方式）
+     形如 ep-2024xxxxxxxxx-xxxxx
+     需要先在控制台「在线推理」里创建接入点，然后复制它的 ID。
+
+填在哪里（二选一即可）：
+  · 环境变量 DOUBAO_MODEL
+  · 或 config/config.yaml 的 llm.providers.doubao.model
+```
+
+#### ⚠️ 豆包的两个坑（都是实测踩到的）
+
+**坑 1：某些模型会「静默忽略」`max_tokens`**
+
+```
+传 max_tokens=16  →  实际输出 2586 tokens（finish_reason=length）
+```
+
+两个解法，都是改配置、不用改代码：
+
+```yaml
+# config/config.yaml → llm.providers.doubao
+# 解法 A：换成新字段名
+max_tokens_field: "max_completion_tokens"
+
+# 解法 B：关掉思考
+extra_body:
+  thinking:
+    type: disabled
+```
+
+> `max_tokens` 和 `max_completion_tokens` 不能同时传，否则 400。
+
+**坑 2：思考的代价极大**
+
+同一句问题（「请用大约三百字介绍一下人工智能的发展历史」）：
+
+| | 输出 tokens | 可见字数 | 耗时 |
+|---|---|---|---|
+| 带思考（默认） | **1913** | 90 字 | **41.1 秒** |
+| 关掉思考 | **64** | 96 字 | 1.8 秒 |
+
+**30 倍 token、22 倍延迟，答案几乎一样。** 想省钱就关掉思考。
+
+### 换成 Grok？
+
+**还没实现。** 改了会得到明确的「怎么做」提示：
 
 ```
 模型调用被拒绝
@@ -434,21 +517,28 @@ Token usage
   provider 'grok' 还没有实现。
 怎么做：
   1. 新建 llm/grok.py
-  2. 写一个继承 LLMProvider 的 GrokProvider，实现 generate()
+  2. 写一个继承 OpenAICompatibleProvider 的 GrokProvider
   3. 在 llm/router.py 的 build_default_registry() 里注册它
-  提示：照抄 llm/deepseek.py 就行。它已经把这四件事
-        示范清楚了：可替换的 HTTP 层、请求构造、
-        响应解析、错误翻译。
+  提示：照抄 llm/doubao.py 就行 —— 它只有 153 行，
+        因为 HTTP / 解析 / 错误翻译都在共用基类里。
 ```
 
 **加一家新厂商只需要三步**，Agent / Brain / Economy 全都不用动。
+
+参考实现的行数对比：
+
+| 文件 | 行数 | 内容 |
+|---|---|---|
+| `llm/openai_compatible.py` | 704 | 共用：HTTP / 请求构造 / 响应解析 / 错误翻译 |
+| `llm/deepseek.py` | 84 | 只有 DeepSeek 的身份 |
+| `llm/doubao.py` | 153 | 只有豆包的身份 |
 
 ---
 
 ## 4. 跑测试
 
 ```bash
-# 全部测试（314 个，不含真实 API 测试）
+# 全部测试（422 个，不含真实 API 测试）
 ./dev.sh test
 
 # 详细输出，显示每个测试的名字
@@ -483,11 +573,13 @@ Token usage
 ### 真实 API 测试
 
 ```bash
-./dev.sh test-real deepseek
+./dev.sh test-real deepseek     # 只跑 DeepSeek
+./dev.sh test-real doubao       # 只跑豆包
+./dev.sh test-real all          # 两家都跑
 ```
 
-- **有 Key** → 真的调用 `api.deepseek.com`，验证真实 usage、真实延迟、整条 Agent 链路
-- **没 Key** → 显示 `SKIPPED [1] Skipped: DEEPSEEK_API_KEY not configured`，**不会失败**
+- **有 Key** → 真的调用对应 API，验证真实 usage、真实延迟、整条 Agent 链路
+- **没 Key** → 该 provider 的用例被 skip，**不会失败**（另一个 provider 照跑）
 
 它验证的是假 HTTP 层验证不了的东西：
 
@@ -511,9 +603,11 @@ Token usage
 | `tests/test_llm_provider.py` | LLM 契约 / MockProvider / 注册表 / Router / 架构守卫 | 72 |
 | `tests/test_brain.py` | Brain、Agent 接入、调用记录 | 34 |
 | `tests/test_deepseek_provider.py` | DeepSeek 请求序列化 / 响应解析 / 错误翻译 / Key 安全 | 72 |
-| | **合计** | **314** |
+| `tests/test_doubao_provider.py` | 豆包特有：模型名两种写法 / 404 / 401 / 429 的含义 | 28 |
+| `tests/test_provider_contract.py` | 两家共用的契约（同一批断言参数化跑两遍） | 80 |
+| | **合计** | **422** |
 
-另有 `tests/test_real_api.py`（18 项）需要真实 API Key，
+另有 `tests/test_real_api.py`（30 项）需要真实 API Key，
 默认不跑，见下面的「真实 API 测试」。
 
 > 想看每个测试到底测什么，直接打开 `tests/` 目录里的文件 —— 每个测试都有中文注释。

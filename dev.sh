@@ -17,6 +17,8 @@
 #   ./dev.sh doctor        检查环境是否正常
 #
 #   ./dev.sh test-real deepseek     真实调用 DeepSeek API（需要 Key，会花钱）
+#   ./dev.sh test-real doubao       真实调用豆包 API
+#   ./dev.sh test-real all          两家的真实测试都跑
 #
 #   ---- 下面这些直接透传给 main.py ----
 #   ./dev.sh demo                        Step 2 完整 LLM 链路演示
@@ -72,18 +74,24 @@ case "$COMMAND" in
         echo
 
         case "$TARGET" in
-            deepseek)
-                if [ -z "${DEEPSEEK_API_KEY:-}" ]; then
-                    # .env 里可能配了，交给 python 那边读
-                    echo "  环境变量 DEEPSEEK_API_KEY 当前未设置；"
+            deepseek|doubao)
+                # Key 优先从进程环境拿；没有的话 python 那边会读 .env
+                KEY_VAR="$(echo "$TARGET" | tr '[:lower:]' '[:upper:]')_API_KEY"
+                if [ -z "$(eval echo \"\${$KEY_VAR:-}\")" ]; then
+                    echo "  环境变量 $KEY_VAR 当前未设置；"
                     echo "  如果 .env 里配了，下面的测试仍然能跑。"
                     echo
                 fi
+                # -k 只选中该 provider 的参数化用例
+                "$VENV_PYTHON" -m pytest tests/test_real_api.py -m real_api \
+                    -v -rs -k "$TARGET" "$@"
+                ;;
+            all)
                 "$VENV_PYTHON" -m pytest tests/test_real_api.py -m real_api -v -rs "$@"
                 ;;
             *)
                 echo "  ❌ 不认识的目标：$TARGET"
-                echo "     目前只支持：deepseek"
+                echo "     支持：deepseek / doubao / all"
                 exit 2
                 ;;
         esac

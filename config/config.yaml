@@ -81,9 +81,51 @@ llm:
       base_url_env: "DOUBAO_BASE_URL"
       model_env: "DOUBAO_MODEL"
       base_url: "https://ark.cn-beijing.volces.com/api/v3"
-      # 豆包这里填的是「推理接入点 ID」，形如 ep-2024xxxxxx-xxxxx
+
+      # 豆包必须显式指定模型，没有合理的默认值。
+      # 两种写法（二选一）：
+      #   ① 模型名称（推荐）：doubao-seed-1-6-250615
+      #   ② 推理接入点 ID：ep-2024xxxxxxxxx-xxxxx
+      # 一般填在 .env 的 DOUBAO_MODEL 里，不用改这里。
       model: ""
+
       timeout_seconds: 60
+
+      # ----------------------------------------------------------
+      # 下面两项是「逃生舱」，平时不用动。
+      # 但豆包的某些模型（尤其是带思考的）【真的会用到】。
+      # ----------------------------------------------------------
+
+      # max_tokens_field：请求体里「最大输出长度」的字段名。
+      #
+      # 【实测发现 / 2025-09】
+      #   某些豆包模型会【忽略】请求里的 max_tokens：
+      #       传 max_tokens=16，实际输出 2586 tokens
+      #   换成 max_completion_tokens 就正常了（输出 16）。
+      #
+      #   注意两个字段不能同时传，否则报 400：
+      #       "max_tokens and max_completion_tokens cannot be set at the same time"
+      #
+      #   所以这里改成 "max_completion_tokens" 即可，无需改代码。
+      max_tokens_field: "max_tokens"
+
+      # extra_body：额外塞进请求体的字段。
+      #
+      # 【实测发现 / 2025-09】这是本配置项最有价值的用法 ——
+      #
+      #   同一个问题，带思考 vs 不带思考：
+      #       带思考（默认）:  输出 2586 tokens，可见内容 27 字
+      #       关掉思考:        输出  16 tokens，可见内容 27 字
+      #
+      #   同样的答案，成本差 160 倍。
+      #   对 AI Economy 这个项目来说，这就是「智力成本」最真实的例子 ——
+      #   它和你能看到的输出完全不成比例。
+      #
+      #   想省钱就打开下面这行：
+      #
+      # extra_body:
+      #   thinking:
+      #     type: disabled
 
     grok:
       enabled: true

@@ -464,7 +464,16 @@ def cmd_providers(runtime: Runtime, args: argparse.Namespace) -> int:
     if info["implemented"]:
         for name in info["implemented"]:
             enabled = "启用" if runtime.router.is_enabled(name) else "已关闭"
-            model = runtime.router.provider_model(name) or "(无默认模型)"
+
+            # 注意：这里要问 provider【实例】拿模型名，而不是直接读 config。
+            # 因为模型名可能来自 .env（环境变量优先级高于配置文件），
+            # 只读 config 会显示成 "(无默认模型)"，误导人以为没配。
+            try:
+                model = runtime.router.get_provider(name).default_model
+            except Exception:  # noqa: BLE001 - 显示用，不该因此崩掉
+                model = ""
+
+            model = model or "(未配置模型)"
             mark = "  ← 当前默认" if name == info["default_provider"] else ""
             print(f"    {name:<10} {enabled:<4} model={model}{mark}")
     else:

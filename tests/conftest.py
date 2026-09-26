@@ -34,6 +34,64 @@ from storage.database import create_memory_database  # noqa: E402
 
 
 # ============================================================
+# 与用户本机的 .env 隔离（自动应用）
+# ============================================================
+# 【为什么需要这个】
+#
+#     项目会在 load_global_config() 时读取 .env 并写入 os.environ。
+#     这在运行时是想要的行为 —— 但在测试里是个陷阱：
+#
+#         你本机 .env 里写了 DEEPSEEK_MODEL=某个值，
+#         于是「环境变量覆盖配置」这条规则被激活，
+#         某些断言「配置值应该生效」的测试就会莫名其妙地失败。
+#
+#     更糟的是它【时快时慢】：.env 存在就失败，删掉就通过。
+#     这种依赖用户本机状态的测试是假信号 ——
+#     它测的不是代码对不对，而是你的 .env 长什么样。
+#
+# 【怎么隔离】
+#
+#     1. 把 core.config.ENV_FILE 指到一个不存在的路径
+#        → load_env_file() 什么都不做
+#     2. 清掉已经进入进程环境的相关变量
+#
+#     real_api 测试例外 —— 它们【就是要】用你的真实 .env。
+PROVIDER_ENV_VARS = (
+    "DEEPSEEK_API_KEY",
+    "DEEPSEEK_BASE_URL",
+    "DEEPSEEK_MODEL",
+    "DOUBAO_API_KEY",
+    "DOUBAO_BASE_URL",
+    "DOUBAO_MODEL",
+    "GROK_API_KEY",
+    "GROK_BASE_URL",
+    "GROK_MODEL",
+    "AI_ECONOMY_DB_PATH",
+    "AI_ECONOMY_LOG_LEVEL",
+)
+
+
+@pytest.fixture(autouse=True)
+def isolate_from_user_dotenv(request, monkeypatch):
+    """
+    让单元测试不读用户本机的 .env。
+
+    只对 real_api 测试放行 —— 那些测试的目的就是验证真实 API。
+    """
+    if request.node.get_closest_marker("real_api"):
+        return
+
+    # 指向一个不可能存在的文件，于是 load_env_file() 直接返回
+    monkeypatch.setattr(
+        "core.config.ENV_FILE",
+        Path("/nonexistent/dsh-tests-have-no-dotenv"),
+    )
+
+    for name in PROVIDER_ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
+
+
+# ============================================================
 # 基础夹具
 # ============================================================
 @pytest.fixture
@@ -46,7 +104,7 @@ def db():
 
 @pytest.fixture
 def config() -> Config:
-    """真实读取 config/config.yaml。"""
+    """真实读取 config/config.yaml（但不受用户 .env 影响）。"""
     return load_global_config()
 
 

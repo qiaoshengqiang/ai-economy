@@ -150,7 +150,7 @@ LLM 只能**提出意图**，永远不能**直接改账**。
 - [x] SQLite 数据库（4 张表）
 - [x] 启动横幅
 - [x] **命令行经济操作**（转账 / 余额 / 流水 / 对账）
-- [x] 314 个 pytest 测试全绿（另有 18 个真实 API 测试单独跑）
+- [x] 422 个 pytest 测试全绿（另有 30 个真实 API 测试单独跑）
 
 **验收标准**（已达成）：
 
@@ -346,6 +346,87 @@ $ ./dev.sh ask "你好" --provider deepseek
 
 **本阶段明确不做**：不接 Doubao / Grok、不做自动选择、不做 fallback、
 不把 token 折算成 AI 币（`cost_ai` 仍是 0 = 还没算）。
+
+### ✅ Step 2.6：豆包 Provider + 共用基类提取（已完成）
+
+**加豆包时发现：DeepSeek / 豆包 / Grok 三家的接口形状完全一样**
+（都是 OpenAI 兼容格式）。所以先把「形状」抽成共用基类，
+再加豆包 —— 而不是把那 647 行复制一份。
+
+| 文件 | 行数 | 职责 |
+|---|---|---|
+| `llm/openai_compatible.py` | 704 | 共用：HTTP / 请求构造 / 响应解析 / 错误翻译 |
+| `llm/deepseek.py` | **84** | 只有 DeepSeek 的身份（从 647 行瘦身） |
+| `llm/doubao.py` | 153 | 只有豆包的身份 |
+
+**加第 N 家的成本 = 一个 100~150 行的文件 + 注册表一行。**
+
+#### 真实调用实测结果（两个 provider 都验证过）
+
+```
+$ ./dev.sh test-real deepseek      14 passed
+$ ./dev.sh test-real doubao        15 passed
+```
+
+**发现 1：豆包的模型名有两种写法，必须显式配置**
+
+豆包没有「固定模型名」，必须二选一：
+
+| 写法 | 形态 | 说明 |
+|---|---|---|
+| 模型名称（推荐） | `doubao-seed-1-6-250615` | 直接用，无需创建接入点 |
+| 推理接入点 ID | `ep-2024xxxxxxxxx-xxxxx` | 需要先在控制台创建并部署 |
+
+所以 `DoubaoProvider` **故意不给默认模型** —— 猜一个只会让人困惑。
+
+**发现 2：某些豆包模型会「静默忽略」max_tokens**
+
+```
+传 max_tokens=16  →  实际输出 2586 tokens（finish_reason=length）
+```
+
+两个可配置的解决方案（都不用改代码）：
+
+| 方案 | 配置 |
+|---|---|
+| 换字段名 | `max_tokens_field: max_completion_tokens` |
+| 关掉思考 | `extra_body: {thinking: {type: disabled}}` |
+
+> 注意 `max_tokens` 和 `max_completion_tokens` 不能同时传，否则 400。
+
+**发现 3（本步骤最重要的经济数据）：思考的成本**
+
+同一句问题，同一个模型，可见答案几乎一样：
+
+| | 输出 tokens | 可见字数 | 耗时 |
+|---|---|---|---|
+| 带思考（默认） | **1913** | 90 字 | **41.1 秒** |
+| 关掉思考 | **64** | 96 字 | 1.8 秒 |
+
+**30 倍 token、22 倍延迟，换来几乎一样的答案。**
+
+这就是这个项目要研究的核心命题落地版：
+**Agent 的智力成本，和它产出的可见结果完全不成比例。**
+普通 Agent 项目看不到这件事（调用是免费的）。
+
+**发现 4：我们的 token 估算在不同厂商之间不可靠**
+
+| Provider | 我们估算 | 真实输入 | 偏差 |
+|---|---|---|---|
+| DeepSeek | 14 | 9 | 我们估高了 1.6 倍（安全方向） |
+| **豆包** | 14 | **51** | **我们估低了 3.7 倍（危险方向）** |
+
+这条数据直接证明了 `token_source` 那个设计的必要性：
+**只有 `api` 来源的 token 才能拿去算钱，`estimated` 只能做粗略预算。**
+
+#### 顺手修掉的一个测试缺陷
+
+加豆包时发现：测试套件会读取用户本机的 `.env`。
+你 `.env` 里写了 `DEEPSEEK_MODEL=...`，环境变量优先级高于配置文件，
+于是「配置生效」类的断言会莫名失败 —— 删掉 `.env` 又通过。
+
+这种「依赖用户本机状态」的测试是假信号。现在 `conftest.py` 加了
+自动夹具，让单元测试与 `.env` 隔离（`real_api` 测试除外，它们就是要用真实 Key）。
 
 ### ⏳ 后续阶段
 
@@ -582,8 +663,10 @@ ai-economy/
 │
 ├── llm/                       ← LLM Provider 系统
 │   ├── base.py                ←   LLMProvider 契约 + LLMResponse + 异常体系
+│   ├── openai_compatible.py   ←   OpenAI 兼容格式的共用基类
 │   ├── mock.py                ←   MockProvider（不需要 Key）
-│   ├── deepseek.py            ←   DeepSeekProvider（真实 HTTP，Step 2.5）
+│   ├── deepseek.py            ←   DeepSeekProvider（84 行）
+│   ├── doubao.py              ←   DoubaoProvider（153 行）
 │   ├── router.py              ←   ProviderRegistry + LLMRouter
 │   └── recorder.py            ←   调用记录（token 用量）
 │
@@ -592,7 +675,7 @@ ai-economy/
 │   ├── database.py            ← SQLite 连接、事务、迁移
 │   └── models.py              ← 表结构定义
 │
-├── tests/                     ← 314 个测试 + 18 个真实 API 测试
+├── tests/                     ← 422 个测试 + 30 个真实 API 测试
 └── data/
     └── economy.db             ← SQLite 数据库（运行产物，不进 git）
 ```
