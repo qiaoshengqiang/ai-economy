@@ -231,6 +231,53 @@ class BaseAgent:
     def has_brain(self) -> bool:
         return self.brain is not None
 
+    def generate(self, messages: Any = None, **kwargs: Any) -> Any:
+        """
+        Agent 思考一次。
+
+        这是 Agent 对外表达「我要用一下智力」的唯一入口。
+        注意它只跟 self.brain 说话，不知道背后是哪家模型：
+
+            agent.generate(messages="帮我分析这个任务")
+                ↓
+            Brain → Router → Provider
+
+        调用成功会顺手记进短期记忆，方便回头 debug
+        「我刚才为什么这么决定」。
+
+        返回值是统一的 LLMResponse（含 token 用量）。
+        为什么不让这里直接返回字符串？
+            因为 token 用量是经济信息，Agent 迟早要拿它算成本。
+            如果这里就把响应拍扁成字符串，那些信息就丢了。
+            只想拿文本的场合，用下面的 think()。
+        """
+        if self.brain is None:
+            raise RuntimeError(
+                f"{self.name} 还没有大脑，无法思考。\n"
+                f"请先用 attach_brain(brain) 给它装一个。"
+            )
+
+        response = self.brain.generate(messages=messages, **kwargs)
+
+        # 记一笔：这次思考的元信息（不含内容，避免记忆膨胀）
+        self.remember(
+            "brain_generate",
+            provider=getattr(response, "provider", None),
+            model=getattr(response, "model", None),
+            total_tokens=getattr(response, "total_tokens", None),
+        )
+
+        return response
+
+    def think(self, prompt: str, **kwargs: Any) -> str:
+        """
+        只想拿到文本时用这个。
+
+        代价是丢掉 token 用量 —— 所以真正要做经济决策时，
+        请直接用 generate()。
+        """
+        return self.generate(messages=prompt, **kwargs).content
+
     # ------------------------------------------------------------
     # 状态变化
     # ------------------------------------------------------------

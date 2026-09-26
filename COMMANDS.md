@@ -56,6 +56,9 @@ python xxx          ❌ 错误 —— 会用到系统 Python，报 "No module na
 # 看两个 Agent 现在各有多少钱
 ./dev.sh balances
 
+# 跑一遍 Step 2 的完整 LLM 链路演示
+./dev.sh demo
+
 # 看系统环境是否正常（出问题时先跑这个）
 ./dev.sh doctor
 ```
@@ -185,10 +188,187 @@ Agent 余额
 
 ---
 
+## 3.5 LLM 命令（Step 2）
+
+### 跑一遍完整链路演示
+
+```bash
+./dev.sh demo
+```
+
+它会告诉你「Agent 到底怎么用到模型的」：
+
+```
+================================
+        AI Economy OS v0.1
+          Step 2 Demo
+================================
+
+调用链
+--------------------------------
+  Agent A
+    ↓  agent.generate(messages=...)
+  Brain
+    ↓  provider = 'mock'（来自配置）
+  Router
+    ↓  按名字查注册表
+  Provider
+    ↓  MockProvider
+  LLMResponse
+
+对话
+--------------------------------
+User:
+  Hello, who are you?
+
+Agent A:
+  Mock response generated for Agent A.
+
+Token usage
+--------------------------------
+  Provider:  mock
+  Model:     mock-model-v1
+  Input:     87
+  Output:    9
+  Total:     96
+  Latency:   0.06 ms
+  Simulated: 是（估算值，不是真实计费数据）
+
+调用记录
+--------------------------------
+  llm_calls 新增: 1 条
+  agent_a 累计: 1 次
+  累计 tokens: 96 (输入 87 / 输出 9)
+
+系统状态
+--------------------------------
+  Agent A 余额: 100 AI（未扣费）
+  账本审计: OK  (货币总量 200 AI)
+  System status: READY
+```
+
+自定义提问、换 Agent：
+
+```bash
+./dev.sh demo --prompt "帮我分析这个任务"
+./dev.sh demo --agent b
+```
+
+### 问一个 Agent 一句话
+
+```bash
+./dev.sh ask "你好"
+./dev.sh ask --agent b "你能写 Python 吗"
+./dev.sh ask --agent a "帮我分析一下这个任务"
+```
+
+输出：
+
+```
+Agent A  [mock/mock-model-v1]
+----------------------------------------------------------
+  你: 你好
+
+  Agent A: Mock response generated for Agent A.
+
+Token usage
+--------------------------------
+  Provider:  mock
+  Model:     mock-model-v1
+  Input:     92
+  Output:    9
+  Total:     101
+
+  累计: 2 次调用, 197 tokens
+```
+
+### 看有哪些模型提供商
+
+```bash
+./dev.sh providers
+```
+
+```
+LLM Providers
+----------------------------------------------------------
+  默认 provider: mock
+
+  可直接使用
+    mock       启用   model=mock-model-v1  ← 当前默认
+
+  已登记但尚未实现
+    deepseek   需要新建 llm/deepseek.py
+    doubao     需要新建 llm/doubao.py
+    grok       需要新建 llm/grok.py
+
+----------------------------------------------------------
+  每个 Agent 当前用的大脑：
+    agent_a    provider=mock       model=mock-model-v1
+    agent_b    provider=mock       model=mock-model-v1
+```
+
+### 查看模型的调用记录
+
+调用记录存在 SQLite 的 `llm_calls` 表里。想直接看：
+
+```bash
+./dev.sh shell
+```
+
+```python
+import sqlite3
+conn = sqlite3.connect("data/economy.db")
+conn.row_factory = sqlite3.Row
+for row in conn.execute(
+    "SELECT agent_id, provider, model, total_tokens, latency_ms, "
+    "simulated, success, created_at FROM llm_calls ORDER BY rowid DESC LIMIT 10"
+):
+    print(dict(row))
+```
+
+或者用现成的 `Recorder`：
+
+```python
+from core.config import load_global_config
+from storage.database import create_database
+from llm import LLMCallRecorder
+
+db = create_database()
+recorder = LLMCallRecorder(db)
+
+print(recorder.summary("agent_a"))   # 汇总 token
+print(recorder.recent("agent_a"))    # 最近几条
+```
+
+### 换成别的模型？
+
+改 `agents/agent_x/config.yaml`：
+
+```yaml
+brain:
+  provider: "mock"     # 改成 deepseek / doubao / grok
+  model: ""            # 留空就用全局注册表里的默认模型
+```
+
+但 **deepseek / doubao / grok 现在还没实现**，所以目前只有 `mock` 能用。
+改成未实现的会得到一条明确的提示：
+
+```
+模型调用被拒绝
+----------------------------------------------
+  LLM provider 'deepseek' 还没有实现。
+怎么做：
+  1. 新建 llm/deepseek.py
+  2. 写一个继承 LLMProvider 的 DeepSeekProvider，实现 generate()
+  3. 在 llm/router.py 的 build_default_registry() 里注册它
+```
+
+---
+
 ## 4. 跑测试
 
 ```bash
-# 全部测试（120 个）
+# 全部测试（239 个）
 ./dev.sh test
 
 # 详细输出，显示每个测试的名字
@@ -223,8 +403,10 @@ Agent 余额
 | `tests/test_economy.py` | 经济系统、隔离、审计、配置 | 32 |
 | `tests/test_transfer.py` | 转账入口与各种拒绝情况 | 27 |
 | `tests/test_startup.py` | 启动流程、重启不重复发钱 | 6 |
-| `tests/test_cli.py` | 命令行命令 | 19 |
-| | **合计** | **120** |
+| `tests/test_cli.py` | 命令行命令 | 34 |
+| `tests/test_llm_provider.py` | LLM 契约 / MockProvider / 注册表 / Router / 架构守卫 | 70 |
+| `tests/test_brain.py` | Brain、Agent 接入、调用记录 | 34 |
+| | **合计** | **239** |
 
 > 想看每个测试到底测什么，直接打开 `tests/` 目录里的文件 —— 每个测试都有中文注释。
 
@@ -343,7 +525,54 @@ Python 3.13.15
 
 ---
 
-### 场景 E：我想改兑换比例
+### 场景 E：我想看 Agent 到底怎么用上模型的
+
+```bash
+./dev.sh demo
+```
+
+它会一步步显示整条链路：
+
+```
+Agent A
+  ↓  agent.generate(messages=...)
+Brain
+  ↓  provider = 'mock'（来自配置）
+Router
+  ↓  按名字查注册表
+Provider
+  ↓  MockProvider
+LLMResponse
+```
+
+然后打印对话内容、token 用量，并确认这次调用**已经记进了数据库**。
+
+想换内容或换 Agent：
+
+```bash
+./dev.sh demo --prompt "帮我分析这个任务"
+./dev.sh demo --agent b
+```
+
+只想随便问一句：
+
+```bash
+./dev.sh ask "你好"
+./dev.sh ask --agent b "你能写 Python 吗"
+```
+
+想看有哪些模型可用：
+
+```bash
+./dev.sh providers
+```
+
+**注意**：现在只有 `mock` 能用。`deepseek` / `doubao` / `grok`
+都显示「需要新建 llm/xxx.py」—— 这是故意的，它们还没实现。
+
+---
+
+### 场景 F：我想改兑换比例
 
 编辑 `config/config.yaml` 第 33 行：
 
@@ -380,7 +609,7 @@ open -e config/config.yaml     # 用文本编辑器打开
 
 ---
 
-### 场景 F：我想改初始余额
+### 场景 G：我想改初始余额
 
 编辑 `config/config.yaml` 第 37 行：
 
@@ -410,7 +639,7 @@ economy:
 
 ---
 
-### 场景 G：改了配置以后，测试会不会报错？
+### 场景 H：改了配置以后，测试会不会报错？
 
 **正常情况下不会。** 测试和你的配置是解耦的 ——
 不管你改 `initial_balance` 还是 `tokens_per_ai_coin`，
@@ -435,11 +664,11 @@ economy:
 
 > 唯一的例外：如果你删掉了 `tokens_per_ai_coin`，或者把它填成
 > `0` / 负数 / 非数字，那属于配置本身不合法，系统会在启动时
-> 明确报错（见场景 E）—— 这不算测试失败。
+> 明确报错（见场景 F）—— 这不算测试失败。
 
 ---
 
-### 场景 H：我把代码改坏了，想确认哪里出问题
+### 场景 I：我把代码改坏了，想确认哪里出问题
 
 ```bash
 ./dev.sh test -x --tb=long     # 第一个失败的测试就停下，显示完整错误
@@ -470,6 +699,9 @@ economy:
 |---|---|
 | （不加命令） | 启动横幅 |
 | `start` | 同上，显式写法 |
+| `demo` | **Step 2** 完整 LLM 链路演示 |
+| `ask <内容>` | **Step 2** 问某个 Agent 一句话 |
+| `providers` | **Step 2** 列出所有 LLM provider |
 | `transfer <付款方> <收款方> <金额>` | 转钱 |
 | `balances` | 看余额 |
 | `ledger` | 看流水 |
@@ -496,6 +728,13 @@ economy:
 |---|---|---|
 | `--agent <Agent>` | 全部 | 只看某个 Agent |
 | `--limit <数字>` | 50 | 最多显示几笔 |
+
+**`ask` / `demo` 的专属参数：**
+
+| 参数 | 默认值 | 作用 |
+|---|---|---|
+| `--agent <Agent>` | `agent_a` | 用哪个 Agent |
+| `--prompt <文字>` | `Hello, who are you?` | 只属于 `demo`，要发的内容 |
 
 ### 退出码（写脚本时用）
 

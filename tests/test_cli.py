@@ -332,3 +332,156 @@ def test_db_flag_after_subcommand(tmp_path):
 
     assert result.returncode == EXIT_OK
     assert db_file.exists(), "--db 写在子命令后面时没有被识别"
+
+
+# ============================================================
+# Step 2：LLM 相关命令
+# ============================================================
+class TestProviderCommands:
+    """
+    这些测试保护你实际会敲的命令。
+
+    功能测试（tests/test_llm_provider.py）证明 LLM 层是对的，
+    但如果你敲的命令跑不起来，那些正确性你也用不上。
+    """
+
+    def test_providers_lists_mock(self, tmp_path):
+        result = run_cli("providers", db_path=tmp_path / "prov.db")
+
+        assert result.returncode == EXIT_OK
+        assert "mock" in result.stdout
+        assert "mock-model-v1" in result.stdout
+
+    def test_providers_shows_unimplemented_ones(self, tmp_path):
+        """未实现的厂商要显示「需要新建哪个文件」，而不是藏起来。"""
+        result = run_cli("providers", db_path=tmp_path / "prov2.db")
+
+        assert "deepseek" in result.stdout
+        assert "llm/deepseek.py" in result.stdout
+        assert "doubao" in result.stdout
+        assert "grok" in result.stdout
+
+    def test_providers_shows_each_agent_brain(self, tmp_path):
+        result = run_cli("providers", db_path=tmp_path / "prov3.db")
+
+        assert "agent_a" in result.stdout
+        assert "agent_b" in result.stdout
+        assert "provider=mock" in result.stdout
+
+    def test_ask_returns_mock_response(self, tmp_path):
+        result = run_cli("ask", "Hello, Agent A.", db_path=tmp_path / "ask.db")
+
+        assert result.returncode == EXIT_OK, result.stdout + result.stderr
+        assert "Mock response generated for Agent A." in result.stdout
+
+    def test_ask_shows_token_usage(self, tmp_path):
+        result = run_cli("ask", "你好", db_path=tmp_path / "ask2.db")
+
+        assert "Token usage" in result.stdout
+        assert "Input:" in result.stdout
+        assert "Output:" in result.stdout
+        assert "Total:" in result.stdout
+
+    def test_ask_marks_simulated(self, tmp_path):
+        result = run_cli("ask", "你好", db_path=tmp_path / "ask3.db")
+        assert "Simulated" in result.stdout
+
+    def test_ask_agent_b(self, tmp_path):
+        result = run_cli(
+            "ask", "--agent", "b", "hi", db_path=tmp_path / "askb.db"
+        )
+
+        assert result.returncode == EXIT_OK
+        assert "Agent B" in result.stdout
+
+    def test_ask_agent_shorthand(self, tmp_path):
+        result = run_cli("ask", "--agent", "a", "hi", db_path=tmp_path / "askc.db")
+
+        assert result.returncode == EXIT_OK
+        assert "Agent A" in result.stdout
+
+    def test_ask_records_to_llm_calls(self, tmp_path):
+        """
+        问一句之后，llm_calls 表里必须有一条记录。
+
+        这是「LLM 调用是经营成本」的原料 ——
+        如果调用没被记下来，以后就没法算钱。
+        """
+        import sqlite3
+
+        db_file = tmp_path / "ask4.db"
+        run_cli("ask", "记录我", db_path=db_file)
+
+        connection = sqlite3.connect(db_file)
+        try:
+            rows = connection.execute(
+                "SELECT agent_id, provider, model, total_tokens, simulated "
+                "FROM llm_calls"
+            ).fetchall()
+        finally:
+            connection.close()
+
+        assert len(rows) == 1
+        agent_id, provider, model, total_tokens, simulated = rows[0]
+        assert agent_id == "agent_a"
+        assert provider == "mock"
+        assert model == "mock-model-v1"
+        assert total_tokens > 0
+        assert simulated == 1
+
+    def test_demo_runs_full_chain(self, tmp_path):
+        result = run_cli("demo", db_path=tmp_path / "demo.db")
+
+        assert result.returncode == EXIT_OK, result.stdout + result.stderr
+        # 链路的每一环都要显示出来
+        assert "Agent A" in result.stdout
+        assert "Brain" in result.stdout
+        assert "Router" in result.stdout
+        assert "MockProvider" in result.stdout
+        assert "LLMResponse" in result.stdout
+        assert "READY" in result.stdout
+
+    def test_demo_shows_conversation(self, tmp_path):
+        result = run_cli("demo", db_path=tmp_path / "demo2.db")
+
+        assert "User:" in result.stdout
+        assert "Mock response generated for Agent A." in result.stdout
+
+    def test_demo_does_not_charge_the_wallet(self, tmp_path):
+        """
+        【本阶段的边界】调用模型暂时不扣钱。
+
+        只记录 token 用量，不连接经济系统 ——
+        那要等 Step 6 的 Cost Calculator。
+        """
+        db_file = tmp_path / "demo3.db"
+        result = run_cli("demo", db_path=db_file)
+
+        assert "未扣费" in result.stdout
+        # 账本审计仍然平衡，说明经济层没被动过
+        assert "账本审计: OK" in result.stdout
+
+    def test_demo_with_custom_prompt(self, tmp_path):
+        result = run_cli(
+            "demo", "--prompt", "自定义问题", db_path=tmp_path / "demo4.db"
+        )
+
+        assert result.returncode == EXIT_OK
+        assert "自定义问题" in result.stdout
+
+    def test_demo_agent_b(self, tmp_path):
+        result = run_cli(
+            "demo", "--agent", "b", db_path=tmp_path / "demo5.db"
+        )
+
+        assert result.returncode == EXIT_OK
+        assert "Agent B" in result.stdout
+
+    def test_repeated_ask_accumulates_records(self, tmp_path):
+        db_file = tmp_path / "multi.db"
+
+        run_cli("ask", "第一次", db_path=db_file)
+        result = run_cli("ask", "第二次", db_path=db_file)
+
+        # 第二次的输出里应该显示累计 2 次
+        assert "累计: 2 次调用" in result.stdout

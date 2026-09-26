@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
 
@@ -50,11 +51,13 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from agents.brain import Brain, BrainSettings                      # noqa: E402
 from core.config import load_global_config                     # noqa: E402
 from core.economy import AgentNotFoundError, Economy, EconomyError  # noqa: E402
 from core.ledger import LedgerError, format_amount              # noqa: E402
 from core.logging_setup import get_logger, setup_logging        # noqa: E402
 from core.paths import ensure_runtime_dirs                      # noqa: E402
+from llm import LLMCallRecorder, LLMRouter, LLMError            # noqa: E402
 
 logger = get_logger(__name__)
 
@@ -65,7 +68,44 @@ DEFAULT_AGENTS = ["agent_a", "agent_b"]
 
 
 # ============================================================
-# 金额格式化
+# 运行时容器
+# ============================================================
+@dataclass
+class Runtime:
+    """
+    把一次运行需要的东西装在一起。
+
+    【为什么要有这个容器】
+
+        程序启动时要组装三样东西：
+
+            Economy   经济系统（钱包、账本）
+            LLMRouter 智力资源路由
+            Recorder  调用记录
+
+        这三样由 main.py（组合根）装配好，再交给各个命令。
+
+        为什么要显式装起来，而不是让 Agent 自己去 new 一个？
+            因为「谁来组装」这件事很重要。
+            Agent 不该知道 Router 是怎么来的、用的哪个 Provider。
+            它只应该拿到一个已经装好的 Brain。
+            组装是组合根的职责 —— 这样以后换 Provider、
+            换记录方式，都只改 main.py 一处。
+    """
+
+    economy: Economy
+    router: LLMRouter
+    recorder: LLMCallRecorder
+
+    def agent(self, agent_id: str):
+        return self.economy.agent(agent_id)
+
+    def close(self) -> None:
+        self.economy.close()
+
+
+# ============================================================
+# 横幅
 # ============================================================
 BANNER_WIDTH = 32
 
@@ -73,6 +113,7 @@ BANNER_WIDTH = 32
 def fmt(value) -> str:
     """格式化金额。统一入口，保证显示风格一致，且永远不会变成科学计数法。"""
     return format_amount(value)
+
 
 
 def print_banner(name: str, version: str) -> None:
@@ -85,10 +126,22 @@ def print_banner(name: str, version: str) -> None:
 
 
 def print_agents(economy: Economy) -> None:
-    """打印每个 Agent 的钱包状况（启动横幅用）。"""
+    """
+    打印每个 Agent 的钱包与大脑状况（启动横幅用）。
+
+    Step 2 新增了 Provider / Model 两行 —— 它们直接来自 Agent 的配置，
+    证明「每个 Agent 可以独立选择用哪个模型」这件事是配得上的。
+    """
     for agent in economy.all_agents():
         print(agent.name)
         print(f"Wallet: {fmt(agent.balance)} {economy.currency}")
+
+        if agent.has_brain:
+            print(f"Provider: {agent.brain.provider}")
+            print(f"Model: {agent.brain.model or '(默认)'}")
+        else:
+            print("Provider: (未装大脑)")
+
         print()
 
 
@@ -122,13 +175,21 @@ def print_status(economy: Economy) -> None:
 # ============================================================
 # 经济系统构建
 # ============================================================
-def build_economy(db_path: Optional[str] = None) -> Economy:
+def build_runtime(db_path: Optional[str] = None) -> Runtime:
     """
-    构建经济系统并创建两个 Agent。
+    组装一次运行的完整环境：经济系统 + LLM 路由 + 调用记录 + 给 Agent 装大脑。
 
-    这个函数被命令行和 pytest 共用，
-    所以它不打印任何东西 —— 打印是命令处理函数的事。
-    这是一个好习惯：让核心逻辑和展示逻辑分开。
+    【这就是「组合根」】
+        注意这个函数的职责：它把各个互相不知道对方存在的部件接起来。
+
+            Economy  不知道 LLM 的存在
+            LLMRouter 不知道 Economy / Agent 的存在
+            Brain     知道 Router，但不知道 Economy
+
+        只有这里同时认识它们。所以「换 Provider」「换记录方式」
+        这类改动只会落在这个函数里，不会污染任何一层。
+
+    注意它不打印任何东西 —— 打印是命令处理函数的事。
     """
     ensure_runtime_dirs()
 
@@ -137,17 +198,49 @@ def build_economy(db_path: Optional[str] = None) -> Economy:
 
     economy = Economy.bootstrap(db_path=db_path, config=config)
 
-    for agent_id in DEFAULT_AGENTS:
-        economy.create_agent(agent_id)
+    # --- LLM 层 ---
+    router = LLMRouter(config)
+    # 记录器需要知道当前的兑换比例，好在每条记录里存下汇率快照。
+    # 注意：这里只【存快照】，不算成本 —— 算成本是 Step 6 的事。
+    recorder = LLMCallRecorder(
+        db=economy.db,
+        tokens_per_ai_coin=economy.tokens_per_ai_coin,
+    )
 
-    return economy
+    # --- 创建 Agent 并给每个装上自己的大脑 ---
+    for agent_id in DEFAULT_AGENTS:
+        agent = economy.create_agent(agent_id)
+
+        # 每个 Agent 的大脑海报来自它自己的 config.yaml，
+        # 所以 A 和 B 可以用不同的 provider，
+        # 而 Agent 的代码里一行厂商名字都不会出现。
+        brain = Brain(
+            router=router,
+            settings=BrainSettings.from_agent_config(agent.config),
+            recorder=recorder,
+        )
+        agent.attach_brain(brain)
+
+    return Runtime(economy=economy, router=router, recorder=recorder)
+
+
+def build_economy(db_path: Optional[str] = None) -> Economy:
+    """
+    向后兼容的入口：只要 Economy。
+
+    Step 1 的测试和外部脚本用的是这个函数，所以保留它。
+    现在它会顺带把大脑也装好 —— 也就是说通过这些测试创建出来的
+    Agent 同样能调用模型，行为和真实运行一致。
+    """
+    return build_runtime(db_path=db_path).economy
 
 
 # ============================================================
 # 命令：start（默认）
 # ============================================================
-def cmd_start(economy: Economy, args: argparse.Namespace) -> int:
+def cmd_start(runtime: Runtime, args: argparse.Namespace) -> int:
     """打印启动横幅。这是不加任何参数时的默认行为。"""
+    economy = runtime.economy
     if getattr(args, "quiet", False):
         for agent in economy.all_agents():
             print(f"{agent.name}: {fmt(agent.balance)} {economy.currency}")
@@ -165,13 +258,14 @@ def cmd_start(economy: Economy, args: argparse.Namespace) -> int:
 # ============================================================
 # 命令：transfer
 # ============================================================
-def cmd_transfer(economy: Economy, args: argparse.Namespace) -> int:
+def cmd_transfer(runtime: Runtime, args: argparse.Namespace) -> int:
     """
     让一个 Agent 向另一个 Agent 转钱。
 
     这是「控制 Agent 花钱」的入口。
     注意它调用的不是钱包，而是 Economy.transfer() —— OS 级校验。
     """
+    economy = runtime.economy
     # 允许用 "a" / "Agent A" / "agent_a" 任意一种写法
     from_id = economy.resolve_agent_id(args.from_agent)
     to_id = economy.resolve_agent_id(args.to_agent)
@@ -237,8 +331,9 @@ def cmd_transfer(economy: Economy, args: argparse.Namespace) -> int:
 # ============================================================
 # 命令：balances
 # ============================================================
-def cmd_balances(economy: Economy, args: argparse.Namespace) -> int:
+def cmd_balances(runtime: Runtime, args: argparse.Namespace) -> int:
     """查看所有 Agent 的余额。"""
+    economy = runtime.economy
     agents = economy.all_agents()
     currency = economy.currency
 
@@ -266,8 +361,9 @@ def cmd_balances(economy: Economy, args: argparse.Namespace) -> int:
 # ============================================================
 # 命令：ledger
 # ============================================================
-def cmd_ledger(economy: Economy, args: argparse.Namespace) -> int:
+def cmd_ledger(runtime: Runtime, args: argparse.Namespace) -> int:
     """查看交易流水。"""
+    economy = runtime.economy
     agent_id = None
     if args.agent:
         agent_id = economy.resolve_agent_id(args.agent)
@@ -312,13 +408,14 @@ def cmd_ledger(economy: Economy, args: argparse.Namespace) -> int:
 # ============================================================
 # 命令：audit
 # ============================================================
-def cmd_audit(economy: Economy, args: argparse.Namespace) -> int:
+def cmd_audit(runtime: Runtime, args: argparse.Namespace) -> int:
     """
     对账：检查「账本里的货币总量」是否对得上。
 
     这是发现经济系统 bug 最重要的工具。
     任何绕过账本直接改余额的代码，都会让这里 FAILED。
     """
+    economy = runtime.economy
     audit = economy.audit()
     currency = economy.currency
 
@@ -343,6 +440,239 @@ def cmd_audit(economy: Economy, args: argparse.Namespace) -> int:
     print("  或者是铸币/转账逻辑有 bug。请立刻检查。")
     print()
     return 1
+
+
+# ============================================================
+# 命令：providers（看 LLM 层现在有什么）
+# ============================================================
+def cmd_providers(runtime: Runtime, args: argparse.Namespace) -> int:
+    """
+    列出所有 LLM provider 的状态。
+
+    这个命令直接体现了注册表的好处：
+    你加一个新厂商，这里的输出会自动多一行，不需要改这段代码。
+    """
+    info = runtime.router.describe()
+
+    print()
+    print("LLM Providers")
+    print("-" * 58)
+    print(f"  默认 provider: {info['default_provider']}")
+    print()
+
+    print("  可直接使用")
+    if info["implemented"]:
+        for name in info["implemented"]:
+            enabled = "启用" if runtime.router.is_enabled(name) else "已关闭"
+            model = runtime.router.provider_model(name) or "(无默认模型)"
+            mark = "  ← 当前默认" if name == info["default_provider"] else ""
+            print(f"    {name:<10} {enabled:<4} model={model}{mark}")
+    else:
+        print("    （无）")
+
+    print()
+    print("  已登记但尚未实现")
+    if info["unimplemented"]:
+        for name in info["unimplemented"]:
+            print(f"    {name:<10} 需要新建 llm/{name}.py")
+    else:
+        print("    （无）")
+
+    print()
+    print("-" * 58)
+    print("  每个 Agent 当前用的大脑：")
+    for agent in runtime.economy.all_agents():
+        if agent.has_brain:
+            brain = agent.brain
+            print(
+                f"    {agent.agent_id:<10} provider={brain.provider:<10} "
+                f"model={brain.model or '(默认)'}"
+            )
+        else:
+            print(f"    {agent.agent_id:<10} (未装大脑)")
+    print()
+
+    return 0
+
+
+# ============================================================
+# 命令：ask（单问一句）
+# ============================================================
+def cmd_ask(runtime: Runtime, args: argparse.Namespace) -> int:
+    """
+    向某个 Agent 问一句话，看它怎么回答。
+
+    这个命令是 Step 2 最直接的成果展示：
+    它走的是 Agent → Brain → Router → Provider 整条链路。
+    """
+    economy = runtime.economy
+    agent_id = economy.resolve_agent_id(args.agent)
+    agent = economy.agent(agent_id)
+
+    if not agent.has_brain:
+        print()
+        print(f"!! {agent.name} 还没有大脑，无法回答 !!")
+        print()
+        return 1
+
+    print()
+    print(f"{agent.name}  [{agent.brain.provider}/{agent.brain.model or '默认'}]")
+    print("-" * 58)
+    print(f"  你: {args.prompt}")
+    print()
+
+    try:
+        response = agent.generate(messages=args.prompt)
+    except LLMError as exc:
+        print("  模型调用失败")
+        print(f"  {exc}")
+        print()
+        return 2
+
+    print(f"  {agent.name}: {response.content}")
+    print()
+
+    print_usage(response)
+
+    # 顺手显示这个 Agent 累计用了多少
+    summary = runtime.recorder.summary(agent_id)
+    print(
+        f"  累计: {summary['calls']} 次调用, "
+        f"{summary['total_tokens']} tokens"
+    )
+    print()
+
+    return 0
+
+
+# ============================================================
+# 命令：demo（Step 2 完整链路演示）
+# ============================================================
+def cmd_demo(runtime: Runtime, args: argparse.Namespace) -> int:
+    """
+    跑一遍 Step 2 的完整链路，把每一环都显示出来。
+
+         User
+          ↓
+        Agent A → Brain → Router → MockProvider
+          ↓
+        LLMResponse（含 token 用量）
+          ↓
+        记进 llm_calls 表
+
+    这个命令存在的意义：
+        证明 Agent【完全不知道】自己在用哪个模型 ——
+        因为它拿到的只有一个 LLMResponse。
+    """
+    economy = runtime.economy
+    agent_id = economy.resolve_agent_id(args.agent)
+    agent = economy.agent(agent_id)
+
+    if not agent.has_brain:
+        print()
+        print(f"!! {agent.name} 还没有大脑 !!")
+        print()
+        return 1
+
+    brain = agent.brain
+    prompt = args.prompt
+
+    banner_name = str(economy.config.get("system.name", "AI Economy OS"))
+    banner_version = str(economy.config.get("system.version", "0.1"))
+
+    print()
+    print("=" * BANNER_WIDTH)
+    print(f"  {banner_name} v{banner_version}".center(BANNER_WIDTH))
+    # 注意：这里用纯 ASCII 做居中。
+    # str.center() 是按【字符数】补空格的，而中文字符在终端里
+    # 占 2 个字符宽，所以含中文的行用 center() 一定会歪。
+    print("Step 2 Demo".center(BANNER_WIDTH))
+    print("=" * BANNER_WIDTH)
+    print()
+
+    # --- 证明 Agent 与厂商解耦 ---
+    print("调用链")
+    print("-" * BANNER_WIDTH)
+    print(f"  {agent.name}")
+    print("    ↓  agent.generate(messages=...)")
+    print("  Brain")
+    print(f"    ↓  provider = {brain.provider!r}（来自配置）")
+    print("  Router")
+    print(f"    ↓  按名字查注册表")
+    print("  Provider")
+    print(f"    ↓  {type(runtime.router.get_provider(brain.provider)).__name__}")
+    print("  LLMResponse")
+    print()
+
+    # --- 真正调用 ---
+    calls_before = runtime.recorder.count(agent_id)
+
+    try:
+        response = agent.generate(messages=prompt)
+    except LLMError as exc:
+        print("!! 模型调用失败 !!")
+        print(f"  {exc}")
+        print()
+        return 2
+
+    print("对话")
+    print("-" * BANNER_WIDTH)
+    print("User:")
+    print(f"  {prompt}")
+    print()
+    print(f"{agent.name}:")
+    print(f"  {response.content}")
+    print()
+
+    print_usage(response)
+
+    # --- 证明记账真的落库了 ---
+    calls_after = runtime.recorder.count(agent_id)
+    summary = runtime.recorder.summary(agent_id)
+
+    print("调用记录")
+    print("-" * BANNER_WIDTH)
+    print(f"  llm_calls 新增: {calls_after - calls_before} 条")
+    print(f"  {agent.agent_id} 累计: {calls_after} 次")
+    print(
+        f"  累计 tokens: {summary['total_tokens']} "
+        f"(输入 {summary['input_tokens']} / 输出 {summary['output_tokens']})"
+    )
+    if summary["simulated_calls"]:
+        print(
+            f"  其中 {summary['simulated_calls']} 次是模拟数据"
+            f"（MockProvider 估算，不是真实计费）"
+        )
+    print()
+
+    # --- 证明经济层没被动过 ---
+    audit = economy.audit()
+    print("系统状态")
+    print("-" * BANNER_WIDTH)
+    print(f"  {agent.name} 余额: {fmt(agent.balance)} {economy.currency}（未扣费）")
+    print(
+        f"  账本审计: {'OK' if audit['balanced'] else 'FAILED'}"
+        f"  (货币总量 {fmt(audit['total_supply'])} {economy.currency})"
+    )
+    print("  System status: READY")
+    print()
+
+    return 0
+
+
+def print_usage(response) -> None:
+    """打印一次调用的 token 用量。"""
+    print("Token usage")
+    print("-" * BANNER_WIDTH)
+    print(f"  Provider:  {response.provider}")
+    print(f"  Model:     {response.model}")
+    print(f"  Input:     {response.input_tokens}")
+    print(f"  Output:    {response.output_tokens}")
+    print(f"  Total:     {response.total_tokens}")
+    print(f"  Latency:   {response.latency_ms:.2f} ms")
+    if response.simulated:
+        print("  Simulated: 是（估算值，不是真实计费数据）")
+    print()
 
 
 # ============================================================
@@ -387,6 +717,9 @@ def build_parser() -> argparse.ArgumentParser:
         epilog="""
 例子:
   python3 main.py                                  启动系统，打印横幅
+  python3 main.py demo                             Step 2 完整链路演示
+  python3 main.py ask "你好"                       问 Agent A 一句话
+  python3 main.py providers                        看有哪些 LLM provider
   python3 main.py transfer agent_a agent_b 20      让 A 付 20 AI 给 B
   python3 main.py transfer a b 20 --reason 定金     简写，带原因
   python3 main.py balances                         查看余额
@@ -471,6 +804,49 @@ def build_parser() -> argparse.ArgumentParser:
         help="对账，检查账本有没有被写坏",
     ).set_defaults(func=cmd_audit)
 
+    # --- providers（Step 2）---
+    subparsers.add_parser(
+        "providers",
+        parents=[shared],
+        help="列出所有 LLM provider 的状态",
+    ).set_defaults(func=cmd_providers)
+
+    # --- ask（Step 2）---
+    ask = subparsers.add_parser(
+        "ask",
+        parents=[shared],
+        help="向某个 Agent 问一句话",
+    )
+    ask.add_argument(
+        "prompt",
+        metavar="内容",
+        help="你要说的话",
+    )
+    ask.add_argument(
+        "--agent",
+        default="agent_a",
+        help="问哪个 Agent（默认 agent_a，可用 a / 'Agent A' 等写法）",
+    )
+    ask.set_defaults(func=cmd_ask)
+
+    # --- demo（Step 2）---
+    demo = subparsers.add_parser(
+        "demo",
+        parents=[shared],
+        help="跑一遍 Step 2 的完整 LLM 调用链路",
+    )
+    demo.add_argument(
+        "--agent",
+        default="agent_a",
+        help="用哪个 Agent 演示（默认 agent_a）",
+    )
+    demo.add_argument(
+        "--prompt",
+        default="Hello, who are you?",
+        help="要发给 Agent 的话",
+    )
+    demo.set_defaults(func=cmd_demo)
+
     return parser
 
 
@@ -489,7 +865,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     db_path = getattr(args, "db", None)
 
     try:
-        economy = build_economy(db_path=db_path)
+        runtime = build_runtime(db_path=db_path)
     except Exception as exc:  # noqa: BLE001
         print()
         print("!! 启动失败 !!")
@@ -501,13 +877,23 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 1
 
     try:
-        return args.func(economy, args)
+        return args.func(runtime, args)
 
     except (AgentNotFoundError, EconomyError, LedgerError) as exc:
         # 这些是「经济规则拒绝了这次操作」，属于预期内的失败，
         # 不是程序 bug。所以要给出清晰、友好的提示，而不是抛堆栈。
         print()
         print("操作被经济系统拒绝")
+        print("-" * 46)
+        print(f"  {exc}")
+        print()
+        return 2
+
+    except LLMError as exc:
+        # 模型层的问题（provider 未实现、配置不对、调用失败）。
+        # 同样属于「可预期的失败」，不该甩堆栈给用户。
+        print()
+        print("模型调用被拒绝")
         print("-" * 46)
         print(f"  {exc}")
         print()
@@ -524,7 +910,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 1
 
     finally:
-        economy.close()
+        runtime.close()
 
 
 if __name__ == "__main__":

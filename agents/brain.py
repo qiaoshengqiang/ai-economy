@@ -1,0 +1,275 @@
+"""
+Brain —— Agent 的智力门面
+============================================================
+
+【Brain 在这个架构里到底是什么】
+
+    它不是模型。它是一个「转接头」。
+
+    Agent 对着 Brain 说：brain.generate(messages=...)
+    Brain 负责：
+        1. 补上这个 Agent 的默认参数（system_prompt / temperature / max_tokens）
+        2. 转交给 Router
+        3. 把这次调用的 token 用量记进账
+        4. 把统一的 LLMResponse 原样交回 Agent
+
+【为什么 Brain 要放在 agents/ 而不是 llm/】
+
+    因为 Brain 是 Agent 的一部分 —— 就像 Identity、Memory、Wallet 一样。
+    llm/ 那个包是【外部资源】（相当于电力公司），
+    Brain 是 Agent 身上「买电、用电」的那个接口。
+
+    分清这一点很重要：
+        Agent 是经济主体（会破产、会赚钱、有声誉）
+        Brain 是它的一个器官
+        Provider 是它花钱买的东西
+
+    所以 Brain 可以碰数据库（记自己的账），
+    而 Provider 绝对不能碰数据库。
+
+【为什么记账放在 Brain，而不是 Router 或 Provider】
+
+    记账需要两个信息：agent_id 和 调用结果。
+
+        Provider  只知道调用结果，不知道是谁调的 → 不行
+        Router    不关心调用方是谁（那样它才能通用）→ 不行
+        Brain     两个都知道                                → ✅
+
+    这样切分之后，Router 和 Provider 都能被单独、干净地测试，
+    不用去 mock 一个数据库。
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any, Dict, Optional, Sequence, Union
+
+from core.logging_setup import get_logger
+from llm.base import LLMResponse, Message
+from llm.recorder import LLMCallRecorder
+from llm.router import LLMRouter
+
+logger = get_logger(__name__)
+
+
+@dataclass
+class BrainSettings:
+    """
+    Brain 的默认参数。
+
+    单独抽出来是为了让「从 Agent 配置构造」这件事有个明确的数据结构，
+    而不是在 Brain.__init__ 里塞八个参数。
+    """
+
+    agent_id: str
+    provider: str = "mock"
+    model: str = ""
+    system_prompt: str = ""
+    temperature: float = 0.7
+    max_tokens: int = 2048
+
+    @classmethod
+    def from_agent_config(cls, agent_config: Any) -> "BrainSettings":
+        """
+        从 AgentConfig 里读出这个 Agent 的大脑设置。
+
+        注意这里只读配置，不 import 任何厂商。
+        provider 只是一个字符串名字，至于这个名字背后
+        是 mock 还是别的什么，Brain 不关心、也不该关心。
+        """
+        return cls(
+            agent_id=str(agent_config.agent_id),
+            provider=str(agent_config.provider),
+            model=str(agent_config.model or ""),
+            system_prompt=str(agent_config.system_prompt or ""),
+            temperature=float(agent_config.temperature),
+            max_tokens=int(agent_config.max_tokens),
+        )
+
+
+class Brain:
+    """
+    Agent 用来调用智力的那个接口。
+
+    用法：
+        brain = Brain(router=router, settings=settings, recorder=recorder)
+
+        response = brain.generate(messages="你好")
+        print(response.content)
+
+        # 只要文本时
+        text = brain.think("你好")
+    """
+
+    def __init__(
+        self,
+        router: LLMRouter,
+        settings: BrainSettings,
+        recorder: Optional[LLMCallRecorder] = None,
+    ):
+        self.router = router
+        self.settings = settings
+        self.recorder = recorder
+
+        # 本 Brain 被用过多少次（调试 / 测试用）
+        self.call_count = 0
+        self.failure_count = 0
+        self.last_response: Optional[LLMResponse] = None
+
+    # ------------------------------------------------------------
+    # 基本属性（都是只读的，方便展示和调试）
+    # ------------------------------------------------------------
+    @property
+    def agent_id(self) -> str:
+        return self.settings.agent_id
+
+    @property
+    def provider(self) -> str:
+        """这个 Agent 主要用哪家。注意这只是个名字，不是代码依赖。"""
+        return self.settings.provider
+
+    @property
+    def model(self) -> str:
+        return self.settings.model
+
+    @property
+    def system_prompt(self) -> str:
+        return self.settings.system_prompt
+
+    # ------------------------------------------------------------
+    # 生成
+    # ------------------------------------------------------------
+    def generate(
+        self,
+        messages: Union[str, Sequence[Message], None] = None,
+        system: Optional[str] = None,
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        record: bool = True,
+        task_id: Optional[str] = None,
+        **kwargs: Any,
+    ) -> LLMResponse:
+        """
+        生成一次回复。
+
+        参数全部可选 —— 不传就用这个 Agent 配置里的默认值。
+
+        record=False 表示这次调用不记账。
+            什么情况下用？比如系统自己发一个「探活」请求，
+            那不是 Agent 的经营行为，不该算在它的成本里。
+
+        失败时会：
+            1. 记一条 success=0 的记录（失败也是重要的经济信息）
+            2. 把异常原样抛出去（不能让 Agent 以为调用成功了）
+        """
+        # --- 用默认值补齐参数 ---
+        # 注意 system 的处理：显式传入的优先，
+        # 没传才用 Agent 自己的 system_prompt。
+        effective_system = system if system is not None else self.system_prompt
+        effective_provider = provider or self.settings.provider
+        effective_model = model if model is not None else (self.settings.model or None)
+        effective_temperature = (
+            self.settings.temperature if temperature is None else temperature
+        )
+        effective_max_tokens = (
+            self.settings.max_tokens if max_tokens is None else max_tokens
+        )
+
+        logger.debug(
+            "%s 的大脑正在思考（provider=%s model=%s）",
+            self.agent_id,
+            effective_provider,
+            effective_model or "(默认)",
+        )
+
+        # --- 调用 ---
+        try:
+            response = self.router.generate(
+                messages=messages,
+                provider=effective_provider,
+                system=effective_system or None,
+                model=effective_model,
+                temperature=effective_temperature,
+                max_tokens=effective_max_tokens,
+                **kwargs,
+            )
+        except Exception as exc:
+            self.failure_count += 1
+
+            if record and self.recorder is not None:
+                # 失败也记一笔。注意这里用的是「请求的」provider/model，
+                # 因为调用根本没成功，拿不到实际使用的模型名。
+                self.recorder.record(
+                    agent_id=self.agent_id,
+                    response=None,
+                    task_id=task_id,
+                    success=False,
+                    error=f"{type(exc).__name__}: {exc}",
+                    provider=effective_provider,
+                    model=effective_model or "",
+                )
+
+            logger.debug(
+                "%s 调用模型失败：%s: %s",
+                self.agent_id,
+                type(exc).__name__,
+                exc,
+            )
+            raise
+
+        # --- 记账 ---
+        self.call_count += 1
+        self.last_response = response
+
+        if record and self.recorder is not None:
+            self.recorder.record(
+                agent_id=self.agent_id,
+                response=response,
+                task_id=task_id,
+                success=True,
+            )
+
+        return response
+
+    # ------------------------------------------------------------
+    # 便捷方法
+    # ------------------------------------------------------------
+    def think(
+        self,
+        prompt: str,
+        system: Optional[str] = None,
+        **kwargs: Any,
+    ) -> str:
+        """
+        只想要文本回复时用这个。
+
+        注意：如果只想拿文本，Agent 会丢掉 token 用量等经济信息。
+        所以在真正要做经济决策的场合，请直接用 generate() 拿完整响应。
+        """
+        response = self.generate(messages=prompt, system=system, **kwargs)
+        return response.content
+
+    # ------------------------------------------------------------
+    def describe(self) -> Dict[str, Any]:
+        """自述。给启动横幅和调试输出用。"""
+        return {
+            "agent_id": self.agent_id,
+            "provider": self.provider,
+            "model": self.model,
+            "temperature": self.settings.temperature,
+            "max_tokens": self.settings.max_tokens,
+            "has_recorder": self.recorder is not None,
+            "calls": self.call_count,
+            "failures": self.failure_count,
+        }
+
+    def __str__(self) -> str:
+        return f"Brain({self.agent_id} → {self.provider}/{self.model or '默认模型'})"
+
+    def __repr__(self) -> str:
+        return (
+            f"Brain(agent_id={self.agent_id!r}, provider={self.provider!r}, "
+            f"model={self.model!r}, calls={self.call_count})"
+        )

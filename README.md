@@ -46,10 +46,35 @@ Agent
              └── future providers
 ```
 
-**代码里的体现**：`agents/base_agent.py` 中不会出现任何厂商名字。
+**代码里的体现**：`agents/` 目录下的代码中不会出现任何厂商名字。
 Agent 只会说 `brain.generate(...)`，至于背后是哪个公司的模型，Agent 不关心。
 
 换来的是：明天 DeepSeek 涨价、或者某个厂商挂了，只改配置，Agent 代码一行不动。
+
+**这条原则由测试强制保证**（`tests/test_llm_provider.py::TestArchitectureGuards`）：
+
+| 守卫 | 检查什么 |
+|---|---|
+| `test_agent_layer_has_no_vendor_names_in_code` | 用 AST 解析 `agents/`，代码里（不含注释）不得出现厂商名 |
+| `test_provider_layer_imports_no_storage` | Provider 不许碰数据库 |
+| `test_router_has_no_if_elif_provider_chain` | Router 里不许有 `if provider == "xxx"` 链 |
+| `test_llm_layer_does_not_import_agents_or_economy` | 依赖方向单向：agents → llm，不能反过来 |
+
+**三层职责的边界**（Step 2 建立）：
+
+```
+Agent    经济主体。会破产、会赚钱、有声誉。
+   ↓
+Brain    Agent 的器官。补默认参数 + 记账。可以碰数据库。
+   ↓
+Router   派发员。谁调的都无所谓，所以它能通用。不知道 agent_id。
+   ↓
+Provider 外部资源。只做一件事：messages → LLMResponse。绝不碰数据库。
+```
+
+为什么记账放在 Brain 而不是 Router 或 Provider？
+因为记账需要 `agent_id` + 调用结果两个信息，**只有 Brain 同时知道**。
+这样切分之后，Router 和 Provider 都能被单独测试，不用 mock 数据库。
 
 ### 2. 余额是算出来的，不是存下来的
 
@@ -125,7 +150,7 @@ LLM 只能**提出意图**，永远不能**直接改账**。
 - [x] SQLite 数据库（4 张表）
 - [x] 启动横幅
 - [x] **命令行经济操作**（转账 / 余额 / 流水 / 对账）
-- [x] 120 个 pytest 测试全绿
+- [x] 239 个 pytest 测试全绿
 
 **验收标准**（已达成）：
 
@@ -211,15 +236,60 @@ System status: READY
 > 这一轮很能说明测试的价值：这三个问题里有两次是**我自己**在
 > 做配置实验时踩出来的，而每次都是测试第一时间发现并报出来的。
 
+### ✅ Step 2：LLM Provider 抽象层（已完成）
+
+**唯一目标：Agent 与具体 LLM 厂商彻底解耦。**
+
+跑通了这条链路：
+
+```
+Agent → Brain → Router → MockProvider → LLMResponse → Agent
+```
+
+新增的四个文件都在 `llm/` 下，加上 `agents/brain.py`。
+
+**验收要点：**
+
+| 要求 | 状态 |
+|---|---|
+| `LLMProvider` 统一接口 | ✅ 抽象基类，签名强制一致 |
+| `LLMResponse` 统一结构 | ✅ content / provider / model / tokens / latency / raw_response |
+| `MockProvider` 不需要 API Key | ✅ 无网络无 Key 也能跑通全链路 |
+| Mock 返回 token 用量 | ✅ 且标记 `simulated=True` |
+| Router + 注册表（非 if/elif） | ✅ 加厂商只改一行注册 |
+| Brain 接入 Agent | ✅ `agent.generate()` → Brain → Router |
+| 调用记录进 SQLite | ✅ 新增 `latency_ms` / `simulated` 列 |
+| **不加一行 Agent 代码就能换厂商** | ✅ 见下面的验证 |
+
+**解耦验证（实测）：**
+
+写一个假想的 DeepSeekProvider，注册后让 agent_b 使用，
+结果 Agent 层代码零改动：
+
+```
+已实现的 provider : ['deepseek', 'mock']
+agent_b 的 provider: deepseek
+解析出的 model     : deepseek-chat
+返回内容           : [假装这是 DeepSeek 的回答]
+llm_calls 记录     : provider=deepseek model=deepseek-chat simulated=0
+
+agents/base_agent.py: ✅ 代码里没有 deepseek
+agents/brain.py     : ✅ 代码里没有 deepseek
+```
+
+**本阶段明确不做的事**（都留给后面）：
+- ❌ 不接真实 DeepSeek / Doubao / Grok API（只登记为「未实现」）
+- ❌ 不做自动模型选择、成本优化路由、自动 fallback
+- ❌ 不算 AI 币成本（只记 token，`cost_ai` 故意留 0 表示「还没算」）
+
 ### ⏳ 后续阶段
 
 | 阶段 | 内容 | 状态 |
 |---|---|---|
-| Step 2 | LLM Provider 系统 + Router + MockProvider | 待开始 |
 | Step 3 | Agent-to-Agent 通信（Message + Transport） | 待开始 |
 | Step 4 | Task / Bid / Contract / Escrow | 待开始 |
 | Step 5 | 完整经济交易 Demo（A 外包给 B，结算） | 待开始 |
-| Step 6 | Cost Calculator、真实模型接入 | 待开始 |
+| Step 6 | Cost Calculator（把 token 用量接到经济系统） | 待开始 |
 
 ---
 
@@ -438,19 +508,25 @@ ai-economy/
 │
 ├── agents/
 │   ├── base_agent.py          ← 经济主体骨架
+│   ├── brain.py               ← Agent 的智力门面（调 Router）
 │   ├── agent_a/
 │   │   ├── config.yaml        ← A 的私有配置
 │   │   ├── workspace/         ← A 的工作产物
 │   │   └── memory/            ← A 的私有记忆
 │   └── agent_b/               ← 同理
 │
-├── llm/                       ← (Step 2) LLM Provider 系统
+├── llm/                       ← LLM Provider 系统（Step 2 已完成）
+│   ├── base.py                ←   LLMProvider 契约 + LLMResponse
+│   ├── mock.py                ←   MockProvider（不需要 Key）
+│   ├── router.py              ←   ProviderRegistry + LLMRouter
+│   └── recorder.py            ←   调用记录（token 用量）
+│
 ├── communication/             ← (Step 3) Agent-to-Agent 通信
 ├── storage/
-│   ├── database.py            ← SQLite 连接、事务
+│   ├── database.py            ← SQLite 连接、事务、迁移
 │   └── models.py              ← 表结构定义
 │
-├── tests/                     ← 120 个测试
+├── tests/                     ← 239 个测试
 └── data/
     └── economy.db             ← SQLite 数据库（运行产物，不进 git）
 ```

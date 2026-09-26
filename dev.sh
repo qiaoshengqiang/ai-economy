@@ -17,6 +17,9 @@
 #   ./dev.sh doctor        检查环境是否正常
 #
 #   ---- 下面这些直接透传给 main.py ----
+#   ./dev.sh demo                        Step 2 完整 LLM 链路演示
+#   ./dev.sh ask "你好"                   问 Agent A 一句话
+#   ./dev.sh providers                   看有哪些 LLM provider
 #   ./dev.sh balances                    查看余额
 #   ./dev.sh transfer agent_a agent_b 20 让 A 付 20 AI 给 B
 #   ./dev.sh ledger                      查看交易流水
@@ -114,6 +117,11 @@ case "$COMMAND" in
         echo "    ./dev.sh shell                 进入交互式 Python"
         echo "    ./dev.sh doctor                检查环境"
         echo
+        echo "LLM（透传给 main.py）："
+        echo "    ./dev.sh demo [--prompt 文字] [--agent a]  Step 2 链路演示"
+        echo "    ./dev.sh ask \"文字\" [--agent b]            问某个 Agent"
+        echo "    ./dev.sh providers                        看 provider 列表"
+        echo
         echo "经济操作（透传给 main.py）："
         echo "    ./dev.sh balances                          查看所有 Agent 余额"
         echo "    ./dev.sh transfer <付款方> <收款方> <金额>   转钱"
@@ -122,6 +130,8 @@ case "$COMMAND" in
         echo
         echo "例子："
         echo "    ./dev.sh test -v                          详细测试输出"
+        echo "    ./dev.sh demo                              完整链路演示"
+        echo "    ./dev.sh ask \"你好\"                        问 Agent A"
         echo "    ./dev.sh transfer agent_a agent_b 20       A 付 20 AI 给 B"
         echo "    ./dev.sh transfer a b 20 --reason 任务定金  简写 + 原因"
         echo "    ./dev.sh run --quiet                      简洁启动输出"

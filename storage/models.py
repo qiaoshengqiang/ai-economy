@@ -167,6 +167,19 @@ SCHEMA_STATEMENTS: Final[tuple[str, ...]] = (
         cost_ai         REAL NOT NULL DEFAULT 0,   -- 折算成 AI 币的成本
         api_cost_usd    REAL NOT NULL DEFAULT 0,   -- 真实美元成本
 
+        -- 这次调用耗时（毫秒）。
+        -- 为什么带单位后缀？因为叫 latency 的话，
+        --     没人知道是秒还是毫秒，1.5 秒当成 1.5 毫秒就是个静默 bug。
+        latency_ms      REAL NOT NULL DEFAULT 0,
+
+        -- 这次调用的 token 数是模拟的还是真实的。
+        -- 为什么必须存？
+        --     MockProvider 返回的是估算值，真实 Provider 返回的是
+        --     API 给的准确值。以后算经济成本时，你必须能一眼分清
+        --     哪些记录是模拟数据、哪些是真花了钱的 ——
+        --     否则拿模拟数据去对真实账单，账永远对不上。
+        simulated       INTEGER NOT NULL DEFAULT 0,
+
         task_id         TEXT,
         success         INTEGER NOT NULL DEFAULT 1,
         error           TEXT,
@@ -178,3 +191,21 @@ SCHEMA_STATEMENTS: Final[tuple[str, ...]] = (
     "CREATE INDEX IF NOT EXISTS idx_llm_calls_agent ON llm_calls (agent_id)",
     "CREATE INDEX IF NOT EXISTS idx_llm_calls_task  ON llm_calls (task_id)",
 )
+
+
+# ============================================================
+# 增量迁移
+# ============================================================
+# 问题：CREATE TABLE IF NOT EXISTS 对【已经存在】的表完全不起作用。
+#       所以如果项目已经跑过、data/economy.db 已经建好了，
+#       光改上面的 DDL 是加不上新列的 —— 你的库会一直缺 latency_ms。
+#
+# 解决：启动时检查列是否存在，缺了才 ALTER TABLE 补上。
+#
+# 格式：表名 -> [(列名, 列定义), ...]
+COLUMN_MIGRATIONS: Final[dict] = {
+    "llm_calls": [
+        ("latency_ms", "REAL NOT NULL DEFAULT 0"),
+        ("simulated", "INTEGER NOT NULL DEFAULT 0"),
+    ],
+}

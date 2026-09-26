@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Iterator, Optional, Union
 
 from core.paths import PROJECT_ROOT
-from storage.models import SCHEMA_STATEMENTS
+from storage.models import COLUMN_MIGRATIONS, SCHEMA_STATEMENTS
 
 
 class Database:
@@ -98,12 +98,67 @@ class Database:
     # ------------------------------------------------------------
     def initialize(self) -> None:
         """
-        创建所有表。可以重复调用（都用了 IF NOT EXISTS）。
+        创建所有表，并补齐老库缺失的列。可以重复调用。
+
+        顺序很重要：
+            1. 先 CREATE TABLE IF NOT EXISTS（新库在这里就建全了）
+            2. 再跑增量迁移（老库在这里补上新加的列）
         """
         conn = self.connect()
         with conn:  # with conn 会自动 commit / rollback
             for statement in SCHEMA_STATEMENTS:
                 conn.execute(statement)
+
+        # 补列必须单独走一步：ALTER TABLE 不能在
+        # CREATE TABLE 的同一批里混着写。
+        self.migrate()
+
+    # ------------------------------------------------------------
+    # 增量迁移
+    # ------------------------------------------------------------
+    def columns_of(self, table: str) -> list:
+        """列出某个表当前的列名。表不存在返回空列表。"""
+        rows = self.fetchall(f"PRAGMA table_info({table})")
+        return [row["name"] for row in rows]
+
+    def migrate(self) -> list:
+        """
+        给已存在的表补上新增的列。
+
+        为什么需要这个？
+            CREATE TABLE IF NOT EXISTS 对【已经存在】的表不起作用。
+            项目已经跑过、data/economy.db 已经建好之后，
+            光改 DDL 是加不上新列的 —— 你的库会一直缺那一列，
+            然后在写入时报 "no such column"。
+
+        这个方法是幂等的：
+            列已经存在就跳过，不会重复添加，也不会报错。
+            所以每次启动都可以放心调用。
+
+        返回：本次真正补上的列，格式 ["llm_calls.latency_ms", ...]
+        """
+        applied: list = []
+
+        for table, columns in COLUMN_MIGRATIONS.items():
+            existing = set(self.columns_of(table))
+            if not existing:
+                # 表都还不存在，说明 CREATE TABLE 那一步没跑到，
+                # 这种情况不该静默跳过
+                continue
+
+            for column_name, column_def in columns:
+                if column_name in existing:
+                    continue
+
+                # 注意：ALTER TABLE 必须走独立事务，
+                # 不能和上面的建表语句混在同一个 with conn 里。
+                with self.transaction() as conn:
+                    conn.execute(
+                        f"ALTER TABLE {table} ADD COLUMN {column_name} {column_def}"
+                    )
+                applied.append(f"{table}.{column_name}")
+
+        return applied
 
     # ------------------------------------------------------------
     # 事务
