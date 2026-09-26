@@ -748,7 +748,7 @@ extra_body:
 ## 4. 跑测试
 
 ```bash
-# 全部测试（748 个，不含真实 API 测试）
+# 全部测试（832 个，不含真实 API 测试）
 ./dev.sh test
 
 # 详细输出，显示每个测试的名字
@@ -817,12 +817,13 @@ extra_body:
 | `tests/test_llm_provider.py` | LLM 契约 / MockProvider / 注册表 / Router / 架构守卫 | 72 |
 | `tests/test_local_transport.py` | Transport 抽象 / 收发 / 失败路径 | 33 |
 | `tests/test_message.py` | Message 创建 / 校验 / 序列化 / 前向兼容 | 51 |
-| `tests/test_provider_contract.py` | 两家共用的契约（同一批参数断言参数化跑两遍） | 80 |
+| `tests/test_protocol_payloads.py` | 结构化 payload / budget≠price / workspace 边界 / 三态诚实性 | 84 |
+| `tests/test_provider_contract.py` | 两家共用的契约（同一批断言参数化跑两遍） | 80 |
 | `tests/test_registry.py` | 注册表纯数据 / 本地远端 / 状态分离 | 34 |
 | `tests/test_startup.py` | 启动流程、重启不重复发钱 | 6 |
 | `tests/test_transfer.py` | 转账入口与各种拒绝情况 | 27 |
 | `tests/test_wallet.py` | 钱包、余额、扣款 | 15 |
-| | **合计** | **748** |
+| | **合计** | **832** |
 
 另有 `tests/test_real_api.py`（30 项）需要真实 API Key，
 默认不跑，见下面的「真实 API 测试」。
@@ -1264,7 +1265,7 @@ initial_balance: 100             # 新 Agent 出生拿多少钱
 | 文件 | 内容 |
 |---|---|
 | `README.md` | 项目介绍、架构、设计原则、经济模型、未来方向 |
-| `PROTOCOL.md` | 通信协议规范：消息格式、状态机、Transport 契约、版本演进 |
+| `PROTOCOL.md` | 通信协议规范：消息格式、状态机、结构化 payload、Workspace 边界 |
 | `COMMANDS.md` | 本文件，命令速查 |
 | `communication/*.py` | Step 3 通信层，每个文件顶部都有设计说明 |
 | `core/*.py` | 每个文件顶部都有大段中文注释解释「为什么这样设计」 |

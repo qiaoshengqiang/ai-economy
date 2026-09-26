@@ -150,7 +150,7 @@ LLM 只能**提出意图**，永远不能**直接改账**。
 - [x] SQLite 数据库（4 张表）
 - [x] 启动横幅
 - [x] **命令行经济操作**（转账 / 余额 / 流水 / 对账）
-- [x] 748 个 pytest 测试全绿（另有 30 个真实 API 测试单独跑）
+- [x] 832 个 pytest 测试全绿（另有 30 个真实 API 测试单独跑）
 
 **验收标准**（已达成）：
 
@@ -635,6 +635,112 @@ $ ./dev.sh communication-log --message msg_4ad6a166
 | `test_communication_guards.py` | +6（日志边界守卫） |
 | `test_cli.py` | +23（日志查询命令、位置参数、参数报错） |
 
+### ✅ Step 3.6：协议语义修正（已完成）
+
+**目标：让协议现在稳定、简单，并为 Step 4+ 留出正确扩展空间。**
+
+**不写新功能，只修协议定义。** 核心结论：
+
+> 检查后确认 `Message` 数据结构**已经能表达**修正后的协议所需的一切，
+> 因此**没有改任何核心通信代码** —— 只改协议文档 + 补测试。
+
+#### 五个概念必须分开
+
+| 概念 | 回答 | 协议载体 |
+|---|---|---|
+| Agent Identity | 我是**谁** | `agent_id` |
+| Transport Address | **怎么**找到我 | `Address(scheme, endpoint)` |
+| Task | 我在做**哪件事** | `payload.task_id` |
+| Workspace | 这件事的**工作空间** | `payload.workspace_id` |
+| Workspace Permission | 我**被允许**做什么 | **协议中不存在** |
+
+**最关键的一条**：
+
+```
+workspace_id  ≠  权限
+```
+
+知道一个 `workspace_id` **不会**带来任何访问能力。
+协议里**不存在**任何「凭 ID 换权限」的机制。
+
+#### 结构化经济 payload
+
+```json
+// TASK_OFFER —— budget 是"预算上限"，是金额对象
+"budget": { "amount": 100, "currency": "AIC" }
+
+// COUNTER_OFFER —— price 是"要价"
+"price":  { "amount":  25, "currency": "AIC" }
+
+// ACCEPT —— 同时带 price 和 reply_to，自成可审计记录
+"price":  { "amount":  25, "currency": "AIC" },
+"reply_to": "msg_counter_002"
+```
+
+**为什么不能是裸数字**：`100` 没有货币语义，机器读不出「100 什么」。
+
+**`budget` ≠ `price`**：
+
+| | 字段 | 谁提 | 含义 |
+|---|---|---|---|
+| 预算 | `budget` | 需求方 | 我**愿意付的上限** |
+| 价格 | `price` | 双方 | **实际成交的数** |
+
+混用一个字段会导致账本凭空多计 75 AIC。**成交价的权威来源是 `ACCEPT.price`。**
+
+#### 三态标注（诚实性）
+
+协议里每一项能力都标为：
+
+| 标记 | 含义 |
+|---|---|
+| ✅ 已实现 | 代码真会产生/处理，有测试 |
+| ⚠️ 已定义未实现 | 协议定义了语义，代码无逻辑 |
+| 🔒 预留 | 只是字段位，语义未定死 |
+
+**沿用这个标注后，协议不再把「注册了」说成「实现了」：**
+
+| 项 | 数量 | 状态 |
+|---|---|---|
+| 消息类型 | 12 个 | 4 个在用，8 个**已定义未实现** |
+| 生命周期状态 | 11 个 | **6 个常规发出**，`FAILED`/`DUPLICATE` 按需，`QUEUED`/`TIMEOUT`/`RETRY` **永不发出** |
+| 结构化 payload | 6 种 | **已定义，代码不校验** |
+| 签名 / 重放防护 / TTL | 3 个字段 | **🔒 预留，未实现** |
+
+#### 一条刻意的边界
+
+> **通信层不校验 payload 的业务形状。**
+
+`{"message_type": "TASK_OFFER", "payload": {"budget": 100}}`
+（裸数字，违反协议）**当前会被正常投递** —— 因为校验它等于让通信层解释业务语义。
+
+校验属于 Step 4 的 Task 层，落点是 `register_type_handler`。
+
+#### 预留字段
+
+| 字段 | 含义 | 状态 |
+|---|---|---|
+| `base_commit` | 基于哪个代码版本**开始**（不是 current / final） | 🔒 未来用于 Git Worktree / 冲突检测 |
+| `acceptance` | **什么条件算完成**（tests / manual / artifact / custom） | 🔒 支付链 `SUBMIT→VERIFY→PASS→SETTLE` 的依据 |
+| `expires_at` | 有效截止时间 | 🔒 报价不能永久有效；**当前不校验** |
+
+#### ⚠️ 一处待你决定的命名冲突
+
+协议示例用 **`AIC`**，但 [`config/config.yaml`](config/config.yaml) 里经济系统配的是 **`AI`**：
+
+```yaml
+economy:
+  currency: "AI"
+```
+
+**本步骤没有改任何一侧**，只在文档里标记。需要在 Step 6（支付）之前统一。
+
+**测试：748 → 832（新增 84）**
+
+| 新增 | 数量 |
+|---|---|
+| `test_protocol_payloads.py` | 84 |
+
 ### ⏳ 后续阶段
 
 | 阶段 | 内容 | 状态 |
@@ -892,7 +998,7 @@ ai-economy/
 │   ├── database.py            ← SQLite 连接、事务、迁移
 │   └── models.py              ← 表结构定义
 │
-├── tests/                     ← 748 个测试 + 30 个真实 API 测试
+├── tests/                     ← 832 个测试 + 30 个真实 API 测试
 └── data/
     └── economy.db             ← SQLite 数据库（运行产物，不进 git）
 ```
