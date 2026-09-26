@@ -72,6 +72,7 @@ from communication.errors import (
     MessageValidationError,
 )
 from communication.message import Message, MessageType
+from communication.recorder import CommunicationRecorder, MessageStatus
 from communication.registry import AgentInfo, AgentRegistry, PresenceStatus
 from communication.transport import DeliveryReceipt, Transport
 
@@ -155,9 +156,20 @@ class CommunicationManager:
         transport: Transport,
         registry: Optional[AgentRegistry] = None,
         seen_memory_size: int = DEFAULT_MEMORY_SIZE,
+        recorder: Optional[CommunicationRecorder] = None,
     ):
         self.transport = transport
         self.registry = registry or AgentRegistry()
+
+        # 通信日志（Step 3.5）。
+        #
+        # 【为什么是可选注入，而不是在内部 new 一个】
+        #     1. 通信层不该知道数据库在哪 —— 那是组合根的事
+        #     2. 测试通信时不该被迫准备一个数据库
+        #     3. 将来换存储（文件、远端日志服务）只改注入的那一个地方
+        #
+        # recorder=None 时所有日志调用都是无操作，通信照常工作。
+        self.recorder = recorder
 
         # 本进程内 agent_id → 处理函数。
         # 注意：这里【只放本地 Agent】。
@@ -294,9 +306,16 @@ class CommunicationManager:
         payload: Optional[Mapping[str, Any]] = None,
         message_type: str = MessageType.TEXT,
         reply_to: Optional[str] = None,
+        trace_id: Optional[str] = None,
+        conversation_id: Optional[str] = None,
     ) -> Message:
         """
         发一条消息。返回实际发出的 Message（含 message_id）。
+
+        trace_id / conversation_id 可以不传（会自动生成）。
+        但【一次任务里的所有消息应该传同一个 trace_id】——
+        否则日志里它们就是互不相干的孤儿，拼不出完整链路。
+        Step 4 的 Task 会把自己的 trace_id 打在所有消息上。
 
         返回 Message 而不是回执，是因为调用方通常更关心
         「我发出去的那条消息」——尤其是要拿它的 message_id 去等回复。
@@ -325,6 +344,8 @@ class CommunicationManager:
             message_type=message_type,
             payload=body,
             reply_to=reply_to,
+            **({"trace_id": trace_id} if trace_id else {}),
+            **({"conversation_id": conversation_id} if conversation_id else {}),
         )
 
         await self.send_message(message)
@@ -343,9 +364,57 @@ class CommunicationManager:
             )
 
         address = await self.resolve_address(message.to_agent)
-        receipt = await self.transport.send(message, address)
+
+        # --- 日志：消息已构造，即将交给传输层 ---
+        self._journal(
+            message, MessageStatus.CREATED,
+            actor=message.from_agent,
+            transport=self.transport.scheme,
+            address=address,
+            detail="消息已构造，等待投递",
+        )
+
+        try:
+            receipt = await self.transport.send(message, address)
+        except Exception as exc:  # noqa: BLE001
+            # 投递失败也要留痕 —— 否则「消息发了但对方没收到」
+            # 这种情况在日志里完全看不见。
+            self._journal(
+                message, MessageStatus.FAILED,
+                actor=message.from_agent,
+                transport=self.transport.scheme,
+                address=address,
+                detail="传输层投递失败",
+                error_code=type(exc).__name__,
+                error_message=str(exc),
+            )
+            raise
 
         self.sent_count += 1
+
+        # --- 日志：传输层接受 ---
+        self._journal(
+            message, MessageStatus.SENT,
+            actor=message.from_agent,
+            transport=self.transport.scheme,
+            address=address,
+            detail=f"传输层已接受（{self.transport.scheme}）",
+        )
+
+        # --- 日志：已送达收件箱 ---
+        #
+        # 本地传输里 SENT 和 DELIVERED 是同一瞬间发生的。
+        # 这里仍然记两条，是为了让状态机的形状和传输方式无关 ——
+        # 将来 P2P 传输里「发出」和「对方确认收到」是两件不同的事，
+        # 到那时本地和网络的日志才能用同一种方式查询。
+        self._journal(
+            message, MessageStatus.DELIVERED,
+            actor=message.to_agent,
+            transport=self.transport.scheme,
+            address=address,
+            detail=f"已进入 {message.to_agent} 的收件箱",
+        )
+
         logger.debug("发出 %s", message)
 
         return receipt
@@ -409,7 +478,19 @@ class CommunicationManager:
         message = await self.transport.receive(key, timeout=timeout)
         if message is None:
             self.timeout_count += 1
+            # 【注意】这里不写消息级日志 —— 因为压根没有消息。
+            # 「等超时了」是 Agent 级别的现象，不是某条消息的状态。
+            # 消息级的 TIMEOUT 属于「发出去了但对方没确认」，
+            # 那需要 ACK 机制，本步骤不实现（状态常量已留好）。
             return InboundResult(status=ReceiveStatus.TIMEOUT, detail="没有等到消息")
+
+        # --- 日志：从信箱取出 ---
+        self._journal(
+            message, MessageStatus.RECEIVED,
+            actor=key,
+            transport=self.transport.scheme,
+            detail=f"已从 {key} 的收件箱取出",
+        )
 
         # --- 防御性检查：确认没有投递错人 ---
         if message.to_agent != key:
@@ -431,6 +512,18 @@ class CommunicationManager:
 
         if not tracker.check_and_add(message.message_id):
             self.duplicate_count += 1
+
+            # 重复投递必须留痕。
+            # 消息表里这个 message_id 仍然只有一行（UPSERT），
+            # 但事件流里会多一条 DUPLICATE ——
+            # 于是「有没有重复投递」是可查的，而不是被静默吞掉。
+            self._journal(
+                message, MessageStatus.DUPLICATE,
+                actor=key,
+                transport=self.transport.scheme,
+                detail=f"重复投递（{message.message_id} 已处理过），已跳过",
+            )
+
             logger.debug("跳过重复消息 %s", message.message_id)
 
             if strict_dedup:
@@ -457,12 +550,43 @@ class CommunicationManager:
                 detail=f"{key} 没有注册消息处理函数",
             )
 
+        # --- 日志：开始处理 ---
+        self._journal(
+            message, MessageStatus.PROCESSING,
+            actor=key,
+            transport=self.transport.scheme,
+            detail=f"{key} 开始处理",
+        )
+
         # --- 处理 ---
-        outcome = handler(message)
-        if inspect.isawaitable(outcome):
-            outcome = await outcome
+        try:
+            outcome = handler(message)
+            if inspect.isawaitable(outcome):
+                outcome = await outcome
+        except Exception as exc:  # noqa: BLE001
+            # 处理函数抛异常 = 这条消息处理失败。
+            # 这类失败最容易被忽略（异常被上层吞掉就查不到了），
+            # 所以必须在这里留一条 FAILED。
+            self._journal(
+                message, MessageStatus.FAILED,
+                actor=key,
+                transport=self.transport.scheme,
+                detail=f"{key} 处理消息时抛出异常",
+                error_code=type(exc).__name__,
+                error_message=str(exc),
+            )
+            raise
 
         self.delivered_count += 1
+
+        # --- 日志：处理完成 ---
+        self._journal(
+            message, MessageStatus.PROCESSED,
+            actor=key,
+            transport=self.transport.scheme,
+            detail=f"{key} 处理完成",
+        )
+
         logger.debug("%s 处理了 %s", key, message)
 
         # --- 处理函数可能返回一条回复 ---
@@ -511,6 +635,53 @@ class CommunicationManager:
                 f"handler 必须可调用，收到 {type(handler).__name__}"
             )
         self._type_handlers[key] = handler
+
+    # ------------------------------------------------------------
+    # 日志
+    # ------------------------------------------------------------
+    def _journal(
+        self,
+        message: Message,
+        status: str,
+        actor: Optional[str] = None,
+        transport: Optional[str] = None,
+        address: Optional[Any] = None,
+        detail: Optional[str] = None,
+        error_code: Optional[str] = None,
+        error_message: Optional[str] = None,
+    ) -> None:
+        """
+        写一条通信日志。
+
+        【为什么这里要吞掉异常】
+            日志是【观测手段】，不该成为通信的单点故障。
+            如果数据库满了导致消息发不出去，那是本末倒置。
+
+            记录器内部已经处理了这一点（strict=False 时返回 None），
+            这里再包一层是为了防止「记录器本身初始化异常」之类的
+            意外情况把通信搞崩。
+
+            测试里想要严格模式，用 CommunicationRecorder(strict=True)。
+        """
+        if self.recorder is None:
+            return
+
+        try:
+            self.recorder.record(
+                message=message,
+                status=status,
+                actor=actor,
+                transport=transport,
+                address=address,
+                detail=detail,
+                error_code=error_code,
+                error_message=error_message,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "通信日志写入异常（不影响通信）：%s: %s",
+                type(exc).__name__, exc,
+            )
 
     # ------------------------------------------------------------
     # 内部
@@ -585,6 +756,7 @@ class CommunicationManager:
             "registry": self.registry.stats(),
             "transport": self.transport.describe(),
             "type_handlers": sorted(self._type_handlers),
+            "journal": self.recorder.stats() if self.recorder is not None else None,
         }
 
     def describe(self) -> Dict[str, Any]:
@@ -594,6 +766,7 @@ class CommunicationManager:
             "registered": self.registry.ids(),
             "local_handlers": sorted(self._handlers),
             "remote_agents": [i.agent_id for i in self.registry.remote_agents()],
+            "journal_enabled": self.recorder is not None,
         }
 
     def __repr__(self) -> str:

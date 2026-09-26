@@ -14,8 +14,10 @@ v0.1 建这些表：
     wallets             —— 钱包（注意：不存余额！）
     ledger_transactions —— 交易账本（唯一的真相来源）
     llm_calls           —— 每次调用模型的 token 用量与成本
-                      （tasks/bids/contracts/escrows/messages
-                        留给 Step 2~5，现在不建，避免过度设计）
+    communication_messages —— 通信日志：每条消息的当前状态
+    communication_events   —— 通信日志：状态事件流（append-only）
+                      （tasks/bids/contracts/escrows
+                        留给后续步骤，现在不建，避免过度设计）
 """
 
 from __future__ import annotations
@@ -30,6 +32,8 @@ TABLE_AGENTS: Final = "agents"
 TABLE_WALLETS: Final = "wallets"
 TABLE_LEDGER: Final = "ledger_transactions"
 TABLE_LLM_CALLS: Final = "llm_calls"
+TABLE_COMM_MESSAGES: Final = "communication_messages"
+TABLE_COMM_EVENTS: Final = "communication_events"
 
 
 # ============================================================
@@ -205,6 +209,141 @@ SCHEMA_STATEMENTS: Final[tuple[str, ...]] = (
 
     "CREATE INDEX IF NOT EXISTS idx_llm_calls_agent ON llm_calls (agent_id)",
     "CREATE INDEX IF NOT EXISTS idx_llm_calls_task  ON llm_calls (task_id)",
+
+    # --------------------------------------------------------
+    # communication_messages —— 通信日志：消息的【当前状态】
+    #
+    # 【为什么消息日志要单独建表，而不是塞进 messages 表】
+    #     现在还没有 messages 表（消息只活在内存队列里）。
+    #     而这张表是【日志】，不是消息本体 ——
+    #     消息本体是 communication/message.py 里的 Message 对象。
+    #
+    #     两者的区别很重要：
+    #         Message      通信用的数据（会被序列化、发出去）
+    #         这张表        观测用的记录（不参与通信，删了也不影响通信）
+    #     所以「Message 不等同于日志」这条要求在物理上是成立的。
+    #
+    # 【为什么以 message_id 为主键】
+    #     一条消息可能被投递多次（网络重发、重试）。
+    #     主键 + UPSERT 保证「一个 message_id 只有一行状态」，
+    #     多次投递的痕迹记在 communication_events 里。
+    #     这样查询「这条消息现在什么状态」永远是确定的。
+    # --------------------------------------------------------
+    """
+    CREATE TABLE IF NOT EXISTS communication_messages (
+        message_id      TEXT PRIMARY KEY,
+
+        -- 串起一整条业务链路用的两个 ID
+        --   trace_id        一次完整任务 / 业务流程（跨多条消息）
+        --   conversation_id 一轮对话 / 协商（通常一个来回）
+        trace_id        TEXT,
+        conversation_id TEXT,
+
+        from_agent      TEXT NOT NULL,
+        to_agent        TEXT NOT NULL,
+        message_type    TEXT NOT NULL,
+
+        -- 生命周期时间戳。哪一步没发生就是 NULL，
+        -- 所以「卡在哪一步」可以直接从这一行看出来。
+        created_at      TEXT,
+        sent_at         TEXT,
+        received_at     TEXT,
+        processed_at    TEXT,
+
+        -- 通信方式与地址。
+        -- 【为什么 address 要单独存】
+        --     将来是 P2P 时，"transport=p2p, address=p2p://12D3KooW..."
+        --     才能说明消息往哪儿去了。只存 transport 不够定位问题。
+        transport       TEXT,
+        address         TEXT,
+        is_remote       INTEGER NOT NULL DEFAULT 0,
+
+        -- 当前状态（取最后一个事件的状态）
+        status          TEXT NOT NULL DEFAULT 'CREATED',
+        retry_count     INTEGER NOT NULL DEFAULT 0,
+
+        -- 失败信息。成功时为 NULL。
+        error_code      TEXT,
+        error_message   TEXT,
+
+        -- payload 的元信息。
+        -- 【为什么即使存了完整 payload 也要存这两个】
+        --     生产环境可能只留元数据和 hash（避免日志无限膨胀）。
+        --     现在就把字段准备好，将来切换时不用改表结构。
+        --     payload_size 是【原始】大小；payload_hash 算的是脱敏后的内容。
+        payload_size    INTEGER NOT NULL DEFAULT 0,
+        payload_hash    TEXT,
+
+        -- 完整 payload（开发环境方便调试；已脱敏；超长会截断）
+        payload         TEXT,
+
+        protocol_version TEXT,
+        reply_to        TEXT,
+
+        updated_at      TEXT
+    )
+    """,
+
+    "CREATE INDEX IF NOT EXISTS idx_comm_msg_trace  ON communication_messages (trace_id)",
+    "CREATE INDEX IF NOT EXISTS idx_comm_msg_conv   ON communication_messages (conversation_id)",
+    "CREATE INDEX IF NOT EXISTS idx_comm_msg_status ON communication_messages (status)",
+    "CREATE INDEX IF NOT EXISTS idx_comm_msg_from   ON communication_messages (from_agent)",
+    "CREATE INDEX IF NOT EXISTS idx_comm_msg_to     ON communication_messages (to_agent)",
+
+    # --------------------------------------------------------
+    # communication_events —— 通信日志：状态【事件流】
+    #
+    # append-only。只 INSERT，不 UPDATE、不 DELETE。
+    #
+    # 【为什么状态要单独记事件，而不是只更新那一行】
+    #     只看最终状态的话，「这条消息失败过两次又成功了」
+    #     和「一次就成功」看起来一模一样。
+    #     而这两件事在排查问题时意义完全不同 ——
+    #     前者说明网络在抖，后者说明一切正常。
+    #
+    #     事件流还能回答：
+    #         · 每两步之间隔了多久（延迟在哪一段）
+    #         · 有没有重复投递
+    #         · 失败的具体原因和顺序
+    # --------------------------------------------------------
+    """
+    CREATE TABLE IF NOT EXISTS communication_events (
+        event_id        TEXT PRIMARY KEY,
+        message_id      TEXT NOT NULL,
+
+        -- 冗余存 trace/conversation，是为了「只查事件表」也能定位，
+        -- 不用每次都 JOIN 回消息表。日志表宁可多一点冗余。
+        trace_id        TEXT,
+        conversation_id TEXT,
+
+        -- 事件类型：CREATED / SENT / DELIVERED / RECEIVED /
+        --          PROCESSING / PROCESSED / DUPLICATE / FAILED /
+        --          TIMEOUT / RETRY
+        status          TEXT NOT NULL,
+
+        -- 这个事件是谁触发的（发送方还是接收方）
+        actor           TEXT,
+
+        transport       TEXT,
+        address         TEXT,
+
+        detail          TEXT,
+
+        error_code      TEXT,
+        error_message   TEXT,
+
+        payload_size    INTEGER,
+        payload_hash    TEXT,
+
+        created_at      TEXT NOT NULL
+    )
+    """,
+
+    "CREATE INDEX IF NOT EXISTS idx_comm_evt_message ON communication_events (message_id)",
+    "CREATE INDEX IF NOT EXISTS idx_comm_evt_trace   ON communication_events (trace_id)",
+    "CREATE INDEX IF NOT EXISTS idx_comm_evt_conv    ON communication_events (conversation_id)",
+    "CREATE INDEX IF NOT EXISTS idx_comm_evt_status  ON communication_events (status)",
+    "CREATE INDEX IF NOT EXISTS idx_comm_evt_time    ON communication_events (created_at)",
 )
 
 

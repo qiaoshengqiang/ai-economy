@@ -61,7 +61,9 @@ from core.paths import ensure_runtime_dirs                      # noqa: E402
 from llm import LLMCallRecorder, LLMRouter, LLMError            # noqa: E402
 from communication import (                                     # noqa: E402
     CommunicationManager,
+    CommunicationRecorder,
     LocalTransport,
+    MessageStatus,
     MessageType,
     ReceiveStatus,
     Transport,
@@ -92,6 +94,7 @@ class Runtime:
             Recorder             调用记录
             CommunicationManager 通信门面    ← Step 3
             Transport            通信实现     ← Step 3（当前是 LocalTransport）
+            CommunicationRecorder 通信日志    ← Step 3.5
 
         这些部件由 main.py（组合根）装配好，再交给各个命令。
 
@@ -111,6 +114,7 @@ class Runtime:
     recorder: LLMCallRecorder
     communication: CommunicationManager
     transport: Transport
+    journal: CommunicationRecorder
 
     def agent(self, agent_id: str):
         return self.economy.agent(agent_id)
@@ -246,7 +250,19 @@ def build_runtime(db_path: Optional[str] = None) -> Runtime:
     # 它是整个项目里唯一一处写死传输方式的地方 ——
     # 将来换成 P2PTransport 只需要改这一行。
     transport = LocalTransport()
-    communication = CommunicationManager(transport=transport)
+
+    # 通信日志（Step 3.5）。
+    # 注意它是【注入】给 CommunicationManager 的，不是 Manager 内部 new 的 ——
+    # 这样通信层不需要知道数据库在哪，测试通信时也不用准备数据库。
+    journal = CommunicationRecorder(
+        db=economy.db,
+        store_payload=True,
+        strict=False,
+    )
+    communication = CommunicationManager(
+        transport=transport,
+        recorder=journal,
+    )
 
     # --- 创建 Agent，给每个装上大脑，并接入通信层 ---
     for agent_id in DEFAULT_AGENTS:
@@ -280,6 +296,7 @@ def build_runtime(db_path: Optional[str] = None) -> Runtime:
         recorder=recorder,
         communication=communication,
         transport=transport,
+        journal=journal,
     )
 
 
@@ -963,6 +980,33 @@ async def _communication_demo_async(
     )
     print()
 
+    # ---------------- 通信日志 ----------------
+    journal = runtime.journal
+    if journal is not None:
+        print("通信日志（已落库，可用 communication-log 查询）")
+        print("-" * 46)
+        trace_messages = journal.trace(sent.trace_id)
+        trace_events = journal.trace_events(sent.trace_id)
+        print(f"  trace_id : {sent.trace_id}")
+        print(f"  本链路   : {len(trace_messages)} 条消息 / {len(trace_events)} 个事件")
+        print(f"  日志总计 : {journal.count_messages()} 条消息 / "
+              f"{journal.count_events()} 个事件")
+        print()
+        print("  最后一条消息的完整事件流：")
+        last_id = (
+            reply_result.message.message_id
+            if reply_result.message is not None
+            else sent.message_id
+        )
+        for event in journal.events_for(last_id):
+            print(
+                f"    {event['status']:<11} "
+                f"{event['actor'] or '-':<10} {event['detail'] or ''}"
+            )
+        print()
+        print(f"  查询方式：./dev.sh communication-log --trace {sent.trace_id}")
+        print()
+
     print("说明")
     print("-" * 46)
     print("  · 全程没有调用任何模型 —— 通信层与 LLM 完全解耦")
@@ -970,6 +1014,267 @@ async def _communication_demo_async(
     print("  · 收发双方只认识 CommunicationManager，不认识 LocalTransport")
     print()
 
+    return 0
+
+
+# ============================================================
+# 命令：communication-log（查询通信日志）
+# ============================================================
+def cmd_communication_log(runtime: Runtime, args: argparse.Namespace) -> int:
+    """
+    按 message_id / trace_id / conversation_id 查通信日志。
+
+    【这个命令的存在理由】
+        需求里说「可以根据日志完整定位通信问题」。
+        光把日志写进数据库还不算 ——
+        还得能在出问题时真的查出来。这就是那个入口。
+    """
+    journal = runtime.journal
+
+    if journal is None:
+        print()
+        print("!! 本次运行没有启用通信日志 !!")
+        print()
+        return 1
+
+    # ---------------- 按单条消息查 ----------------
+    if args.message:
+        return _print_message_detail(journal, args.message)
+
+    # ---------------- 按 trace 查 ----------------
+    if args.trace:
+        return _print_trace(journal, args.trace)
+
+    # ---------------- 按 conversation 查 ----------------
+    if args.conversation:
+        return _print_conversation(journal, args.conversation)
+
+    # ---------------- 列出最近的 trace ----------------
+    if args.traces:
+        return _print_trace_list(journal, args.limit)
+
+    # ---------------- 默认：最近的消息 ----------------
+    return _print_recent_messages(journal, args)
+
+
+def _short(text, width: int = 40) -> str:
+    if text is None:
+        return ""
+    text = str(text).replace("\n", " ")
+    return text if len(text) <= width else text[: width - 1] + "…"
+
+
+def _print_recent_messages(journal, args) -> int:
+    rows = journal.recent(
+        limit=args.limit,
+        agent_id=args.agent,
+        status=args.status,
+    )
+
+    print()
+    print("通信日志 —— 最近的消息")
+    print("-" * 96)
+    print(f"  {'时间':<20} {'状态':<11} {'方向':<22} {'类型':<10} 消息 ID")
+    print("-" * 96)
+
+    if not rows:
+        print("  （还没有任何通信记录）")
+        print()
+        return 0
+
+    for row in rows:
+        when = (row["created_at"] or "")[:19].replace("T", " ")
+        flow = f"{row['from_agent']} → {row['to_agent']}"
+        print(
+            f"  {when:<20} {row['status']:<11} {flow:<22} "
+            f"{row['message_type']:<10} {row['message_id']}"
+        )
+        if row["error_message"]:
+            print(f"      ⚠️  {_short(row['error_code'])}: {_short(row['error_message'], 70)}")
+
+    print("-" * 96)
+    print(f"  共 {len(rows)} 条    trace: {_short(args.trace or '（用 --traces 看有哪些）')}")
+    print()
+    print("  提示：")
+    print("    ./dev.sh communication-log --traces             列出最近的链路")
+    print("    ./dev.sh communication-log --message msg_xxx    看一条消息的完整事件流")
+    print("    ./dev.sh communication-log --trace trc_xxx      看一条链路的所有消息")
+    print("    ./dev.sh communication-log --status FAILED      只看失败的")
+    print()
+    return 0
+
+
+def _print_message_detail(journal, message_id: str) -> int:
+    row = journal.get_message(message_id)
+
+    if row is None:
+        print()
+        print(f"找不到消息：{message_id}")
+        print("（用 ./dev.sh communication-log 看最近的消息）")
+        print()
+        return 2
+
+    print()
+    print(f"消息 {message_id}")
+    print("-" * 72)
+
+    fields = [
+        ("trace_id", row["trace_id"]),
+        ("conversation_id", row["conversation_id"]),
+        ("from → to", f"{row['from_agent']} → {row['to_agent']}"),
+        ("message_type", row["message_type"]),
+        ("status", row["status"]),
+        ("transport", row["transport"]),
+        ("address", row["address"]),
+        ("is_remote", bool(row["is_remote"])),
+        ("reply_to", row["reply_to"]),
+        ("retry_count", row["retry_count"]),
+        ("payload_size", row["payload_size"]),
+        ("payload_hash", _short(row["payload_hash"], 24)),
+    ]
+    for key, value in fields:
+        print(f"  {key:<16}: {value}")
+
+    print()
+    print("  时间线")
+    for key in ("created_at", "sent_at", "received_at", "processed_at"):
+        print(f"    {key:<14}: {(row[key] or '—')[:26]}")
+
+    if row["error_message"]:
+        print()
+        print("  ⚠️  错误")
+        print(f"    code    : {row['error_code']}")
+        print(f"    message : {_short(row['error_message'], 300)}")
+
+    print()
+    print("  事件流")
+    print("  " + "-" * 68)
+    for event in journal.events_for(message_id):
+        when = (event["created_at"] or "")[11:19]
+        print(
+            f"    [{when}] {event['status']:<11} "
+            f"{event['actor'] or '-':<10} {_short(event['detail'], 40)}"
+        )
+        if event["error_message"]:
+            print(f"              ⚠️  {_short(event['error_message'], 60)}")
+
+    print()
+    return 0
+
+
+def _print_trace(journal, trace_id: str) -> int:
+    messages = journal.trace(trace_id)
+    events = journal.trace_events(trace_id)
+
+    print()
+    print(f"链路 {trace_id}")
+    print("-" * 96)
+
+    if not messages:
+        print("  （这条链路没有消息）")
+        print()
+        return 2
+
+    print(f"  消息 {len(messages)} 条 / 事件 {len(events)} 个")
+    print()
+    print(f"  {'时间':<20} {'状态':<11} {'方向':<22} {'类型':<12} 消息 ID")
+    print("  " + "-" * 92)
+
+    for row in messages:
+        when = (row["created_at"] or "")[:19].replace("T", " ")
+        flow = f"{row['from_agent']} → {row['to_agent']}"
+        print(
+            f"  {when:<20} {row['status']:<11} {flow:<22} "
+            f"{row['message_type']:<12} {row['message_id']}"
+        )
+
+    # 状态汇总：一眼看出卡在哪
+    by_status: dict = {}
+    for row in messages:
+        by_status[row["status"]] = by_status.get(row["status"], 0) + 1
+    print()
+    print("  状态汇总:", ", ".join(f"{k}={v}" for k, v in sorted(by_status.items())))
+
+    # 有问题就把事件流也打出来
+    troubled = [m for m in messages if m["status"] in ("FAILED", "TIMEOUT")
+                or m["error_message"]]
+    if troubled:
+        print()
+        print("  ⚠️  有问题的消息：")
+        for row in troubled:
+            print(
+                f"    {row['message_id']}  {row['status']}  "
+                f"{_short(row['error_code'])}: {_short(row['error_message'], 60)}"
+            )
+        print()
+        print("  相关事件：")
+        for event in events:
+            if event["status"] in ("FAILED", "TIMEOUT", "DUPLICATE", "RETRY"):
+                when = (event["created_at"] or "")[11:19]
+                print(
+                    f"    [{when}] {event['message_id']} "
+                    f"{event['status']}: {_short(event['detail'], 40)}"
+                )
+
+    print()
+    print(f"  查某一条：./dev.sh communication-log --message <上面的消息 ID>")
+    print()
+    return 0
+
+
+def _print_conversation(journal, conversation_id: str) -> int:
+    rows = journal.conversation(conversation_id)
+
+    print()
+    print(f"对话 {conversation_id}")
+    print("-" * 88)
+
+    if not rows:
+        print("  （这轮对话没有消息）")
+        print()
+        return 2
+
+    for row in rows:
+        when = (row["created_at"] or "")[:19].replace("T", " ")
+        print(
+            f"  {when}  {row['from_agent']} → {row['to_agent']}  "
+            f"[{row['message_type']}]  {row['status']}"
+        )
+
+    print("-" * 88)
+    print(f"  共 {len(rows)} 条")
+    print()
+    return 0
+
+
+def _print_trace_list(journal, limit: int) -> int:
+    rows = journal.traces(limit=limit)
+
+    print()
+    print("最近的通信链路（trace）")
+    print("-" * 88)
+    print(f"  {'trace_id':<20} {'消息':>5} {'已处理':>7} {'失败':>5}  最后活动")
+    print("-" * 88)
+
+    if not rows:
+        print("  （还没有任何链路）")
+        print()
+        return 0
+
+    for row in rows:
+        last = (row["last_at"] or "")[:19].replace("T", " ")
+        failed = row["failed"] or 0
+        mark = "  ⚠️" if failed else ""
+        print(
+            f"  {row['trace_id']:<20} {row['messages']:>5} "
+            f"{row['processed'] or 0:>7} {failed:>5}  {last}{mark}"
+        )
+
+    print("-" * 88)
+    print(f"  共 {len(rows)} 条链路")
+    print()
+    print("  看某条链路的详情：./dev.sh communication-log --trace <trace_id>")
+    print()
     return 0
 
 
@@ -1020,6 +1325,8 @@ def build_parser() -> argparse.ArgumentParser:
   python3 main.py ask "你好" --provider deepseek    用真实 DeepSeek 问一句
   python3 main.py providers                        看有哪些 LLM provider
   python3 main.py communication-demo               跑一遍 Agent 间通信
+  python3 main.py communication-log --traces       看最近的通信链路
+  python3 main.py communication-log --trace trc_x  看某条链路的全部消息
   python3 main.py transfer agent_a agent_b 20      让 A 付 20 AI 给 B
   python3 main.py transfer a b 20 --reason 定金     简写，带原因
   python3 main.py balances                         查看余额
@@ -1185,6 +1492,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="等待接收的超时秒数（默认 2.0）",
     )
     comm.set_defaults(func=cmd_communication_demo)
+
+    # --- communication-log（Step 3.5）---
+    log = subparsers.add_parser(
+        "communication-log",
+        parents=[shared],
+        help="查询通信日志（按 message_id / trace_id / conversation_id）",
+    )
+    log.add_argument("--message", default=None, help="看某条消息的完整事件流")
+    log.add_argument("--trace", default=None, help="看某条链路（一次任务）的所有消息")
+    log.add_argument("--conversation", default=None, help="看某一轮对话")
+    log.add_argument("--traces", action="store_true", help="列出最近的链路")
+    log.add_argument("--agent", default=None, help="只看与某个 Agent 相关的消息")
+    log.add_argument("--status", default=None, help="只看某个状态（如 FAILED）")
+    log.add_argument("--limit", type=int, default=20, help="最多显示几条（默认 20）")
+    log.set_defaults(func=cmd_communication_log)
 
     return parser
 

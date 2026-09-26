@@ -130,6 +130,27 @@ class Message:
     message_id: str = field(default_factory=lambda: new_message_id("msg"))
     timestamp: str = field(default_factory=utc_now_iso)
 
+    # ---- 用于把多条消息串成一条链路（Step 3.5 新增）----
+    #
+    # 这两个 ID 是「消息本身的数据」，不是日志 ——
+    # 因为它们要被发给对方。对方回复时会把同一个 trace_id 带回来，
+    # 于是整条链路就串起来了。
+    #
+    #   trace_id         一次完整任务 / 业务流程（跨很多条消息）
+    #   conversation_id  一轮对话 / 协商（通常一个来回）
+    #
+    # 举例：A 发起外包任务
+    #     trace_id = trc_xxx         ← 这个任务从头到尾都用它
+    #       TASK_REQUEST   conversation_id = conv_1    同一轮议价
+    #       BID            conversation_id = conv_1
+    #       ACCEPT         conversation_id = conv_1
+    #       SUBMIT         conversation_id = conv_2   换了一轮：交付
+    #
+    # 一次任务只有一轮对话时两者内容会很像，但仍是两个独立维度：
+    # 一个管「哪个任务」，一个管「哪轮对话」。
+    trace_id: str = field(default_factory=lambda: new_message_id("trc"))
+    conversation_id: str = field(default_factory=lambda: new_message_id("conv"))
+
     reply_to: Optional[str] = None
     protocol_version: str = PROTOCOL_VERSION
     extensions: Dict[str, Any] = field(default_factory=dict)
@@ -151,6 +172,15 @@ class Message:
             raise MessageValidationError("消息缺少 message_type")
         if not self.message_id:
             raise MessageValidationError("消息缺少 message_id")
+
+        # trace_id / conversation_id 现在就要校验：
+        # 它们是把整条链路串起来的钥匙，缺了日志就串不起来。
+        self.trace_id = str(self.trace_id or "").strip()
+        self.conversation_id = str(self.conversation_id or "").strip()
+        if not self.trace_id:
+            raise MessageValidationError("消息缺少 trace_id")
+        if not self.conversation_id:
+            raise MessageValidationError("消息缺少 conversation_id")
 
         if self.from_agent == self.to_agent:
             raise MessageValidationError(
@@ -247,6 +277,11 @@ class Message:
             message_type=message_type,
             payload=body,
             reply_to=self.message_id,
+            # 【关键】回复继承原消息的链路 ID。
+            # 不继承的话，一次任务的来回消息在日志里就是互不相干的孤儿，
+            # 你永远拼不出完整链路。
+            trace_id=self.trace_id,
+            conversation_id=self.conversation_id,
         )
 
     # ------------------------------------------------------------
@@ -260,6 +295,8 @@ class Message:
         "message_type",
         "timestamp",
         "payload",
+        "trace_id",
+        "conversation_id",
         "reply_to",
         "protocol_version",
     )
@@ -280,6 +317,8 @@ class Message:
             "message_type": self.message_type,
             "timestamp": self.timestamp,
             "payload": dict(self.payload),
+            "trace_id": self.trace_id,
+            "conversation_id": self.conversation_id,
             "protocol_version": self.protocol_version,
         }
         if self.reply_to:
@@ -321,6 +360,8 @@ class Message:
             payload=dict(payload) if isinstance(payload, Mapping) else payload,
             message_id=data.get("message_id") or new_message_id("msg"),
             timestamp=data.get("timestamp") or utc_now_iso(),
+            trace_id=data.get("trace_id") or new_message_id("trc"),
+            conversation_id=data.get("conversation_id") or new_message_id("conv"),
             reply_to=data.get("reply_to"),
             protocol_version=str(data.get("protocol_version") or PROTOCOL_VERSION),
             extensions=unknown,
@@ -362,6 +403,8 @@ class Message:
             "to": self.to_agent,
             "type": self.message_type,
             "timestamp": self.timestamp,
+            "trace_id": self.trace_id,
+            "conversation_id": self.conversation_id,
             "reply_to": self.reply_to,
         }
 

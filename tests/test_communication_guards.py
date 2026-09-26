@@ -608,3 +608,139 @@ class TestCompositionRoot:
             assert agent_a.communication is not runtime.transport
         finally:
             runtime.close()
+
+
+# ============================================================
+# 8. 通信日志的边界（Step 3.5）
+# ============================================================
+class TestJournalBoundaries:
+    """
+    通信日志引入了一个新角色，它必须待在正确的位置。
+
+    核心要求：Message ≠ 日志。
+
+        Message      通信用的数据，要发给对方
+        日志          观测用的记录，不参与通信
+
+    如果 Message 知道日志的存在，那么：
+        · 消息体里会混进观测字段
+        · 日志开关会影响消息内容
+        · 将来换存储方式要改消息结构
+
+    所以下面这些守卫在守着「谁可以知道日志」这条线。
+    """
+
+    def test_message_does_not_know_about_journal(self):
+        """
+        message.py 不能碰日志、数据库、存储。
+
+        消息本体必须是纯粹的 —— 它只知道自己的字段。
+        """
+        source = COMMUNICATION_DIR / "message.py"
+        forbidden = ("recorder", "journal", "storage", "sqlite", "database")
+
+        for module in imported_modules(parse(source)):
+            lowered = module.lower()
+            for word in forbidden:
+                assert word not in lowered, (
+                    f"message.py 导入了 {module} —— 消息不该知道日志的存在"
+                )
+
+    def test_transport_does_not_write_logs_itself(self):
+        """
+        Transport 不能自己写日志。
+
+        为什么？
+            日志要记 agent_id、trace_id、状态语义 ——
+            这些是【编排层】的信息，Transport 根本不知道。
+
+            如果让 Transport 自己记，它就得反过来依赖 Message 的
+            业务字段和 RecordedEvent，层次立刻乱掉。
+
+            正确分工：
+                CommunicationManager 决定「记什么」
+                CommunicationRecorder 决定「怎么写」
+                Transport 只管把消息送出去
+        """
+        forbidden = ("recorder", "journal", "storage", "sqlite", "database")
+        violations = []
+
+        for name in ("transport.py", "local_transport.py"):
+            source = COMMUNICATION_DIR / name
+            for module in imported_modules(parse(source)):
+                lowered = module.lower()
+                for word in forbidden:
+                    if word in lowered:
+                        violations.append(f"{name} 导入了 {module}")
+
+        assert not violations, (
+            "传输层不该自己写日志：\n" + "\n".join(f"  {v}" for v in violations)
+        )
+
+    def test_only_manager_and_recorder_touch_storage(self):
+        """
+        通信层里只有 manager.py 和 recorder.py 允许碰数据库。
+
+        manager 需要 db 吗？不需要 —— 它只是把 recorder 传下去。
+        真正碰数据库的是 recorder.py。
+
+        所以更准确地说：**只有 recorder.py 可以 import storage**。
+        """
+        violations = []
+
+        for source in communication_sources():
+            if source.name == "recorder.py":
+                continue
+            for module in imported_modules(parse(source)):
+                if module.startswith("storage"):
+                    violations.append(f"{source.name} 导入了 {module}")
+
+        assert not violations, (
+            "communication/ 里只有 recorder.py 能碰数据库：\n"
+            + "\n".join(f"  {v}" for v in violations)
+        )
+
+    def test_journal_does_not_import_llm_or_economy(self):
+        """日志也不能偷偷依赖 LLM 或 Economy。"""
+        source = COMMUNICATION_DIR / "recorder.py"
+        modules = imported_modules(parse(source))
+
+        for module in modules:
+            assert not module.startswith("llm"), f"recorder.py 导入了 {module}"
+            assert not module.startswith("core.economy"), f"recorder.py 导入了 {module}"
+            assert not module.startswith("core.wallet"), f"recorder.py 导入了 {module}"
+            assert not module.startswith("core.ledger"), f"recorder.py 导入了 {module}"
+
+    def test_recorder_is_optional_for_manager(self):
+        """
+        CommunicationManager 必须能在没有 recorder 的情况下工作。
+
+        这条守卫的意义：日志是【可选观测层】，
+        不能让「没接日志」变成通信不可用。
+        """
+        import inspect
+
+        from communication import CommunicationManager
+
+        signature = inspect.signature(CommunicationManager.__init__)
+        recorder_param = signature.parameters.get("recorder")
+
+        assert recorder_param is not None, "Manager 应该接受 recorder 参数"
+        assert recorder_param.default is None, "recorder 必须是可选的"
+
+    def test_message_has_trace_ids_as_first_class_fields(self):
+        """
+        trace_id / conversation_id 是【消息数据】，不是日志字段。
+
+        所以它们必须在 Message 上，能被序列化、能发给对方 ——
+        否则对方回复时无法带回同一个 trace_id，链路就断了。
+        """
+        from communication import Message
+
+        msg = Message(from_agent="a", to_agent="b")
+        assert msg.trace_id
+        assert msg.conversation_id
+
+        restored = Message.from_json(msg.to_json())
+        assert restored.trace_id == msg.trace_id
+        assert restored.conversation_id == msg.conversation_id

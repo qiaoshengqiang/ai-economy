@@ -610,6 +610,99 @@ extra_body:
 ./dev.sh communication-demo --timeout 5
 ```
 
+### 查通信日志（Step 3.5）
+
+出问题时，这是你的第一站。
+
+**看最近的消息：**
+
+```bash
+./dev.sh communication-log
+```
+
+```
+通信日志 —— 最近的消息
+------------------------------------------------------------------------------------------------
+  时间                   状态          方向                     类型         消息 ID
+------------------------------------------------------------------------------------------------
+  2026-09-26 07:51:02  PROCESSED   agent_b → agent_a      TEXT       msg_0860eb25
+  2026-09-26 07:51:02  PROCESSED   agent_a → agent_b      TEXT       msg_4ad6a166
+------------------------------------------------------------------------------------------------
+  共 4 条
+```
+
+**列出最近的链路：**
+
+```bash
+./dev.sh communication-log --traces
+```
+
+```
+最近的通信链路（trace）
+----------------------------------------------------------------------------------------
+  trace_id                消息     已处理    失败  最后活动
+----------------------------------------------------------------------------------------
+  trc_0b327e83             2       2     0  2026-09-26 07:51:02
+  trc_9befdd0a             2       2     0  2026-09-26 07:51:02
+----------------------------------------------------------------------------------------
+```
+
+**看某条链路（一次任务）的全部消息：**
+
+```bash
+./dev.sh communication-log --trace trc_0b327e83
+```
+
+**看某条消息的完整事件流：**
+
+```bash
+./dev.sh communication-log --message msg_4ad6a166
+```
+
+```
+消息 msg_4ad6a166
+------------------------------------------------------------------------
+  trace_id        : trc_0b327e83
+  conversation_id : conv_64be7b6c
+  from → to       : agent_a → agent_b
+  status          : PROCESSED
+  transport       : local
+  address         : local://agent_b
+  is_remote       : False
+  payload_size    : 25
+  payload_hash    : e7d0955f2780b8b9d60591c…
+
+  时间线
+    created_at    : 2026-09-26T07:51:02.478368
+    sent_at       : 2026-09-26T07:51:02.479265
+    received_at   : 2026-09-26T07:51:02.479804
+    processed_at  : 2026-09-26T07:51:02.480245
+
+  事件流
+    [07:51:02] CREATED     agent_a    消息已构造，等待投递
+    [07:51:02] SENT        agent_a    传输层已接受（local）
+    [07:51:02] DELIVERED   agent_b    已进入 agent_b 的收件箱
+    [07:51:02] RECEIVED    agent_b    已从 agent_b 的收件箱取出
+    [07:51:02] PROCESSING  agent_b    agent_b 开始处理
+    [07:51:02] PROCESSED   agent_b    agent_b 处理完成
+```
+
+**排错时的用法：**
+
+```bash
+./dev.sh communication-log --status FAILED    # 只看失败的
+./dev.sh communication-log --agent b          # 只看和 B 相关的
+```
+
+**怎么知道卡在哪一步？** 看哪一列时间戳是空的：
+
+| 现象 | 含义 |
+|---|---|
+| `status=DELIVERED` 且 `received_at=NULL` | 消息进了对方的信箱，但对方一直没取 |
+| `status=FAILED` 且有 `error_message` | 对方取了，但处理时出错 |
+| 事件流里有 `DUPLICATE` | 同一条消息被投递了多次 |
+| `retry_count > 0` | 重试过（目前还没有重试逻辑，字段先留好） |
+
 ### 通信层能做什么 / 不能做什么
 
 | 能做 | 不能做 |
@@ -619,13 +712,15 @@ extra_body:
 | ✅ 重复消息只处理一次 | ❌ 任务、议价、合同 |
 | ✅ 按消息类型注册专门处理器 | ❌ 消息签名 / 加密 |
 | ✅ 远端 Agent 登记（只有地址） | ❌ 自动发现节点 |
+| ✅ 通信日志（按 message/trace/conversation 查） | ❌ Web 面板 / Prometheus / Grafana |
+| ✅ 敏感信息自动脱敏 | ❌ 日志轮转 / 归档 |
 
 ---
 
 ## 4. 跑测试
 
 ```bash
-# 全部测试（633 个，不含真实 API 测试）
+# 全部测试（737 个，不含真实 API 测试）
 ./dev.sh test
 
 # 详细输出，显示每个测试的名字
@@ -681,24 +776,25 @@ extra_body:
 
 | 文件 | 测什么 | 数量 |
 |---|---|---|
-| `tests/test_wallet.py` | 钱包、余额、扣款 | 15 |
-| `tests/test_ledger.py` | 交易账本、金额校验、金额显示格式 | 21 |
-| `tests/test_economy.py` | 经济系统、隔离、审计、配置 | 32 |
-| `tests/test_transfer.py` | 转账入口与各种拒绝情况 | 27 |
-| `tests/test_startup.py` | 启动流程、重启不重复发钱 | 6 |
-| `tests/test_cli.py` | 命令行命令 | 34 |
-| `tests/test_llm_provider.py` | LLM 契约 / MockProvider / 注册表 / Router / 架构守卫 | 72 |
+| `tests/test_address.py` | 身份与地址分离 / 解析 / 不可变性 | 28 |
 | `tests/test_brain.py` | Brain、Agent 接入、调用记录 | 34 |
+| `tests/test_cli.py` | 命令行命令（含通信日志查询） | 47 |
+| `tests/test_communication.py` | 完整链路 / 去重 / 可替换传输 / 真 Agent | 44 |
+| `tests/test_communication_guards.py` | 通信层架构守卫（含日志边界） | 27 |
+| `tests/test_communication_recorder.py` | 通信日志 / 脱敏 / 去重 / 查询 | 86 |
 | `tests/test_deepseek_provider.py` | DeepSeek 请求序列化 / 响应解析 / 错误翻译 / Key 安全 | 72 |
 | `tests/test_doubao_provider.py` | 豆包特有：模型名两种写法 / 404 / 401 / 429 的含义 | 28 |
-| `tests/test_provider_contract.py` | 两家共用的契约（同一批断言参数化跑两遍） | 80 |
-| `tests/test_message.py` | Message 创建 / 校验 / 序列化 / 前向兼容 | 51 |
-| `tests/test_address.py` | 身份与地址分离 / 解析 / 不可变性 | 28 |
+| `tests/test_economy.py` | 经济系统、隔离、审计、配置 | 32 |
+| `tests/test_ledger.py` | 交易账本、金额校验、金额显示格式 | 21 |
+| `tests/test_llm_provider.py` | LLM 契约 / MockProvider / 注册表 / Router / 架构守卫 | 72 |
 | `tests/test_local_transport.py` | Transport 抽象 / 收发 / 失败路径 | 33 |
+| `tests/test_message.py` | Message 创建 / 校验 / 序列化 / 前向兼容 | 51 |
+| `tests/test_provider_contract.py` | 两家共用的契约（同一批断言参数化跑两遍） | 80 |
 | `tests/test_registry.py` | 注册表纯数据 / 本地远端 / 状态分离 | 34 |
-| `tests/test_communication.py` | 完整链路 / 去重 / 可替换传输 / 真 Agent | 44 |
-| `tests/test_communication_guards.py` | 通信层架构守卫 | 21 |
-| | **合计** | **633** |
+| `tests/test_startup.py` | 启动流程、重启不重复发钱 | 6 |
+| `tests/test_transfer.py` | 转账入口与各种拒绝情况 | 27 |
+| `tests/test_wallet.py` | 钱包、余额、扣款 | 15 |
+| | **合计** | **737** |
 
 另有 `tests/test_real_api.py`（30 项）需要真实 API Key，
 默认不跑，见下面的「真实 API 测试」。
@@ -998,6 +1094,7 @@ economy:
 | `ask <内容>` | **Step 2** 问某个 Agent 一句话 |
 | `providers` | **Step 2** 列出所有 LLM provider |
 | `communication-demo` | **Step 3** Agent 间通信链路演示 |
+| `communication-log` | **Step 3.5** 查询通信日志 |
 | `transfer <付款方> <收款方> <金额>` | 转钱 |
 | `balances` | 看余额 |
 | `ledger` | 看流水 |
@@ -1041,6 +1138,18 @@ economy:
 | `--receiver <Agent>` | `agent_b` | 接收方 |
 | `--text <文字>` | `Hello Agent B` | 要发的内容 |
 | `--timeout <秒>` | `2.0` | 等待接收的超时 |
+
+**`communication-log` 的专属参数：**
+
+| 参数 | 作用 |
+|---|---|
+| `--message <msg_id>` | 看一条消息的完整事件流和时间线 |
+| `--trace <trc_id>` | 看一条链路（一次任务）的所有消息 |
+| `--conversation <conv_id>` | 看一轮对话 |
+| `--traces` | 列出最近的链路 |
+| `--agent <Agent>` | 只看与某个 Agent 相关的消息 |
+| `--status <状态>` | 只看某个状态（如 `FAILED`） |
+| `--limit <数字>` | 最多显示几条（默认 20） |
 
 ### 退出码（写脚本时用）
 

@@ -49,6 +49,20 @@ class FakeAgent:
         self.reply_with = reply_with
 
     # ------------------------------------------------------------
+    def on_message(self, handler: Any) -> None:
+        """
+        和真实 BaseAgent.on_message 对齐的接口。
+
+        假 Agent 也提供这个方法，是为了让测试里
+        「装一个回复函数」的写法在真假 Agent 上完全一致 ——
+        否则同一段测试逻辑换个 Agent 类型就跑不了了。
+        """
+        if handler is not None and not callable(handler):
+            raise ValueError(
+                f"消息处理函数必须可调用，收到 {type(handler).__name__}"
+            )
+        self.reply_with = handler
+
     def handle_message(self, message: Any) -> Any:
         self.inbox.append(message)
 

@@ -507,3 +507,176 @@ class TestProviderCommands:
 
         # 第二次的输出里应该显示累计 2 次
         assert "累计: 2 次调用" in result.stdout
+
+
+# ============================================================
+# Step 3.5：通信日志命令
+# ============================================================
+class TestCommunicationLogCommands:
+    """
+    光把日志写进数据库还不算「能定位问题」——
+    还得能在出问题时真的查出来。
+    """
+
+    @staticmethod
+    def _run_demo_then(db_file, *args):
+        """先跑一次通信演示产生日志，再执行查询命令。"""
+        run_cli("communication-demo", db_path=db_file)
+        return run_cli(*args, db_path=db_file)
+
+    def test_log_lists_recent_messages(self, tmp_path):
+        result = self._run_demo_then(tmp_path / "log1.db", "communication-log")
+
+        assert result.returncode == EXIT_OK
+        assert "通信日志" in result.stdout
+        assert "agent_a" in result.stdout
+        assert "agent_b" in result.stdout
+        assert "msg_" in result.stdout
+
+    def test_log_empty_database_is_friendly(self, tmp_path):
+        """一条记录都没有时不该报错，要给出有用的提示。"""
+        result = run_cli("communication-log", db_path=tmp_path / "log_empty.db")
+
+        assert result.returncode == EXIT_OK
+        assert "还没有任何通信记录" in result.stdout
+
+    def test_log_traces_lists_traces(self, tmp_path):
+        result = self._run_demo_then(
+            tmp_path / "log2.db", "communication-log", "--traces"
+        )
+
+        assert result.returncode == EXIT_OK
+        assert "trc_" in result.stdout
+        assert "链路" in result.stdout
+
+    def test_log_trace_detail(self, tmp_path):
+        db_file = tmp_path / "log3.db"
+        run_cli("communication-demo", db_path=db_file)
+
+        traces = run_cli("communication-log", "--traces", db_path=db_file)
+        import re
+
+        match = re.search(r"trc_[0-9a-f]+", traces.stdout)
+        assert match, f"没能从输出里找到 trace_id：{traces.stdout}"
+
+        result = run_cli(
+            "communication-log", "--trace", match.group(0), db_path=db_file
+        )
+
+        assert result.returncode == EXIT_OK
+        assert "消息 2 条" in result.stdout
+        assert "状态汇总" in result.stdout
+
+    def test_log_message_detail_shows_event_stream(self, tmp_path):
+        db_file = tmp_path / "log4.db"
+        run_cli("communication-demo", db_path=db_file)
+
+        listing = run_cli("communication-log", db_path=db_file)
+        import re
+
+        match = re.search(r"msg_[0-9a-f]+", listing.stdout)
+        assert match
+
+        result = run_cli(
+            "communication-log", "--message", match.group(0), db_path=db_file
+        )
+
+        assert result.returncode == EXIT_OK
+        for status in ("CREATED", "SENT", "DELIVERED", "RECEIVED",
+                       "PROCESSING", "PROCESSED"):
+            assert status in result.stdout, f"事件流里缺少 {status}"
+
+    def test_log_message_detail_shows_all_timestamps(self, tmp_path):
+        db_file = tmp_path / "log5.db"
+        run_cli("communication-demo", db_path=db_file)
+
+        listing = run_cli("communication-log", db_path=db_file)
+        import re
+
+        message_id = re.search(r"msg_[0-9a-f]+", listing.stdout).group(0)
+
+        result = run_cli(
+            "communication-log", "--message", message_id, db_path=db_file
+        )
+
+        for field in ("created_at", "sent_at", "received_at", "processed_at"):
+            assert field in result.stdout
+
+    def test_log_unknown_message_returns_2(self, tmp_path):
+        result = run_cli(
+            "communication-log", "--message", "msg_不存在",
+            db_path=tmp_path / "log6.db",
+        )
+
+        assert result.returncode == EXIT_REJECTED
+        assert "找不到消息" in result.stdout
+
+    def test_log_filter_by_agent(self, tmp_path):
+        db_file = tmp_path / "log7.db"
+        run_cli("communication-demo", db_path=db_file)
+
+        result = run_cli(
+            "communication-log", "--agent", "agent_a", db_path=db_file
+        )
+
+        assert result.returncode == EXIT_OK
+        assert "msg_" in result.stdout
+
+    def test_log_filter_by_status(self, tmp_path):
+        db_file = tmp_path / "log8.db"
+        run_cli("communication-demo", db_path=db_file)
+
+        processed = run_cli(
+            "communication-log", "--status", "PROCESSED", db_path=db_file
+        )
+        failed = run_cli(
+            "communication-log", "--status", "FAILED", db_path=db_file
+        )
+
+        assert "PROCESSED" in processed.stdout
+        # 演示里没有失败，所以失败的查询应该是空的
+        assert "FAILED" not in failed.stdout.split("提示")[0]
+
+    def test_log_conversation(self, tmp_path):
+        db_file = tmp_path / "log9.db"
+        run_cli("communication-demo", db_path=db_file)
+
+        # 先拿到一个 conversation_id
+        listing = run_cli("communication-log", db_path=db_file)
+        import re
+
+        message_id = re.search(r"msg_[0-9a-f]+", listing.stdout).group(0)
+        detail = run_cli(
+            "communication-log", "--message", message_id, db_path=db_file
+        )
+        conv = re.search(r"conv_[0-9a-f]+", detail.stdout)
+        assert conv, "消息详情里应该有 conversation_id"
+
+        result = run_cli(
+            "communication-log", "--conversation", conv.group(0), db_path=db_file
+        )
+
+        assert result.returncode == EXIT_OK
+        assert "对话" in result.stdout
+
+    def test_demo_reports_journal(self, tmp_path):
+        """演示本身应该显示日志已经落库，并给出查询方式。"""
+        result = run_cli("communication-demo", db_path=tmp_path / "log10.db")
+
+        assert result.returncode == EXIT_OK
+        assert "通信日志" in result.stdout
+        assert "trace_id" in result.stdout
+        assert "communication-log" in result.stdout
+
+    def test_log_never_prints_api_keys(self, tmp_path):
+        """
+        【安全】日志命令的输出里不能出现任何 Key 样式的字符串。
+        """
+        import re
+
+        db_file = tmp_path / "log11.db"
+        run_cli("communication-demo", db_path=db_file)
+        result = run_cli("communication-log", db_path=db_file)
+
+        assert not re.search(r"sk-[A-Za-z0-9]{20,}", result.stdout)
+        assert not re.search(r"ark-[A-Za-z0-9]{20,}", result.stdout)

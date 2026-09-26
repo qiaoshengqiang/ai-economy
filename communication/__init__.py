@@ -50,6 +50,16 @@ Communication —— Agent 之间的通信层
     · MessageType 里的 TASK_OFFER / PAYMENT_RESULT 等 → 只有名字
     · Message 的 extensions / protocol_version → 前向兼容
     · Message.payload 里的 task_id / workspace_id → Task Workspace 接口
+
+【通信日志（Step 3.5）】
+
+    recorder.py 是这个包里的观察者，不参与通信：
+        Message → Transport → CommunicationRecorder → SQLite
+
+    它记录每条消息的生命周期（CREATED → SENT → … → PROCESSED），
+    并支持按 message_id / trace_id / conversation_id 查回整条链路。
+
+    删掉日志表，通信照常工作 —— 这就是「Message ≠ 日志」。
 """
 
 from communication.address import Address
@@ -72,6 +82,13 @@ from communication.manager import (
     ReceiveStatus,
 )
 from communication.message import PROTOCOL_VERSION, Message, MessageType
+from communication.recorder import (
+    REDACTED,
+    CommunicationRecorder,
+    MessageStatus,
+    payload_fingerprint,
+    redact,
+)
 from communication.registry import AgentInfo, AgentRegistry, PresenceStatus
 from communication.transport import DeliveryReceipt, Transport
 
@@ -94,6 +111,12 @@ __all__ = [
     "AgentRegistry",
     "CommunicationManager",
     "SeenMessageTracker",
+    # 通信日志
+    "CommunicationRecorder",
+    "MessageStatus",
+    "redact",
+    "payload_fingerprint",
+    "REDACTED",
     # 异常
     "CommunicationError",
     "AgentNotFoundError",

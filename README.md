@@ -150,7 +150,7 @@ LLM 只能**提出意图**，永远不能**直接改账**。
 - [x] SQLite 数据库（4 张表）
 - [x] 启动横幅
 - [x] **命令行经济操作**（转账 / 余额 / 流水 / 对账）
-- [x] 633 个 pytest 测试全绿（另有 30 个真实 API 测试单独跑）
+- [x] 737 个 pytest 测试全绿（另有 30 个真实 API 测试单独跑）
 
 **验收标准**（已达成）：
 
@@ -493,6 +493,145 @@ Agent A ← CommunicationManager ← Message ← Transport ←──────
 把路径丢掉了 —— 于是同一台机器上的不同 Agent 会解析成同一个地址。
 现在 netloc 和 path 一起保留。
 
+### ✅ Step 3.5：通信日志（Communication Journal）（已完成）
+
+**目标：出问题时能靠日志定位，而不是靠猜。**
+
+```
+Message → Transport → CommunicationRecorder → SQLite
+```
+
+#### 最重要的一条：Message ≠ 日志
+
+| | Message | 日志 |
+|---|---|---|
+| 是什么 | 通信用的数据 | 观测用的记录 |
+| 会发给对方吗 | 会 | 不会 |
+| 删掉会怎样 | 通信没了 | **通信照常工作** |
+| 存在哪 | 内存 / 网络 | SQLite 两张表 |
+
+`communication/message.py` 里**没有一行代码提到日志** —— 由架构守卫强制保证。
+
+#### 两张表
+
+| 表 | 作用 | 写入方式 |
+|---|---|---|
+| `communication_messages` | 每条消息的**当前状态**（一行一条，message_id 主键） | UPSERT |
+| `communication_events` | 状态**事件流** | append-only |
+
+**为什么状态要拆成「一行 + 事件流」：**
+
+- 只看最终状态的话，「失败过两次又成功了」和「一次就成功」看起来一样
+- 一行保证「一个 message_id 只有一条状态」，反复投递不会产生无法区分的重复记录
+- 事件流保留完整历史：每步间隔、重试次数、失败原因、重复投递次数
+
+#### 记录的状态
+
+```
+CREATED → SENT → DELIVERED → RECEIVED → PROCESSING → PROCESSED
+                              ↓            ↓            ↓
+                            DUPLICATE    FAILED       FAILED
+```
+（`QUEUED` / `TIMEOUT` / `RETRY` 常量已留，等有 ACK 机制和重试逻辑时启用）
+
+#### 一条消息的日志长这样
+
+```
+$ ./dev.sh communication-log --message msg_4ad6a166
+
+消息 msg_4ad6a166
+------------------------------------------------------------------------
+  trace_id        : trc_0b327e83
+  conversation_id : conv_64be7b6c
+  from → to       : agent_a → agent_b
+  message_type    : TEXT
+  status          : PROCESSED
+  transport       : local
+  address         : local://agent_b
+  is_remote       : False
+  retry_count     : 0
+  payload_size    : 25
+  payload_hash    : e7d0955f2780b8b9d60591c…
+
+  时间线
+    created_at    : 2026-09-26T07:51:02.478368
+    sent_at       : 2026-09-26T07:51:02.479265
+    received_at   : 2026-09-26T07:51:02.479804
+    processed_at  : 2026-09-26T07:51:02.480245
+
+  事件流
+    [07:51:02] CREATED     agent_a    消息已构造，等待投递
+    [07:51:02] SENT        agent_a    传输层已接受（local）
+    [07:51:02] DELIVERED   agent_b    已进入 agent_b 的收件箱
+    [07:51:02] RECEIVED    agent_b    已从 agent_b 的收件箱取出
+    [07:51:02] PROCESSING  agent_b    agent_b 开始处理
+    [07:51:02] PROCESSED   agent_b    agent_b 处理完成
+```
+
+**四个时间戳分开存的价值**：哪一步没发生，看哪一列是 `NULL` 就知道。
+只发了没收 → `status=DELIVERED`、`received_at=NULL`。
+
+#### 两种链路 ID
+
+| ID | 管什么 | 谁继承 |
+|---|---|---|
+| `trace_id` | 一次完整任务 / 业务流程 | **回复自动继承** —— 整条任务的往返消息都能串起来 |
+| `conversation_id` | 一轮对话 / 协商 | 同上 |
+
+回复不继承 `trace_id` 的话，一次任务的来回消息在日志里就是互不相干的孤儿。
+
+#### 敏感信息自动脱敏
+
+日志会被查询、打印、贴到聊天里求助 —— **一旦 Key 进去就等于泄露，而且永久留在数据库里**。
+
+所以在**入口处自动过滤**（不靠人自觉）：
+
+| 手段 | 例子 |
+|---|---|
+| 键名匹配 | `api_key` / `secret` / `private_key` / `mnemonic` / `access_token` / `authorization` |
+| 值特征匹配 | `sk-xxxxx` / `ark-xxxxx` / `Bearer xxx` / `-----BEGIN PRIVATE KEY-----` |
+| 错误信息 | 异常里拼了请求头也会被抹掉 |
+
+**注意 `token` 本身没有列为敏感** —— 因为 `input_tokens` / `total_tokens` / `tokens_per_ai_coin` 都是正当字段。一律脱敏会让日志没法看。
+
+#### 日志失败不影响通信
+
+日志是观测手段，不该成为通信的单点故障。
+`CommunicationRecorder` 默认 `strict=False`：写失败只记 warning，消息照常发送。
+测试里用 `strict=True` 让失败暴露出来。
+
+#### 为 P2P 预留
+
+日志里存 `{transport, address, is_remote}`，而不是「本地」这种假设：
+
+| 传输 | transport | address | is_remote |
+|---|---|---|---|
+| 本地 | `local` | `local://agent_b` | 0 |
+| 未来 P2P | `p2p` | `p2p://12D3KooW...` | 1 |
+
+表结构不用改。
+
+#### 验收结果
+
+| 需求验收点 | 状态 |
+|---|---|
+| 1. 发送消息产生日志 | ✅ CREATED/SENT/DELIVERED |
+| 2. 接收消息产生日志 | ✅ RECEIVED/PROCESSING/PROCESSED |
+| 3. 成功流程状态完整 | ✅ 6 个事件、4 个时间戳齐全 |
+| 4. 失败流程有错误记录 | ✅ FAILED + error_code + error_message |
+| 5. 相同 message_id 不产生无法区分的重复记录 | ✅ UPSERT 一行 + 事件流留痕 |
+| 6. 日志不含钱包私钥 / API Key | ✅ 入口自动脱敏，含错误信息 |
+| 7. 不影响现有通信功能 | ✅ 日志失败通信照常 |
+| 8. 原有测试继续通过 | ✅ 633 → 737 全绿 |
+
+**测试：633 → 737（新增 104）**
+
+| 新增/修改 | 数量 |
+|---|---|
+| `test_communication_recorder.py` | 86 |
+| `test_communication_guards.py` | +6（日志边界守卫） |
+| `test_cli.py` | +12（日志查询命令） |
+
 ### ⏳ 后续阶段
 
 | 阶段 | 内容 | 状态 |
@@ -742,12 +881,13 @@ ai-economy/
 │   ├── registry.py            ←   AgentRegistry（只存数据）
 │   ├── manager.py             ←   CommunicationManager
 │   ├── dedup.py               ←   重复消息检测
+│   ├── recorder.py            ←   通信日志（Step 3.5）
 │   └── errors.py              ←   通信异常体系
 ├── storage/
 │   ├── database.py            ← SQLite 连接、事务、迁移
 │   └── models.py              ← 表结构定义
 │
-├── tests/                     ← 633 个测试 + 30 个真实 API 测试
+├── tests/                     ← 737 个测试 + 30 个真实 API 测试
 └── data/
     └── economy.db             ← SQLite 数据库（运行产物，不进 git）
 ```

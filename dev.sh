@@ -25,6 +25,8 @@
 #   ./dev.sh ask "你好"                   问 Agent A 一句话
 #   ./dev.sh providers                   看有哪些 LLM provider
 #   ./dev.sh communication-demo          Step 3 Agent 间通信演示
+#   ./dev.sh communication-log           Step 3.5 查询通信日志
+#   ./dev.sh communication-log --traces  列出最近的通信链路
 #   ./dev.sh balances                    查看余额
 #   ./dev.sh transfer agent_a agent_b 20 让 A 付 20 AI 给 B
 #   ./dev.sh ledger                      查看交易流水
@@ -163,6 +165,9 @@ case "$COMMAND" in
         echo
         echo "Agent 通信（透传给 main.py）："
         echo "    ./dev.sh communication-demo                Step 3 通信链路演示"
+        echo "    ./dev.sh communication-log                 看最近的通信消息"
+        echo "    ./dev.sh communication-log --traces        列出最近的链路"
+        echo "    ./dev.sh communication-log --trace trc_x   看一条链路的全部消息"
         echo
         echo "LLM（透传给 main.py）："
         echo "    ./dev.sh demo [--prompt 文字] [--agent a]  Step 2 链路演示"
@@ -180,6 +185,7 @@ case "$COMMAND" in
         echo "    ./dev.sh test-real deepseek              真实调用 DeepSeek"
         echo "    ./dev.sh demo                              完整链路演示"
         echo "    ./dev.sh communication-demo                Agent 间通信演示"
+        echo "    ./dev.sh communication-log --traces        看通信链路"
         echo "    ./dev.sh ask \"你好\"                        问 Agent A"
         echo "    ./dev.sh transfer agent_a agent_b 20       A 付 20 AI 给 B"
         echo "    ./dev.sh transfer a b 20 --reason 任务定金  简写 + 原因"
