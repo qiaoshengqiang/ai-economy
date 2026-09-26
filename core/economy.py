@@ -43,7 +43,7 @@ from typing import Any, Dict, List, Optional, Union
 from agents.base_agent import AgentStatus, BaseAgent, Reputation
 from core.config import AgentConfig, Config, load_agent_config, load_global_config
 from core.identity import AgentIdentity, utc_now_iso
-from core.ledger import Ledger
+from core.ledger import Ledger, Transaction
 from core.logging_setup import get_logger
 from core.paths import ensure_runtime_dirs
 from core.wallet import Wallet, WalletRepository
@@ -351,6 +351,177 @@ class Economy:
                 f"{agent.name} 当前无法承担经济责任"
                 f"（状态：{agent.status}，余额：{agent.balance} {self.currency}）"
             )
+
+    # ------------------------------------------------------------
+    # 经济动作：转账（OS 级执行入口）
+    # ------------------------------------------------------------
+    def transfer(
+        self,
+        from_agent_id: str,
+        to_agent_id: str,
+        amount: float,
+        reason: str = "manual_transfer",
+        task_id: Optional[str] = None,
+        contract_id: Optional[str] = None,
+    ) -> Transaction:
+        """
+        让一个 Agent 付钱给另一个 Agent。**这是唯一被允许的转账路径。**
+
+        【为什么必须走这个方法，而不能直接调 wallet.transfer_to？】
+
+        Wallet 层只检查「余额够不够」。
+        但一次真实的经济支付还应该有更多关卡：
+
+            1. 付款方和收款方都真实存在吗？     ← Wallet 不检查
+            2. 是不是自己给自己转账？           ← Wallet 检查了
+            3. 付款方还有偿付能力吗？           ← Wallet 不检查
+            4. 金额是正数吗？                   ← Wallet 检查了
+
+        这些「经济规则」属于 OS Core 的职责，不属于钱包。
+        钱包只管钱，Economy 管规则。
+
+        【未来接入 LLM 时】
+
+            LLM 输出："我决定支付 Agent B 20 AI"
+                ↓
+            Agent 解析成意图：transfer(to="agent_b", amount=20)
+                ↓
+            调用【这个方法】
+                ↓
+            校验通过才真正写账本；不通过就抛异常
+                ↓
+            Agent 把异常翻译成"支付被系统拒绝"
+
+        所以这个方法就是「LLM 提出意图 → OS 验证 → 执行」里的中间那一环。
+        把入口建在这里，以后接 LLM 时不需要改任何经济逻辑。
+
+        校验通过后，钱从 from 的钱包流向 to 的钱包，Ledger 记录一笔 TRANSFER。
+
+        参数：
+            amount: 必须 > 0
+            reason: 人类可读的原因，会写进账本（比如 "task_payment"）
+        返回：
+            写入账本的那笔 Transaction
+
+        异常：
+            AgentNotFoundError      某个 Agent 不存在
+            EconomyError            自己转自己 / 金额非正 / 付款方已破产
+            InsufficientFundsError  余额不足
+        """
+        # --- 关卡 1：两个 Agent 都必须存在 ---
+        from_agent = self.agent(from_agent_id)
+        to_agent = self.agent(to_agent_id)
+
+        # --- 关卡 2：不能自己给自己转账 ---
+        if from_agent_id == to_agent_id:
+            raise EconomyError(
+                f"不能给自己转账：{from_agent.name} 的付款方和收款方是同一个 Agent"
+            )
+
+        # --- 关卡 3：金额必须是正数 ---
+        try:
+            value = float(amount)
+        except (TypeError, ValueError):
+            raise EconomyError(f"金额必须是数字，收到：{amount!r}")
+
+        if value != value:  # NaN
+            raise EconomyError("金额不能是 NaN")
+
+        if value <= 0:
+            raise EconomyError(
+                f"转账金额必须大于 0，收到 {value}。"
+                f"（想做反向转账就调换付款方和收款方）"
+            )
+
+        # --- 关卡 4：付款方必须还有偿付能力 ---
+        #
+        # 破产的 Agent 不能继续承担经济责任。
+        # 注意：这里拒绝的是「付款」，因为付款是承担责任的行为。
+        # 别人给它转钱是允许的 —— 那正是它翻身的机会。
+        if not from_agent.can_take_financial_risk:
+            raise EconomyError(
+                f"{from_agent.name} 当前无法承担经济责任，转账被拒绝。"
+                f"（状态：{from_agent.status}，"
+                f"余额：{from_agent.balance} {self.currency}）"
+            )
+
+        # --- 关卡 5：余额是否足够（交给钱包，规则只有一处定义）---
+        tx = from_agent.wallet.transfer_to(
+            to_agent.wallet,
+            value,
+            reason=reason,
+            task_id=task_id,
+            contract_id=contract_id,
+        )
+
+        # --- 转账后刷新双方状态 ---
+        #
+        # 为什么两边的状态都要刷新？
+        #   付款方可能因为这笔钱而破产（余额归零）
+        #   收款方可能因为这笔钱而复活（从 INSOLVENT 回到 ACTIVE）
+        from_agent.update_status()
+        to_agent.update_status()
+
+        logger.info(
+            "转账 %s -> %s : %.4g %s（%s，交易号 %s）",
+            from_agent.agent_id,
+            to_agent.agent_id,
+            value,
+            self.currency,
+            reason,
+            tx.tx_id,
+        )
+
+        return tx
+
+    # ------------------------------------------------------------
+    # Agent 查找（让命令行可以用名字或 ID 指定 Agent）
+    # ------------------------------------------------------------
+    def resolve_agent_id(self, name_or_id: str) -> str:
+        """
+        把用户输入解析成真正的 agent_id。
+
+        支持三种写法（都不区分大小写）：
+            "agent_a"   —— 精确的 agent_id
+            "Agent A"   —— 显示名
+            "a"         —— 简写（自动补全成 agent_a）
+
+        这样命令行里 `./dev.sh transfer a b 20` 也能跑通。
+        """
+        key = str(name_or_id).strip().lower()
+
+        if not key:
+            raise AgentNotFoundError("没有指定 Agent")
+
+        agents = self.all_agents()
+
+        # 1) 精确匹配 agent_id
+        for agent in agents:
+            if agent.agent_id.lower() == key:
+                return agent.agent_id
+
+        # 2) 匹配显示名
+        for agent in agents:
+            if agent.name.lower() == key:
+                return agent.agent_id
+
+        # 3) 简写："a" -> "agent_a"（只在唯一匹配时才接受，避免歧义）
+        candidates = [
+            agent.agent_id
+            for agent in agents
+            if agent.agent_id.lower() == f"agent_{key}"
+        ]
+        if len(candidates) == 1:
+            return candidates[0]
+
+        available = ", ".join(
+            f"{a.agent_id} ({a.name})" for a in agents
+        ) or "（还没有任何 Agent）"
+
+        raise AgentNotFoundError(
+            f"找不到 Agent：{name_or_id!r}\n"
+            f"可用的 Agent：{available}"
+        )
 
     # ------------------------------------------------------------
     # 审计

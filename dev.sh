@@ -15,6 +15,13 @@
 #   ./dev.sh clean         删掉数据库重来（会重新发钱）
 #   ./dev.sh shell         进入虚拟环境的交互式 Python
 #   ./dev.sh doctor        检查环境是否正常
+#
+#   ---- 下面这些直接透传给 main.py ----
+#   ./dev.sh balances                    查看余额
+#   ./dev.sh transfer agent_a agent_b 20 让 A 付 20 AI 给 B
+#   ./dev.sh ledger                      查看交易流水
+#   ./dev.sh audit                       对账
+#   ./dev.sh --help                      查看全部命令
 # ============================================================
 
 set -euo pipefail
@@ -97,19 +104,32 @@ case "$COMMAND" in
         fi
         ;;
 
-    help|*)
+    help|-h|--help|"")
         echo "AI Economy OS —— 开发辅助脚本"
         echo
-        echo "用法："
+        echo "环境 / 开发命令："
         echo "    ./dev.sh test [pytest 参数]    跑测试"
         echo "    ./dev.sh run  [main.py 参数]   启动系统"
         echo "    ./dev.sh clean                 清除数据库和日志"
         echo "    ./dev.sh shell                 进入交互式 Python"
         echo "    ./dev.sh doctor                检查环境"
         echo
+        echo "经济操作（透传给 main.py）："
+        echo "    ./dev.sh balances                          查看所有 Agent 余额"
+        echo "    ./dev.sh transfer <付款方> <收款方> <金额>   转钱"
+        echo "    ./dev.sh ledger [--agent a]                查看交易流水"
+        echo "    ./dev.sh audit                             对账"
+        echo
         echo "例子："
-        echo "    ./dev.sh test -v                   详细测试输出"
-        echo "    ./dev.sh test tests/test_ledger.py  只跑账本测试"
-        echo "    ./dev.sh run --quiet               简洁启动输出"
+        echo "    ./dev.sh test -v                          详细测试输出"
+        echo "    ./dev.sh transfer agent_a agent_b 20       A 付 20 AI 给 B"
+        echo "    ./dev.sh transfer a b 20 --reason 任务定金  简写 + 原因"
+        echo "    ./dev.sh run --quiet                      简洁启动输出"
+        ;;
+
+    *)
+        # 其它命令一律透传给 main.py。
+        # 这样 main.py 以后新增命令，dev.sh 不需要跟着改。
+        exec "$VENV_PYTHON" main.py "$COMMAND" "$@"
         ;;
 esac
