@@ -229,9 +229,9 @@ def build_default_registry() -> ProviderRegistry:
     """
     建好系统自带的注册表。
 
-    本阶段只有 mock 是真正实现的。
-    deepseek / doubao / grok 先登记为「已知但未实现」，
-    这样用户一旦在配置里写 deepseek，会得到一条
+    目前 mock 和 deepseek 是真正实现的，
+    doubao / grok 先登记为「已知但未实现」，
+    这样用户一旦在配置里写它们，会得到一条
     明确告诉他「去建哪个文件」的提示，而不是一句「找不到」。
 
     未实现提示的写法，就是「怎么加一个厂商」的说明书。
@@ -245,6 +245,16 @@ def build_default_registry() -> ProviderRegistry:
 
     registry.register("mock", MockProvider)
 
+    # DeepSeekProvider 的 __init__ 多了一个可选参数 http_post
+    # （注入自定义 HTTP 实现，测试用）。因为有默认值，
+    # 它同样可以直接当工厂用。
+    #
+    # ★ 这一行，就是「接入一家真实厂商」在 Router 侧的全部代价。★
+    #   注册表相比 if/elif 链的好处，在这里体现得最直接。
+    from llm.deepseek import DeepSeekProvider
+
+    registry.register("deepseek", DeepSeekProvider)
+
     # ---- 已登记，未实现 ----
     #
     # 每个提示都精确到「建哪个文件、写什么类、去哪里注册」，
@@ -254,12 +264,14 @@ def build_default_registry() -> ProviderRegistry:
         "  1. 新建 llm/{name}.py\n"
         "  2. 写一个继承 LLMProvider 的 {cls}，实现 generate()\n"
         "  3. 在 llm/router.py 的 build_default_registry() 里注册它\n"
-        "  提示：Provider 只负责把 messages 转成 LLMResponse，\n"
+        "  提示：照抄 llm/deepseek.py 就行。它已经把这四件事\n"
+        "        示范清楚了：可替换的 HTTP 层、请求构造、\n"
+        "        响应解析、错误翻译。\n"
+        "  注意：Provider 只负责把 messages 转成 LLMResponse，\n"
         "        不要在里面记账、算钱、碰数据库。"
     )
 
     for name, cls_name in (
-        ("deepseek", "DeepSeekProvider"),
         ("doubao", "DoubaoProvider"),
         ("grok", "GrokProvider"),
     ):

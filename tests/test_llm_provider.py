@@ -395,13 +395,25 @@ class TestProviderRegistry:
         assert registry.is_registered("mock")
 
     def test_default_registry_declares_future_providers(self):
-        """deepseek / doubao / grok 要「已登记但未实现」，而不是「不存在」。"""
+        """
+        doubao / grok 要「已登记但未实现」，而不是「不存在」。
+
+        （deepseek 在 Step 2.5 已经实现，所以不在这份清单里。）
+        """
         registry = build_default_registry()
 
-        for name in ("deepseek", "doubao", "grok"):
+        for name in ("doubao", "grok"):
             assert name in registry.unimplemented
             assert registry.is_known(name)
             assert not registry.is_registered(name)
+
+    def test_default_registry_has_deepseek_implemented(self):
+        """Step 2.5：deepseek 从「未实现」转成了「已实现」。"""
+        registry = build_default_registry()
+
+        assert "deepseek" in registry.implemented
+        assert "deepseek" not in registry.unimplemented
+        assert registry.is_registered("deepseek")
 
     def test_create_mock(self):
         provider = build_default_registry().create("mock", {}, "mock-model-v1")
@@ -413,7 +425,7 @@ class TestProviderRegistry:
 
     def test_unimplemented_provider_raises_not_implemented(self):
         with pytest.raises(ProviderNotImplementedError):
-            build_default_registry().create("deepseek", {}, "deepseek-chat")
+            build_default_registry().create("doubao", {}, "")
 
     def test_unimplemented_error_tells_you_what_to_do(self):
         """
@@ -421,11 +433,11 @@ class TestProviderRegistry:
         而不是只说一句「未实现」让人去猜。
         """
         with pytest.raises(ProviderNotImplementedError) as excinfo:
-            build_default_registry().create("deepseek", {}, "")
+            build_default_registry().create("grok", {}, "")
 
         message = str(excinfo.value)
-        assert "llm/deepseek.py" in message
-        assert "DeepSeekProvider" in message
+        assert "llm/grok.py" in message
+        assert "GrokProvider" in message
 
     def test_registering_new_provider_needs_no_router_change(self):
         """
@@ -466,14 +478,14 @@ class TestProviderRegistry:
     def test_register_clears_unimplemented_mark(self):
         """先登记为未实现，后来实现了，就不该再报「未实现」。"""
         registry = build_default_registry()
-        assert "deepseek" in registry.unimplemented
+        assert "doubao" in registry.unimplemented
 
-        registry.register("deepseek", MockProvider)
+        registry.register("doubao", MockProvider)
 
-        assert "deepseek" in registry.implemented
-        assert "deepseek" not in registry.unimplemented
+        assert "doubao" in registry.implemented
+        assert "doubao" not in registry.unimplemented
         # 真的能造出来了
-        assert isinstance(registry.create("deepseek", {}, ""), MockProvider)
+        assert isinstance(registry.create("doubao", {}, ""), MockProvider)
 
     def test_create_rejects_non_provider(self):
         registry = ProviderRegistry()
@@ -564,19 +576,31 @@ class TestLLMRouter:
     def test_unimplemented_error_reaches_caller(self, config):
         """走 Router 调用未实现的 provider，要抛出正确的异常类型。"""
         with pytest.raises(ProviderNotImplementedError):
-            LLMRouter(config).generate(provider="deepseek", messages="hi")
+            LLMRouter(config).generate(provider="doubao", messages="hi")
 
     def test_available_providers(self, config):
+        """
+        可用的 provider = 已实现 + 没在配置里被关掉。
+
+        Step 2.5 之后 deepseek 已实现，所以它也在列表里
+        （能不能真的调通是另一回事，那取决于有没有配 API Key）。
+        """
         router = LLMRouter(config)
-        assert "mock" in router.available_providers()
-        assert "deepseek" not in router.available_providers()
+        available = router.available_providers()
+
+        assert "mock" in available
+        assert "deepseek" in available
+        # 未实现的不能出现在可用列表里
+        assert "doubao" not in available
+        assert "grok" not in available
 
     def test_describe(self, config):
         info = LLMRouter(config).describe()
 
         assert info["default_provider"] == "mock"
         assert "mock" in info["implemented"]
-        assert "deepseek" in info["unimplemented"]
+        assert "deepseek" in info["implemented"]
+        assert "doubao" in info["unimplemented"]
 
     def test_passes_all_parameters_through(self, config):
         """system / temperature / max_tokens / model 都要真的传下去。"""
@@ -781,14 +805,37 @@ class TestArchitectureGuards:
             f"请改用注册表（registry.register）。"
         )
 
-    def test_only_mock_is_actually_implemented(self):
+    def test_implemented_provider_list(self):
         """
-        本阶段不应该偷偷实现真实厂商。
+        已实现的 provider 清单。
 
-        验收标准里写明了：只让 MockProvider 真正工作。
+        Step 2 时只有 mock；
+        Step 2.5 接入了真实的 deepseek。
+        以后每接一家，这里就多一项。
         """
         registry = build_default_registry()
-        assert registry.implemented == ["mock"]
+        assert registry.implemented == ["deepseek", "mock"]
+
+    def test_no_vendor_names_in_agents_after_real_provider(self):
+        """
+        【Step 2.5 的核心验收】
+
+        接入真实厂商之后，Agent 层依然不能出现厂商名字。
+
+        这条测试在接入 DeepSeek 之前就有，接入之后必须依然通过 ——
+        这正是「抽象是否成立」的最终判据。
+        """
+        for source in (PROJECT_ROOT / "agents").rglob("*.py"):
+            strings, names = _code_strings_and_names(source)
+
+            for text in strings:
+                assert "deepseek" not in text.lower(), (
+                    f"{source.name} 的代码字符串里出现了 deepseek"
+                )
+            for name in names:
+                assert "deepseek" not in name.lower(), (
+                    f"{source.name} 的标识符 {name!r} 里出现了 deepseek"
+                )
 
     def test_llm_layer_does_not_import_agents_or_economy(self):
         """

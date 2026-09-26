@@ -294,10 +294,10 @@ LLM Providers
   默认 provider: mock
 
   可直接使用
+    deepseek   启用   model=deepseek-chat
     mock       启用   model=mock-model-v1  ← 当前默认
 
   已登记但尚未实现
-    deepseek   需要新建 llm/deepseek.py
     doubao     需要新建 llm/doubao.py
     grok       需要新建 llm/grok.py
 
@@ -306,6 +306,9 @@ LLM Providers
     agent_a    provider=mock       model=mock-model-v1
     agent_b    provider=mock       model=mock-model-v1
 ```
+
+注意 `可直接使用` 只表示「代码已实现、配置没关掉」。
+DeepSeek 能不能真的调通，还取决于你有没有配 `DEEPSEEK_API_KEY`。
 
 ### 查看模型的调用记录
 
@@ -340,35 +343,112 @@ print(recorder.summary("agent_a"))   # 汇总 token
 print(recorder.recent("agent_a"))    # 最近几条
 ```
 
-### 换成别的模型？
+### 用真实的 DeepSeek
 
-改 `agents/agent_x/config.yaml`：
+**第一步：配 Key**
+
+```bash
+cp .env.example .env
+open -e .env        # 填入 DEEPSEEK_API_KEY
+```
+
+Key 只放在 `.env` 里。`.env` 已被 `.gitignore` 排除，永远不会进 git。
+
+**第二步：临时用一次（不改任何配置）**
+
+```bash
+./dev.sh ask "你好，请用一句话介绍自己" --provider deepseek
+./dev.sh demo --provider deepseek --prompt "说：好"
+```
+
+**第三步：或者把某个 Agent 固定改成用 DeepSeek**
+
+改 `agents/agent_a/config.yaml`：
 
 ```yaml
 brain:
-  provider: "mock"     # 改成 deepseek / doubao / grok
-  model: ""            # 留空就用全局注册表里的默认模型
+  provider: "deepseek"      # 从 mock 改成 deepseek
+  model: ""                 # 留空就用 llm.providers.deepseek.model
 ```
 
-但 **deepseek / doubao / grok 现在还没实现**，所以目前只有 `mock` 能用。
-改成未实现的会得到一条明确的提示：
+然后这个 Agent 以后每次思考都走真实 API —— **Agent 的代码一行都不用改。**
+
+**成功时的输出：**
+
+```
+Agent A  [deepseek/deepseek-chat]
+----------------------------------------------------------
+  你: 你好
+
+  Agent A: 你好！我是 DeepSeek...
+
+Token usage
+--------------------------------
+  Provider:      deepseek
+  Model:         deepseek-chat
+  Input tokens:  26
+  Output tokens: 9
+  Total tokens:  35
+  Latency:       812.34 ms
+  Simulated:     False
+  Token source:  api  (来自 API 的真实用量，可以拿去对账单)
+```
+
+**注意 `Token source`：**
+
+| 值 | 含义 |
+|---|---|
+| `api` | API 返回的真实用量 —— 可以拿去算钱、对账单 |
+| `estimated` | 我们估算的（MockProvider）—— 只能做粗略预算 |
+| `unknown` | API 没返回，我们也不知道 —— **没有猜，就是不知道** |
+
+**没配 Key 时的提示：**
+
+```
+模型调用失败
+  LLM provider 'deepseek' 当前不可用：环境变量 DEEPSEEK_API_KEY 未设置或为空。
+请复制 .env.example 为 .env，然后填入你的 Key：
+    cp .env.example .env
+    # 编辑 .env，填入 DEEPSEEK_API_KEY=<你的Key>
+```
+
+**Key 错误时：**
+
+```
+模型调用失败
+  DeepSeek 鉴权失败（HTTP 401）。
+通常是这几种原因：
+  · DEEPSEEK_API_KEY 的值不对或已失效
+  · Key 前后有空格或换行
+  · Key 被撤销了
+重试没有意义，请检查环境变量。
+```
+
+### 换成 Doubao / Grok？
+
+这两个**还没实现**。改了会得到明确的「怎么做」提示：
 
 ```
 模型调用被拒绝
 ----------------------------------------------
-  LLM provider 'deepseek' 还没有实现。
+  provider 'grok' 还没有实现。
 怎么做：
-  1. 新建 llm/deepseek.py
-  2. 写一个继承 LLMProvider 的 DeepSeekProvider，实现 generate()
+  1. 新建 llm/grok.py
+  2. 写一个继承 LLMProvider 的 GrokProvider，实现 generate()
   3. 在 llm/router.py 的 build_default_registry() 里注册它
+  提示：照抄 llm/deepseek.py 就行。它已经把这四件事
+        示范清楚了：可替换的 HTTP 层、请求构造、
+        响应解析、错误翻译。
 ```
+
+**加一家新厂商只需要三步**，Agent / Brain / Economy 全都不用动。
 
 ---
 
 ## 4. 跑测试
 
 ```bash
-# 全部测试（239 个）
+# 全部测试（314 个，不含真实 API 测试）
 ./dev.sh test
 
 # 详细输出，显示每个测试的名字
@@ -392,7 +472,31 @@ brain:
 
 # 测试失败时停下来，并显示完整的错误
 ./dev.sh test -x --tb=long
+
+# 真实调用 DeepSeek API（需要 Key，会真的花钱）
+./dev.sh test-real deepseek
 ```
+
+**默认测试永不联网。** `./dev.sh test` 会排除所有打了 `real_api` 标记的测试 ——
+所以不管你有没有 API Key，它都应该稳定通过。
+
+### 真实 API 测试
+
+```bash
+./dev.sh test-real deepseek
+```
+
+- **有 Key** → 真的调用 `api.deepseek.com`，验证真实 usage、真实延迟、整条 Agent 链路
+- **没 Key** → 显示 `SKIPPED [1] Skipped: DEEPSEEK_API_KEY not configured`，**不会失败**
+
+它验证的是假 HTTP 层验证不了的东西：
+
+| 验证点 | 为什么必须真调 |
+|---|---|
+| 真实返回里 `choices[0].message.content` 真的存在吗 | 字段名假设错了只有真调才知道 |
+| `usage` 真的叫 `prompt_tokens` / `completion_tokens` / `total_tokens` 吗 | 同上 |
+| 我们估算的 token 和真实值差几倍 | 只有对比才能知道估算靠不靠谱 |
+| Agent → Brain → Router → DeepSeek 整条链路通不通 | 端到端只有真跑才算数 |
 
 **可用的测试文件：**
 
@@ -404,9 +508,13 @@ brain:
 | `tests/test_transfer.py` | 转账入口与各种拒绝情况 | 27 |
 | `tests/test_startup.py` | 启动流程、重启不重复发钱 | 6 |
 | `tests/test_cli.py` | 命令行命令 | 34 |
-| `tests/test_llm_provider.py` | LLM 契约 / MockProvider / 注册表 / Router / 架构守卫 | 70 |
+| `tests/test_llm_provider.py` | LLM 契约 / MockProvider / 注册表 / Router / 架构守卫 | 72 |
 | `tests/test_brain.py` | Brain、Agent 接入、调用记录 | 34 |
-| | **合计** | **239** |
+| `tests/test_deepseek_provider.py` | DeepSeek 请求序列化 / 响应解析 / 错误翻译 / Key 安全 | 72 |
+| | **合计** | **314** |
+
+另有 `tests/test_real_api.py`（18 项）需要真实 API Key，
+默认不跑，见下面的「真实 API 测试」。
 
 > 想看每个测试到底测什么，直接打开 `tests/` 目录里的文件 —— 每个测试都有中文注释。
 

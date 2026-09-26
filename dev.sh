@@ -16,6 +16,8 @@
 #   ./dev.sh shell         进入虚拟环境的交互式 Python
 #   ./dev.sh doctor        检查环境是否正常
 #
+#   ./dev.sh test-real deepseek     真实调用 DeepSeek API（需要 Key，会花钱）
+#
 #   ---- 下面这些直接透传给 main.py ----
 #   ./dev.sh demo                        Step 2 完整 LLM 链路演示
 #   ./dev.sh ask "你好"                   问 Agent A 一句话
@@ -51,8 +53,40 @@ shift || true
 
 case "$COMMAND" in
     test)
-        echo "▶ 运行测试..."
-        "$VENV_PYTHON" -m pytest "$@"
+        # 默认排除 real_api 标记的测试 ——
+        # 它们需要 API Key 和网络，而且每跑一次都真的花钱。
+        # 想跑请用 ./dev.sh test-real
+        echo "▶ 运行测试（不含需要真实 API Key 的测试）..."
+        "$VENV_PYTHON" -m pytest -m "not real_api" "$@"
+        ;;
+
+    test-real)
+        # 只跑真实 API 集成测试。
+        # 没有 Key 时会显示 "Skipped: DEEPSEEK_API_KEY not configured"，
+        # 而不是失败 —— 没配 Key 的人不该看到一片红。
+        TARGET="${1:-deepseek}"
+        shift || true
+
+        echo "▶ 真实 API 集成测试（provider=$TARGET）"
+        echo "  注意：这会真的调用外部 API，可能产生费用。"
+        echo
+
+        case "$TARGET" in
+            deepseek)
+                if [ -z "${DEEPSEEK_API_KEY:-}" ]; then
+                    # .env 里可能配了，交给 python 那边读
+                    echo "  环境变量 DEEPSEEK_API_KEY 当前未设置；"
+                    echo "  如果 .env 里配了，下面的测试仍然能跑。"
+                    echo
+                fi
+                "$VENV_PYTHON" -m pytest tests/test_real_api.py -m real_api -v -rs "$@"
+                ;;
+            *)
+                echo "  ❌ 不认识的目标：$TARGET"
+                echo "     目前只支持：deepseek"
+                exit 2
+                ;;
+        esac
         ;;
 
     run)
@@ -116,6 +150,7 @@ case "$COMMAND" in
         echo "    ./dev.sh clean                 清除数据库和日志"
         echo "    ./dev.sh shell                 进入交互式 Python"
         echo "    ./dev.sh doctor                检查环境"
+        echo "    ./dev.sh test-real deepseek    真实 API 集成测试（需 Key，会花钱）"
         echo
         echo "LLM（透传给 main.py）："
         echo "    ./dev.sh demo [--prompt 文字] [--agent a]  Step 2 链路演示"
@@ -130,6 +165,7 @@ case "$COMMAND" in
         echo
         echo "例子："
         echo "    ./dev.sh test -v                          详细测试输出"
+        echo "    ./dev.sh test-real deepseek              真实调用 DeepSeek"
         echo "    ./dev.sh demo                              完整链路演示"
         echo "    ./dev.sh ask \"你好\"                        问 Agent A"
         echo "    ./dev.sh transfer agent_a agent_b 20       A 付 20 AI 给 B"

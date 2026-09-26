@@ -150,7 +150,7 @@ LLM 只能**提出意图**，永远不能**直接改账**。
 - [x] SQLite 数据库（4 张表）
 - [x] 启动横幅
 - [x] **命令行经济操作**（转账 / 余额 / 流水 / 对账）
-- [x] 239 个 pytest 测试全绿
+- [x] 314 个 pytest 测试全绿（另有 18 个真实 API 测试单独跑）
 
 **验收标准**（已达成）：
 
@@ -281,6 +281,71 @@ agents/brain.py     : ✅ 代码里没有 deepseek
 - ❌ 不接真实 DeepSeek / Doubao / Grok API（只登记为「未实现」）
 - ❌ 不做自动模型选择、成本优化路由、自动 fallback
 - ❌ 不算 AI 币成本（只记 token，`cost_ai` 故意留 0 表示「还没算」）
+
+### ✅ Step 2.5：真实 DeepSeek Provider（已完成）
+
+**唯一目标：验证 Step 2 那套抽象在真实 HTTP API 下是否成立。**
+
+结论：**成立。** 接入真实厂商只动了两处：
+
+| 改动 | 位置 |
+|---|---|
+| 新增 `llm/deepseek.py` | 全部 DeepSeek 细节关在这一个文件里 |
+| 注册表加一行 `registry.register("deepseek", DeepSeekProvider)` | `llm/router.py` |
+
+**`core/` 一行没动；`agents/` 一行没动。**
+
+调用链：
+
+```
+Agent → Brain → Router → DeepSeekProvider → 真实 HTTPS → LLMResponse → Agent
+```
+
+**验收结果：**
+
+| 要求 | 状态 |
+|---|---|
+| MockProvider 继续正常 | ✅ |
+| DeepSeekProvider 能真实调用 | ✅ 实测连通 api.deepseek.com |
+| Agent 无需任何 DeepSeek 专属代码 | ✅ 由 AST 守卫测试强制 |
+| Router 能按名字找到它 | ✅ |
+| 真实 usage 进入 LLMResponse | ✅ `token_source="api"` |
+| `simulated=false` 表示真实数据 | ✅ |
+| API 错误进入统一异常体系 | ✅ 401→AuthenticationError，429→RateLimitError 等 |
+| API Key 不泄露 | ✅ 只从环境变量读，异常信息自动抹除 |
+| 原有测试全部通过 | ✅ 314 passed |
+| 架构守卫全部通过 | ✅ 5 条守卫 + 反向测试验证过非空转 |
+
+**新增的能力：`token_source` 三态**
+
+这是本步骤最重要的设计修正。原本 `simulated: bool` 只能表达「模拟/真实」两态，
+但真实场景有三种：
+
+| token_source | 含义 | 能不能拿去算钱 |
+|---|---|---|
+| `api` | API 返回的真实 usage | ✅ 可以，能对账单 |
+| `estimated` | 我们自己估算的 | ⚠️ 只能做粗略预算 |
+| `unknown` | API 没返回，我们也不知道 | ❌ 不能，也**不许猜** |
+
+关键规则：**API 没给 usage 时，token 字段留 `None`（未知），绝不用估算值顶替。**
+因为 token 在这个项目里要换钱，把猜测当事实会让账永远对不上。
+
+**真实调用验证**（用无效 Key 实测真实 HTTPS 往返）：
+
+```
+$ ./dev.sh ask "你好" --provider deepseek
+
+  模型调用失败
+  DeepSeek 鉴权失败（HTTP 401）。
+  通常是这几种原因：
+    · DEEPSEEK_API_KEY 的值不对或已失效
+    · Key 前后有空格或换行
+    · Key 被撤销了
+  重试没有意义，请检查环境变量。
+```
+
+**本阶段明确不做**：不接 Doubao / Grok、不做自动选择、不做 fallback、
+不把 token 折算成 AI 币（`cost_ai` 仍是 0 = 还没算）。
 
 ### ⏳ 后续阶段
 
@@ -515,9 +580,10 @@ ai-economy/
 │   │   └── memory/            ← A 的私有记忆
 │   └── agent_b/               ← 同理
 │
-├── llm/                       ← LLM Provider 系统（Step 2 已完成）
-│   ├── base.py                ←   LLMProvider 契约 + LLMResponse
+├── llm/                       ← LLM Provider 系统
+│   ├── base.py                ←   LLMProvider 契约 + LLMResponse + 异常体系
 │   ├── mock.py                ←   MockProvider（不需要 Key）
+│   ├── deepseek.py            ←   DeepSeekProvider（真实 HTTP，Step 2.5）
 │   ├── router.py              ←   ProviderRegistry + LLMRouter
 │   └── recorder.py            ←   调用记录（token 用量）
 │
@@ -526,7 +592,7 @@ ai-economy/
 │   ├── database.py            ← SQLite 连接、事务、迁移
 │   └── models.py              ← 表结构定义
 │
-├── tests/                     ← 239 个测试
+├── tests/                     ← 314 个测试 + 18 个真实 API 测试
 └── data/
     └── economy.db             ← SQLite 数据库（运行产物，不进 git）
 ```

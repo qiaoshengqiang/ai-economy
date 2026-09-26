@@ -35,6 +35,7 @@ import time
 from typing import Any, Mapping, Optional, Sequence, Union
 
 from llm.base import (
+    TOKEN_SOURCE_ESTIMATED,
     LLMProvider,
     LLMResponse,
     Message,
@@ -160,6 +161,10 @@ class MockProvider(LLMProvider):
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             total_tokens=input_tokens + output_tokens,
+            # 明确标记来源：这些 token 数是【估算】的，不是真实计费数据。
+            # 有了这个标记，以后 Economy 算成本时就能一眼分清
+            # 哪些记录能拿去对账单、哪些只是模拟。
+            token_source=TOKEN_SOURCE_ESTIMATED,
             latency_ms=latency_ms,
             # 保留一个「原始返回」的样子。
             # 真实的 Provider 这里放的是厂商的原始 JSON；

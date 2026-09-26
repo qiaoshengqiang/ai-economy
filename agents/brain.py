@@ -169,7 +169,34 @@ class Brain:
         # 没传才用 Agent 自己的 system_prompt。
         effective_system = system if system is not None else self.system_prompt
         effective_provider = provider or self.settings.provider
-        effective_model = model if model is not None else (self.settings.model or None)
+
+        # 判断这次是不是「临时换了另一家 provider」。
+        #
+        # 【为什么这件事很重要】这是个很容易踩的坑：
+        #     Agent 的配置是 provider=mock, model=mock-model-v1。
+        #     如果临时指定 provider=deepseek 却把
+        #     model=mock-model-v1 一起带过去，
+        #     DeepSeek 会收到一个它不认识的模型名然后报错。
+        #
+        #     原因在于 self.settings.model 是「针对原 provider
+        #     解析出来的模型名」，换 provider 之后它就失效了。
+        #
+        # 所以规则是：
+        #     显式给了 model        → 用它
+        #     换了 provider          → 不传 model，让新 Provider 用自己的默认模型
+        #     没换 provider          → 用 Agent 配置里的 model
+        provider_switched = (
+            effective_provider.strip().lower()
+            != str(self.settings.provider).strip().lower()
+        )
+
+        if model is not None:
+            effective_model = model
+        elif provider_switched:
+            effective_model = None
+        else:
+            effective_model = self.settings.model or None
+
         effective_temperature = (
             self.settings.temperature if temperature is None else temperature
         )

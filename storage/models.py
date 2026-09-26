@@ -180,6 +180,21 @@ SCHEMA_STATEMENTS: Final[tuple[str, ...]] = (
         --     否则拿模拟数据去对真实账单，账永远对不上。
         simulated       INTEGER NOT NULL DEFAULT 0,
 
+        -- token 数据的来源（Step 2.5 新增）。
+        --
+        --   api       真实 usage，可以直接拿去算钱 / 对账单
+        --   estimated 我们自己估算的，只能做粗略预算
+        --   unknown   API 没给，我们也不知道。
+        --             这时 token 列存的是 0 —— 但那是【占位的 0】，
+        --             不是「真的用了 0 个 token」。两者含义完全不同。
+        --
+        -- 为什么 token 列不干脆改成可空（NULL）？
+        --     因为 SQLite 改不了已有列的 NOT NULL 约束，
+        --     已经建好的库没法平滑升级。
+        --     所以用这一列承载「这个数字可不可信」的信息。
+        --     ★ 判断 token 是否可信，一律看 token_source，不要看数字大小。
+        token_source    TEXT NOT NULL DEFAULT 'unknown',
+
         task_id         TEXT,
         success         INTEGER NOT NULL DEFAULT 1,
         error           TEXT,
@@ -207,5 +222,36 @@ COLUMN_MIGRATIONS: Final[dict] = {
     "llm_calls": [
         ("latency_ms", "REAL NOT NULL DEFAULT 0"),
         ("simulated", "INTEGER NOT NULL DEFAULT 0"),
+        ("token_source", "TEXT NOT NULL DEFAULT 'unknown'"),
     ],
 }
+
+
+# ============================================================
+# 数据回填
+# ============================================================
+# 加列的时候，老数据会拿到 DEFAULT 值 —— 但那不一定是对的。
+#
+# 具体到这里：
+#     Step 2 时期的记录全是 MockProvider 产生的，simulated=1，
+#     它们的 token_source 应该是 'estimated'。
+#     但 ADD COLUMN 只能填一个统一的默认值 'unknown'，
+#     于是老记录被错误地标成了「来源不明」。
+#
+# 所以加完列要补一次数据。格式：(说明, SQL)
+#
+# 为什么可以每次启动都跑？
+#     因为这些语句都是幂等的 —— 第一次跑完就没有行再匹配了。
+#     真正的迁移框架（记录版本号、只跑一次）等库变复杂了再说，
+#     现在多跑几次 UPDATE 的成本可以忽略。
+DATA_MIGRATIONS: Final[tuple] = (
+    (
+        "把 Step 2 时期 simulated=1 的老记录标回 estimated",
+        f"""
+        UPDATE llm_calls
+           SET token_source = 'estimated'
+         WHERE simulated = 1
+           AND token_source = 'unknown'
+        """,
+    ),
+)

@@ -352,14 +352,17 @@ class TestProviderCommands:
         assert "mock" in result.stdout
         assert "mock-model-v1" in result.stdout
 
-    def test_providers_shows_unimplemented_ones(self, tmp_path):
-        """未实现的厂商要显示「需要新建哪个文件」，而不是藏起来。"""
+    def test_providers_shows_implemented_and_unimplemented(self, tmp_path):
+        """已实现的要列出来；未实现的要显示「需要新建哪个文件」，而不是藏起来。"""
         result = run_cli("providers", db_path=tmp_path / "prov2.db")
 
+        # Step 2.5 之后 deepseek 已实现
         assert "deepseek" in result.stdout
-        assert "llm/deepseek.py" in result.stdout
+        # 未实现的仍然要给出明确的下一步
         assert "doubao" in result.stdout
+        assert "llm/doubao.py" in result.stdout
         assert "grok" in result.stdout
+        assert "llm/grok.py" in result.stdout
 
     def test_providers_shows_each_agent_brain(self, tmp_path):
         result = run_cli("providers", db_path=tmp_path / "prov3.db")
@@ -378,13 +381,33 @@ class TestProviderCommands:
         result = run_cli("ask", "你好", db_path=tmp_path / "ask2.db")
 
         assert "Token usage" in result.stdout
-        assert "Input:" in result.stdout
-        assert "Output:" in result.stdout
-        assert "Total:" in result.stdout
+        assert "Input tokens:" in result.stdout
+        assert "Output tokens:" in result.stdout
+        assert "Total tokens:" in result.stdout
+        assert "Latency:" in result.stdout
 
     def test_ask_marks_simulated(self, tmp_path):
         result = run_cli("ask", "你好", db_path=tmp_path / "ask3.db")
-        assert "Simulated" in result.stdout
+        assert "Simulated:     True" in result.stdout
+        # Step 2.5：还要说清 token 数据是从哪来的
+        assert "Token source:  estimated" in result.stdout
+
+    def test_ask_records_token_source(self, tmp_path):
+        """llm_calls 里要记下 token 的来源，方便以后区分真假数据。"""
+        import sqlite3
+
+        db_file = tmp_path / "asksrc.db"
+        run_cli("ask", "你好", db_path=db_file)
+
+        connection = sqlite3.connect(db_file)
+        try:
+            row = connection.execute(
+                "SELECT token_source, simulated FROM llm_calls"
+            ).fetchone()
+        finally:
+            connection.close()
+
+        assert row == ("estimated", 1)
 
     def test_ask_agent_b(self, tmp_path):
         result = run_cli(

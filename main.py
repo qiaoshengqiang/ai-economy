@@ -515,14 +515,25 @@ def cmd_ask(runtime: Runtime, args: argparse.Namespace) -> int:
         print()
         return 1
 
+    # --provider 可以临时换一家，不改配置文件
+    override = resolve_provider_option(runtime, getattr(args, "provider", None))
+
+    shown_provider = override or agent.brain.provider
+    if override:
+        # 临时换 provider 时，模型名要按新 provider 重新解析 ——
+        # 否则会显示出旧 provider 的模型，误导人。
+        shown_model = runtime.router.provider_model(override) or "默认"
+    else:
+        shown_model = agent.brain.model or "默认"
+
     print()
-    print(f"{agent.name}  [{agent.brain.provider}/{agent.brain.model or '默认'}]")
+    print(f"{agent.name}  [{shown_provider}/{shown_model}]")
     print("-" * 58)
     print(f"  你: {args.prompt}")
     print()
 
     try:
-        response = agent.generate(messages=args.prompt)
+        response = agent.generate(messages=args.prompt, provider=override)
     except LLMError as exc:
         print("  模型调用失败")
         print(f"  {exc}")
@@ -577,6 +588,10 @@ def cmd_demo(runtime: Runtime, args: argparse.Namespace) -> int:
     brain = agent.brain
     prompt = args.prompt
 
+    # --provider 可以临时换一家
+    override = resolve_provider_option(runtime, getattr(args, "provider", None))
+    effective_provider = override or brain.provider
+
     banner_name = str(economy.config.get("system.name", "AI Economy OS"))
     banner_version = str(economy.config.get("system.version", "0.1"))
 
@@ -596,11 +611,12 @@ def cmd_demo(runtime: Runtime, args: argparse.Namespace) -> int:
     print(f"  {agent.name}")
     print("    ↓  agent.generate(messages=...)")
     print("  Brain")
-    print(f"    ↓  provider = {brain.provider!r}（来自配置）")
+    origin = "命令行 --provider" if override else "来自 Agent 配置"
+    print(f"    ↓  provider = {effective_provider!r}（{origin}）")
     print("  Router")
     print(f"    ↓  按名字查注册表")
     print("  Provider")
-    print(f"    ↓  {type(runtime.router.get_provider(brain.provider)).__name__}")
+    print(f"    ↓  {type(runtime.router.get_provider(effective_provider)).__name__}")
     print("  LLMResponse")
     print()
 
@@ -608,7 +624,7 @@ def cmd_demo(runtime: Runtime, args: argparse.Namespace) -> int:
     calls_before = runtime.recorder.count(agent_id)
 
     try:
-        response = agent.generate(messages=prompt)
+        response = agent.generate(messages=prompt, provider=override)
     except LLMError as exc:
         print("!! 模型调用失败 !!")
         print(f"  {exc}")
@@ -649,6 +665,10 @@ def cmd_demo(runtime: Runtime, args: argparse.Namespace) -> int:
     audit = economy.audit()
     print("系统状态")
     print("-" * BANNER_WIDTH)
+    print(f"  Provider: {effective_provider}")
+    print(
+        f"  Model:    {runtime.router.provider_model(effective_provider) or '默认'}"
+    )
     print(f"  {agent.name} 余额: {fmt(agent.balance)} {economy.currency}（未扣费）")
     print(
         f"  账本审计: {'OK' if audit['balanced'] else 'FAILED'}"
@@ -661,18 +681,78 @@ def cmd_demo(runtime: Runtime, args: argparse.Namespace) -> int:
 
 
 def print_usage(response) -> None:
-    """打印一次调用的 token 用量。"""
+    """
+    打印一次调用的 token 用量。
+
+    【为什么要小心处理 None】
+        token 有三个层次：
+            具体数字  API 真的给了
+            0        确实用了 0 个 token
+            None     不知道（API 没返回 usage）
+
+        None 绝对不能显示成 0 —— 那会让人以为「这次调用没花钱」。
+        所以这里明确显示「未知」，并把来源说清楚。
+    """
+    provider = response.provider
+    model = response.model
+
+    def show(value) -> str:
+        if value is None:
+            return "未知"
+        return str(value)
+
+    source = response.token_source
+    source_note = {
+        "api": "来自 API 的真实用量，可以拿去对账单",
+        "estimated": "估算值，不是真实计费数据",
+        "unknown": "API 未返回 usage —— 这里没有估算顶替，就是不知道",
+    }.get(source, source)
+
     print("Token usage")
     print("-" * BANNER_WIDTH)
-    print(f"  Provider:  {response.provider}")
-    print(f"  Model:     {response.model}")
-    print(f"  Input:     {response.input_tokens}")
-    print(f"  Output:    {response.output_tokens}")
-    print(f"  Total:     {response.total_tokens}")
-    print(f"  Latency:   {response.latency_ms:.2f} ms")
-    if response.simulated:
-        print("  Simulated: 是（估算值，不是真实计费数据）")
+    print(f"  Provider:      {provider}")
+    print(f"  Model:         {model}")
+    print(f"  Input tokens:  {show(response.input_tokens)}")
+    print(f"  Output tokens: {show(response.output_tokens)}")
+    print(f"  Total tokens:  {show(response.total_tokens)}")
+    print(f"  Latency:       {response.latency_ms:.2f} ms")
+    print(f"  Simulated:     {response.simulated}")
+    print(f"  Token source:  {source}  ({source_note})")
     print()
+
+
+def resolve_provider_option(runtime: Runtime, requested: Optional[str]) -> Optional[str]:
+    """
+    处理命令行传进来的 --provider。
+
+    为什么要单独处理？
+        因为用户很容易打错 provider 名字，或者选了一个
+        还没实现 / 没配 Key 的。与其让它一路走到调用时才炸，
+        不如在这里就给出清晰提示。
+
+    返回 None 表示「用 Agent 自己配置里的 provider」。
+    """
+    if not requested:
+        return None
+
+    name = requested.strip().lower()
+    registry = runtime.router.registry
+
+    if not registry.is_known(name):
+        available = ", ".join(registry.known) or "（无）"
+        raise LLMError(
+            f"未知的 provider：{requested!r}\n"
+            f"可用的名字：{available}\n"
+            f"（用 `./dev.sh providers` 看完整列表）"
+        )
+
+    if name not in registry.implemented:
+        hint = registry.hint_for(name) or ""
+        raise LLMError(
+            f"provider {name!r} 还没有实现。\n" + hint
+        )
+
+    return name
 
 
 # ============================================================
@@ -719,6 +799,7 @@ def build_parser() -> argparse.ArgumentParser:
   python3 main.py                                  启动系统，打印横幅
   python3 main.py demo                             Step 2 完整链路演示
   python3 main.py ask "你好"                       问 Agent A 一句话
+  python3 main.py ask "你好" --provider deepseek    用真实 DeepSeek 问一句
   python3 main.py providers                        看有哪些 LLM provider
   python3 main.py transfer agent_a agent_b 20      让 A 付 20 AI 给 B
   python3 main.py transfer a b 20 --reason 定金     简写，带原因
@@ -827,6 +908,11 @@ def build_parser() -> argparse.ArgumentParser:
         default="agent_a",
         help="问哪个 Agent（默认 agent_a，可用 a / 'Agent A' 等写法）",
     )
+    ask.add_argument(
+        "--provider",
+        default=None,
+        help="临时指定 LLM provider（默认用 Agent 配置里的，例如 deepseek）",
+    )
     ask.set_defaults(func=cmd_ask)
 
     # --- demo（Step 2）---
@@ -844,6 +930,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--prompt",
         default="Hello, who are you?",
         help="要发给 Agent 的话",
+    )
+    demo.add_argument(
+        "--provider",
+        default=None,
+        help="临时指定 LLM provider（默认用 Agent 配置里的，例如 deepseek）",
     )
     demo.set_defaults(func=cmd_demo)
 

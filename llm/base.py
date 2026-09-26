@@ -69,6 +69,58 @@ class LLMRequestError(LLMError):
     """调用模型失败（网络问题、鉴权失败、余额不足等）。"""
 
 
+# ------------------------------------------------------------
+# 调用失败的细分类型
+# ------------------------------------------------------------
+# 【为什么要把失败分这么细】
+#
+#     因为不同的失败，正确的反应完全不同：
+#
+#         AuthenticationError   key 错了 / 过期了
+#                               → 重试没有意义，必须改配置
+#         RateLimitError        被限流了
+#                               → 等一会儿重试是有效的（未来的 fallback 会用）
+#         LLMTimeoutError       超时
+#                               → 可以重试，或换更快的模型
+#         LLMHTTPError          服务端 5xx
+#                               → 可以重试
+#         InvalidResponseError  返回体解析不了
+#                               → 重试通常也没用，是接口变了或中间有代理
+#
+#     如果全塞进一个 LLMRequestError，上层就只能「一律重试」，
+#     而对着 401 无限重试是最浪费钱的失败模式。
+#
+# 这些异常全部继承 LLMRequestError，所以已有的
+# `except LLMRequestError` 代码不受影响，向后兼容。
+# ------------------------------------------------------------
+class AuthenticationError(LLMRequestError):
+    """鉴权失败（HTTP 401 / 403）。重试无意义，要改 Key。"""
+
+
+class RateLimitError(LLMRequestError):
+    """被限流（HTTP 429）。等一会儿重试有效。"""
+
+
+class LLMTimeoutError(LLMRequestError):
+    """请求超时。可以重试。"""
+
+
+class LLMHTTPError(LLMRequestError):
+    """其它 HTTP 错误码（4xx / 5xx）。"""
+
+    def __init__(self, message: str, status_code: Optional[int] = None):
+        super().__init__(message)
+        self.status_code = status_code
+
+
+class InvalidResponseError(LLMRequestError):
+    """
+    返回体能拿到，但解析不了 —— JSON 坏了、字段缺失、结构变了。
+
+    这一类通常意味着接口变了，或者中间有代理改写了响应。
+    """
+
+
 # ============================================================
 # 消息与角色
 # ============================================================
@@ -225,6 +277,29 @@ def estimate_messages_tokens(messages: Iterable[Message]) -> int:
 
 
 # ============================================================
+# token 数据的来源
+# ============================================================
+# 【为什么必须区分这三种】
+#
+#     API      真实 usage，能直接拿去算钱、对账单
+#     ESTIMATED 我们自己估的，只能用来做粗略预算
+#     UNKNOWN   API 没给，我们也不知道 —— 不许猜
+#
+# 最危险的做法是「API 没给 usage 就自己估一个，然后当作真实值」。
+# 那样两份数据混在一起以后，你永远无法回答
+# 「上个月到底花了多少 token」。
+TOKEN_SOURCE_API = "api"
+TOKEN_SOURCE_ESTIMATED = "estimated"
+TOKEN_SOURCE_UNKNOWN = "unknown"
+
+VALID_TOKEN_SOURCES = {
+    TOKEN_SOURCE_API,
+    TOKEN_SOURCE_ESTIMATED,
+    TOKEN_SOURCE_UNKNOWN,
+}
+
+
+# ============================================================
 # 统一返回结构
 # ============================================================
 @dataclass
@@ -235,22 +310,32 @@ class LLMResponse:
     这是整个 LLM 层对外唯一的数据格式。
     上层（Brain / Agent / Economy）只认识它，不认识任何厂商的原始 JSON。
 
-    关于 token 字段：
-        真实 Provider 从 API 的 usage 字段里取；
-        MockProvider 用 estimate_tokens() 估算，
-        并把 simulated 标记为 True。
+    关于 token 字段（Step 2.5 修正）：
 
-        这个区分很重要 —— 以后接上真实账单时，
-        你需要能一眼看出哪些记录是模拟的、哪些是真花了钱的。
+        真实 Provider 从 API 的 usage 字段取 → 填具体数字，token_source="api"
+        MockProvider 自己估算              → 填估算值，  token_source="estimated"
+        API 没返回 usage                    → 三个字段留 None，token_source="unknown"
+
+        【关键】第三种情况绝对不许「补一个估计值凑上」。
+        不知道就是不知道 —— 因为 token 在这个项目里要换钱，
+        把猜测当事实会让账永远对不上。
+
+        None 和 0 的区别很重要：
+            0     = 确实用了 0 个 token（比如空输入）
+            None  = 不知道用了多少
     """
 
     content: str
     provider: str
     model: str
 
-    input_tokens: int = 0
-    output_tokens: int = 0
-    total_tokens: int = 0
+    # 允许 None：None 表示「不知道」，0 表示「确实是 0」
+    input_tokens: Optional[int] = None
+    output_tokens: Optional[int] = None
+    total_tokens: Optional[int] = None
+
+    # 这些 token 数是从哪来的（api / estimated / unknown）
+    token_source: str = TOKEN_SOURCE_UNKNOWN
 
     # 显式带单位：latency_ms。不叫 latency 是为了防止
     # 有人误以为是秒，然后把 1.5 秒当成 1.5 毫秒处理。
@@ -262,11 +347,53 @@ class LLMResponse:
 
     finish_reason: Optional[str] = None
 
-    # 这个 token 数是不是模拟出来的
+    # 这个 token 数是不是模拟/估算出来的。
+    # 保留这个字段是为了向后兼容（Step 2 的代码和测试都在用），
+    # 但它能表达的信息比 token_source 少 —— 新代码请优先看 token_source。
     simulated: bool = False
 
     created_at: str = field(default_factory=utc_now_iso)
     metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        """
+        做一点一致性归一，避免出现自相矛盾的响应对象。
+
+        规则：
+            1. token_source 非法 → 报错（早失败好过悄悄用错值）
+            2. simulated=True 但没指定来源 → 推断为 estimated
+            3. token_source="api" 但数字是 None → 说明调用方用错了
+        """
+        if self.token_source not in VALID_TOKEN_SOURCES:
+            raise ValueError(
+                f"token_source 非法：{self.token_source!r}。"
+                f"合法取值：{sorted(VALID_TOKEN_SOURCES)}"
+            )
+
+        # 只给了 simulated 这个老字段时，推断来源
+        if self.simulated and self.token_source == TOKEN_SOURCE_UNKNOWN:
+            self.token_source = TOKEN_SOURCE_ESTIMATED
+
+        # estimated 必须同时把 simulated 标上，否则老代码会看漏
+        if self.token_source == TOKEN_SOURCE_ESTIMATED:
+            self.simulated = True
+
+    # ------------------------------------------------------------
+    # token 相关
+    # ------------------------------------------------------------
+    @property
+    def usage_known(self) -> bool:
+        """token 用量是不是已知的。"""
+        return self.total_tokens is not None
+
+    @property
+    def usage_from_api(self) -> bool:
+        """这些 token 数是不是 API 给的准确值。可以拿去对账单。"""
+        return self.token_source == TOKEN_SOURCE_API
+
+    @property
+    def usage_is_estimated(self) -> bool:
+        return self.token_source == TOKEN_SOURCE_ESTIMATED
 
     # ------------------------------------------------------------
     # 兼容你需求里的叫法
@@ -294,6 +421,7 @@ class LLMResponse:
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
             "total_tokens": self.total_tokens,
+            "token_source": self.token_source,
             "latency_ms": self.latency_ms,
             "finish_reason": self.finish_reason,
             "simulated": self.simulated,
@@ -302,11 +430,14 @@ class LLMResponse:
         }
 
     def __str__(self) -> str:
-        mark = " (模拟)" if self.simulated else ""
-        return (
-            f"<LLMResponse {self.provider}/{self.model} "
-            f"{self.total_tokens} tokens{mark}>"
-        )
+        if self.total_tokens is None:
+            usage = "token 用量未知"
+        else:
+            usage = f"{self.total_tokens} tokens"
+            if self.simulated:
+                usage += " (模拟)"
+
+        return f"<LLMResponse {self.provider}/{self.model} {usage}>"
 
     def __repr__(self) -> str:
         preview = self.content[:40].replace("\n", " ")
@@ -314,7 +445,8 @@ class LLMResponse:
             preview += "…"
         return (
             f"LLMResponse(provider={self.provider!r}, model={self.model!r}, "
-            f"tokens={self.total_tokens}, content={preview!r})"
+            f"tokens={self.total_tokens}, "
+            f"token_source={self.token_source!r}, content={preview!r})"
         )
 
 

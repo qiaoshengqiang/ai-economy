@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Iterator, Optional, Union
 
 from core.paths import PROJECT_ROOT
-from storage.models import COLUMN_MIGRATIONS, SCHEMA_STATEMENTS
+from storage.models import COLUMN_MIGRATIONS, DATA_MIGRATIONS, SCHEMA_STATEMENTS
 
 
 class Database:
@@ -157,6 +157,34 @@ class Database:
                         f"ALTER TABLE {table} ADD COLUMN {column_name} {column_def}"
                     )
                 applied.append(f"{table}.{column_name}")
+
+        # 补完列，再修数据。
+        # 顺序不能反 —— 数据回填依赖列已经存在。
+        applied.extend(self._backfill())
+
+        return applied
+
+    def _backfill(self) -> list:
+        """
+        跑数据回填语句（幂等，可以每次启动都跑）。
+
+        为什么需要这一步？
+            给表加列时，老数据只能拿到一个统一的 DEFAULT 值。
+            但真实情况往往更复杂 —— 比如「Step 2 时期的记录
+            其实都是估算值，不该被标成来源不明」。
+            这时就需要加完列之后再补一次数据。
+
+        返回：本次真正改动了行的回填说明。
+        """
+        applied: list = []
+
+        for description, sql in DATA_MIGRATIONS:
+            with self.transaction() as conn:
+                cursor = conn.execute(sql)
+                changed = cursor.rowcount
+
+            if changed:
+                applied.append(f"{description}（{changed} 行）")
 
         return applied
 

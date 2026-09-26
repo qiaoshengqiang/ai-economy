@@ -36,7 +36,7 @@ from typing import Any, Dict, List, Optional
 
 from core.identity import new_message_id, utc_now_iso
 from core.logging_setup import get_logger
-from llm.base import LLMResponse
+from llm.base import TOKEN_SOURCE_UNKNOWN, LLMResponse
 from storage.database import Database
 from storage.models import TABLE_LLM_CALLS
 
@@ -46,6 +46,26 @@ logger = get_logger(__name__)
 def new_call_id() -> str:
     """生成调用记录 ID，形如 call_3f9a2b1c。"""
     return new_message_id("call")
+
+
+def _as_int(value: Optional[int]) -> int:
+    """
+    把可能为 None 的 token 数转成 int。
+
+    None 的含义是「不知道用了多少 token」。
+    数据库列是 NOT NULL，所以这里用 0 占位，
+    真正表达「不知道」的是同一行的 token_source = 'unknown'。
+
+    为什么不在这里估算一个数？
+        因为估算值会被误当成真实值，然后污染整个成本计算。
+        宁可留一个明确的「不知道」。
+    """
+    if value is None:
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
 
 
 class LLMCallRecorder:
@@ -97,11 +117,15 @@ class LLMCallRecorder:
         if response is not None:
             row_provider = response.provider
             row_model = response.model
-            input_tokens = int(response.input_tokens)
-            output_tokens = int(response.output_tokens)
-            total_tokens = int(response.total_tokens)
-            latency_ms = float(response.latency_ms)
+            # token 可能是 None（API 没返回 usage）。
+            # 数据库列是 NOT NULL，所以落库时用 0 占位 ——
+            # 但 token_source 会如实记下「这个 0 是不知道，不是真的 0」。
+            input_tokens = _as_int(response.input_tokens)
+            output_tokens = _as_int(response.output_tokens)
+            total_tokens = _as_int(response.total_tokens)
+            latency_ms = float(response.latency_ms or 0.0)
             simulated = 1 if response.simulated else 0
+            token_source = response.token_source
         else:
             row_provider = provider or "unknown"
             row_model = model or ""
@@ -110,6 +134,8 @@ class LLMCallRecorder:
             total_tokens = 0
             latency_ms = 0.0
             simulated = 0
+            # 调用都失败了，自然拿不到 usage
+            token_source = TOKEN_SOURCE_UNKNOWN
 
         with self.db.transaction() as conn:
             conn.execute(
@@ -117,10 +143,10 @@ class LLMCallRecorder:
                 INSERT INTO {TABLE_LLM_CALLS} (
                     call_id, agent_id, provider, model,
                     input_tokens, output_tokens, total_tokens,
-                    latency_ms, simulated,
+                    latency_ms, simulated, token_source,
                     tokens_per_ai_coin, cost_ai, api_cost_usd,
                     task_id, success, error, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     call_id,
@@ -132,6 +158,7 @@ class LLMCallRecorder:
                     total_tokens,
                     latency_ms,
                     simulated,
+                    token_source,
                     self.tokens_per_ai_coin,
                     # cost_ai / api_cost_usd 本阶段【故意留 0】。
                     # 0 在这里的含义是「还没算」，不是「免费」。
@@ -215,7 +242,10 @@ class LLMCallRecorder:
                     COALESCE(SUM(total_tokens), 0)  AS total_tokens,
                     COALESCE(SUM(latency_ms), 0)    AS latency_ms,
                     COALESCE(SUM(success), 0)       AS successes,
-                    COALESCE(SUM(simulated), 0)     AS simulated_calls
+                    COALESCE(SUM(simulated), 0)     AS simulated_calls,
+                    COALESCE(SUM(token_source = 'api'), 0)       AS api_calls,
+                    COALESCE(SUM(token_source = 'estimated'), 0) AS estimated_calls,
+                    COALESCE(SUM(token_source = 'unknown'), 0)   AS unknown_calls
                 FROM {TABLE_LLM_CALLS}
                 WHERE agent_id = ?
                 """,
@@ -231,7 +261,10 @@ class LLMCallRecorder:
                     COALESCE(SUM(total_tokens), 0)  AS total_tokens,
                     COALESCE(SUM(latency_ms), 0)    AS latency_ms,
                     COALESCE(SUM(success), 0)       AS successes,
-                    COALESCE(SUM(simulated), 0)     AS simulated_calls
+                    COALESCE(SUM(simulated), 0)     AS simulated_calls,
+                    COALESCE(SUM(token_source = 'api'), 0)       AS api_calls,
+                    COALESCE(SUM(token_source = 'estimated'), 0) AS estimated_calls,
+                    COALESCE(SUM(token_source = 'unknown'), 0)   AS unknown_calls
                 FROM {TABLE_LLM_CALLS}
                 """
             )
@@ -245,6 +278,9 @@ class LLMCallRecorder:
                 "latency_ms": 0.0,
                 "failures": 0,
                 "simulated_calls": 0,
+                "api_calls": 0,
+                "estimated_calls": 0,
+                "unknown_calls": 0,
             }
 
         calls = int(row["calls"])
@@ -258,6 +294,11 @@ class LLMCallRecorder:
             "latency_ms": float(row["latency_ms"]),
             "failures": calls - successes,
             "simulated_calls": int(row["simulated_calls"]),
+            # token 数据的可信度分布。
+            # 只有 api_calls 那些记录的 token 数是可以拿去算钱的。
+            "api_calls": int(row["api_calls"]),
+            "estimated_calls": int(row["estimated_calls"]),
+            "unknown_calls": int(row["unknown_calls"]),
         }
 
     def __repr__(self) -> str:

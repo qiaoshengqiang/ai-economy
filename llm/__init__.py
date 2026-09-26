@@ -4,11 +4,12 @@ LLM 层 —— Agent 可以调用的「外部智力资源」
 
 这个包提供这些东西：
 
-    base.py     契约：LLMProvider（所有厂商都要满足的接口）
-                      LLMResponse（统一的返回结构）
-    router.py   路由：按名字找到 Provider（注册表，不用 if/elif）
-    mock.py     兜底：不需要 Key 的假模型，让整条链路能跑起来
-    recorder.py 记账：每次调用留下 token 用量
+    base.py      契约：LLMProvider（所有厂商都要满足的接口）
+                       LLMResponse（统一的返回结构）
+    router.py    路由：按名字找到 Provider（注册表，不用 if/elif）
+    mock.py      兜底：不需要 Key 的假模型，让整条链路能跑起来
+    deepseek.py  真实：接 DeepSeek 的 HTTP API（Step 2.5）
+    recorder.py  记账：每次调用留下 token 用量
 
 【这个包的定位很重要】
 
@@ -33,8 +34,17 @@ LLM 层 —— Agent 可以调用的「外部智力资源」
 """
 
 from llm.base import (
+    TOKEN_SOURCE_API,
+    TOKEN_SOURCE_ESTIMATED,
+    TOKEN_SOURCE_UNKNOWN,
+    AuthenticationError,
+    InvalidResponseError,
     LLMError,
+    LLMHTTPError,
     LLMProvider,
+    LLMRequestError,
+    LLMTimeoutError,
+    RateLimitError,
     LLMRequestError,
     LLMResponse,
     ProviderDisabledError,
@@ -44,6 +54,7 @@ from llm.base import (
     estimate_tokens,
     normalize_messages,
 )
+from llm.deepseek import DeepSeekProvider, HTTPResult, default_http_post
 from llm.mock import MockProvider
 from llm.recorder import LLMCallRecorder
 from llm.router import LLMRouter, ProviderRegistry, build_default_registry
@@ -60,8 +71,20 @@ __all__ = [
     "normalize_messages",
     "estimate_tokens",
     "estimate_messages_tokens",
+    "AuthenticationError",
+    "RateLimitError",
+    "LLMTimeoutError",
+    "LLMHTTPError",
+    "InvalidResponseError",
+    "TOKEN_SOURCE_API",
+    "TOKEN_SOURCE_ESTIMATED",
+    "TOKEN_SOURCE_UNKNOWN",
     # providers
     "MockProvider",
+    "DeepSeekProvider",
+    # 真实 HTTP 层的可替换入口（测试用）
+    "HTTPResult",
+    "default_http_post",
     # routing
     "LLMRouter",
     "ProviderRegistry",
