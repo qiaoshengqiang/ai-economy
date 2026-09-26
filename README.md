@@ -501,7 +501,10 @@ Agent A ← CommunicationManager ← Message ← Transport ←──────
 Message → Transport → CommunicationRecorder → SQLite
 ```
 
-#### 最重要的一条：Message ≠ 日志
+#> 完整的协议规范（消息格式、状态机、Transport 契约、版本演进规则）
+> 见 **[`PROTOCOL.md`](PROTOCOL.md)**。
+
+### 最重要的一条：Message ≠ 日志
 
 | | Message | 日志 |
 |---|---|---|
@@ -836,6 +839,8 @@ python -m pytest tests/test_ledger.py -v
 ai-economy/
 │
 ├── README.md                  ← 你在这里
+├── COMMANDS.md                ← 命令速查
+├── PROTOCOL.md                ← 通信协议规范（Step 3 / 3.5）
 ├── requirements.txt
 ├── .env.example               ← 复制成 .env 后填 API Key
 ├── .gitignore
