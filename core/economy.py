@@ -18,9 +18,9 @@ Economy —— 经济系统的核心
 
 正确的不信任结构：
 
-    LLM 说："我决定支付 Agent B 20 AI"
+    LLM 说："我决定支付 Agent B 20 AIC"
         ↓
-    Economy 检查：你有 20 AI 吗？有合同吗？托管里有吗？
+    Economy 检查：你有 20 AIC 吗？有合同吗？托管里有吗？
         ↓
     检查通过才真正执行 Ledger 写入
         ↓
@@ -92,7 +92,7 @@ class Economy:
         self.config = config or load_global_config()
 
         # --- 经济参数（全部来自配置，没有一个硬编码）---
-        self.currency: str = str(self.config.get("economy.currency", "AI"))
+        self.currency: str = str(self.config.get("economy.currency", "AIC"))
 
         # 兑换比例是核心经济模型参数，配置里没有就直接报错。
         # 用一个函数统一取值，保证「配置 → Economy → AgentConfig」
@@ -396,7 +396,7 @@ class Economy:
 
         【未来接入 LLM 时】
 
-            LLM 输出："我决定支付 Agent B 20 AI"
+            LLM 输出："我决定支付 Agent B 20 AIC"
                 ↓
             Agent 解析成意图：transfer(to="agent_b", amount=20)
                 ↓

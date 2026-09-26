@@ -160,8 +160,8 @@ def test_main_quiet_mode(tmp_path):
     lines = [line for line in result.stdout.strip().splitlines() if line]
 
     expected = configured_initial_balance()
-    assert f"Agent A: {format_amount(expected)} AI" in lines
-    assert f"Agent B: {format_amount(expected)} AI" in lines
+    assert f"Agent A: {format_amount(expected)} AIC" in lines
+    assert f"Agent B: {format_amount(expected)} AIC" in lines
 
 
 def test_main_reports_not_ready_when_only_one_agent(tmp_path):

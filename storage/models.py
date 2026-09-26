@@ -79,7 +79,7 @@ SCHEMA_STATEMENTS: Final[tuple[str, ...]] = (
     CREATE TABLE IF NOT EXISTS wallets (
         wallet_id   TEXT PRIMARY KEY,
         agent_id    TEXT NOT NULL UNIQUE,
-        currency    TEXT NOT NULL DEFAULT 'AI',
+        currency    TEXT NOT NULL DEFAULT 'AIC',
         created_at  TEXT NOT NULL,
 
         -- 该钱包允许透支的额度。v0.1 恒为 0：没钱就不能花。
@@ -121,7 +121,7 @@ SCHEMA_STATEMENTS: Final[tuple[str, ...]] = (
         to_agent    TEXT,               -- 收款方
 
         amount      REAL NOT NULL CHECK (amount >= 0),
-        asset       TEXT NOT NULL DEFAULT 'AI',
+        asset       TEXT NOT NULL DEFAULT 'AIC',
 
         reason      TEXT,               -- 人类可读的原因
         task_id     TEXT,               -- 关联任务（可空）
@@ -144,9 +144,9 @@ SCHEMA_STATEMENTS: Final[tuple[str, ...]] = (
     #
     # 【这是本项目区别于普通 Multi-Agent 项目的地方】
     # LLM 不是免费的魔法，它是 Agent 的「生产资料成本」。
-    # 每次调用都要记账：用了多少 token、折算多少 AI 币。
+    # 每次调用都要记账：用了多少 token、折算多少 AIC。
     #
-    # 注意 ：api_cost_usd（真实美元成本）和 cost_ai（折算成 AI 币）
+    # 注意 ：api_cost_usd（真实美元成本）和 cost_ai（折算成 AIC）
     #        要分开存。因为两者汇率会变，不能混在一起。
     # --------------------------------------------------------
     """
@@ -168,7 +168,7 @@ SCHEMA_STATEMENTS: Final[tuple[str, ...]] = (
         -- 注意这里【不给 DEFAULT】：经济参数只允许来自
         --     config/config.yaml，不允许在表结构里藏一个数字。
         tokens_per_ai_coin INTEGER NOT NULL,
-        cost_ai         REAL NOT NULL DEFAULT 0,   -- 折算成 AI 币的成本
+        cost_ai         REAL NOT NULL DEFAULT 0,   -- 折算成 AIC 的成本
         api_cost_usd    REAL NOT NULL DEFAULT 0,   -- 真实美元成本
 
         -- 这次调用耗时（毫秒）。
@@ -391,6 +391,55 @@ DATA_MIGRATIONS: Final[tuple] = (
            SET token_source = 'estimated'
          WHERE simulated = 1
            AND token_source = 'unknown'
+        """,
+    ),
+    # --------------------------------------------------------
+    # Step 3.7：货币代码 AI → AIC
+    #
+    # 【为什么这条迁移是必须的，不是可选的】
+    #
+    #     账本余额是【按 asset 过滤后求和】算出来的：
+    #         SELECT SUM(...) FROM ledger_transactions WHERE asset = ?
+    #     钱包也一样 —— 它拿自己那一行的 currency 去查账本。
+    #
+    #     所以只要代码默认值改成 'AIC' 而老数据还是 'AI'，
+    #     就会出现「新 Agent 用 AIC、老 Agent 用 AI」的混用：
+    #
+    #         ❌ 老 Agent 转钱给新 Agent 直接失败
+    #            （实测：WalletError: 币种不一致）
+    #         ❌ 账本里同一个系统出现两种资产标签
+    #
+    #     这个失败是实测出来的，不是推测。所以必须把老数据一起改名。
+    #
+    # 【为什么可以 UPDATE 账本 —— 这不违反 append-only】
+    #
+    #     账本不允许 UPDATE 的是【金额】—— 那才是钱本身。
+    #     这里改的是一个【货币符号的写法】：
+    #         'AI'  →  'AIC'
+    #     金额、方向、时间、原因一个字段都没动。
+    #
+    #     这更接近「给同一个单位换个名字」，不是改账。
+    #     真正的改账（金额错了）必须走冲正分录（红字），
+    #     绝不能 UPDATE —— 这条线不能松。
+    #
+    # 【幂等性】
+    #     WHERE 条件是「等于旧值 'AI'」，改完就没有行再匹配，
+    #     所以每次启动跑一遍是安全的。
+    # --------------------------------------------------------
+    (
+        "把钱包里的货币代码从 AI 改成 AIC",
+        """
+        UPDATE wallets
+           SET currency = 'AIC'
+         WHERE currency = 'AI'
+        """,
+    ),
+    (
+        "把账本里的资产代码从 AI 改成 AIC",
+        """
+        UPDATE ledger_transactions
+           SET asset = 'AIC'
+         WHERE asset = 'AI'
         """,
     ),
 )

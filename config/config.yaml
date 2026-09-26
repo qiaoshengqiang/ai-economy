@@ -24,7 +24,7 @@ storage:
 # ------------------------------------------------------------
 economy:
   # 本系统的记账单位。v0.1 用本地 Ledger 模拟，不接区块链。
-  currency: "AI"
+  currency: "AIC"
   currency_name: "AI Coin"
 
   # 【核心经济模型参数】多少 token 折算成 1 个 AI 币。

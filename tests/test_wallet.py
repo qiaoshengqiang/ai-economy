@@ -27,7 +27,7 @@ def test_new_agent_has_initial_balance(funded_agents):
 
     assert agent_a.balance == 100
     assert agent_b.balance == 100
-    assert economy.currency == "AI"
+    assert economy.currency == "AIC"
 
 
 def test_wallet_has_no_stored_balance_field(funded_agents):

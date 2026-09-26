@@ -108,7 +108,7 @@ def test_bare_command_still_prints_banner(tmp_path, balance0):
     assert "AI Economy OS" in result.stdout
     assert "Agent A" in result.stdout
     assert "Agent B" in result.stdout
-    assert f"{format_amount(balance0)} AI" in result.stdout
+    assert f"{format_amount(balance0)} AIC" in result.stdout
     assert "READY" in result.stdout
 
 
@@ -116,8 +116,8 @@ def test_quiet_flag_still_works(tmp_path, balance0):
     result = run_cli("--quiet", db_path=tmp_path / "quiet.db")
 
     assert result.returncode == EXIT_OK
-    assert f"Agent A: {format_amount(balance0)} AI" in result.stdout
-    assert f"Agent B: {format_amount(balance0)} AI" in result.stdout
+    assert f"Agent A: {format_amount(balance0)} AIC" in result.stdout
+    assert f"Agent B: {format_amount(balance0)} AIC" in result.stdout
 
 
 # ============================================================
@@ -247,7 +247,7 @@ def test_rejected_cli_transfer_changes_nothing(tmp_path, balance0, too_much):
     run_cli("transfer", "agent_a", "agent_b", format_amount(too_much), db_path=db_file)
     result = run_cli("balances", db_path=db_file)
 
-    assert f"{format_amount(balance0)} AI" in result.stdout
+    assert f"{format_amount(balance0)} AIC" in result.stdout
     assert format_amount(balance0 * 2) in result.stdout   # 合计没变
 
 

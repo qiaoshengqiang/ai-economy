@@ -92,7 +92,7 @@ class Transaction:
     amount: float
     from_agent: Optional[str] = None
     to_agent: Optional[str] = None
-    asset: str = "AI"
+    asset: str = "AIC"
     reason: Optional[str] = None
     task_id: Optional[str] = None
     contract_id: Optional[str] = None
@@ -192,14 +192,14 @@ class Ledger:
 
     参数：
         db:              数据库连接
-        currency:        本账本记账的资产符号，默认 "AI"
+        currency:        本账本记账的资产符号，默认 "AIC"
         amount_precision: 金额保留小数位
     """
 
     def __init__(
         self,
         db: Database,
-        currency: str = "AI",
+        currency: str = "AIC",
         amount_precision: int = 4,
     ):
         self.db = db

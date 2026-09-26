@@ -399,7 +399,7 @@ class TestFullAgentChain:
 
     def test_real_call_does_not_touch_wallet_or_ledger(self, economy, case):
         """
-        【本阶段的边界】即使是真实花钱的调用，也【不】扣 AI 币。
+        【本阶段的边界】即使是真实花钱的调用，也【不】扣 AIC。
 
         只记 token，不接经济系统 —— 那是 Step 6 的事。
         """

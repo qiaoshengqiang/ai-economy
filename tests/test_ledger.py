@@ -75,7 +75,7 @@ def test_transaction_has_all_required_fields(ledger):
     assert data["from"] == "agent_a"
     assert data["to"] == "agent_b"
     assert data["amount"] == 10
-    assert data["asset"] == "AI"
+    assert data["asset"] == "AIC"
     assert data["reason"] == "task_payment"
     assert data["task_id"] == "task_001"
     assert data["timestamp"]
@@ -207,7 +207,7 @@ def test_history_is_chronological(ledger):
 def test_amount_precision_is_respected(db):
     from core.ledger import Ledger
 
-    ledger = Ledger(db=db, currency="AI", amount_precision=2)
+    ledger = Ledger(db=db, currency="AIC", amount_precision=2)
     ledger.record(TX_GENESIS_MINT, 10.005, None, "agent_a")
 
     # 保留 2 位小数 -> 会被舍入

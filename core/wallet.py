@@ -321,7 +321,7 @@ class WalletRepository:
         self.db = db
         self.ledger = ledger
 
-    def create(self, agent_id: str, currency: str = "AI") -> Wallet:
+    def create(self, agent_id: str, currency: str = "AIC") -> Wallet:
         """为一个 Agent 创建钱包。如果已存在就返回已有的。"""
         existing = self.get(agent_id)
         if existing is not None:
@@ -371,7 +371,7 @@ class WalletRepository:
         self._attach(wallet)
         return wallet
 
-    def get_or_create(self, agent_id: str, currency: str = "AI") -> Wallet:
+    def get_or_create(self, agent_id: str, currency: str = "AIC") -> Wallet:
         wallet = self.get(agent_id)
         return wallet if wallet is not None else self.create(agent_id, currency)
 

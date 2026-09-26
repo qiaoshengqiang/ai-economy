@@ -150,7 +150,7 @@ LLM 只能**提出意图**，永远不能**直接改账**。
 - [x] SQLite 数据库（4 张表）
 - [x] 启动横幅
 - [x] **命令行经济操作**（转账 / 余额 / 流水 / 对账）
-- [x] 832 个 pytest 测试全绿（另有 30 个真实 API 测试单独跑）
+- [x] 857 个 pytest 测试全绿（另有 30 个真实 API 测试单独跑）
 
 **验收标准**（已达成）：
 
@@ -724,22 +724,105 @@ workspace_id  ≠  权限
 | `acceptance` | **什么条件算完成**（tests / manual / artifact / custom） | 🔒 支付链 `SUBMIT→VERIFY→PASS→SETTLE` 的依据 |
 | `expires_at` | 有效截止时间 | 🔒 报价不能永久有效；**当前不校验** |
 
-#### ⚠️ 一处待你决定的命名冲突
+#### 货币代码（已在 Step 3.7 统一）
 
-协议示例用 **`AIC`**，但 [`config/config.yaml`](config/config.yaml) 里经济系统配的是 **`AI`**：
-
-```yaml
-economy:
-  currency: "AI"
-```
-
-**本步骤没有改任何一侧**，只在文档里标记。需要在 Step 6（支付）之前统一。
+本步骤发现协议示例用 `AIC` 而 `config.yaml` 用 `AI`，只做了标记。
+**Step 3.7 已统一为 `AIC`**（含数据迁移），见下一节。
 
 **测试：748 → 832（新增 84）**
 
 | 新增 | 数量 |
 |---|---|
 | `test_protocol_payloads.py` | 84 |
+
+### ✅ Step 3.7：协议收尾（已完成）—— **Step 3 正式冻结**
+
+**三件小事，之后不再动协议。**
+
+#### 1. 货币代码统一为 `AIC`
+
+```text
+AIC = AI Coin
+```
+
+| 位置 | 现在 |
+|---|---|
+| `config.yaml` `economy.currency` | `"AIC"` |
+| 钱包 `wallets.currency` | `"AIC"` |
+| 账本 `ledger_transactions.asset` | `"AIC"` |
+| 协议示例 | `"AIC"` |
+
+> **名字 vs 代码**：`AI Coin` 是**名字**（人读），`AIC` 是**代码**（机器读）。
+> 「AI Economy」是项目名，不是货币代码。
+
+**⚠️ 这一步必须带数据迁移** —— 不是可选的：
+
+余额是「按 `asset` 过滤后求和」算出来的。如果代码用 `AIC` 而老数据是 `AI`：
+- 旧 Agent 用 `AI`、新 Agent 用 `AIC` → **币种不一致**
+- 实测后果：**转账直接失败**（`WalletError: 币种不一致`）
+
+所以加了 2 条幂等的 `DATA_MIGRATIONS`，把 `wallets.currency` 和
+`ledger_transactions.asset` 里的 `'AI'` 改成 `'AIC'`。
+
+> **这不违反账本 append-only**：账本不允许 UPDATE 的是**金额**。
+> 这里改的只是货币符号的写法，**金额一个字节都没动**（已验证：77.0 → 77.0）。
+
+#### 2. `ACCEPT` 的最终成交价语义（两种情况）
+
+```text
+ACCEPT.price = 被 ACCEPT 的那条 Offer 所要求的价格
+
+如果 reply_to 指向 TASK_OFFER     →  ACCEPT.price = TASK_OFFER.budget
+如果 reply_to 指向 COUNTER_OFFER  →  ACCEPT.price = COUNTER_OFFER.price
+```
+
+| 情况 | 流程 | 成交价 |
+|---|---|---|
+| A 直接接受 | `TASK_OFFER(100)` → `ACCEPT` | **100**（= budget） |
+| B 还价后接受 | `TASK_OFFER(100)` → `COUNTER_OFFER(25)` → `ACCEPT` | **25**（= counter price） |
+
+#### 3. `task_id` ≠ `trace_id`
+
+| | `task_id` | `trace_id` |
+|---|---|---|
+| 代表 | 业务任务的**稳定身份** | 一次具体的**执行链路** |
+| 生命周期 | 整个任务不变 | 一次执行结束后固定 |
+| 位置 | `payload`（业务数据） | 信封（通信元数据） |
+| 用途 | 归属、结算 | 日志追踪、故障排查 |
+
+```
+TASK-001                 ← task_id 始终是它
+ ├── trace-A             ← 第一次执行，失败了
+ └── trace-B             ← 重试，成功了
+```
+
+如果 Task 就等于 `trace_id`，重试时 `task_id` 会变 ——
+同一个业务任务在账本里变成两个，历史无法归并。
+
+#### 4. `message_id` 暂时承担 Offer 标识
+
+**当前不引入 `offer_id`。** 一条报价的 `message_id` 就是它的标识，
+`reply_to` 指出它回应的是哪一条。
+
+```
+offer-001  TASK_OFFER      budget = 100
+offer-002  COUNTER_OFFER   price  =  60   reply_to = offer-001
+offer-003  COUNTER_OFFER   price  =  30   reply_to = offer-002
+ACCEPT                     price  =  30   reply_to = offer-003
+```
+
+多轮还价也能完整重建。将来确需 `offer_id` 时，走**协议版本升级**。
+
+**测试：832 → 857（新增 25）**
+
+| 变化 | 数量 |
+|---|---|
+| `test_protocol_payloads.py` | +23（ACCEPT 两情况、task_id≠trace_id、报价链） |
+| 货币统一守卫 | +2（原「已知不一致」提醒改为强制统一） |
+| 货币断言更新 | `test_cli` / `test_startup` / `test_economy` / `test_ledger` / `test_wallet` / `conftest` |
+
+**代码改动说明**：`core/` 只有**默认值字符串和注释**，`communication/` 只有**一行注释**，
+**零逻辑改动**（`git diff` 可验证）。
 
 ### ⏳ 后续阶段
 
@@ -998,7 +1081,7 @@ ai-economy/
 │   ├── database.py            ← SQLite 连接、事务、迁移
 │   └── models.py              ← 表结构定义
 │
-├── tests/                     ← 832 个测试 + 30 个真实 API 测试
+├── tests/                     ← 857 个测试 + 30 个真实 API 测试
 └── data/
     └── economy.db             ← SQLite 数据库（运行产物，不进 git）
 ```

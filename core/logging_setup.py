@@ -4,7 +4,7 @@
 
 为什么日志在这个项目里特别重要？
     经济系统的 bug 很隐蔽。
-    如果 A 少了 20 AI 但 B 没多 20 AI，光看最终余额是查不出来的，
+    如果 A 少了 20 AIC 但 B 没多 20 AIC，光看最终余额是查不出来的，
     必须能顺着日志一条条追。
 
 所以我们的目标是让日志读起来像一份「事件流水」：
@@ -13,7 +13,7 @@
     [12:01:12] Agent A evaluating task
     [12:01:13] Agent A decided to outsource
     [12:01:14] Message sent A -> B
-    [12:01:15] Agent B submitted bid: 20 AI
+    [12:01:15] Agent B submitted bid: 20 AIC
     ...
 """
 

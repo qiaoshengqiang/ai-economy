@@ -11,7 +11,7 @@ AI Economy OS v0.1 —— 启动入口 & 命令行工具
 【命令行工具】
 
     python3 main.py transfer agent_a agent_b 20
-        → 让 Agent A 付 20 AI 给 Agent B（这是经济系统的执行入口）
+        → 让 Agent A 付 20 AIC 给 Agent B（这是经济系统的执行入口）
 
     python3 main.py balances
         → 查看所有 Agent 的余额
@@ -852,7 +852,7 @@ def cmd_communication_demo(runtime: Runtime, args: argparse.Namespace) -> int:
         Agent B → 回复 → Agent A
 
     【这个 Demo 刻意不做的事】
-        · 不涉及任何 AI 币
+        · 不涉及任何 AIC
         · 不涉及任何交易
         · 不调用任何模型
 
@@ -1010,7 +1010,7 @@ async def _communication_demo_async(
     print("说明")
     print("-" * 46)
     print("  · 全程没有调用任何模型 —— 通信层与 LLM 完全解耦")
-    print("  · 全程没有涉及任何 AI 币 —— 通信层与 Economy 完全解耦")
+    print("  · 全程没有涉及任何 AIC —— 通信层与 Economy 完全解耦")
     print("  · 收发双方只认识 CommunicationManager，不认识 LocalTransport")
     print()
 
@@ -1432,7 +1432,7 @@ def build_parser() -> argparse.ArgumentParser:
   python3 main.py communication-demo               跑一遍 Agent 间通信
   python3 main.py communication-log --traces       看最近的通信链路
   python3 main.py communication-log --trace trc_x  看某条链路的全部消息
-  python3 main.py transfer agent_a agent_b 20      让 A 付 20 AI 给 B
+  python3 main.py transfer agent_a agent_b 20      让 A 付 20 AIC 给 B
   python3 main.py transfer a b 20 --reason 定金     简写，带原因
   python3 main.py balances                         查看余额
   python3 main.py ledger --agent a                 查看 A 的流水

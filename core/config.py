@@ -135,7 +135,7 @@ class ConfigError(Exception):
 # 会强制保证这一点。
 TOKENS_PER_AI_COIN_EXAMPLE = (
     "economy:\n"
-    "  tokens_per_ai_coin: <整数>    # 1 AI币 = 多少个 token"
+    "  tokens_per_ai_coin: <整数>    # 1 AIC = 多少个 token"
 )
 
 
@@ -156,7 +156,7 @@ def require_positive_int(
         一旦配置文件和代码里的值不一致，就没人说得清
         系统到底用的是哪一个 —— 这是经济系统里非常危险的模糊地带。
 
-        所以像「AI币 ↔ token 兑换比例」这种核心经济模型参数，
+        所以像「AIC ↔ token 兑换比例」这种核心经济模型参数，
         如果配置里没有，就应该在启动时立刻报错，
         而不是悄悄用一个代码里写死的数字继续跑。
 
@@ -304,12 +304,12 @@ class AgentConfig:
 
     @property
     def currency(self) -> str:
-        return str(self.get("economy.currency", "AI"))
+        return str(self.get("economy.currency", "AIC"))
 
     @property
     def tokens_per_ai_coin(self) -> int:
         """
-        【核心经济模型参数】1 AI币 = 多少 token。
+        【核心经济模型参数】1 AIC = 多少 token。
 
         这里【故意不给默认值】：配置里没有就报错。
         因为给默认值等于把经济参数偷偷写死在代码里，

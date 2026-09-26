@@ -1,8 +1,9 @@
 # AI Economy OS —— 通信协议规范
 
 > **协议版本**：`1`（`PROTOCOL_VERSION = "1"`）
-> **状态**：本地双 Agent 可用；跨网络所需的部分**尚未实现**（见 [第 2 节](#2-实现状态诚实版)）
-> **最后同步**：Step 3.6（协议语义修正）
+> **状态**：🟢 **可冻结** —— Step 3.7 收尾后协议不再变动
+> **实现程度**：本地双 Agent 可用；跨网络所需的部分**尚未实现**（见 [第 2 节](#2-实现状态诚实版)）
+> **最后同步**：Step 3.7（货币代码统一为 `AIC`、ACCEPT 成交价语义、`task_id` ≠ `trace_id`）
 
 ---
 
@@ -411,22 +412,40 @@ Message(from_agent="a", to_agent="b", message_type="完全瞎写的类型")   # 
 协议不实现多货币系统，但**结构上必须容得下**。
 未来加货币不需要改协议。
 
-> **⚠️ 待统一的命名（Step 6 之前必须决定）**
->
-> 本协议示例使用 **`AIC`**（对应「AI Coin」）。
-> 但 [`config/config.yaml`](config/config.yaml) 里的经济系统当前配置是：
->
-> ```yaml
-> economy:
->   currency: "AI"
->   currency_name: "AI Coin"
-> ```
->
-> **两者不一致。** 规则的表述是「`currency` 的值必须等于
-> `economy.currency` 的配置值」，所以现在应该是 `"AI"`。
->
-> 这需要在 Step 6（支付）之前统一：要么把配置改成 `AIC`，
-> 要么把协议示例改成 `AI`。**本步骤不改任何一侧**，仅标记。
+#### 本项目的唯一货币代码：`AIC`
+
+```text
+AIC = AI Coin
+```
+
+**整个项目统一使用 `AIC`**，包括：
+
+| 位置 | 值 |
+|---|---|
+| [`config/config.yaml`](config/config.yaml) `economy.currency` | `"AIC"` |
+| `economy.currency_name` | `"AI Coin"`（名字，不是代码） |
+| 协议示例 | `"AIC"` |
+| 账本 `ledger_transactions.asset` | `"AIC"` |
+| 钱包 `wallets.currency` | `"AIC"` |
+
+> **`currency` 的值必须等于 `economy.currency` 的配置值。**
+> Step 3.7 已把两边统一为 `AIC`。
+
+**注意区分「代码」和「名字」：**
+
+- **代码** `AIC` —— 出现在数据里，机器读的
+- **名字** `AI Coin` —— 出现在界面和文档里，人读的
+
+「AI Economy」是**项目名**，不是货币代码，不受此约定影响。
+
+**已有的旧数据已迁移**：`wallets.currency` 和 `ledger_transactions.asset`
+里残留的 `'AI'` 会被 [`storage/models.py`](storage/models.py) 的
+`DATA_MIGRATIONS` 自动改成 `'AIC'`（幂等，每次启动跑一遍是安全的）。
+
+> **为什么这个迁移是必须的**：余额是「按 `asset` 过滤后求和」算出来的。
+> 如果代码用 `AIC` 而老数据是 `AI`，就会出现新老 Agent 币种不一致 ——
+> **实测后果是转账直接失败**（`WalletError: 币种不一致`）。
+> 迁移只改货币符号的写法，**金额一个字节都没动**。
 
 **金额不设精度上限**（协议层不规定小数位）。
 精度属于经济系统的事（`economy.amount_precision`）。
@@ -508,6 +527,9 @@ Message(from_agent="a", to_agent="b", message_type="完全瞎写的类型")   # 
 | `expires_at` | ❌ | 🔒 这个报价的有效期 |
 | `reason` | ❌ | 可选的人类可读说明 |
 
+**这条消息的 `message_id` 就是这次报价的标识**（见 [10.4](#104-当前版本用-message_id-标识一次报价)）——
+当前版本不引入独立的 `offer_id`。
+
 > **绝不要用 `TEXT` 表达议价。**
 >
 > ```json
@@ -520,7 +542,56 @@ Message(from_agent="a", to_agent="b", message_type="完全瞎写的类型")   # 
 
 ### 7.4 `ACCEPT` / `REJECT`
 
-**`ACCEPT`** —— 接受某个报价，**形成成交价**：
+**`ACCEPT`** —— 接受某个报价，**形成成交价**。
+
+#### 最终成交价的协议规则
+
+```text
+ACCEPT.price = 被 ACCEPT 的那条 Offer 所要求的价格
+```
+
+展开成两种情况：
+
+```text
+如果 reply_to 指向 TASK_OFFER     →  ACCEPT.price = TASK_OFFER.budget
+如果 reply_to 指向 COUNTER_OFFER  →  ACCEPT.price = COUNTER_OFFER.price
+```
+
+**情况 A：直接接受 `TASK_OFFER`**（不还价，成交价 = 预算）
+
+```
+A ──TASK_OFFER (budget = 100 AIC)──→ B
+A ←────────ACCEPT (price = 100 AIC)── B
+```
+
+```json
+{
+  "message_type": "ACCEPT",
+  "from_agent": "agent_b",
+  "to_agent": "agent_a",
+  "trace_id": "trc_task001",
+  "conversation_id": "conv_round1",
+  "reply_to": "msg_task_offer",
+  "protocol_version": "1",
+  "payload": {
+    "task_id": "TASK-001",
+    "price": {
+      "amount": 100,
+      "currency": "AIC"
+    }
+  }
+}
+```
+
+> 这里 `price` **等于** `budget`。预算被全额接受，没有任何折让。
+
+**情况 B：接受 `COUNTER_OFFER`**（还价后成交）
+
+```
+A ──TASK_OFFER (budget = 100 AIC)──→ B
+A ←──COUNTER_OFFER (price = 25 AIC)── B
+A ──ACCEPT (price = 25 AIC)────────→ B
+```
 
 ```json
 {
@@ -529,7 +600,8 @@ Message(from_agent="a", to_agent="b", message_type="完全瞎写的类型")   # 
   "to_agent": "agent_b",
   "trace_id": "trc_task001",
   "conversation_id": "conv_round1",
-  "reply_to": "msg_counter_002",
+  "reply_to": "msg_counter",
+  "protocol_version": "1",
   "payload": {
     "task_id": "TASK-001",
     "price": {
@@ -540,21 +612,29 @@ Message(from_agent="a", to_agent="b", message_type="完全瞎写的类型")   # 
 }
 ```
 
+> 这里 `price`（25）**不等于** `budget`（100）。还价生效了，
+> 预算 100 只是**上限**，实际成交 25。
+
+#### 字段表
+
 | 字段 | 必需 | 说明 |
 |---|---|---|
-| `task_id` | ✅ | |
-| `price` | ✅ | **成交价** |
+| `task_id` | ✅ | 同一个 Task |
+| `price` | ✅ | **成交价**，取值见上面的两种规则 |
 | `reply_to` | ✅ | **必须指向被接受的那条报价** |
 
-**为什么 `ACCEPT` 要同时带 `price` 和 `reply_to`：**
+#### 为什么同时带 `price` 和 `reply_to`
 
 - 只带 `reply_to` → 读日志时要回溯才能知道成交价是多少
-- 只带 `price` → 不知道接受的是哪条报价（如果对方中途改过价就说不清）
+- 只带 `price` → 不知道接受的是哪条报价（对方中途改过价就说不清）
 - **两个都带** → 自成一条可审计记录
 
-> **协议规则**：`ACCEPT.price` **必须等于** `reply_to` 所指向消息的
-> `price`（或 `budget`，如果直接接受原始报价）。不一致即为协议违规。
-> Step 4 的校验器应当检查这一点。
+> **协议规则**：`ACCEPT.price` 必须等于 `reply_to` 所指消息的价格
+> （`TASK_OFFER` 取 `budget`，`COUNTER_OFFER` 取 `price`）。
+> 不一致即为协议违规。
+>
+> 🔒 **当前没有代码强制这条规则** —— 校验属于 Step 4 的 Task 层。
+> 本步骤只把语义定义清楚，并用测试表达出来。
 
 **`REJECT`** —— 拒绝：
 
@@ -938,24 +1018,62 @@ FAILED   DUPLICATE  TIMEOUT  RETRY
 
 ## 10. 链路与追踪
 
-### 10.1 三个 ID 的职责（**不可互相替代**）
+### 10.1 四个标识的职责（**不可互相替代**）
 
 | 字段 | 回答什么问题 | 作用域 | 谁继承 |
 |---|---|---|---|
-| `trace_id` | 这属于**哪个更大的业务流程 / Task 执行链**？ | **跨多条消息、可能跨多轮对话** | 所有相关消息共享同一个 |
-| `conversation_id` | 这属于**哪一轮对话 / 协商**？ | 一轮往返（几条消息） | 该轮内所有消息共享 |
+| `task_id` | 这是**哪个业务任务**？ | **跨执行、跨重试** | 由业务层携带（在 `payload` 里） |
+| `trace_id` | 这是**哪一次执行 / 协作链路**？ | 一次执行内的多条消息 | 该次执行内所有消息共享 |
+| `conversation_id` | 这是**哪一轮对话 / 协商**？ | 一轮往返（几条消息） | 该轮内所有消息共享 |
 | `reply_to` | 这条消息**直接回复**的是哪**一条**消息？ | **单条消息** | 不继承 —— 每条各自指向 |
 
 **它们不是彼此的替代品：**
 
-- 只有 `trace_id` → 知道属于哪个任务，但不知道哪条回复哪条
+- 只有 `task_id` → 知道属于哪个任务，但不知道是哪次执行、哪条回复哪条
+- 只有 `trace_id` → 知道哪次执行，但不知道是哪个业务任务
 - 只有 `conversation_id` → 知道哪一轮，但跨轮就看不出关系
-- 只有 `reply_to` → 能串成链，但要回溯整条链才知道属于哪个任务
+- 只有 `reply_to` → 能串成链，但要回溯整条链才知道属于哪次执行
 
-### 10.2 完整示例
+### 10.2 `task_id` ≠ `trace_id`（**必须分清**）
+
+> **不要把 `Task` 和 `trace_id` 写成完全等价的关系。**
+
+| | `task_id` | `trace_id` |
+|---|---|---|
+| 代表 | 一个业务任务的**稳定身份** | 一次具体的**执行 / 协作链路** |
+| 例子 | `TASK-001` | `trc_a1b2c3d4` |
+| 生命周期 | **整个任务**从头到尾不变 | **一次执行**结束后就固定了 |
+| 存在位置 | `payload`（业务数据） | 信封（通信元数据） |
+| 用途 | 业务归属、结算依据 | **日志追踪、链路追踪、故障排查** |
+
+**为什么不能等价 —— 同一个任务可能执行多次：**
 
 ```
-trace_id = trc_task001              ← 整个任务，从头到尾
+TASK-001                        ← task_id 始终是它
+ ├── trace-A                    ← 第一次执行：跑到一半失败了
+ └── trace-B                    ← 第二次执行：重试，成功了
+```
+
+如果 `Task` 就等于 `trace_id`，那么重试时 `task_id` 就会变 —— 
+**同一个业务任务在账本和日志里变成两个不同的任务**，历史无法归并，
+「这个任务到底花了多少钱」也算不出来。
+
+**正确的表述**：
+
+```text
+一个 Task 的稳定身份        = task_id
+Task 当前正在哪条链路上执行  = trace_id（可以随重试而变）
+Task 可以关联当前 trace_id
+```
+
+🔒 **当前不实现重试。** 本步骤只把语义定清楚，
+免得未来做重试时才发现 `task_id` 被当成了 `trace_id`。
+
+### 10.3 完整示例
+
+```
+task_id  = TASK-001                 ← 业务任务（一直在 payload 里）
+trace_id = trc_exec_1               ← 这一次执行
 │
 ├─ conversation_id = conv_1         ← 第一轮：议价
 │    msg_1  TASK_OFFER      A→B     （无 reply_to —— 它是起点）
@@ -970,7 +1088,43 @@ trace_id = trc_task001              ← 整个任务，从头到尾
 **注意 `msg_4.reply_to = msg_3`** —— 即使换了 `conversation_id`，
 `reply_to` 仍然指向链上的上一条。这让整条任务可以被完整重建。
 
-### 10.3 继承规则（强制）
+### 10.4 当前版本：用 `message_id` 标识一次报价
+
+> **当前不引入 `offer_id`。**
+
+一条 `TASK_OFFER` 或 `COUNTER_OFFER` 的 **`message_id` 即可唯一标识该次报价消息**。
+`reply_to` 指出当前消息**回应 / 接受的是哪一条具体消息**。
+
+于是报价链可以完整重建：
+
+```
+TASK_OFFER      message_id = offer-001
+COUNTER_OFFER   message_id = offer-002    reply_to = offer-001
+ACCEPT                                    reply_to = offer-002
+```
+
+多轮还价同样够用：
+
+```
+offer-001  TASK_OFFER      budget = 100
+offer-002  COUNTER_OFFER   price  =  60    reply_to = offer-001
+offer-003  COUNTER_OFFER   price  =  40    reply_to = offer-002
+offer-004  COUNTER_OFFER   price  =  30    reply_to = offer-003
+ACCEPT                     price  =  30    reply_to = offer-004
+```
+
+**为什么现在不需要 `offer_id`：**
+
+- `message_id` 已经是**唯一且不可变**的
+- 每条报价消息本来就只表达一次出价 —— 两者是**一一对应**的
+- 多一个 ID 就多一个可能不一致的来源
+- 每一轮的报价历史都还在（消息都在日志里），可审计
+
+🔒 **未来如果确实需要**（例如一条消息里携带多轮报价、或报价需要脱离消息存在），
+再通过**协议版本升级**引入独立的 `offer_id`。
+Step 4 不应擅自添加。
+
+### 10.5 继承规则（强制）
 
 `Message.reply()` **必须**继承原消息的 `trace_id` 和 `conversation_id`：
 
@@ -989,7 +1143,7 @@ reply.message_id         != original.message_id     # 必须不同
 到了网络上就是消息石沉大海。链路 ID 不继承的话，
 一次任务的往返消息在日志里就是互不相干的孤儿。
 
-### 10.4 通过 `manager.send()` 指定
+### 10.6 通过 `manager.send()` 指定
 
 ```python
 await manager.send("agent_a", "agent_b",
@@ -997,7 +1151,13 @@ await manager.send("agent_a", "agent_b",
                    conversation_id="conv_round1")
 ```
 
-不指定则自动生成。**Step 4 的 Task 应该给它的所有消息盖上同一个 `trace_id`。**
+不指定则自动生成。
+
+**Step 4 的 Task 应该：**
+
+- 在 `payload.task_id` 里带上**稳定的业务任务身份**
+- 给**同一次执行**的所有消息盖上**同一个 `trace_id`**
+- 重试时生成**新的 `trace_id`**，但 `task_id` 保持不变（见 10.2）
 
 ---
 

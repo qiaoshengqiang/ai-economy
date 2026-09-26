@@ -144,7 +144,7 @@ class TestCommunicationDoesNotDependOnEconomy:
         为什么？
             因为「把消息送到」和「解释消息里的钱」是两件事。
                 Communication：A 给 B 发了一条 TASK_OFFER
-                Economy      ：这条 offer 里的 20 AI 币，A 付得起吗
+                Economy      ：这条 offer 里的 20 AIC，A 付得起吗
             混在一起的话，以后加一种带钱的消息类型就要改通信层。
         """
         forbidden = (

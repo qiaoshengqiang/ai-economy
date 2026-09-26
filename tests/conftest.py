@@ -111,7 +111,7 @@ def config() -> Config:
 @pytest.fixture
 def ledger(db) -> Ledger:
     """一个绑定在内存数据库上的空账本。"""
-    return Ledger(db=db, currency="AI", amount_precision=4)
+    return Ledger(db=db, currency="AIC", amount_precision=4)
 
 
 @pytest.fixture
@@ -147,7 +147,7 @@ TEST_INITIAL_BALANCE = 100.0
 @pytest.fixture
 def funded_agents(economy):
     """
-    创建两个各带 TEST_INITIAL_BALANCE (100) AI 的 Agent。
+    创建两个各带 TEST_INITIAL_BALANCE (100) AIC 的 Agent。
 
     返回 (economy, agent_a, agent_b)。
     这是测试经济行为最常用的起点。

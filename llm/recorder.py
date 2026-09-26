@@ -13,10 +13,10 @@ LLM Call Recorder —— 把每次模型调用记进账
 【本阶段只做一件事：记录 token】
 
     记：用了多少 token、花了多少时间、用的哪个模型
-    不记：折算成多少 AI 币
+    不记：折算成多少 AIC
 
     为什么不在这一步算钱？
-        因为「token → AI 币」的换算规则（tokens_per_ai_coin）
+        因为「token → AIC」的换算规则（tokens_per_ai_coin）
         你随时可能调整，而成本计算还牵扯任务、合同、结算。
         那是 Step 6 的事。这一步只负责把原料准备好。
 
@@ -230,7 +230,7 @@ class LLMCallRecorder:
         汇总某个 Agent（或全系统）的 token 消耗。
 
         【重要】这里只汇总 token，不汇总钱。
-            以后 Economy 会拿这个数字去算 AI 币成本。
+            以后 Economy 会拿这个数字去算 AIC 成本。
         """
         if agent_id:
             row = self.db.fetchone(

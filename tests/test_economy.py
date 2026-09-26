@@ -71,7 +71,7 @@ def test_create_agent_is_idempotent(economy):
     """
     重复创建同一个 Agent 不应该重复发钱。
 
-    这是个很容易踩的坑：程序跑第二遍，Agent 就白拿了 100 AI。
+    这是个很容易踩的坑：程序跑第二遍，Agent 就白拿了 100 AIC。
     """
     first = economy.create_agent("agent_a")
     balance_after_first = first.balance
@@ -227,7 +227,7 @@ def test_status_summary(funded_agents):
     status = economy.status()
 
     assert status["agent_count"] == 2
-    assert status["currency"] == "AI"
+    assert status["currency"] == "AIC"
     assert status["version"] == "0.1"
     assert status["audit"]["balanced"] is True
     assert len(status["agents"]) == 2
@@ -291,7 +291,7 @@ def test_tokens_per_ai_coin_from_config(economy, config):
     """
     【兑换比例】
 
-    1 AI币 = 多少 token 这个参数必须来自配置，不能硬编码进代码。
+    1 AIC = 多少 token 这个参数必须来自配置，不能硬编码进代码。
 
     注意这里【不断言具体数字】—— 因为它是你随时可以调整的经济模型参数。
     如果断言 == 10000，那你把它改成 5000 做实验时测试就会假报警。
@@ -460,7 +460,7 @@ class TestRequiredConfig:
         return Config(
             {
                 "system": {"name": "test"},
-                "economy": {"currency": "AI", "initial_balance": 100},
+                "economy": {"currency": "AIC", "initial_balance": 100},
             }
         )
 
@@ -519,7 +519,7 @@ class TestRequiredConfig:
             {
                 "system": {"name": "test", "version": "0.1"},
                 "storage": {"database_path": ":memory:"},
-                "economy": {"currency": "AI", "initial_balance": 100},
+                "economy": {"currency": "AIC", "initial_balance": 100},
             }
         )
 

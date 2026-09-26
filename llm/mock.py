@@ -19,7 +19,7 @@ MockProvider —— 假的模型，真的链路
 
 【它必须返回真实的 token 用量】
     即使没有真实成本，也要返回 input_tokens / output_tokens，
-    这样「token → AI 币成本」这条链路以后能直接接上。
+    这样「token → AIC 成本」这条链路以后能直接接上。
 
     但它会把自己标记成 simulated=True，
     让你在账本里能一眼区分「模拟数据」和「真花了钱」。

@@ -236,26 +236,49 @@ class TestMoneyObject:
         assert isinstance(amount, (int, float))
         assert not isinstance(amount, bool)
 
-    def test_currency_matches_economy_config_or_is_flagged(self):
+    def test_currency_is_unified_as_aic(self):
         """
-        【已知不一致，本步骤故意不改】
+        【Step 3.7】货币代码已统一为 AIC。
 
-        协议示例用 "AIC"，但 config.yaml 里经济系统配的是 "AI"。
-        这条测试**记录**了当前状态，避免有人以为它们已经一致。
-
-        统一时机：Step 6（支付）之前。
+        这条测试原来是「记录已知不一致」的提醒（会在不一致时通过）。
+        Step 3.7 统一之后，它反过来成为**强制统一**的守卫：
+        谁把货币代码改回 "AI"，这里立刻失败。
         """
         from core.config import load_global_config
 
+        assert load_global_config().get("economy.currency") == "AIC"
+        assert task_offer_payload()["budget"]["currency"] == "AIC"
+        assert counter_offer_payload()["price"]["currency"] == "AIC"
+
+    def test_economy_and_protocol_agree_on_currency(self):
+        """
+        经济系统的货币代码，必须和协议示例用的是同一个。
+
+        这是 Step 3.7 的核心要求：项目里只能有一个货币代码。
+        """
+        from core.config import load_global_config
+
+        protocol_currency = money(1)["currency"]
         economy_currency = load_global_config().get("economy.currency")
-        protocol_example_currency = "AIC"
 
-        if economy_currency == protocol_example_currency:
-            pytest.skip("已经统一了，这条提醒不再需要")
+        assert protocol_currency == economy_currency == "AIC"
 
-        # 当前状态：两者不同。这是已知待办，不是 bug。
-        assert economy_currency == "AI"
-        assert protocol_example_currency == "AIC"
+    def test_no_ai_currency_code_left_in_config(self):
+        """
+        配置里不能再出现把 "AI" 当货币代码的写法。
+
+        （注意 "AI Economy" / "AI Coin" 是名字，不是代码，不受影响。）
+        """
+        from pathlib import Path as _Path
+
+        import yaml
+
+        config = yaml.safe_load(
+            _Path("config/config.yaml").read_text(encoding="utf-8")
+        )
+        assert config["economy"]["currency"] == "AIC"
+        # 名字可以保留 "AI Coin"，但代码必须是 AIC
+        assert "AI Coin" in config["economy"]["currency_name"]
 
 
 # ============================================================
@@ -1260,3 +1283,576 @@ class TestEnvelopeUnchanged:
     )
     def test_all_twelve_message_types_still_registered(self, name):
         assert hasattr(MessageType, name)
+
+
+# ============================================================
+# 12. ACCEPT 的最终成交价语义（Step 3.7）
+# ============================================================
+def accepted_price_for(offer_message: Message):
+    """
+    协议规则的可执行版本：
+
+        ACCEPT.price = 被 ACCEPT 的 Offer 所要求的价格
+
+        如果 reply_to 指向 TASK_OFFER    → 取它的 budget
+        如果 reply_to 指向 COUNTER_OFFER → 取它的 price
+
+    【注意】这是**测试里的**参考实现，不是生产代码。
+    真正的校验属于 Step 4 的 Task 层。
+    放在这里是为了把协议规则写成可执行的形式，避免歧义。
+    """
+    if offer_message.message_type == MessageType.TASK_OFFER:
+        return offer_message.payload["budget"]
+    if offer_message.message_type == MessageType.COUNTER_OFFER:
+        return offer_message.payload["price"]
+    raise ValueError(f"不能 ACCEPT 一个 {offer_message.message_type}")
+
+
+def build_accept(offer_message: Message, task_id: str = "TASK-001") -> Message:
+    """按协议规则构造 ACCEPT。"""
+    return offer_message.reply(
+        message_type=MessageType.ACCEPT,
+        payload={
+            "task_id": task_id,
+            "price": accepted_price_for(offer_message),
+        },
+    )
+
+
+class TestAcceptFinalPrice:
+    """
+    ACCEPT.price 的两种情况。
+
+    这是 Step 3.7 的核心修正之一：明确「接受 TASK_OFFER」和
+    「接受 COUNTER_OFFER」时，成交价分别取自哪里。
+    """
+
+    # ---------------- 情况 A：直接接受 TASK_OFFER ----------------
+    def test_case_a_direct_accept_takes_budget_as_price(self):
+        """
+        A 发出 TASK_OFFER(budget=100)，B 直接 ACCEPT。
+
+        此时成交价 = 预算 = 100。
+        """
+        offer = Message(
+            from_agent="agent_a", to_agent="agent_b",
+            message_type=MessageType.TASK_OFFER,
+            payload=task_offer_payload(budget=money(100)),
+        )
+
+        accept = build_accept(offer)
+
+        # 成交价等于预算
+        assert accept.payload["price"] == {"amount": 100, "currency": "AIC"}
+        assert accept.payload["price"] == offer.payload["budget"]
+        # 指向那条 TASK_OFFER
+        assert accept.reply_to == offer.message_id
+        # ACCEPT 自己不出现 budget
+        assert "budget" not in accept.payload
+
+    def test_case_a_is_a_reply_so_direction_is_flipped(self):
+        """ACCEPT 是回复 —— 收发双方自动对调。"""
+        offer = Message(
+            from_agent="agent_a", to_agent="agent_b",
+            message_type=MessageType.TASK_OFFER, payload=task_offer_payload(),
+        )
+        accept = build_accept(offer)
+
+        assert accept.from_agent == "agent_b"      # 原接收方来接受
+        assert accept.to_agent == "agent_a"
+
+    # ---------------- 情况 B：接受 COUNTER_OFFER ----------------
+    def test_case_b_accept_takes_counter_price(self):
+        """
+        A 发 TASK_OFFER(budget=100)，B 回 COUNTER_OFFER(price=25)，
+        A ACCEPT。
+
+        此时成交价 = 25，**不是** 100。
+        """
+        offer = Message(
+            from_agent="agent_a", to_agent="agent_b",
+            message_type=MessageType.TASK_OFFER,
+            payload=task_offer_payload(budget=money(100)),
+        )
+        counter = offer.reply(
+            message_type=MessageType.COUNTER_OFFER,
+            payload=counter_offer_payload(price=money(25)),
+        )
+
+        accept = build_accept(counter)
+
+        assert accept.payload["price"] == {"amount": 25, "currency": "AIC"}
+        assert accept.reply_to == counter.message_id
+
+    def test_case_b_final_price_differs_from_budget(self):
+        """
+        【关键断言】预算 100、成交 25 —— 两个数必须能分别查到。
+
+        如果 budget 被当成成交价，这里会看到 100 而不是 25。
+        """
+        offer = Message(
+            from_agent="agent_a", to_agent="agent_b",
+            message_type=MessageType.TASK_OFFER,
+            payload=task_offer_payload(budget=money(100)),
+        )
+        counter = offer.reply(
+            message_type=MessageType.COUNTER_OFFER,
+            payload=counter_offer_payload(price=money(25)),
+        )
+        accept = build_accept(counter)
+
+        # 三个数各自独立存在
+        assert offer.payload["budget"]["amount"] == 100     # 预算，没被改
+        assert counter.payload["price"]["amount"] == 25     # 报价
+        assert accept.payload["price"]["amount"] == 25      # 成交
+        assert offer.payload["budget"]["amount"] != accept.payload["price"]["amount"]
+
+    # ---------------- 统一的协议规则 ----------------
+    def test_rule_matches_accepted_offer_price(self):
+        """
+        统一规则：ACCEPT.price = 被接受的那条 Offer 的价格。
+
+        对 TASK_OFFER 取 budget，对 COUNTER_OFFER 取 price。
+        """
+        task_offer = Message(
+            from_agent="a", to_agent="b",
+            message_type=MessageType.TASK_OFFER,
+            payload=task_offer_payload(budget=money(80)),
+        )
+        counter_offer = Message(
+            from_agent="b", to_agent="a",
+            message_type=MessageType.COUNTER_OFFER,
+            payload=counter_offer_payload(price=money(30)),
+        )
+
+        assert accepted_price_for(task_offer) == {"amount": 80, "currency": "AIC"}
+        assert accepted_price_for(counter_offer) == {"amount": 30, "currency": "AIC"}
+
+    def test_cannot_accept_a_non_offer(self):
+        """ACCEPT 一个 TEXT 消息是没有意义的。"""
+        text = Message(
+            from_agent="a", to_agent="b",
+            message_type=MessageType.TEXT, payload={"text": "你好"},
+        )
+
+        with pytest.raises(ValueError):
+            accepted_price_for(text)
+
+    @pytest.mark.parametrize("budget_amount,expected", [(100, 100), (1, 1), (999999, 999999)])
+    def test_direct_accept_preserves_budget_amount(self, budget_amount, expected):
+        """直接接受时成交价严格等于预算（不折扣、不加价）。"""
+        offer = Message(
+            from_agent="a", to_agent="b",
+            message_type=MessageType.TASK_OFFER,
+            payload=task_offer_payload(budget=money(budget_amount)),
+        )
+        assert build_accept(offer).payload["price"]["amount"] == expected
+
+    def test_currency_is_preserved_through_accept(self):
+        """成交价的货币必须和报价一致。"""
+        offer = Message(
+            from_agent="a", to_agent="b",
+            message_type=MessageType.TASK_OFFER,
+            payload=task_offer_payload(budget=money(100, "AIC")),
+        )
+        assert build_accept(offer).payload["price"]["currency"] == "AIC"
+
+    def test_two_case_transcripts_are_both_valid(self, run_async, fake_agents):
+        """
+        两种情况都要能通过通信层真实走一遍。
+        """
+        manager = CommunicationManager(LocalTransport())
+        agent_a, agent_b = fake_agents
+        manager.register(agent_a)
+        manager.register(agent_b)
+        captured = {}
+
+        async def scenario():
+            # 情况 A：直接接受
+            offer_a = await manager.send(
+                "agent_a", "agent_b",
+                message_type=MessageType.TASK_OFFER,
+                payload=task_offer_payload(budget=money(100)),
+                trace_id="trc_case_a",
+            )
+            await manager.receive("agent_b", timeout=1.0)
+            accept_a = build_accept(agent_b.last_message())
+            await manager.send_message(accept_a)
+            await manager.receive("agent_a", timeout=1.0)
+
+            # 情况 B：先还价再接受
+            offer_b = await manager.send(
+                "agent_a", "agent_b",
+                message_type=MessageType.TASK_OFFER,
+                payload=task_offer_payload(budget=money(100)),
+                trace_id="trc_case_b",
+            )
+            await manager.receive("agent_b", timeout=1.0)
+            counter = agent_b.last_message().reply(
+                message_type=MessageType.COUNTER_OFFER,
+                payload=counter_offer_payload(price=money(25)),
+            )
+            await manager.send_message(counter)
+            await manager.receive("agent_a", timeout=1.0)
+            accept_b = build_accept(agent_a.last_message())
+            await manager.send_message(accept_b)
+            await manager.receive("agent_b", timeout=1.0)
+
+            captured.update(
+                offer_a=offer_a, accept_a=accept_a,
+                offer_b=offer_b, counter=counter, accept_b=accept_b,
+            )
+
+        run_async(scenario())
+
+        # 情况 A：成交价 = 预算
+        assert captured["accept_a"].payload["price"]["amount"] == 100
+        assert captured["accept_a"].reply_to == captured["offer_a"].message_id
+
+        # 情况 B：成交价 = 还价
+        assert captured["accept_b"].payload["price"]["amount"] == 25
+        assert captured["accept_b"].reply_to == captured["counter"].message_id
+
+
+# ============================================================
+# 13. task_id ≠ trace_id（Step 3.7）
+# ============================================================
+class TestTaskIdIsNotTraceId:
+    """
+    【两个 ID 的职责不同，不能写成等价关系】
+
+        task_id   业务任务的**稳定身份**（跨执行不变）
+        trace_id  一次具体的**执行 / 协作链路**（日志追踪用）
+
+    同一个 Task 因为失败重跑，会有多个 trace：
+        TASK-001
+         ├── trc_A
+         └── trc_B
+    """
+
+    def test_task_id_lives_in_payload_trace_id_in_envelope(self):
+        """
+        两个 ID 存在**不同位置** —— 这本身就说明它们不是一回事。
+
+        task_id  在 payload 里（业务数据）
+        trace_id 在信封上（通信元数据）
+        """
+        message = Message(
+            from_agent="a", to_agent="b",
+            message_type=MessageType.TASK_OFFER,
+            payload=task_offer_payload(task_id="TASK-001"),
+            trace_id="trc_execution_1",
+        )
+
+        assert message.payload["task_id"] == "TASK-001"   # 业务层
+        assert message.trace_id == "trc_execution_1"      # 通信层
+        assert message.payload["task_id"] != message.trace_id
+
+    def test_same_task_can_have_multiple_traces(self, run_async, fake_agents):
+        """
+        【核心场景】同一个任务重跑两次，会有两个不同的 trace_id。
+
+        这正是 task_id 与 trace_id 不能等价的原因。
+        """
+        manager = CommunicationManager(LocalTransport())
+        agent_a, agent_b = fake_agents
+        manager.register(agent_a)
+        manager.register(agent_b)
+
+        async def scenario():
+            first = await manager.send(
+                "agent_a", "agent_b",
+                message_type=MessageType.TASK_OFFER,
+                payload=task_offer_payload(task_id="TASK-001"),
+                trace_id="trc_attempt_a",
+            )
+            second = await manager.send(
+                "agent_a", "agent_b",
+                message_type=MessageType.TASK_OFFER,
+                payload=task_offer_payload(task_id="TASK-001"),   # 同一个任务
+                trace_id="trc_attempt_b",                          # 不同的执行
+            )
+            return first, second
+
+        first, second = run_async(scenario())
+
+        # 同一个 task_id
+        assert first.payload["task_id"] == second.payload["task_id"] == "TASK-001"
+        # 不同的 trace_id
+        assert first.trace_id != second.trace_id
+
+    def test_trace_groups_messages_of_one_execution(self, run_async, fake_agents):
+        """
+        trace_id 把「一次执行」里的多条消息归到一起。
+        """
+        manager = CommunicationManager(LocalTransport())
+        agent_a, agent_b = fake_agents
+        manager.register(agent_a)
+        manager.register(agent_b)
+
+        async def scenario():
+            offer = await manager.send(
+                "agent_a", "agent_b",
+                message_type=MessageType.TASK_OFFER,
+                payload=task_offer_payload(),
+                trace_id="trc_one_run",
+            )
+            await manager.receive("agent_b", timeout=1.0)
+            counter = agent_b.last_message().reply(
+                message_type=MessageType.COUNTER_OFFER,
+                payload=counter_offer_payload(),
+            )
+            await manager.send_message(counter)
+            return offer, counter
+
+        offer, counter = run_async(scenario())
+
+        # 同一次执行 —— trace_id 一致（reply 自动继承）
+        assert offer.trace_id == counter.trace_id == "trc_one_run"
+
+    def test_task_id_has_no_accessor_on_message(self):
+        """
+        Message 上有 `task_id` 访问器（读 payload），但**没有** `trace_id` 的
+        特殊语义绑定 —— trace_id 是独立字段，不是从 payload 读的。
+        """
+        message = Message(
+            from_agent="a", to_agent="b",
+            payload={"task_id": "TASK-001"},
+            trace_id="trc_x",
+        )
+
+        assert message.task_id == "TASK-001"        # 从 payload 读
+        assert message.trace_id == "trc_x"          # 独立字段
+
+        # 把 payload 里的 task_id 去掉，trace_id 不受影响
+        empty = Message(from_agent="a", to_agent="b", trace_id="trc_y")
+        assert empty.task_id is None
+        assert empty.trace_id == "trc_y"
+
+    def test_task_id_survives_retry_with_different_trace(self):
+        """
+        两次「执行」的消息可以有不同的 trace_id，但 task_id 不变。
+        """
+        attempt_a = Message(
+            from_agent="a", to_agent="b",
+            message_type=MessageType.TASK_OFFER,
+            payload=task_offer_payload(task_id="TASK-001"),
+            trace_id="trc_attempt_a",
+        )
+        attempt_b = Message(
+            from_agent="a", to_agent="b",
+            message_type=MessageType.TASK_OFFER,
+            payload=task_offer_payload(task_id="TASK-001"),
+            trace_id="trc_attempt_b",
+        )
+
+        assert attempt_a.payload["task_id"] == attempt_b.payload["task_id"]
+        assert attempt_a.trace_id != attempt_b.trace_id
+
+
+# ============================================================
+# 14. message_id 承担 Offer 标识 + reply_to 建立报价链（Step 3.7）
+# ============================================================
+class TestOfferChainViaMessageId:
+    """
+    【当前版本不引入 offer_id】
+
+    一条 TASK_OFFER / COUNTER_OFFER 的 `message_id` 就是这条报价的标识。
+    `reply_to` 指出它回应的是哪一条具体消息。
+
+    于是下面这条链可以完整重建：
+
+        TASK_OFFER     message_id = offer-001
+        COUNTER_OFFER  message_id = offer-002   reply_to = offer-001
+        ACCEPT                                  reply_to = offer-002
+    """
+
+    def test_no_offer_id_field_exists(self):
+        """
+        当前版本**不引入** offer_id —— 协议明确用 message_id 代替。
+
+        这条测试是那个决定的守卫：谁加了 offer_id，这里会失败，
+        从而被迫先改协议（并递增 protocol_version）。
+        """
+        message = Message(
+            from_agent="a", to_agent="b",
+            message_type=MessageType.TASK_OFFER, payload=task_offer_payload(),
+        )
+
+        assert "offer_id" not in message.payload
+        assert not hasattr(message, "offer_id")
+        # 信封字段里也没有
+        assert "offer_id" not in message.to_dict()
+
+    def test_message_id_identifies_the_offer(self):
+        """一条报价的 message_id 唯一标识这条报价。"""
+        offer = Message(
+            from_agent="a", to_agent="b",
+            message_id="offer-001",
+            message_type=MessageType.TASK_OFFER,
+            payload=task_offer_payload(),
+        )
+
+        assert offer.message_id == "offer-001"
+        # 序列化往返后标识不变
+        assert Message.from_json(offer.to_json()).message_id == "offer-001"
+
+    def test_reply_to_builds_the_offer_chain(self):
+        """
+        用 reply_to 把报价链完整串起来。
+        """
+        offer = Message(
+            from_agent="agent_a", to_agent="agent_b",
+            message_id="offer-001",
+            message_type=MessageType.TASK_OFFER,
+            trace_id="trc_t", conversation_id="conv_1",
+            payload=task_offer_payload(budget=money(100)),
+        )
+        counter = Message(
+            from_agent="agent_b", to_agent="agent_a",
+            message_id="offer-002",
+            message_type=MessageType.COUNTER_OFFER,
+            reply_to="offer-001",
+            trace_id="trc_t", conversation_id="conv_1",
+            payload=counter_offer_payload(price=money(25)),
+        )
+        accept = Message(
+            from_agent="agent_a", to_agent="agent_b",
+            message_id="offer-003",
+            message_type=MessageType.ACCEPT,
+            reply_to="offer-002",
+            trace_id="trc_t", conversation_id="conv_1",
+            payload={"task_id": "TASK-001", "price": money(25)},
+        )
+
+        chain = {m.message_id: m for m in (offer, counter, accept)}
+
+        # 从 ACCEPT 反推整条链
+        assert accept.reply_to == "offer-002"
+        assert chain[accept.reply_to].message_type == MessageType.COUNTER_OFFER
+        assert chain[accept.reply_to].reply_to == "offer-001"
+        assert chain[counter.reply_to].message_type == MessageType.TASK_OFFER
+
+        # 起点没有 reply_to
+        assert offer.reply_to is None
+
+    def test_chain_is_walkable_to_the_root(self):
+        """写一个通用的回溯函数，证明链是可走的。"""
+        offer = Message(
+            from_agent="a", to_agent="b", message_id="m1",
+            message_type=MessageType.TASK_OFFER, payload=task_offer_payload(),
+        )
+        counter = offer.reply(
+            message_type=MessageType.COUNTER_OFFER,
+            payload=counter_offer_payload(),
+        )
+        accept = counter.reply(
+            message_type=MessageType.ACCEPT,
+            payload={"task_id": "TASK-001", "price": money(25)},
+        )
+
+        by_id = {m.message_id: m for m in (offer, counter, accept)}
+
+        def walk(message):
+            """从任意一条消息回溯到链的起点。"""
+            path = [message]
+            while path[-1].reply_to is not None:
+                path.append(by_id[path[-1].reply_to])
+            return list(reversed(path))
+
+        path = walk(accept)
+
+        assert [m.message_type for m in path] == [
+            MessageType.TASK_OFFER,
+            MessageType.COUNTER_OFFER,
+            MessageType.ACCEPT,
+        ]
+
+    def test_each_offer_has_a_distinct_message_id(self):
+        """链上每条报价的 message_id 必须互不相同。"""
+        offer = Message(
+            from_agent="a", to_agent="b",
+            message_type=MessageType.TASK_OFFER, payload=task_offer_payload(),
+        )
+        counter = offer.reply(
+            message_type=MessageType.COUNTER_OFFER,
+            payload=counter_offer_payload(),
+        )
+        accept = counter.reply(
+            message_type=MessageType.ACCEPT,
+            payload={"task_id": "TASK-001", "price": money(25)},
+        )
+
+        ids = [offer.message_id, counter.message_id, accept.message_id]
+        assert len(set(ids)) == 3
+
+    def test_multi_round_negotiation_chain(self):
+        """
+        多轮还价也能串成一条链 —— 这正是「用 message_id 当报价标识」
+        够用的原因。
+        """
+        first = Message(
+            from_agent="a", to_agent="b", message_id="m1",
+            message_type=MessageType.TASK_OFFER, payload=task_offer_payload(),
+        )
+        second = first.reply(
+            message_type=MessageType.COUNTER_OFFER,
+            payload=counter_offer_payload(price=money(60)),
+        )
+        third = second.reply(
+            message_type=MessageType.COUNTER_OFFER,
+            payload=counter_offer_payload(price=money(40)),
+        )
+        fourth = third.reply(
+            message_type=MessageType.COUNTER_OFFER,
+            payload=counter_offer_payload(price=money(30)),
+        )
+
+        chain = [first, second, third, fourth]
+
+        # 严格串成一条链
+        assert first.reply_to is None
+        for previous, current in zip(chain, chain[1:]):
+            assert current.reply_to == previous.message_id
+
+        # 每一轮的报价都被保留（历史可审计）
+        assert [m.payload.get("price", {}).get("amount") for m in chain[1:]] == [60, 40, 30]
+
+    def test_accept_chain_works_over_communication_layer(self, run_async, fake_agents):
+        """整条链通过通信层真实走一遍，reply_to 关系保持正确。"""
+        manager = CommunicationManager(LocalTransport())
+        agent_a, agent_b = fake_agents
+        manager.register(agent_a)
+        manager.register(agent_b)
+        seen = []
+
+        async def scenario():
+            offer = await manager.send(
+                "agent_a", "agent_b",
+                message_type=MessageType.TASK_OFFER,
+                payload=task_offer_payload(),
+            )
+            seen.append(("offer", offer, await manager.receive("agent_b", timeout=1.0)))
+
+            counter = agent_b.last_message().reply(
+                message_type=MessageType.COUNTER_OFFER,
+                payload=counter_offer_payload(),
+            )
+            await manager.send_message(counter)
+            seen.append(("counter", counter, await manager.receive("agent_a", timeout=1.0)))
+
+            accept = build_accept(agent_a.last_message())
+            await manager.send_message(accept)
+            seen.append(("accept", accept, await manager.receive("agent_b", timeout=1.0)))
+
+        run_async(scenario())
+
+        offer = seen[0][1]
+        counter = seen[1][1]
+        accept = seen[2][1]
+
+        assert counter.reply_to == offer.message_id
+        assert accept.reply_to == counter.message_id
+        assert len({offer.message_id, counter.message_id, accept.message_id}) == 3
+        # 三方都在同一个 trace
+        assert offer.trace_id == counter.trace_id == accept.trace_id
