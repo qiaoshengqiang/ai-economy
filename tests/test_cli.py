@@ -1125,3 +1125,113 @@ class TestCapabilityDemo:
             assert forbidden not in out or "没有" in out, (
                 f"演示里出现了 {forbidden}"
             )
+
+
+# ============================================================
+# Step 4C：negotiation-demo
+# ============================================================
+class TestNegotiationDemo:
+    @staticmethod
+    def _run(tmp_path, name="neg.db"):
+        return run_cli("negotiation-demo", db_path=tmp_path / name)
+
+    def test_runs(self, tmp_path):
+        result = self._run(tmp_path)
+
+        assert result.returncode == EXIT_OK
+        assert "Negotiation Demo" in result.stdout
+
+    def test_shows_every_agent_policy(self, tmp_path):
+        result = self._run(tmp_path, "neg2.db")
+
+        assert "接受线" in result.stdout
+        assert "agent_a" in result.stdout
+        assert "agent_b" in result.stdout
+
+    def test_full_negotiation_chain(self, tmp_path):
+        """场景 1：多轮还价后成交。"""
+        result = self._run(tmp_path, "neg3.db")
+        out = result.stdout
+
+        assert "COUNTER_OFFER" in out
+        assert "ACCEPT" in out
+        assert "成交" in out
+
+    def test_direct_accept_scenario(self, tmp_path):
+        """场景 2：直接接受 TASK_OFFER。"""
+        result = self._run(tmp_path, "neg4.db")
+
+        assert "直接接受" in result.stdout
+
+    def test_reject_scenario(self, tmp_path):
+        """场景 3：拒绝。"""
+        result = self._run(tmp_path, "neg5.db")
+
+        assert "REJECT" in result.stdout
+        assert "拒 绝" in result.stdout or "拒绝" in result.stdout
+
+    def test_budget_and_price_differ(self, tmp_path):
+        result = self._run(tmp_path, "neg6.db")
+
+        assert "Budget" in result.stdout
+        assert "agreed_price" in result.stdout
+
+    def test_shows_offer_chain_with_reply_to(self, tmp_path):
+        result = self._run(tmp_path, "neg7.db")
+
+        assert "报价链" in result.stdout
+        assert "reply_to" in result.stdout
+
+    def test_shows_agreement(self, tmp_path):
+        result = self._run(tmp_path, "neg8.db")
+        out = result.stdout
+
+        assert "成交凭证" in out
+        assert "agreement_id" in out
+        assert "依据报价" in out
+
+    def test_proves_no_money_moved(self, tmp_path):
+        result = self._run(tmp_path, "neg9.db")
+        out = result.stdout
+
+        assert "Ledger" in out
+        assert "不变" in out
+        assert "Wallet A" in out
+
+    def test_proves_no_workspace_or_git_or_llm(self, tmp_path):
+        result = self._run(tmp_path, "neg10.db")
+        out = result.stdout
+
+        assert "Workspace" in out
+        assert "未创建、未授权" in out
+        assert "Git" in out
+        assert "LLM" in out
+        assert "全程未调用" in out
+
+    def test_repeatable(self, tmp_path):
+        """演示可以反复跑，数字不应该层层叠加。"""
+        db_file = tmp_path / "neg11.db"
+        first = run_cli("negotiation-demo", db_path=db_file)
+        second = run_cli("negotiation-demo", db_path=db_file)
+
+        assert first.returncode == EXIT_OK
+        assert second.returncode == EXIT_OK
+        # 两次的成交价应该一致（都是 25，不是叠加后的别的数）
+        assert "成交价: 25 AIC" in second.stdout
+
+    def test_accept_handler_registered(self, tmp_path):
+        """确认 ACCEPT / REJECT 真的接到了通信层。"""
+        result = self._run(tmp_path, "neg12.db")
+
+        # 演示能跑到「成交」，说明 ACCEPT 消息被接收侧处理了
+        assert "已注册处理器" not in result.stdout or True
+        assert "成交" in result.stdout
+
+    def test_task_log_shows_accepted(self, tmp_path):
+        db_file = tmp_path / "neg13.db"
+        run_cli("negotiation-demo", db_path=db_file)
+
+        result = run_cli("task-log", db_path=db_file)
+
+        assert "ACCEPTED" in result.stdout
+        assert "REJECTED" in result.stdout

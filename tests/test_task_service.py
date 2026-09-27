@@ -80,11 +80,12 @@ def make_offer(sender="agent_a", recipient="agent_b", **overrides) -> Message:
     )
 
 
-def make_counter(price=25, task_id="TASK-001", **overrides) -> Message:
+def make_counter(price=25, task_id="TASK-001", sender="agent_b",
+                 recipient="agent_a", **overrides) -> Message:
     payload = {"task_id": task_id, "price": {"amount": price, "currency": "AIC"}}
     payload.update(overrides.pop("payload", {}))
     return Message(
-        from_agent="agent_b", to_agent="agent_a",
+        from_agent=sender, to_agent=recipient,
         message_type=MessageType.COUNTER_OFFER,
         payload=payload,
         **overrides,
@@ -460,11 +461,23 @@ class TestHandleCounterOffer:
         assert store.get("TASK-001").status == TaskStatus.NEGOTIATING
 
     def test_multiple_rounds(self, service, store):
-        """多轮还价 —— NEGOTIATING 的自转换。"""
+        """
+        多轮还价 —— NEGOTIATING 的自转换。
+
+        【注意双方必须交替】
+            Step 4C 加了轮次校验：不能回自己刚发的那条报价。
+            所以这里是 B → A → B 轮流，不是同一个人连报三次。
+        """
         service.handle_offer(make_offer())
-        service.handle_counter_offer(make_counter(price=60))
-        service.handle_counter_offer(make_counter(price=40))
-        service.handle_counter_offer(make_counter(price=25))
+
+        first = make_counter(price=60)
+        service.handle_counter_offer(first)
+
+        second = make_counter(price=40, sender="agent_a", recipient="agent_b")
+        service.handle_counter_offer(second)
+
+        third = make_counter(price=25)
+        service.handle_counter_offer(third)
 
         offers = store.offers_for("TASK-001")
         assert [o.amount.amount for o in offers] == [100, 60, 40, 25]

@@ -150,7 +150,7 @@ LLM 只能**提出意图**，永远不能**直接改账**。
 - [x] SQLite 数据库（4 张表）
 - [x] 启动横幅
 - [x] **命令行经济操作**（转账 / 余额 / 流水 / 对账）
-- [x] 1475 个 pytest 测试全绿（另有 30 个真实 API 测试单独跑）
+- [x] 1635 个 pytest 测试全绿（另有 30 个真实 API 测试单独跑）
 
 **验收标准**（已达成）：
 
@@ -1093,11 +1093,155 @@ Task (task_xxx)
 > `ACCEPT` / `REJECT` / `SUBMIT` / `VERIFY` / `PAYMENT_*` 仍然禁止。
 > **保护力没有降低，反而更精确** —— 多接一个类型就会红。
 
+### ✅ Step 4C：低成本自主任务协商与成交（已完成）
+
+**一句话目标**：让 Agent 能以**极低计算成本**完成结构化任务议价，
+并把最终决定可靠地落到 Task 状态和成交凭证上；
+LLM 是未来可选的「思考器」，而不是每一轮谈判的必经之路。
+
+#### 完整链路
+
+```
+Agent A
+  ↓
+DecisionPolicy（本地规则，零 LLM 调用）
+  ↓
+Decision（ACCEPT / COUNTER_OFFER / REJECT）
+  ↓
+TaskService（校验 + 执行）
+  ↓
+Task Core（改状态）
+```
+
+#### DecisionPolicy：三层分离
+
+| 层 | 回答什么问题 | 能不能改状态 |
+|---|---|---|
+| **DecisionPolicy** | 「我要接受、还价，还是拒绝？」 | ❌ 不能（纯函数） |
+| **TaskService** | 「这个决定符合协议规则吗？」 | ⚠️ 只通过 Task Core |
+| **Task Core** | 「这个合法决定如何改变任务状态？」 | ✅ 只有它能改 |
+
+**为什么必须这样分**：一次任务可能来回十几轮报价。
+如果每轮都调大模型，**谈判成本可能高于任务本身的价值**。
+所以第一版用确定性的 `RuleBasedDecisionPolicy`：
+
+```
+参数（来自 Agent **自己的** config.yaml）：
+    accept_price      接受线（卖家：≥ 就接；买家：≤ 就接）
+    opening_ask       第一次还价报多少
+    walk_away_price   绝对底线，比它更差直接拒绝
+    max_rounds        最多还几次价（防止无限拉扯）
+
+四条规则（按顺序，确定性）：
+    1. 已经还过价 且 报价达到接受线        → ACCEPT
+    2. 报价比底线更差                      → REJECT
+    3. 还价次数用完                        → REJECT
+    4. 否则                                → COUNTER_OFFER（按轮次让步）
+```
+
+**方向由任务关系决定，不是由 agent_id**：
+
+```python
+is_initiator = (task.creator == me)   # 我是买方
+# 卖方：价越高越好   买方：价越低越好
+```
+
+这样换成任何两个 Agent 都成立 —— 代码里**没有** `if agent_id == "agent_b"`（有守卫）。
+
+#### 为什么默认不接受第一个报价
+
+因为 `TASK_OFFER.budget` 是**上限**，不是报价：
+
+```
+买方说「我最多出 100」  ≠  「我出 100」
+```
+
+卖方收到 100 的预算，正确做法是**报出自己的价格**（60），而不是按 100 成交。
+想「对方给够就立刻拿下」的 Agent 把 `accept_first_offer` 设成 True 即可 —— 那是它的选择。
+
+#### 议价示例（negotiation-demo 场景 1）
+
+```
+A → TASK_OFFER      budget = 100 AIC
+B → COUNTER_OFFER   60 AIC
+A → COUNTER_OFFER   40 AIC
+B → COUNTER_OFFER   25 AIC
+A → ACCEPT          25 AIC   ✅ 成交
+
+budget = 100 AIC        ← 预算（上限，没变）
+agreed_price = 25 AIC   ← 成交价
+```
+
+#### 成交证据链
+
+```
+Task（ACCEPTED）
+  └── 报价历史（每条都带 message_id / reply_to / from_agent / trace / conversation）
+  └── TaskAgreementRecord（不可变，append-only）
+        accepted_offer_message_id  ← 能反查到「接受的是哪一条报价」
+```
+
+**`TaskAgreementRecord` 不是账本，也不是支付记录** ——
+它只说「双方在这个时间、通过这条报价，达成了这个价格的协议」。
+
+#### 三条边界（守卫 + 反向测试）
+
+| 边界 | 说明 |
+|---|---|
+| **ACCEPT ≠ 付款** | 成交后钱包、账本**一个字节都不动** |
+| **ACCEPT ≠ Workspace 权限** | 成交不创建 Workspace、不授予任何访问权 |
+| **谈判不调 LLM** | 决策层不 import `llm/*`，全程零模型调用 |
+
+#### 角色 / 轮次验证
+
+| 规则 | 目的 |
+|---|---|
+| 只有参与方能响应 | 防止无关 Agent 替别人的任务做决定 |
+| 不能回自己刚发的报价 | 防止一个人代表双方签合同 |
+| 终态任务不能再响应 | 防止已拒绝的任务被重新报价 |
+
+判断依据**全部来自任务字段**（`creator` / `contractor` / `participants` /
+`offer.from_agent`），没有任何具体 Agent 的名字。
+
+#### 业务拒绝 vs 协议错误
+
+| 情况 | 处理 | 任务状态 |
+|---|---|---|
+| 价格不合适 → `REJECT` | **业务行为** | → `REJECTED` ✅ |
+| 还价超过预算 | **协议违规** | **不变**（回 `ERROR`） |
+
+#### 验收结果（对照 30 条）
+
+| 组 | 状态 |
+|---|---|
+| 1–5 ACCEPT（直接接受 / 接受还价 / 价格匹配 / agreed_price / 状态） | ✅ |
+| 6–7 budget 与 agreed_price 不混淆 | ✅ |
+| 8–9 price ≤ budget、AIC 校验 | ✅ |
+| 10–15 多轮 NEGOTIATING / 报价历史 / reply_to / message_id / trace / conversation | ✅ |
+| 16 角色 / 轮次验证 | ✅ |
+| 17–19 ACCEPT 不转账、不建 Workspace、不调 LLM | ✅ 有回归测试 |
+| 20–22 DecisionPolicy 独立、不调 LLM、不硬编码 B | ✅ 有守卫 |
+| 23–27 无 Task Manager、Task 不依赖通信、通信不依赖 Task、无 Workspace 权限、无 P2P | ✅ 有守卫 |
+| 28–30 旧测试通过、新测试通过、negotiation-demo 完成 | ✅ |
+
+**测试：1475 → 1635（新增 160）**
+
+| 新增 | 数量 | 测什么 |
+|---|---|---|
+| `test_decision_policy.py` | 41 | 四条规则 / 确定性 / 无副作用 / 不调 LLM |
+| `test_negotiation.py` | 48 | ACCEPT / COUNTER / REJECT / 角色轮次 / 凭证 / 隔离 |
+| `test_negotiation_guards.py` | 58 | 7 类架构守卫 |
+| `test_cli.py` | +13 | `negotiation-demo` |
+
+> **守卫又一次演进了**：Step 4B 的守卫只允许接入 `TASK_OFFER` / `COUNTER_OFFER`，
+> Step 4C 增加了 `ACCEPT` / `REJECT`。每多接一个类型都必须**显式改守卫**，
+> 这正是它的价值。`SUBMIT` / `VERIFY` / `PAYMENT_*` 仍然禁止。
+
 ### ⏳ 后续阶段
 
 | 阶段 | 内容 | 状态 |
 |---|---|---|
-| Step 4C | ACCEPT / REJECT 接入、议价流程闭环 | 待开始 |
+| Step 4D | 验收（SUBMIT / VERIFY）或 Task Workspace | 待开始 |
 | Step 5 | 完整经济交易 Demo（A 外包给 B，结算） | 待开始 |
 | Step 6 | Cost Calculator（把 token 用量接到经济系统） | 待开始 |
 
@@ -1317,6 +1461,8 @@ ai-economy/
 │   ├── wallet.py              ← 钱包 + 钱包仓库
 │   ├── money.py               ←   金额值类型（Step 4A）
 │   ├── capability.py          ←   能力声明与匹配（Step 4B）
+│   ├── decision_policy.py     ←   议价决策策略（Step 4C）
+│   ├── task_agreement.py      ←   成交凭证（Step 4C）
 │   ├── agent_directory.py     ←   能力发现目录（Step 4B）
 │   ├── task.py                ←   Task 领域对象 + 状态机（Step 4A）
 │   ├── task_store.py          ←   Task 持久化（Step 4A）
@@ -1360,7 +1506,7 @@ ai-economy/
 │   ├── database.py            ← SQLite 连接、事务、迁移
 │   └── models.py              ← 表结构定义
 │
-├── tests/                     ← 1475 个测试 + 30 个真实 API 测试
+├── tests/                     ← 1635 个测试 + 30 个真实 API 测试
 └── data/
     └── economy.db             ← SQLite 数据库（运行产物，不进 git）
 ```

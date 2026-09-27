@@ -279,22 +279,56 @@ class TestTaskDoesNotOverreach:
                 f"Task 不该知道 AgentDirectory 的存在"
             )
 
-    def test_task_has_no_discovery_methods(self):
+    def test_task_has_no_agent_discovery_methods(self):
+        """
+        【守卫随 Step 4C 收紧了，值得说明】
+
+        原来这条守卫只要方法名里含 "find" 就报错。但 Step 4C 给 Task 加了
+        `find_offer_by_message()` —— 它是在任务**自己的报价历史**里查，
+        和「发现 Agent」毫无关系。原来的写法会误报。
+
+        现在改成两条精确规则：
+            1. 名字里出现 discover / directory / candidate 这类词 → 违规
+            2. 「查找动词 + Agent 相关词」同时出现 → 违规
+
+        这样 find_offer_by_message 放行，而 find_agents / find_capable
+        照样会被抓住。保护力没有降低。
+        """
         from core.task import Task
 
-        forbidden = {
-            "discover", "find", "search", "lookup", "candidate",
-            "directory", "match", "send", "offer_to", "delegate",
-        }
+        #: 只要出现就违规（这些词本身就带着「发现 Agent」的语义）
+        reserved = {"discover", "discovery", "directory", "candidate",
+                    "candidates", "capable"}
 
-        found = [
-            name for name in dir(Task)
-            if not name.startswith("_") and matches(name, forbidden)
-        ]
+        #: 查找动词
+        discovery_verbs = {"find", "search", "lookup", "match", "list"}
+
+        #: Agent 相关词
+        agent_words = {"agent", "agents", "partner", "partners",
+                       "contractor_candidates", "helpers"}
+
+        #: 委派动作
+        delegation = {"send", "delegate", "dispatch", "outsource",
+                      "publish", "broadcast", "offer_to"}
+
+        found = []
+        for name in dir(Task):
+            if name.startswith("_"):
+                continue
+
+            segments = name_segments(name)
+
+            if segments & reserved or segments & delegation:
+                found.append(name)
+                continue
+
+            if (segments & discovery_verbs) and (segments & agent_words):
+                found.append(name)
 
         assert not found, (
-            f"Task 上出现了发现/委派类方法：{found}\n"
-            f"Task 只声明需要什么能力；找 Agent 和发消息都不是它的事。"
+            f"Task 上出现了「发现 Agent / 委派」类方法：{found}\n"
+            f"Task 只声明需要什么能力；找 Agent 和发消息都不是它的事。\n"
+            f"（在自己历史里查报价是允许的，比如 find_offer_by_message）"
         )
 
     def test_task_does_not_import_communication(self):

@@ -34,8 +34,13 @@ from core.identity import new_message_id, utc_now_iso
 from core.logging_setup import get_logger
 from core.money import Money
 from core.task import Offer, Task, TaskStatus
+from core.task_agreement import TaskAgreementRecord
 from storage.database import Database
-from storage.models import TABLE_TASK_OFFERS, TABLE_TASKS
+from storage.models import (
+    TABLE_TASK_AGREEMENTS,
+    TABLE_TASK_OFFERS,
+    TABLE_TASKS,
+)
 
 logger = get_logger(__name__)
 
@@ -141,8 +146,9 @@ class TaskStore:
             f"""
             INSERT INTO {TABLE_TASK_OFFERS} (
                 offer_id, task_id, offer_type, amount, currency,
-                message_id, note, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                message_id, reply_to, from_agent, trace_id, conversation_id,
+                note, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(offer_id) DO NOTHING
             """,
             (
@@ -152,6 +158,10 @@ class TaskStore:
                 offer.amount.amount,
                 offer.amount.currency,
                 offer.message_id,
+                offer.reply_to,
+                offer.from_agent,
+                offer.trace_id,
+                offer.conversation_id,
                 offer.note,
                 offer.created_at,
             ),
@@ -164,6 +174,10 @@ class TaskStore:
         amount: Money,
         message_id: Optional[str] = None,
         note: Optional[str] = None,
+        reply_to: Optional[str] = None,
+        from_agent: Optional[str] = None,
+        trace_id: Optional[str] = None,
+        conversation_id: Optional[str] = None,
     ) -> Offer:
         """
         只记一条报价，不碰任务主体。
@@ -181,6 +195,10 @@ class TaskStore:
             offer_type=offer_type,
             amount=amount,
             message_id=message_id,
+            reply_to=reply_to,
+            from_agent=from_agent,
+            trace_id=trace_id,
+            conversation_id=conversation_id,
             note=note,
         )
 
@@ -282,6 +300,10 @@ class TaskStore:
                 offer_type=row["offer_type"],
                 amount=Money(row["amount"], row["currency"]),
                 message_id=row["message_id"],
+                reply_to=row["reply_to"],
+                from_agent=row["from_agent"],
+                trace_id=row["trace_id"],
+                conversation_id=row["conversation_id"],
                 note=row["note"],
                 created_at=row["created_at"],
             )
@@ -297,6 +319,97 @@ class TaskStore:
         else:
             row = self.db.fetchone(f"SELECT COUNT(*) AS n FROM {TABLE_TASKS}")
         return int(row["n"]) if row else 0
+
+    # ------------------------------------------------------------
+    # 成交凭证（Step 4C）
+    # ------------------------------------------------------------
+    def record_agreement(
+        self, agreement: TaskAgreementRecord
+    ) -> TaskAgreementRecord:
+        """
+        记一份成交凭证。
+
+        【append-only】
+            和账本一样只 INSERT，不改写 —— 历史不允许被改写。
+            同一个任务理论上可以有多份（先谈成、取消、再谈成），
+            所以不做唯一约束，需要时取最新的一份。
+
+        【重复写入是幂等的】
+            agreement_id 是主键，重复写同一条不会产生第二行。
+        """
+        if not isinstance(agreement, TaskAgreementRecord):
+            raise TypeError(
+                f"record_agreement 需要 TaskAgreementRecord，"
+                f"收到 {type(agreement).__name__}"
+            )
+
+        with self.db.transaction() as conn:
+            conn.execute(
+                f"""
+                INSERT INTO {TABLE_TASK_AGREEMENTS} (
+                    agreement_id, task_id, initiator, contractor,
+                    price_amount, price_currency,
+                    accepted_offer_message_id, trace_id, conversation_id,
+                    created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(agreement_id) DO NOTHING
+                """,
+                (
+                    agreement.agreement_id,
+                    agreement.task_id,
+                    agreement.initiator,
+                    agreement.contractor,
+                    agreement.agreed_price.amount,
+                    agreement.agreed_price.currency,
+                    agreement.accepted_offer_message_id,
+                    agreement.trace_id,
+                    agreement.conversation_id,
+                    agreement.created_at,
+                ),
+            )
+
+        logger.debug(
+            "已记录成交凭证 %s（%s @ %s）",
+            agreement.agreement_id, agreement.task_id, agreement.agreed_price,
+        )
+        return agreement
+
+    def agreements_for(self, task_id: str) -> List[TaskAgreementRecord]:
+        """取一个任务的全部成交凭证（按时间正序）。"""
+        rows = self.db.fetchall(
+            f"""
+            SELECT * FROM {TABLE_TASK_AGREEMENTS}
+             WHERE task_id = ?
+             ORDER BY created_at ASC, rowid ASC
+            """,
+            (str(task_id),),
+        )
+        return [self._row_to_agreement(row) for row in rows]
+
+    def latest_agreement(self, task_id: str) -> Optional[TaskAgreementRecord]:
+        """当前有效的那份成交凭证（最新一份）。"""
+        agreements = self.agreements_for(task_id)
+        return agreements[-1] if agreements else None
+
+    def count_agreements(self) -> int:
+        row = self.db.fetchone(
+            f"SELECT COUNT(*) AS n FROM {TABLE_TASK_AGREEMENTS}"
+        )
+        return int(row["n"]) if row else 0
+
+    @staticmethod
+    def _row_to_agreement(row) -> TaskAgreementRecord:
+        return TaskAgreementRecord(
+            agreement_id=row["agreement_id"],
+            task_id=row["task_id"],
+            initiator=row["initiator"],
+            contractor=row["contractor"],
+            agreed_price=Money(row["price_amount"], row["price_currency"]),
+            accepted_offer_message_id=row["accepted_offer_message_id"],
+            trace_id=row["trace_id"],
+            conversation_id=row["conversation_id"],
+            created_at=row["created_at"],
+        )
 
     def count_offers(self) -> int:
         row = self.db.fetchone(f"SELECT COUNT(*) AS n FROM {TABLE_TASK_OFFERS}")
@@ -364,6 +477,7 @@ class TaskStore:
         return {
             "tasks": self.count(),
             "offers": self.count_offers(),
+            "agreements": self.count_agreements(),
             "by_status": by_status,
             "workspaces": len({
                 row["workspace_id"]

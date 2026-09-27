@@ -21,7 +21,12 @@ from pathlib import Path
 from typing import Iterator, Optional, Union
 
 from core.paths import PROJECT_ROOT
-from storage.models import COLUMN_MIGRATIONS, DATA_MIGRATIONS, SCHEMA_STATEMENTS
+from storage.models import (
+    COLUMN_MIGRATIONS,
+    DATA_MIGRATIONS,
+    POST_MIGRATION_INDEXES,
+    SCHEMA_STATEMENTS,
+)
 
 
 class Database:
@@ -103,6 +108,10 @@ class Database:
         顺序很重要：
             1. 先 CREATE TABLE IF NOT EXISTS（新库在这里就建全了）
             2. 再跑增量迁移（老库在这里补上新加的列）
+            3. 最后建「依赖新列的索引」
+
+        第 3 步不能提前：索引建立在列之上，而那一列可能是第 2 步
+        才加上去的。提前建会在老库上报 "no such column"。
         """
         conn = self.connect()
         with conn:  # with conn 会自动 commit / rollback
@@ -112,6 +121,11 @@ class Database:
         # 补列必须单独走一步：ALTER TABLE 不能在
         # CREATE TABLE 的同一批里混着写。
         self.migrate()
+
+        # 补完列才能给新列建索引
+        with conn:
+            for statement in POST_MIGRATION_INDEXES:
+                conn.execute(statement)
 
     # ------------------------------------------------------------
     # 增量迁移

@@ -475,17 +475,22 @@ class TestEconomicMessagesAreWiredCorrectly:
             ❌ ACCEPT / REJECT / SUBMIT / VERIFY / PAYMENT_*
                仍然禁止接入（属于后续步骤）
 
-        守卫因此从「一个都不许」变成「只许这两个，且只能从组合根接」——
-        保护力没有降低，反而更精确了。
+        Step 4C 完成了议价闭环，所以**又一次有控制地放宽**：
+            ✅ ACCEPT         接入（成交，含价格一致性校验）
+            ✅ REJECT         接入（业务拒绝）
+            ❌ SUBMIT / VERIFY / PAYMENT_*
+               仍然禁止（属于后续步骤）
+
+        守卫的内容没变，只是白名单跟着步骤往前走 ——
+        每多接一个类型都必须**显式改这里**，这正是它的价值。
     """
 
-    #: Step 4B 允许接入通信层的经济消息
-    WIRED = ("TASK_OFFER", "COUNTER_OFFER")
+    #: 到 Step 4C 为止，允许接入通信层的经济消息
+    WIRED = ("TASK_OFFER", "COUNTER_OFFER", "ACCEPT", "REJECT")
 
     #: 仍然禁止接入的（属于后续步骤）
     STILL_UNWIRED = (
-        "ACCEPT", "REJECT", "SUBMIT", "VERIFY",
-        "PAYMENT_REQUEST", "PAYMENT_RESULT",
+        "SUBMIT", "VERIFY", "PAYMENT_REQUEST", "PAYMENT_RESULT",
     )
 
     def test_future_message_types_are_still_not_wired(self):

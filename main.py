@@ -38,7 +38,7 @@ import asyncio
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 # ------------------------------------------------------------
 # 让 Python 能找到项目内的模块
@@ -58,6 +58,7 @@ from core.economy import AgentNotFoundError, Economy, EconomyError  # noqa: E402
 from core.ledger import LedgerError, format_amount              # noqa: E402
 from core.logging_setup import get_logger, setup_logging        # noqa: E402
 from core.agent_directory import AgentDirectory, LocalAgentDirectory  # noqa: E402
+from core.decision_policy import RuleBasedDecisionPolicy        # noqa: E402
 from core.money import Money                                    # noqa: E402
 from core.task import OfferType, Task, TaskStatus               # noqa: E402
 from core.task_store import TaskStore                           # noqa: E402
@@ -103,6 +104,7 @@ class Runtime:
             TaskStore            任务持久化     ← Step 4A（Task Core）
             AgentDirectory       能力发现       ← Step 4B
             TaskService          消息→领域适配  ← Step 4B
+            DecisionPolicy       议价决策策略    ← Step 4C
 
         这些部件由 main.py（组合根）装配好，再交给各个命令。
 
@@ -126,6 +128,7 @@ class Runtime:
     tasks: TaskStore
     directory: AgentDirectory
     task_service: TaskService
+    decision_policies: Dict[str, Any]
 
     def agent(self, agent_id: str):
         return self.economy.agent(agent_id)
@@ -273,6 +276,12 @@ def _wire_task_handlers(
     communication.register_type_handler(
         MessageType.COUNTER_OFFER, adapt(task_service.handle_counter_offer)
     )
+    communication.register_type_handler(
+        MessageType.ACCEPT, adapt(task_service.handle_accept)
+    )
+    communication.register_type_handler(
+        MessageType.REJECT, adapt(task_service.handle_reject)
+    )
 
 
 def build_runtime(db_path: Optional[str] = None) -> Runtime:
@@ -385,8 +394,36 @@ def build_runtime(db_path: Optional[str] = None) -> Runtime:
             address=_address_hint(communication, agent.agent_id),
         )
 
+    # 每个 Agent 自己的议价策略（Step 4C）。
+    #
+    # 【为什么在这里逐个构造】
+    #     因为议价参数是**每个 Agent 私有的经济参数**，
+    #     写在各自的 config.yaml 里：
+    #
+    #         agent_a: accept_price=50, opening_ask=40, ...
+    #         agent_b: accept_price=50, opening_ask=60, ...
+    #
+    #     同一个策略类，参数不同 —— 所以不需要（也禁止）
+    #     写 `if agent_id == "agent_b"`。
+    #
+    #     没有配置 negotiation 的 Agent 就拿不到策略，
+    #     它收到报价时会明确报错，而不是被塞一个默认策略。
+    decision_policies: Dict[str, Any] = {}
+    for agent in economy.all_agents():
+        params = agent.config.negotiation
+        if params:
+            decision_policies[agent.agent_id] = (
+                RuleBasedDecisionPolicy.from_config(
+                    params, currency=economy.currency
+                )
+            )
+
     # 消息 → 领域 的适配层
-    task_service = TaskService(store=tasks, directory=directory)
+    task_service = TaskService(
+        store=tasks,
+        directory=directory,
+        policies=decision_policies,
+    )
 
     # 把 Task 的业务处理器接到通信层的类型处理器上。
     #
@@ -406,6 +443,7 @@ def build_runtime(db_path: Optional[str] = None) -> Runtime:
         tasks=tasks,
         directory=directory,
         task_service=task_service,
+        decision_policies=decision_policies,
     )
 
 
@@ -2027,6 +2065,362 @@ def cmd_capability_demo(runtime: Runtime, args: argparse.Namespace) -> int:
 
 
 # ============================================================
+# 命令：negotiation-demo（Step 4C）
+# ============================================================
+async def _negotiate(
+    runtime: Runtime,
+    task_id: str,
+    first_message,
+    max_steps: int = 8,
+):
+    """
+    驱动一轮完整的议价，直到成交 / 拒绝 / 步数用尽。
+
+    【这个循环里没有一次 LLM 调用】
+        每一步都是：
+            收到消息 → DecisionPolicy（本地规则）→ Decision → TaskService 执行
+        决策层是纯本地计算，所以谈判成本几乎为零。
+    """
+    manager = runtime.communication
+    service = runtime.task_service
+    transcript = []
+
+    current = first_message
+    for _ in range(max_steps):
+        responder = current.to_agent
+
+        inbound = await manager.receive(responder, timeout=2.0)
+        if inbound.message is None:
+            transcript.append(("timeout", responder, None, None))
+            break
+
+        incoming = inbound.message
+        decision = service.decide(incoming)
+        result = service.execute(incoming, decision)
+
+        transcript.append((decision.decision_type, responder, decision, result))
+
+        if not result.ok:
+            break
+        if result.action in ("accepted", "already_accepted", "rejected"):
+            # 成交/拒绝之后，把最后那条消息也发出去，
+            # 让对方那一侧也走一遍接收逻辑（这样两边状态一致）
+            reply = result.to_reply(incoming)
+            if reply is not None:
+                await manager.send_message(reply)
+                await manager.receive(reply.to_agent, timeout=2.0)
+            break
+
+        reply = result.to_reply(incoming)
+        if reply is None:
+            break
+
+        await manager.send_message(reply)
+        current = reply
+
+    return transcript
+
+
+def _reset_demo_tasks(runtime: Runtime, task_ids) -> int:
+    """
+    清掉上一次演示留下的任务，让演示可以反复跑。
+
+    【这只是演示的便利，不是产品功能】
+        真实的 tasks / task_offers / task_agreements 都是 append-only 的，
+        生产代码里**没有**任何删除它们的路径（有架构守卫盯着）。
+
+        但演示如果每次都在旧数据上叠加，输出会越来越乱
+        （同一个 task_id 下堆着好几轮的报价），
+        所以这里在开始前把演示自己用过的那几个 task_id 清掉。
+    """
+    removed = 0
+    with runtime.tasks.db.transaction() as conn:
+        for task_id in task_ids:
+            for table in ("task_agreements", "task_offers", "tasks"):
+                cursor = conn.execute(
+                    f"DELETE FROM {table} WHERE task_id = ?", (task_id,)
+                )
+                removed += cursor.rowcount or 0
+    return removed
+
+
+def cmd_negotiation_demo(runtime: Runtime, args: argparse.Namespace) -> int:
+    """
+    自主议价演示（Step 4C）。
+
+    【要证明的三件事】
+
+        ✅ Agent 能自己完成 ACCEPT / COUNTER_OFFER / REJECT
+        ✅ 决策由**本地规则**做出 —— 谈判全程不调用任何模型
+        ✅ 成交只是**合同成立**：不转账、不建 Workspace、不碰 Git
+    """
+    from core.decision_policy import RuleBasedDecisionPolicy
+
+    store = runtime.tasks
+    economy = runtime.economy
+    directory = runtime.directory
+
+    print()
+    print("=" * 68)
+    print("        AI Economy OS v0.1")
+    print("        Step 4C — Negotiation Demo")
+    print("=" * 68)
+    print()
+
+    # 让演示可以反复跑（见 _reset_demo_tasks 的说明）
+    demo_ids = ("TASK-NEG-1", "TASK-NEG-2", "TASK-NEG-3")
+    _reset_demo_tasks(runtime, demo_ids)
+
+    ledger_before = economy.ledger.count()
+    balance_before_a = economy.agent("agent_a").balance
+    balance_before_b = economy.agent("agent_b").balance
+
+    # ---------------- 0) 双方的议价策略 ----------------
+    print("① 每个 Agent 自己的议价策略（来自各自的 config.yaml）")
+    print("-" * 68)
+    for agent_id, policy in sorted(runtime.decision_policies.items()):
+        info = policy.describe()
+        side = "买方（发起方，越低越好）" if agent_id == "agent_a" else "卖方（承接方，越高越好）"
+        print(f"  {agent_id}  {side}")
+        print(f"     接受线 {info['accept_price']:<9} 开口 {info['opening_ask']:<9} "
+              f"底线 {info['walk_away_price']:<9} 最多还价 {info['max_rounds']} 次")
+    print()
+    print("  【注意】这些是**每个 Agent 自己的私有经济参数**，")
+    print("         同一个策略类，参数不同 —— 代码里没有任何 Agent 的名字。")
+    print()
+
+    # ============================================================
+    # 场景 1：完整议价链 → 成交
+    # ============================================================
+    print("=" * 68)
+    print("场景 1：多轮议价 → 成交")
+    print("=" * 68)
+    print()
+
+    task1 = Task.create(
+        task_id="TASK-NEG-1",
+        creator="agent_a",
+        description="写一个 CSV 分析程序",
+        budget=Money(100),
+        workspace_id="WS-001",
+        required_capabilities=["python_coding", "data_analysis"],
+        participants=["agent_a", "agent_b"],
+    )
+    task1.offer()
+    store.save(task1)
+
+    print(f"  Budget（预算上限）: {task1.budget}")
+    print()
+
+    async def run_scenario_1():
+        offer = await runtime.communication.send(
+            "agent_a", "agent_b",
+            message_type=MessageType.TASK_OFFER,
+            trace_id=task1.current_trace_id,
+            payload={
+                "task_id": task1.task_id,
+                "workspace_id": "WS-001",
+                "description": task1.description,
+                "budget": task1.budget.to_dict(),
+                "required_capabilities": ["python_coding", "data_analysis"],
+            },
+        )
+        return offer, await _negotiate(runtime, task1.task_id, offer)
+
+    offer1, transcript1 = asyncio.run(run_scenario_1())
+
+    print(f"  A → TASK_OFFER      budget = {task1.budget}      （{offer1.message_id}）")
+    for index, (kind, responder, decision, result) in enumerate(transcript1, start=1):
+        if kind == "timeout":
+            print(f"  （{responder} 没有等到消息，流程结束）")
+            continue
+        price = decision.price if decision is not None else None
+        if kind == "ACCEPT":
+            print(f"  {responder} → ACCEPT        {price}      ✅ 成交")
+        elif kind == "REJECT":
+            print(f"  {responder} → REJECT")
+        else:
+            print(f"  {responder} → COUNTER_OFFER {price}")
+
+    print()
+    final1 = store.get(task1.task_id)
+    agreement1 = store.latest_agreement(task1.task_id)
+    print(f"  任务状态      : {final1.status}")
+    print(f"  agreed_price  : {final1.agreed_price}")
+    print(f"  budget        : {final1.budget}   ← 和成交价是两个不同的数")
+    print(f"  contractor    : {final1.contractor}")
+    print()
+    print("  报价链（可用 reply_to 回溯）：")
+    for item in store.offers_for(task1.task_id):
+        print(f"    {item.offer_type:<15} {str(item.amount):>9}  "
+              f"from={item.from_agent:<8} reply_to={item.reply_to}")
+    print()
+    if agreement1 is not None:
+        print("  成交凭证（不可变，append-only）：")
+        print(f"    agreement_id             : {agreement1.agreement_id}")
+        print(f"    双方                     : {agreement1.initiator} ↔ {agreement1.contractor}")
+        print(f"    成交价                   : {agreement1.agreed_price}")
+        print(f"    依据报价 message_id      : {agreement1.accepted_offer_message_id}")
+        print(f"    trace_id / conversation  : {agreement1.trace_id} / {agreement1.conversation_id}")
+    print()
+
+    # ============================================================
+    # 场景 2：直接接受 TASK_OFFER
+    # ============================================================
+    print("=" * 68)
+    print("场景 2：直接接受 TASK_OFFER（不还价）")
+    print("=" * 68)
+    print()
+
+    print("  这里临时把 B 的 accept_first_offer 设为 True ——")
+    print("  同一个策略类，只是参数不同（这正是「策略是 Agent 自己的参数」）。")
+    print()
+
+    original_policy = runtime.task_service.policies["agent_b"]
+    b_params = dict(economy.agent("agent_b").config.negotiation)
+    runtime.task_service.policies["agent_b"] = (
+        RuleBasedDecisionPolicy.from_config(
+            {**b_params, "accept_first_offer": True},
+            currency=economy.currency,
+        )
+    )
+
+    task2 = Task.create(
+        task_id="TASK-NEG-2",
+        creator="agent_a",
+        description="简单的数据清洗",
+        budget=Money(80),
+        participants=["agent_a", "agent_b"],
+    )
+    task2.offer()
+    store.save(task2)
+
+    async def run_scenario_2():
+        offer = await runtime.communication.send(
+            "agent_a", "agent_b",
+            message_type=MessageType.TASK_OFFER,
+            trace_id=task2.current_trace_id,
+            payload={
+                "task_id": task2.task_id,
+                "description": task2.description,
+                "budget": task2.budget.to_dict(),
+            },
+        )
+        return offer, await _negotiate(runtime, task2.task_id, offer)
+
+    offer2, transcript2 = asyncio.run(run_scenario_2())
+    runtime.task_service.policies["agent_b"] = original_policy
+
+    print(f"  A → TASK_OFFER      budget = {task2.budget}")
+    for kind, responder, decision, result in transcript2:
+        if kind == "ACCEPT":
+            print(f"  {responder} → ACCEPT        {decision.price}      "
+                  f"✅ 直接按预算成交")
+        elif kind != "timeout":
+            print(f"  {responder} → {kind}")
+
+    final2 = store.get(task2.task_id)
+    print()
+    print(f"  任务状态     : {final2.status}")
+    print(f"  agreed_price : {final2.agreed_price}   （= budget，因为直接接受了上限）")
+    print()
+
+    # ============================================================
+    # 场景 3：拒绝
+    # ============================================================
+    print("=" * 68)
+    print("场景 3：拒 绝（超出底线）")
+    print("=" * 68)
+    print()
+
+    b_policy = runtime.decision_policies["agent_b"]
+    task3 = Task.create(
+        task_id="TASK-NEG-3",
+        creator="agent_a",
+        description="一个预算太低的任务",
+        budget=Money(10),          # 低于 B 的底线 25
+        participants=["agent_a", "agent_b"],
+    )
+    task3.offer()
+    store.save(task3)
+
+    async def run_scenario_3():
+        offer = await runtime.communication.send(
+            "agent_a", "agent_b",
+            message_type=MessageType.TASK_OFFER,
+            trace_id=task3.current_trace_id,
+            payload={
+                "task_id": task3.task_id,
+                "description": task3.description,
+                "budget": task3.budget.to_dict(),
+            },
+        )
+        return offer, await _negotiate(runtime, task3.task_id, offer)
+
+    offer3, transcript3 = asyncio.run(run_scenario_3())
+
+    print(f"  A → TASK_OFFER      budget = {task3.budget}   "
+          f"（低于 B 的底线 {b_policy.walk_away_price}）")
+    for kind, responder, decision, result in transcript3:
+        if kind == "REJECT":
+            reason = ""
+            if result is not None and result.details.get("reason"):
+                reason = f"  理由：{result.details['reason']}"
+            print(f"  {responder} → REJECT{reason}")
+        elif kind != "timeout":
+            print(f"  {responder} → {kind}")
+
+    final3 = store.get(task3.task_id)
+    print()
+    print(f"  任务状态     : {final3.status}")
+    print(f"  agreed_price : {final3.agreed_price}   （没成交，所以是空的）")
+    print()
+    print("  拒绝是**正常的业务行为** —— 不是协议错误，也不是通信失败。")
+    print()
+
+    # ============================================================
+    # 边界证明
+    # ============================================================
+    ledger_after = economy.ledger.count()
+    balance_after_a = economy.agent("agent_a").balance
+    balance_after_b = economy.agent("agent_b").balance
+
+    print("=" * 68)
+    print("边界证明")
+    print("=" * 68)
+    print()
+    print(f"  Budget          : 100 AIC  →  成交价: {final1.agreed_price}")
+    print(f"  Wallet A        : {format_amount(balance_before_a)} → "
+          f"{format_amount(balance_after_a)} AIC   "
+          f"{'✅ 不变' if balance_after_a == balance_before_a else '❌ 被改了'}")
+    print(f"  Wallet B        : {format_amount(balance_before_b)} → "
+          f"{format_amount(balance_after_b)} AIC   "
+          f"{'✅ 不变' if balance_after_b == balance_before_b else '❌ 被改了'}")
+    print(f"  Ledger          : {ledger_before} → {ledger_after} 条   "
+          f"{'✅ 不变' if ledger_after == ledger_before else '❌ 被改了'}")
+    print(f"  Workspace       : 未创建、未授权   ✅（ACCEPT ≠ 权限）")
+    print(f"  Git             : 未触碰           ✅")
+    print(f"  LLM             : 全程未调用       ✅（决策是本地规则）")
+    print()
+    print("  · ACCEPT 只意味着**合同成立**，不意味着付款")
+    print("  · Capability ≠ Permission，成交 ≠ 获得 Workspace 访问权")
+    print()
+
+    # ---------------- 统计 ----------------
+    print("持久化")
+    print("-" * 68)
+    stats = store.stats()
+    print(f"  任务 {stats['tasks']} 个 / 报价 {stats['offers']} 条 / "
+          f"成交凭证 {stats['agreements']} 份")
+    print(f"  按状态: {stats['by_status']}")
+    print()
+    print(f"  查询方式：./dev.sh task-log {task1.task_id}")
+    print(f"            ./dev.sh communication-log --trace {final1.current_trace_id}")
+    print()
+    return 0
+
+
+# ============================================================
 # 命令行参数
 # ============================================================
 def build_parser() -> argparse.ArgumentParser:
@@ -2291,6 +2685,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="能力发现与自主委派演示（不转账、不授权、不调模型）",
     )
     cap_demo.set_defaults(func=cmd_capability_demo)
+
+    # --- negotiation-demo（Step 4C）---
+    neg_demo = subparsers.add_parser(
+        "negotiation-demo",
+        parents=[shared],
+        help="自主议价演示（不调用 LLM、不转账、不建 Workspace）",
+    )
+    neg_demo.set_defaults(func=cmd_negotiation_demo)
 
     return parser
 

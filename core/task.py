@@ -239,6 +239,32 @@ class TaskValidationError(TaskError):
     """Task 字段本身不合法。"""
 
 
+class TaskRoleError(TaskError):
+    """
+    角色 / 轮次不对。
+
+    【Step 4C §16 的硬性要求】
+
+        不允许错误的人做错误的操作：
+
+            · 不是这个任务的参与方，却来 ACCEPT
+            · 上一条报价是自己发的，却自己回自己
+            · 任务已经结束，还想继续报价
+
+    【注意】判断依据全部来自任务自己的字段
+        （creator / contractor / participants / offer.from_agent），
+        **没有任何具体 Agent 的名字** —— 所以换成任何两个 Agent 都成立。
+    """
+
+
+class InvalidResponderError(TaskRoleError):
+    """这个 Agent 不是该任务的合法参与方。"""
+
+
+class NotYourTurnError(TaskRoleError):
+    """轮次不对（比如上一条报价就是你自己发的）。"""
+
+
 class BudgetExceededError(TaskError):
     """
     成交价超过了预算上限。
@@ -270,9 +296,16 @@ class OfferType:
     COUNTER_OFFER = "COUNTER_OFFER"
     ACCEPT = "ACCEPT"
 
+    #: Step 4C 加的 —— 拒绝也要进报价历史。
+    #: 【为什么拒绝也要记】
+    #:     §12：REJECT 是正常的**业务行为**（「我理解，但我不接」），
+    #:     不是协议错误。既然是业务行为，就该留在历史里可审计 ——
+    #:     否则以后看不出「这个任务被谁拒过、什么时候拒的」。
+    REJECT = "REJECT"
+
     @classmethod
     def all(cls) -> List[str]:
-        return [cls.TASK_OFFER, cls.COUNTER_OFFER, cls.ACCEPT]
+        return [cls.TASK_OFFER, cls.COUNTER_OFFER, cls.ACCEPT, cls.REJECT]
 
 
 @dataclass(frozen=True)
@@ -301,9 +334,30 @@ class Offer:
 
     #: 关联的通信消息 ID。
     #: 【可以是None】—— 因为 Task Core 不依赖通信层。
-    #: 将来接入通信后，这里会填上那条 TASK_OFFER 消息的 message_id，
+    #: 接入通信后，这里会填上那条报价消息的 message_id，
     #: 于是就能从任务一路查到通信日志。
     message_id: Optional[str] = None
+
+    # ---- 以下四个字段是 Step 4C 加的，为了让报价历史自解释 ----
+    #
+    # 【为什么 reply_to 必须有】
+    #     它指出「这条报价是在回应哪一条」。
+    #     有了它，ACCEPT 就能反查到「最终接受的是哪一条报价」（§18），
+    #     不需要再新增一个 accepted_offer_id（§18 明确要求别加重复 ID）。
+    #
+    # 【为什么 from_agent 必须有】
+    #     角色 / 轮次验证要用它：「谁刚报过价」决定了「现在该谁说话」（§16）。
+    #     不许用 `if agent_id == "agent_b"` 这种写法判断轮次。
+    reply_to: Optional[str] = None
+    from_agent: Optional[str] = None
+
+    # 【为什么连 trace_id / conversation_id 也存进来】
+    #     §11 明确要求：每一条新的 Counter Offer
+    #     「必须保留 trace_id / 必须保留 conversation_id」。
+    #     存在这里之后，报价历史是**自解释**的 ——
+    #     不查通信日志也能还原完整链路。
+    trace_id: Optional[str] = None
+    conversation_id: Optional[str] = None
 
     note: Optional[str] = None
 
@@ -324,6 +378,10 @@ class Offer:
             "offer_type": self.offer_type,
             "amount": self.amount.to_dict(),
             "message_id": self.message_id,
+            "reply_to": self.reply_to,
+            "from_agent": self.from_agent,
+            "trace_id": self.trace_id,
+            "conversation_id": self.conversation_id,
             "note": self.note,
             "created_at": self.created_at,
         }
@@ -335,6 +393,10 @@ class Offer:
             offer_type=data["offer_type"],
             amount=Money.from_dict(data["amount"]),
             message_id=data.get("message_id"),
+            reply_to=data.get("reply_to"),
+            from_agent=data.get("from_agent"),
+            trace_id=data.get("trace_id"),
+            conversation_id=data.get("conversation_id"),
             note=data.get("note"),
             created_at=data.get("created_at") or utc_now_iso(),
         )
@@ -715,6 +777,10 @@ class Task:
         amount: Money,
         message_id: Optional[str] = None,
         note: Optional[str] = None,
+        reply_to: Optional[str] = None,
+        from_agent: Optional[str] = None,
+        trace_id: Optional[str] = None,
+        conversation_id: Optional[str] = None,
     ) -> Offer:
         """
         记下一条报价。
@@ -732,10 +798,31 @@ class Task:
                 f"报价金额必须是 Money，收到 {type(amount).__name__}"
             )
 
+        # 【幂等：同一个 message_id 只记一次】
+        #
+        #     为什么需要？
+        #         同一条报价消息可能被两处处理：
+        #             · 发送侧：我决定报价，记下「我报了 X」
+        #             · 接收侧：对方收到，也记下「他报了 X」
+        #         在单进程演示里两边共用同一个 store，
+        #         于是同一条报价会被记两次 —— 而重复的报价会让
+        #         「我已经还过几次价」算错，进而让谈判提前终止。
+        #
+        #     报价的唯一标识就是它那条消息的 message_id，
+        #     所以按它去重是天然正确的。
+        if message_id is not None:
+            existing = self.find_offer_by_message(message_id)
+            if existing is not None:
+                return existing
+
         record = Offer(
             offer_type=offer_type,
             amount=amount,
             message_id=message_id,
+            reply_to=reply_to,
+            from_agent=from_agent,
+            trace_id=trace_id,
+            conversation_id=conversation_id,
             note=note,
         )
         self.offers.append(record)
@@ -744,6 +831,76 @@ class Task:
 
     def latest_offer(self) -> Optional[Offer]:
         return self.offers[-1] if self.offers else None
+
+    def find_offer_by_message(self, message_id: str) -> Optional[Offer]:
+        """
+        按 message_id 找一条报价。
+
+        【用途】ACCEPT 必须能反查到「被接受的是哪一条报价」（§18）。
+        """
+        for offer in reversed(self.offers):
+            if offer.message_id == message_id:
+                return offer
+        return None
+
+    def offer_by_type(self, offer_type: str) -> List[Offer]:
+        return [o for o in self.offers if o.offer_type == offer_type]
+
+    # ------------------------------------------------------------
+    # 参与方与轮次
+    # ------------------------------------------------------------
+    def is_participant(self, agent_id: str) -> bool:
+        """
+        这个 Agent 是不是这个任务的合法参与方。
+
+        【用途】§16：防止「Agent C 在没有成为合法参与方的情况下直接 ACCEPT」。
+
+        【注意这里没有任何具体 Agent 的名字】
+            判断依据是任务自己的字段（creator / contractor / participants），
+            所以换成任何两个 Agent 都一样成立。
+        """
+        if not agent_id:
+            return False
+        return agent_id in {
+            self.creator,
+            self.contractor,
+            *self.participants,
+        }
+
+    def counterparty_of(self, agent_id: str) -> Optional[str]:
+        """
+        对方的 agent_id。
+
+        发起方的对方是承接方，反之亦然。
+        """
+        # 【注意不能直接 return self.contractor】
+        #     承接方可能在成交前还是 None，
+        #     这时要往下走去找 participants，而不是返回 None 就结束。
+        if agent_id == self.creator and self.contractor:
+            return self.contractor
+        if self.contractor and agent_id == self.contractor:
+            return self.creator
+        # 还不是正式参与方时，从参与者名单里找一个别人
+        for participant in self.participants:
+            if participant != agent_id:
+                return participant
+        return None
+
+    def is_initiator(self, agent_id: str) -> bool:
+        """这个 Agent 是不是任务的发起方（付钱的那一方）。"""
+        return agent_id == self.creator
+
+    def negotiation_round_for(self, agent_id: str) -> int:
+        """
+        这个 Agent 已经还过几次价。
+
+        【用途】防止无限还价（§30：超过 max_rounds 不再 COUNTER）。
+        """
+        return sum(
+            1 for offer in self.offers
+            if offer.offer_type == OfferType.COUNTER_OFFER
+            and offer.from_agent == agent_id
+        )
 
     def offer_amounts(self) -> List[float]:
         """报价历史里的数值序列 —— 方便看「还了几次价」。"""

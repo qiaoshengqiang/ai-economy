@@ -371,6 +371,28 @@ class AgentConfig:
         value = self.get("capabilities.skills", [])
         return list(value) if isinstance(value, list) else []
 
+    @property
+    def negotiation(self) -> dict:
+        """
+        这个 Agent 自己的**议价参数**（Step 4C）。
+
+        【为什么必须放在 Agent 自己的配置里】
+            议价参数是 Agent 的私有经济策略：
+                B 的最低价是 20，C 的可能是 50
+            如果写在代码里，就必然要写
+                if agent_id == "agent_b": ...
+            而那正是需求明令禁止的（§6 / §17）。
+
+            放在配置里，同一个 RuleBasedDecisionPolicy 类就能服务所有 Agent，
+            差别只在于各自的配置文件不同。
+
+        返回空字典表示「没配置议价参数」——
+        这时组合根不会给它构造策略，它收到报价时会明确报错，
+        而不是悄悄用一个默认策略替它做经济决定。
+        """
+        value = self.get("negotiation", {})
+        return dict(value) if isinstance(value, dict) else {}
+
     # --- 行为 ---
     @property
     def allow_outsourcing(self) -> bool:

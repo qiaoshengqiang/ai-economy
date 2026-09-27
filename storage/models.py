@@ -38,6 +38,7 @@ TABLE_COMM_MESSAGES: Final = "communication_messages"
 TABLE_COMM_EVENTS: Final = "communication_events"
 TABLE_TASKS: Final = "tasks"
 TABLE_TASK_OFFERS: Final = "task_offers"
+TABLE_TASK_AGREEMENTS: Final = "task_agreements"
 
 
 # ============================================================
@@ -457,6 +458,16 @@ SCHEMA_STATEMENTS: Final[tuple[str, ...]] = (
         -- 关联的通信消息（可空 —— Task Core 不依赖通信层）
         message_id  TEXT,
 
+        -- Step 4C：让报价历史自解释
+        --   reply_to        回应的是哪一条消息（ACCEPT 靠它反查被接受的报价）
+        --   from_agent      谁提的（角色 / 轮次验证靠它）
+        --   trace_id        哪一次执行
+        --   conversation_id 哪一轮对话
+        reply_to        TEXT,
+        from_agent      TEXT,
+        trace_id        TEXT,
+        conversation_id TEXT,
+
         note        TEXT,
         created_at  TEXT NOT NULL,
 
@@ -466,6 +477,66 @@ SCHEMA_STATEMENTS: Final[tuple[str, ...]] = (
 
     "CREATE INDEX IF NOT EXISTS idx_task_offers_task ON task_offers (task_id)",
     "CREATE INDEX IF NOT EXISTS idx_task_offers_type ON task_offers (offer_type)",
+
+    # --------------------------------------------------------
+    # task_agreements —— 成交凭证（append-only）
+    #
+    # 【这不是账本，也不是支付记录】
+    #     ACCEPT 只表示「合同成立」。这里一分钱都没动。
+    #     以后 Payment 阶段可以**引用**这条凭证去执行转账。
+    #
+    # 【为什么要单独一张表】
+    #     tasks.agreed_price 会随任务状态变化而被后续操作影响，
+    #     而「当时到底谈成了什么」必须有一份**不会再变**的记录。
+    #     和账本一样：只 INSERT，不改写。
+    #
+    # 【accepted_offer_message_id 为什么不是外键】
+    #     因为它指向的是**通信消息**，而消息在通信日志里。
+    #     Task Core 不依赖 communication，所以这里只存 ID，
+    #     需要时自己去 journal 查（§18 要的就是这条可追踪的路径）。
+    # --------------------------------------------------------
+    """
+    CREATE TABLE IF NOT EXISTS task_agreements (
+        agreement_id    TEXT PRIMARY KEY,
+        task_id         TEXT NOT NULL,
+
+        initiator       TEXT NOT NULL,
+        contractor      TEXT NOT NULL,
+
+        price_amount    REAL NOT NULL,
+        price_currency  TEXT NOT NULL,
+
+        accepted_offer_message_id TEXT,
+
+        trace_id        TEXT,
+        conversation_id TEXT,
+
+        created_at      TEXT NOT NULL,
+
+        FOREIGN KEY (task_id) REFERENCES tasks (task_id)
+    )
+    """,
+
+    "CREATE INDEX IF NOT EXISTS idx_agreements_task ON task_agreements (task_id)",
+    "CREATE INDEX IF NOT EXISTS idx_agreements_time ON task_agreements (created_at)",
+)
+
+
+# ============================================================
+# 必须在【补列之后】才能建的索引
+# ============================================================
+# 【为什么单独一组】
+#     索引建立在列之上。如果某一列是后来 ALTER TABLE 加上去的，
+#     那么在老库上「CREATE INDEX ... (那一列)」会直接报
+#     "no such column" —— 因为执行 SCHEMA 的时候列还不存在。
+#
+#     所以这些索引不能放在 SCHEMA 里，必须等 migrate() 补完列再建。
+#
+#     Step 4C 第一次踩到这个坑：给 task_offers 加了 from_agent 列
+#     并顺手在同一批里建索引，结果老库一启动就崩。
+POST_MIGRATION_INDEXES: Final[tuple[str, ...]] = (
+    "CREATE INDEX IF NOT EXISTS idx_task_offers_msg  ON task_offers (message_id)",
+    "CREATE INDEX IF NOT EXISTS idx_task_offers_from ON task_offers (from_agent)",
 )
 
 
@@ -490,6 +561,14 @@ COLUMN_MIGRATIONS: Final[dict] = {
     # 所以只需要加列，不需要回填数据。
     "tasks": [
         ("required_capabilities", "TEXT"),
+    ],
+    # Step 4C 给报价历史加了四个关联字段。
+    # 老数据是 NULL（表示「不知道关联哪条消息」），这是合理的默认值。
+    "task_offers": [
+        ("reply_to", "TEXT"),
+        ("from_agent", "TEXT"),
+        ("trace_id", "TEXT"),
+        ("conversation_id", "TEXT"),
     ],
 }
 

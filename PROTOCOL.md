@@ -692,8 +692,35 @@ A ──ACCEPT (price = 25 AIC)────────→ B
 > （`TASK_OFFER` 取 `budget`，`COUNTER_OFFER` 取 `price`）。
 > 不一致即为协议违规。
 >
-> 🔒 **当前没有代码强制这条规则** —— 校验属于 Step 4 的 Task 层。
-> 本步骤只把语义定义清楚，并用测试表达出来。
+> ✅ **Step 4C 起这条规则已在代码里强制**：
+> [`services/task_service.py`](services/task_service.py) 的 `handle_accept()`
+> 会去报价历史里查 `reply_to` 对应的那条报价，价格不一致就回 `ERROR`
+> 并且**不改任务状态**。
+>
+> 同时 `reply_to` 是**必需的** —— 一条不指向任何已知报价的 ACCEPT 会被拒绝，
+> 因为那样就无法回答「双方最终接受的是哪一条报价」。
+
+#### 成交证据链（Step 4C）
+
+一次成交会同时留下三样东西，可以用 `reply_to` 串起来：
+
+```
+Task（状态 ACCEPTED，agreed_price = 25 AIC）
+  └── 报价历史
+        TASK_OFFER      100 AIC   message_id = msg_1
+        COUNTER_OFFER    60 AIC   message_id = msg_2   reply_to = msg_1
+        COUNTER_OFFER    40 AIC   message_id = msg_3   reply_to = msg_2
+        COUNTER_OFFER    25 AIC   message_id = msg_4   reply_to = msg_3
+        ACCEPT           25 AIC   message_id = msg_5   reply_to = msg_4  ← 被接受的是这条
+  └── 成交凭证 TaskAgreementRecord
+        accepted_offer_message_id = msg_4
+        trace_id / conversation_id
+```
+
+> **成交凭证不是账本，也不是支付记录。**
+> 它只说明「双方在这个时间、通过这条报价，达成了这个价格的协议」。
+> 付款属于后续步骤，可以引用这条凭证。
+> 有架构守卫禁止这张表出现任何支付字段。
 
 **`REJECT`** —— 拒绝：
 
@@ -709,6 +736,11 @@ A ──ACCEPT (price = 25 AIC)────────→ B
 ```
 
 `reason` 可选、人类可读。**拒绝不需要金额字段。**
+
+> **拒绝是业务行为，不是协议错误。**
+> 价格不合适 → `REJECT`，任务进入 `REJECTED`（正常）。
+> 还价超过预算 → 那条消息**无效**，回 `ERROR`，任务状态**不变**。
+> 两者在 Task 层严格区分（有测试）。
 
 ### 7.5 `SUBMIT` / `VERIFY`（预留）
 
