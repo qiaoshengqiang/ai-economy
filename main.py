@@ -70,6 +70,7 @@ from core.paths import ensure_runtime_dirs                      # noqa: E402
 from llm import LLMCallRecorder, LLMRouter, LLMError            # noqa: E402
 from communication import (                                     # noqa: E402
     CommunicationManager,
+    DEFAULT_CLAIM_LEASE_SECONDS,
     CommunicationRecorder,
     LocalTransport,
     MessageStatus,
@@ -352,10 +353,22 @@ def build_runtime(db_path: Optional[str] = None) -> Runtime:
     # 通信日志（Step 3.5）。
     # 注意它是【注入】给 CommunicationManager 的，不是 Manager 内部 new 的 ——
     # 这样通信层不需要知道数据库在哪，测试通信时也不用准备数据库。
+    #
+    # 【Workspace Phase 0：两个可靠性参数从配置读】
+    #     认领租约时长和 SQLite 忙等超时都不是业务规则，
+    #     而是「这个部署面对并发时怎么表现」——
+    #     所以它们来自 config.yaml，不写死在代码里。
+    reliability_config = config.get("system.reliability", {}) or {}
     journal = CommunicationRecorder(
         db=economy.db,
         store_payload=True,
         strict=False,
+        claim_lease_seconds=int(
+            reliability_config.get(
+                "message_claim_lease_seconds",
+                DEFAULT_CLAIM_LEASE_SECONDS,
+            )
+        ),
     )
     communication = CommunicationManager(
         transport=transport,
@@ -3126,6 +3139,333 @@ def _run_async(coro):
     return asyncio.run(coro)
 
 
+# ============================================================
+# 命令：reliability-multiprocess-demo（Workspace Phase 0）
+# ============================================================
+def cmd_reliability_multiprocess_demo(
+    runtime: Runtime, args: argparse.Namespace
+) -> int:
+    """
+    真实多进程 / 租约演示（Workspace Phase 0）。
+
+    【它要证明的五件事】
+
+        ① 两个**真正的进程**都能打开并写同一个数据库
+        ② 同一条消息：只能有一个进程认领成功
+        ③ 同一个 Task：CAS 只有一个成功，另一个被拒绝
+        ④ 认领租约：未过期抢不走，过期后可以接手
+        ⑤ 崩溃的 worker 留下的认领，会在租约到期后被恢复
+
+    【它刻意不证明的事情】
+        ❌ 不做 retry / 不做心跳 / 不做 Workspace
+        ❌ 不做多机 —— 这是**多进程**，同一个文件系统
+    """
+    import multiprocessing as mp
+    import os
+    import tempfile
+    import time as _time
+    from datetime import timedelta
+    from pathlib import Path as _Path
+
+    from communication import Message, MessageType
+    from core.identity import utc_now
+    from core.money import Money
+    from core.task import Task
+    from core.task_store import ConcurrentTaskModification, TaskStore
+    from communication.recorder import CommunicationRecorder
+    from storage.database import Database
+
+    sys_path = str(_Path(__file__).resolve().parent)
+    if sys_path not in sys.path:
+        sys.path.insert(0, sys_path)
+    from tests import multiprocess_helpers as helpers
+
+    print()
+    print("=" * 76)
+    print("        AI Economy OS v0.1")
+    print("        Workspace Phase 0 — Multiprocess / Claim Lease")
+    print("=" * 76)
+    print()
+    print("  只验证两件事：")
+    print("      真实的多进程并发写入（不是线程、不是单例连接）")
+    print("      消息认领从「永久占用」变成「短期租约」")
+    print()
+
+    workdir = _Path(tempfile.mkdtemp(prefix="dsh-p0-"))
+    db_path = str(workdir / "multiprocess.db")
+
+    # ---- 建库 ----
+    db = Database(db_path)
+    db.initialize()
+    pragmas = db.pragmas()
+    print(f"  数据库文件 : {db_path}")
+    print(f"  建立连接的进程 PID : {os.getpid()}")
+    print(f"  journal_mode : {pragmas['journal_mode']}")
+    print(f"  busy_timeout : {pragmas['busy_timeout']} ms")
+    print()
+
+    ctx = mp.get_context("spawn")
+
+    def drain(queue):
+        items = []
+        while not queue.empty():
+            items.append(queue.get())
+        return items
+
+    def run(targets, barrier_size=None, timeout=90):
+        out = ctx.Queue()
+        barrier = ctx.Barrier(barrier_size) if barrier_size else None
+        processes = []
+        for target, args in targets:
+            full = (*args, barrier, out) if barrier is not None else (*args, out)
+            processes.append(ctx.Process(target=target, args=full))
+        for process in processes:
+            process.start()
+        for process in processes:
+            process.join(timeout=timeout)
+        results = drain(out)
+        out.close()
+        return results
+
+    # ============================================================
+    # ① 两个独立进程打开并写同一个数据库
+    # ============================================================
+    print("=" * 76)
+    print("① 两个真正的进程打开并写同一个数据库")
+    print("=" * 76)
+    print()
+
+    results = run([
+        (helpers.read_write_worker, (db_path, "A")),
+        (helpers.read_write_worker, (db_path, "B")),
+    ])
+    for item in results:
+        if item.get("step") == "opened":
+            print(f"  [pid {item['pid']}] {item['worker']} 打开成功  "
+                  f"journal_mode={item['journal_mode']}  "
+                  f"busy_timeout={item['busy_timeout']}")
+        elif item.get("step") == "done":
+            print(f"  [pid {item['pid']}] {item['worker']} 写入成功  "
+                  f"（看到 {item['before']} 行 → 写后 {item['after']} 行）")
+        else:
+            print(f"  [pid {item['pid']}] {item['worker']} ❌ {item.get('error')}")
+
+    pids = {item["pid"] for item in results}
+    print()
+    print(f"  参与写入的进程数: {len(pids)}   子进程 PID: {sorted(pids)}")
+    print("  ✅ 两个独立进程都成功" if len(pids) == 2
+          else "  ❌ 没有真正并发")
+    print()
+    print("  【关键】每个进程各自 `Database(path)` —— 没有共享对象、")
+    print("         没有共享连接。父进程的连接不会被传给子进程。")
+    print()
+
+    # ============================================================
+    # ② 同一条消息：只能一个进程认领
+    # ============================================================
+    print("=" * 76)
+    print("② 同一条消息 —— 两个进程同时抢，只能一个成功")
+    print("=" * 76)
+    print()
+
+    results = run([
+        (helpers.claim_worker, (db_path, "msg_demo_race", "worker-A")),
+        (helpers.claim_worker, (db_path, "msg_demo_race", "worker-B")),
+    ], barrier_size=2)
+
+    for item in sorted(results, key=lambda r: r.get("worker", "")):
+        mark = "✅ 认领成功" if item.get("ok") else f"🚫 {item.get('status')}"
+        print(f"  [pid {item['pid']}] {item['worker']:<10} → {mark}")
+    print()
+
+    db2 = Database(db_path)
+    state = CommunicationRecorder(db2).processing_state("msg_demo_race")
+    print(f"  数据库里的最终状态:")
+    print(f"      claim_id       = {state['claimed_by']}")
+    print(f"      processed_once = {state['processed']}   （只是认领，还没处理完）")
+    print(f"      failure_count  = {state['failure_count']}")
+    print()
+    print("  ✅ 只有一个进程拿到认领" if len([r for r in results if r.get("ok")]) == 1
+          else "  ❌ 两个都认领成功了")
+    print()
+
+    # ============================================================
+    # ③ 同一个 Task：CAS 冲突
+    # ============================================================
+    print("=" * 76)
+    print("③ 同一个 Task —— CAS 只有一个成功，另一个被拒绝")
+    print("=" * 76)
+    print()
+
+    store = TaskStore(db2)
+    store.save(Task.create(task_id="T-DEMO-CAS", creator="agent_a",
+                           description="CAS 演示", budget=Money(100),
+                           participants=["agent_a", "agent_b"]))
+    print(f"  任务初始 version = {store.get('T-DEMO-CAS').version}")
+    print()
+
+    results = run([
+        (helpers.cas_worker, (db_path, "T-DEMO-CAS", "A")),
+        (helpers.cas_worker, (db_path, "T-DEMO-CAS", "B")),
+    ], barrier_size=2)
+
+    for item in sorted(results, key=lambda r: r.get("worker", "")):
+        if item["outcome"] == "SUCCESS":
+            print(f"  [pid {item['pid']}] 写入方 {item['worker']} → ✅ 保存成功  "
+                  f"version {item['version_read']} → {item['version_after']}")
+        elif item["outcome"] == "CONFLICT":
+            print(f"  [pid {item['pid']}] 写入方 {item['worker']} → 🚫 被拒绝  "
+                  f"（我手上 v{item['expected']}，数据库已是 v{item['actual']}）")
+        else:
+            print(f"  [pid {item['pid']}] 写入方 {item['worker']} → ❌ {item.get('error')}")
+
+    final = store.get("T-DEMO-CAS")
+    print()
+    print(f"  最终 version = {final.version}   note = {final.note!r}")
+    print("  ✅ 只 +1（输家没有偷偷写进去）"
+          if final.version == 1 + len([r for r in results if r["outcome"] == "SUCCESS"])
+          else "  ❌ version 不对")
+    print()
+    print("  【这是 Workspace Phase 0 测出来的真实缺陷】")
+    print("     4D.1 的并发保护在**单进程**下正确。")
+    print("     真多进程测试时，失败者拿到的是：")
+    print("         OperationalError: database is locked")
+    print("     而不是 ConcurrentTaskModification。")
+    print("     原因：BEGIN（延迟事务）先拿读锁，写的时候要升级 →")
+    print("           两个进程都持读锁都在等 → 死锁 →")
+    print("           SQLite 立刻返回 BUSY，**不理会 busy_timeout**。")
+    print("     修法：写事务改用 BEGIN IMMEDIATE。")
+    print()
+
+    # ============================================================
+    # ④ 租约：未过期抢不走，过期可接手
+    # ============================================================
+    print("=" * 76)
+    print("④ 认领租约 —— 未过期抢不走，过期后可以接手")
+    print("=" * 76)
+    print()
+
+    lease_recorder = CommunicationRecorder(db2, claim_lease_seconds=60)
+    lease_message = Message(
+        from_agent="agent_a", to_agent="agent_b",
+        message_type=MessageType.SUBMIT,
+        payload={"task_id": "T-LEASE"},
+        message_id="msg_demo_lease",
+    )
+    base = utc_now()
+
+    def at(offset):
+        return (base + timedelta(seconds=offset)).isoformat()
+
+    print(f"  租约时长 = {lease_recorder.claim_lease_seconds} 秒")
+    print()
+
+    claim = lease_recorder.claim_message(lease_message, "worker-A", now=at(0))
+    print(f"  T+0s   worker-A 认领          → {claim.status}")
+
+    state = lease_recorder.processing_state("msg_demo_lease")
+    print(f"         claim_id = {state['claimed_by']}   "
+          f"claimed_at = {state['claimed_at']}")
+    print()
+
+    claim = lease_recorder.claim_message(lease_message, "worker-B", now=at(30))
+    print(f"  T+30s  worker-B 想接手        → {claim.status}  "
+          f"（租约还没过期，抢不走）")
+
+    claim = lease_recorder.claim_message(lease_message, "worker-B", now=at(90))
+    print(f"  T+90s  worker-B 再试          → {claim.status}  "
+          f"（租约过期，可以接手）")
+
+    state = lease_recorder.processing_state("msg_demo_lease")
+    print()
+    print(f"         接手后 claim_id = {state['claimed_by']}")
+    print(f"                claimed_at = {state['claimed_at']}")
+    print(f"                reclaimed  = {claim.reclaimed}  "
+          f"previous_owner = {claim.previous_owner}")
+    print(f"                processed  = {state['processed']}   "
+          f"（租约过期 ≠ 处理完成）")
+    print(f"                failure_count = {state['failure_count']}   "
+          f"（worker 崩溃 ≠ 业务失败）")
+    print()
+    print("  ✅ 租约过期让占用失效，但**不改变**成功事实与失败计数")
+    print()
+
+    # ============================================================
+    # ⑤ 崩溃恢复
+    # ============================================================
+    print("=" * 76)
+    print("⑤ 崩溃恢复 —— worker 被 kill 之后，认领会在租约到期后恢复")
+    print("=" * 76)
+    print()
+
+    crash_out = ctx.Queue()
+    crash_process = ctx.Process(
+        target=helpers.crash_after_claim_worker,
+        args=(db_path, "msg_demo_crash", "crashed-worker", crash_out, 60),
+    )
+    crash_process.start()
+    crash_process.join(timeout=60)
+    for item in drain(crash_out):
+        print(f"  [pid {item['pid']}] {item['worker']} 认领 → {item['status']}")
+    crash_out.close()
+
+    print("  该进程**直接退出**：不释放认领、不关闭连接、不跑任何清理代码")
+    print("  （这就是 kill -9 的效果 —— 没有 finally 会执行）")
+    print()
+
+    crash_recorder = CommunicationRecorder(db2, claim_lease_seconds=60)
+    state = crash_recorder.processing_state("msg_demo_crash")
+    print(f"  崩溃后数据库里:")
+    print(f"      claim_id = {state['claimed_by']}   "
+          f"（认领留下来了 —— 因为没人清理）")
+    print()
+
+    claim = crash_recorder.claim_message(
+        Message(from_agent="agent_a", to_agent="agent_b",
+                message_type=MessageType.SUBMIT,
+                payload={"task_id": "T-CRASH"},
+                message_id="msg_demo_crash"),
+        "rescuer", now=at(120),
+    )
+    print(f"  租约到期后，rescuer 认领      → {claim.status}  "
+          f"reclaimed={claim.reclaimed}")
+    print(f"      previous_owner = {claim.previous_owner}")
+    print()
+    print("  ✅ 恢复**不依赖崩溃进程做任何配合** —— 只靠租约到期")
+    print()
+
+    # ============================================================
+    # 边界证明
+    # ============================================================
+    print("=" * 76)
+    print("边界证明")
+    print("=" * 76)
+    print()
+
+    integrity = db2.fetchone("PRAGMA integrity_check")[0]
+    print(f"  数据库完整性      : {integrity}")
+    print(f"  消息表行数        : {db2.fetchone('SELECT COUNT(*) AS n FROM communication_messages')['n']}")
+    print(f"  成功处理过的消息  : {crash_recorder.count_processed()}")
+    print()
+    print(f"  Wallet / Ledger   : 未被本阶段触碰   ✅")
+    print(f"  Workspace         : 仍未实现         ✅")
+    print(f"  Git               : 未触碰           ✅")
+    print(f"  代码执行          : 未执行           ✅")
+    print(f"  Retry Scheduler   : 未实现           ✅")
+    print(f"  Heartbeat         : 未实现           ✅")
+    print()
+    print("  · 消息去重与认领是**持久化事实** —— 跨进程、跨重启都有效")
+    print("  · Task 的并发写入在**真实多进程**下被正确拒绝，不会静默覆盖")
+    print("  · 认领是**短期租约** —— 崩溃的 worker 不会永久占住消息")
+    print()
+
+    db.close()
+    db2.close()
+    print(f"  演示目录: {workdir}")
+    print()
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     """
     构建命令行解析器。
@@ -3412,6 +3752,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="可靠性 / 并发加固演示（持久化去重 + 乐观锁 + 事务）",
     )
     rel_demo.set_defaults(func=cmd_reliability_demo)
+
+    # --- reliability-multiprocess-demo（Workspace Phase 0）---
+    mp_demo = subparsers.add_parser(
+        "reliability-multiprocess-demo",
+        parents=[shared],
+        help="真实多进程 / 认领租约演示（Workspace Phase 0）",
+    )
+    mp_demo.set_defaults(func=cmd_reliability_multiprocess_demo)
 
     return parser
 

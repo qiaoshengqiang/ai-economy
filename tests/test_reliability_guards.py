@@ -166,14 +166,33 @@ class TestGuard1DedupIsPersistent:
         #     如果查原文，把真正的条件删掉之后守卫照样绿 ——
         #     因为文档里的示例还在。
         #     （反向测试时正是这么发现的。）
-        code = code_only(COMM_DIR / "recorder.py")
+        # 【先把空白压平】
+        #     认领条件现在是多行的：
+        #         AND (
+        #              claim_id IS NULL
+        #              OR claimed_at IS NULL
+        #              OR claimed_at < ?
+        #         )
+        #     直接匹配 "AND claim_id IS NULL" 会匹配不到 ——
+        #     但那不是「条件没了」，只是换行了。
+        #     所以压平空白再检查语义片段。
+        code = " ".join(code_only(COMM_DIR / "recorder.py").split())
 
-        assert "AND claim_id IS NULL" in code, (
-            "认领的 UPDATE 必须带 `AND claim_id IS NULL` 条件 —— "
+        assert "claim_id IS NULL" in code, (
+            "认领的 UPDATE 必须带 `claim_id IS NULL` 条件 —— "
             "否则两个 worker 会同时认领成功"
         )
-        assert "AND processed_once = 0" in code, (
+        assert "processed_once = 0" in code, (
             "认领必须排除已经处理过的消息"
+        )
+        # 【Workspace Phase 0 新增】租约过期也必须能接手
+        assert "claimed_at < ?" in code, (
+            "认领条件必须包含租约过期判断（claimed_at < ?）—— "
+            "否则崩溃的 worker 会永久占住消息"
+        )
+        assert "claimed_at IS NULL" in code, (
+            "claimed_at 缺失（老数据 / 半写状态）时也应该可以被认领，"
+            "否则那条消息永远抢不到"
         )
 
     def test_processed_once_is_monotonic(self):

@@ -150,7 +150,7 @@ LLM 只能**提出意图**，永远不能**直接改账**。
 - [x] SQLite 数据库（4 张表）
 - [x] 启动横幅
 - [x] **命令行经济操作**（转账 / 余额 / 流水 / 对账）
-- [x] 2140 个 pytest 测试全绿（另有 30 个真实 API 测试单独跑）
+- [x] 2333 个 pytest 测试全绿（另有 30 个真实 API 测试单独跑）
 
 **验收标准**（已达成）：
 
@@ -1598,11 +1598,123 @@ with db.transaction():
 **10 组守卫全部做了反向测试。** 其中两条一开始太弱
 （匹配到了自己的方法名 / 文档里的 SQL 示例），加强后才真正抓到。
 
+### ✅ Workspace Phase 0：多进程验证 + 认领租约（已完成）
+
+**不是 Workspace 实现。** 是进 Workspace 之前必须做的两个前置验证
+—— 因为 Workspace 会引入**更长的执行任务**和**真实的文件副作用**，
+这两件事在单进程假设下都会变成灾难。
+
+#### 任务 A：真实多进程验证 —— 测出了两个真实缺陷
+
+4D.1 的并发设计**只在单进程单连接下验证过**。用真正的
+`multiprocessing.Process`（不是线程）跑起来之后，两个缺陷立刻暴露：
+
+**① 写事务用的是 `BEGIN`（延迟事务）→ 多进程下并发保护失效**
+
+```
+Process A: BEGIN → SELECT（拿 SHARED）→ UPDATE（想升级成写锁）
+Process B: BEGIN → SELECT（拿 SHARED）→ UPDATE（想升级成写锁）
+                ↑ 两边都持读锁，都在等对方 → 死锁
+```
+
+SQLite 检测到死锁会**立刻**返回 `SQLITE_BUSY`，**不理会 `busy_timeout`**。
+于是调用方拿到的是：
+
+```
+OperationalError: database is locked      ← 而不是 ConcurrentTaskModification
+```
+
+**并发保护在真实多进程下被静默绕过了。** 修法：写事务改用
+`BEGIN IMMEDIATE`（事务开始就拿写锁，没有升级步骤）。
+只读事务仍然用 `BEGIN`，可以并发读。
+
+**② `PRAGMA journal_mode = WAL` 是排他操作，却在每个连接上无条件执行**
+
+多进程同时连接时互相撞成 `database is locked` —— 甚至在
+`connect()` 阶段就炸。修法：先读当前模式，只有不是 WAL 时才切换。
+
+**③ 连接缓存不是 PID 感知的**
+
+`fork` 之后子进程会继承父进程的 `Database._conn`。
+SQLite 明确说明跨 fork 复用连接不安全。这在 macOS 上看不出来
+（默认 `spawn`，不可能继承），但 Linux 默认 `fork`。
+
+修法：缓存里记 `owner_pid`，PID 不匹配就丢弃重建。
+
+#### 任务 B：认领租约
+
+4D.1 给了 `claim_id` / `claimed_at` —— 但那是**永久**认领。
+worker 被 `kill -9` 之后，这个 claim 永远卡在那里：
+
+```
+UNCLAIMED ──claim──→ CLAIMED ──success──→ PROCESSED
+                        │
+                        ├── failure ──→ UNCLAIMED
+                        └── lease 过期 → UNCLAIMED     ← Phase 0 新增
+```
+
+**回收仍然是一条原子条件 UPDATE**（消除 TOCTOU）：
+
+```sql
+UPDATE communication_messages
+   SET claim_id = ?, claimed_at = ?
+ WHERE message_id = ?
+   AND processed_once = 0
+   AND (claim_id IS NULL OR claimed_at IS NULL OR claimed_at < ?)
+```
+
+> 🔒 **租约只管「谁现在有权处理」，不管「处理成功没有」**
+>
+> | 租约过期 | 结果 |
+> |---|---|
+> | 别人可以接手 | ✅ |
+> | `processed_once` 不变 | ✅ 成功事实与租约无关 |
+> | `failure_count` 不变 | ✅ worker 崩溃 ≠ 业务失败 |
+> | 消息不删除 | ✅ |
+>
+> 有守卫逐条钉住这四条。
+
+**租约可配置**：`config.yaml` 的 `system.reliability.message_claim_lease_seconds`
+（默认 300 秒），由组合根注入 `CommunicationRecorder`。
+有测试证明配置**真的被读取**（改成 42 → recorder 就是 42）。
+
+#### 验收结果
+
+| 项 | 状态 |
+|---|---|
+| 两进程打开/读写同一库 | ✅ 真进程、独立连接、都成功 |
+| WAL 在子进程生效 | ✅ `journal_mode=wal` |
+| 同一消息只有一个认领成功 | ✅ barrier 对齐起跑，2/4 进程都测了 |
+| 同一 Task CAS 只有一个成功 | ✅ 另一个抛 `ConcurrentTaskModification` |
+| 失败者不覆盖成功者 | ✅ 最终 version 只 +1 |
+| 不同 Task 可并行 | ✅ 不会被过度锁死 |
+| 压力测试无损坏 | ✅ `PRAGMA integrity_check = ok` |
+| 租约未过期不可抢 | ✅ |
+| 租约过期可接手 | ✅ `reclaimed=True` + `previous_owner` |
+| `processed_once=1` 永久不可抢 | ✅ 即使租约早已过期 |
+| 崩溃后租约到期恢复 | ✅ 真进程直接退出，不依赖任何清理 |
+| fork 后连接独立 | ✅ 显式测了 `get_context("fork")` |
+| 协议仍是 v1 / Wallet 零变化 | ✅ |
+
+**测试：2140 → 2333（新增 193）**
+
+| 新增 | 数量 | 测什么 |
+|---|---|---|
+| `test_multiprocess_database.py` | 14 | 真进程：打开 / 认领 / CAS / 并行 / 压力 / 回滚 / fork |
+| `test_message_claim_lease.py` | 33 | 租约语义 / 边界 / 原子回收 / 崩溃恢复 / 配置 |
+| `test_multiprocess_guards.py` | 137 | 11 组守卫 + 迁移 |
+| `test_cli.py` | +19 | `reliability-multiprocess-demo` |
+| 既有守卫更新 | +9 | 认领条件改成带租约的版本 |
+
+**11 组守卫全部做了反向测试。** 其中一条一开始太弱
+（查原文，而文档里为了解释这个修复大量提到了 `BEGIN IMMEDIATE`），
+改成查纯代码之后才真正抓到。
+
 ### ⏳ 后续阶段
 
 | 阶段 | 内容 | 状态 |
 |---|---|---|
-| Step 5 | Task Workspace + Permission（真正的执行环境） | 待开始 |
+| Task Workspace | 创建 / 授权 / 隔离 / 共享 | 待开始 |
 | 结算 | Payment / Escrow / Settlement（可引用 `TaskAgreementRecord`） | 待开始 |
 | Step 5 | 完整经济交易 Demo（A 外包给 B，结算） | 待开始 |
 | Step 6 | Cost Calculator（把 token 用量接到经济系统） | 待开始 |
@@ -1875,7 +1987,7 @@ ai-economy/
 │   ├── database.py            ← SQLite 连接、事务、迁移
 │   └── models.py              ← 表结构定义
 │
-├── tests/                     ← 2140 个测试 + 30 个真实 API 测试
+├── tests/                     ← 2333 个测试 + 30 个真实 API 测试
 └── data/
     └── economy.db             ← SQLite 数据库（运行产物，不进 git）
 ```

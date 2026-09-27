@@ -15,18 +15,35 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator, Optional, Union
 
+from core.logging_setup import get_logger
 from core.paths import PROJECT_ROOT
+logger = get_logger(__name__)
+
 from storage.models import (
     COLUMN_MIGRATIONS,
     DATA_MIGRATIONS,
     POST_MIGRATION_INDEXES,
     SCHEMA_STATEMENTS,
 )
+
+
+#: 默认的 SQLite 忙等超时（毫秒）。
+#:
+#: 【为什么必须显式设置，而不是"Python 默认就有"】
+#:     `sqlite3.connect(timeout=5.0)` 确实会把 busy_timeout 设成 5000，
+#:     所以过去**碰巧**是 5 秒。但那是 Python 的默认值，
+#:     不是我们的决定 —— 它没有写在任何地方，也没法配置。
+#:
+#:     多进程写同一个库时，这个值决定了「另一个进程拿着写锁时，
+#:     我怎么等」。等不到就抛 database is locked。
+#:     这是个可靠性参数，应该被明确声明。
+DEFAULT_BUSY_TIMEOUT_MS = 5000
 
 
 class Database:
@@ -40,11 +57,28 @@ class Database:
             conn.execute("INSERT ...")
     """
 
-    def __init__(self, path: Union[str, Path] = ":memory:"):
+    def __init__(
+        self,
+        path: Union[str, Path] = ":memory:",
+        busy_timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS,
+    ):
         self.path = str(path)
         self._conn: Optional[sqlite3.Connection] = None
         # 事务嵌套深度（见 transaction() 的说明）
         self._tx_depth = 0
+
+        # 这个连接是**哪个进程**创建的。
+        #
+        # 【为什么需要一个 PID】
+        #     看 connect() 里的说明 —— fork 之后子进程会继承
+        #     父进程的连接，而那是不能用的。
+        self._owner_pid: Optional[int] = None
+
+        if busy_timeout_ms < 0:
+            raise ValueError(
+                f"busy_timeout_ms 不能为负，收到 {busy_timeout_ms}"
+            )
+        self.busy_timeout_ms = int(busy_timeout_ms)
 
     # ------------------------------------------------------------
     # 连接管理
@@ -53,16 +87,111 @@ class Database:
     def is_memory(self) -> bool:
         return self.path == ":memory:"
 
+    @property
+    def owner_pid(self) -> Optional[int]:
+        """
+        持有当前连接的进程 PID（None 表示还没连接）。
+
+        给测试用 —— 让「每个进程一个连接」这件事可以被**断言**，
+        而不是只能靠读代码相信。
+        """
+        return self._owner_pid
+
+    def pragmas(self) -> dict:
+        """
+        当前连接的关键 PRAGMA（给测试 / 演示 / 排查用）。
+
+        没有连接时返回 {}。
+        """
+        if self._conn is None:
+            return {}
+
+        def value(name):
+            row = self._conn.execute(f"PRAGMA {name}").fetchone()
+            return row[0] if row else None
+
+        return {
+            "journal_mode": value("journal_mode"),
+            "busy_timeout": value("busy_timeout"),
+            "foreign_keys": value("foreign_keys"),
+            "synchronous": value("synchronous"),
+        }
+
     def connect(self) -> sqlite3.Connection:
         """
-        建立连接（若已连接则复用）。
+        建立连接（**按进程**复用）。
 
-        为什么 check_same_thread=False？
+        ============================================================
+        【Step 4D.1 之后这里加了两件事 —— Workspace Phase 0 修的】
+        ============================================================
+
+        【一、连接缓存必须是 PID 感知的】
+
+            原来是这样：
+
+                if self._conn is not None:
+                    return self._conn
+
+            单进程没问题。但 `fork()` 之后：
+
+                父进程建了连接 → fork → 子进程**继承** self._conn
+
+            子进程拿到的那个连接是**父进程创建的** ——
+            SQLite 明确说明跨 fork 复用连接是不安全的
+            （共享的页缓存、WAL 索引、锁状态会不一致）。
+
+            现在缓存里记了 owner_pid：
+
+                PID 相同 → 复用（正常路径，快）
+                PID 不同 → 丢弃继承来的连接，**重新建一个**
+
+            这样「每个进程一个连接」是结构性保证，
+            而不是靠调用方记得别把 Database 对象传给子进程。
+
+        【二、busy_timeout 显式设置】
+
+            过去它**碰巧**是 5000 —— 因为 sqlite3.connect(timeout=5.0)
+            的默认值。但那是 Python 的默认，不是我们的决定。
+
+            多进程写同一个库时，这个值决定「另一个进程拿着写锁时我等多久」。
+            现在它被显式声明、可配置、有文档。
+
+            同时把 connect 的 timeout 也设成一致的值 ——
+            否则「Python 层等 5 秒」和「SQLite 层 busy_timeout」
+            可能不一致，出问题时很难判断是哪一层在等。
+
+        【check_same_thread=False 是什么】
+
             v0.1 是单线程的，但以后 Agent 可能用线程/异步并行干活。
-            现在先设好，避免以后踩坑。
+            设成 False 让连接可以在别的线程里用。
+
+            ⚠️ 注意：这只是**允许**跨线程使用，不等于线程安全。
+            多个线程共享同一个 Database 时，连接本身和事务深度
+            都不是线程安全的 —— 见报告里的技术债。
         """
+        pid = os.getpid()
+
         if self._conn is not None:
-            return self._conn
+            if self._owner_pid == pid:
+                return self._conn
+
+            # ---- fork 之后：继承来的连接不能用 ----
+            #
+            # 【为什么只丢弃、不 close()】
+            #     子进程里 close 一个「父进程开启、可能有未提交事务」的连接，
+            #     会触发一次 rollback —— 而那是父进程的事务。
+            #     虽然 fd 已经各自独立，但为了绝对不干扰父进程，
+            #     这里只丢引用，让它在子进程退出时自然回收。
+            #
+            #     （子进程通常是短命的；真正的长命进程应该自己建
+            #       Database 对象，而不是继承父进程的。）
+            logger.warning(
+                "进程 %s 继承了一个由进程 %s 建立的数据库连接，"
+                "已丢弃并重新建立（SQLite 连接不能跨 fork 复用）",
+                pid, self._owner_pid,
+            )
+            self._conn = None
+            self._tx_depth = 0
 
         if not self.is_memory:
             # 确保父目录存在，否则 sqlite3.connect 会报 "unable to open database file"
@@ -72,7 +201,12 @@ class Database:
                 self.path = str(db_path)
             db_path.parent.mkdir(parents=True, exist_ok=True)
 
-        conn = sqlite3.connect(self.path, check_same_thread=False)
+        conn = sqlite3.connect(
+            self.path,
+            check_same_thread=False,
+            # 和下面的 PRAGMA 保持一致 —— 免得两层超时不一样
+            timeout=self.busy_timeout_ms / 1000.0,
+        )
 
         # 让查询结果支持 row["column_name"] 这种访问方式
         conn.row_factory = sqlite3.Row
@@ -80,18 +214,57 @@ class Database:
         # SQLite 默认关闭外键约束，必须每个连接手动打开
         conn.execute("PRAGMA foreign_keys = ON")
 
+        # 写竞争时等待而不是立刻失败（显式声明，不依赖 Python 默认）
+        conn.execute(f"PRAGMA busy_timeout = {self.busy_timeout_ms}")
+
         # WAL 模式：读写并发更好，且断电更不容易损坏数据。
-        # 内存数据库不支持 WAL，所以跳过。
+        #
+        # 【为什么多进程下它很关键】
+        #     回滚日志模式下，写者会阻塞读者；
+        #     WAL 模式下读写可以真正并行 —— 这正是多进程场景需要的。
+        #
+        # 【Workspace Phase 0：这里改成了「先看再设」】
+        #
+        #     原来是无条件执行：
+        #
+        #         PRAGMA journal_mode = WAL
+        #
+        #     但这条 PRAGMA **需要独占访问**。多进程同时 connect() 时，
+        #     它们会互相撞成：
+        #
+        #         sqlite3.OperationalError: database is locked
+        #
+        #     （这是真的测出来的 —— 两个进程同时连同一个库，
+        #       其中一半直接在 connect() 就炸了。busy_timeout 也救不了，
+        #       因为切换 journal mode 要的是排他锁。）
+        #
+        #     现在先读一次当前模式：已经是 WAL 就什么都不做。
+        #     只有真的需要切换时才执行 —— 而那通常只发生在
+        #     第一个进程建库的时候。
+        #
+        #     即使切换时撞上锁也不该让连接失败：那说明**别的进程
+        #     正在切**，切完之后就是 WAL 了。
         if not self.is_memory:
-            conn.execute("PRAGMA journal_mode = WAL")
+            try:
+                current_mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+                if str(current_mode).lower() != "wal":
+                    conn.execute("PRAGMA journal_mode = WAL")
+            except sqlite3.OperationalError as exc:
+                logger.debug(
+                    "切换 journal_mode 时撞上锁（大概率是别的进程正在切）：%s",
+                    exc,
+                )
 
         self._conn = conn
+        self._owner_pid = pid
         return conn
 
     def close(self) -> None:
         if self._conn is not None:
             self._conn.close()
             self._conn = None
+        self._owner_pid = None
+        self._tx_depth = 0
 
     def __enter__(self) -> "Database":
         self.connect()
@@ -208,7 +381,7 @@ class Database:
     # 事务
     # ------------------------------------------------------------
     @contextmanager
-    def transaction(self) -> Iterator[sqlite3.Connection]:
+    def transaction(self, write: bool = True) -> Iterator[sqlite3.Connection]:
         """
         事务上下文。**可重入**（嵌套时自动加入外层事务）。
 
@@ -261,6 +434,20 @@ class Database:
 
             所以「要么都成功，要么都不发生」对嵌套块同样成立。
 
+        【参数 write】
+
+            write=True（默认） → BEGIN IMMEDIATE（拿写锁，多进程安全）
+            write=False        → BEGIN（延迟读事务，可并发读）
+
+            默认 True 是因为这个项目里 transaction() **绝大多数**用于写：
+            TaskStore 的每个写方法、recorder 的每个写方法都自己开事务。
+            把默认设成 True 意味着「忘了写 write=False」的代价只是
+            「读也串行化了」—— 慢一点，但**不会错**。
+            反过来（默认 False）的代价是并发下随机 `database is locked`。
+
+            只读的调用点见 TaskStore.executions_for / find_execution_by_message
+            / count_executions —— 它们显式传 write=False。
+
         【为什么用简单嵌套而不是 SAVEPOINT】
 
             SAVEPOINT 能让内层独立回滚而外层继续提交。
@@ -274,7 +461,47 @@ class Database:
         depth = self._tx_depth
 
         if depth == 0:
-            conn.execute("BEGIN")
+            # ============================================================
+            # 【Workspace Phase 0：写事务改用 BEGIN IMMEDIATE】
+            # ============================================================
+            #
+            # 原来一律用 `BEGIN`（= BEGIN DEFERRED）。它的行为是：
+            # 事务开始时**只拿读锁**，等到第一次写才尝试升级成写锁。
+            #
+            # 单进程下没问题。两个进程并发时会出现经典的
+            # **升级死锁**：
+            #
+            #     A: BEGIN → SELECT（拿 SHARED）→ UPDATE（想升 RESERVED）
+            #     B: BEGIN → SELECT（拿 SHARED）→ UPDATE（想升 RESERVED）
+            #
+            #     两边都持着 SHARED，都在等对方释放才能升级 —— 死锁。
+            #
+            # SQLite 检测到这种死锁后会**立刻**返回 SQLITE_BUSY，
+            # **不理会 busy_timeout**（等下去只会永远等）。
+            # 于是调用方拿到的是：
+            #
+            #     OperationalError: database is locked
+            #
+            # 而不是我们期待的 `ConcurrentTaskModification` ——
+            # 并发保护在真实多进程下就**失效**了。
+            #
+            # `BEGIN IMMEDIATE` 在事务开始时就拿写锁，
+            # 所以不存在「先读后升级」这一步，也就没有死锁：
+            #
+            #     两个进程同时 BEGIN IMMEDIATE
+            #     → 一个立刻拿到写锁
+            #     → 另一个等 busy_timeout
+            #     → 等到之后发现 version 已经变了
+            #     → 正确地抛 ConcurrentTaskModification
+            #
+            # 【代价】
+            #     写事务之间**完全串行**。这是 SQLite 的模型决定的
+            #     （单写者），不是我们引入的限制。
+            #
+            # 【只读事务呢】
+            #     传 write=False 走原来的 `BEGIN`（延迟读事务）——
+            #     它们不升级，不会有死锁，而且可以真正并发读。
+            conn.execute("BEGIN IMMEDIATE" if write else "BEGIN")
 
         self._tx_depth = depth + 1
         try:

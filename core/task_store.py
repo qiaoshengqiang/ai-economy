@@ -808,7 +808,7 @@ class TaskStore:
             「上一轮为什么不通过」正是承接方最需要的信息 ——
             只给最新一条就把它丢了。
         """
-        with self.db.transaction() as conn:
+        with self.db.transaction(write=False) as conn:
             rows = conn.execute(
                 f"""
                 SELECT * FROM {TABLE_TASK_EXECUTIONS}
@@ -834,7 +834,7 @@ class TaskStore:
         if not message_id:
             return None
 
-        with self.db.transaction() as conn:
+        with self.db.transaction(write=False) as conn:
             row = conn.execute(
                 f"""
                 SELECT * FROM {TABLE_TASK_EXECUTIONS}
@@ -896,7 +896,7 @@ class TaskStore:
 
     def count_executions(self, task_id: Optional[str] = None) -> int:
         """执行事件总数（可限定某个任务）。"""
-        with self.db.transaction() as conn:
+        with self.db.transaction(write=False) as conn:
             if task_id is None:
                 row = conn.execute(
                     f"SELECT COUNT(*) AS n FROM {TABLE_TASK_EXECUTIONS}"

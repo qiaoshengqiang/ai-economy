@@ -1436,3 +1436,79 @@ class TestReliabilityDemo:
 
         assert first.returncode == EXIT_OK
         assert second.returncode == EXIT_OK
+
+
+# ============================================================
+# Workspace Phase 0：reliability-multiprocess-demo
+# ============================================================
+class TestReliabilityMultiprocessDemo:
+    """演示用临时目录，所以不需要 db_path。"""
+
+    @staticmethod
+    def _run():
+        return run_cli("reliability-multiprocess-demo")
+
+    def test_runs(self):
+        result = self._run()
+
+        assert result.returncode == EXIT_OK
+        assert "Workspace Phase 0" in result.stdout
+        assert "Multiprocess" in result.stdout
+
+    def test_shows_all_five_parts(self):
+        out = self._run().stdout
+
+        for marker in ("①", "②", "③", "④", "⑤"):
+            assert marker in out, f"演示缺少 {marker}"
+
+    def test_part1_two_real_processes(self):
+        out = self._run().stdout
+
+        assert "参与写入的进程数: 2" in out
+        assert "两个独立进程都成功" in out
+        assert "journal_mode" in out
+        assert "busy_timeout" in out
+
+    def test_part2_only_one_claim(self):
+        out = self._run().stdout
+
+        assert "认领成功" in out
+        assert "BUSY" in out
+        assert "只有一个进程拿到认领" in out
+
+    def test_part3_cas_conflict(self):
+        out = self._run().stdout
+
+        assert "被拒绝" in out or "🚫" in out
+        assert "version" in out
+        assert "BEGIN IMMEDIATE" in out, "演示应该解释这个修复"
+
+    def test_part4_lease(self):
+        out = self._run().stdout
+
+        assert "租约时长" in out
+        assert "T+30s" in out and "BUSY" in out
+        assert "T+90s" in out and "CLAIMED" in out
+        assert "不改变" in out
+
+    def test_part5_crash_recovery(self):
+        out = self._run().stdout
+
+        assert "crashed-worker" in out
+        assert "rescuer" in out
+        assert "不依赖崩溃进程做任何配合" in out
+
+    def test_boundary_proofs(self):
+        out = self._run().stdout
+
+        assert "数据库完整性      : ok" in out
+        assert "Wallet" in out
+        assert "Workspace" in out
+        assert "Heartbeat" in out
+
+    def test_repeatable(self):
+        first = self._run()
+        second = self._run()
+
+        assert first.returncode == EXIT_OK
+        assert second.returncode == EXIT_OK

@@ -70,6 +70,8 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 from core.identity import new_message_id, utc_now_iso
 from core.logging_setup import get_logger
 from communication.address import Address
+from datetime import timedelta
+
 from communication.dedup import ClaimStatus, MessageClaim
 from communication.message import Message
 from storage.database import Database
@@ -81,6 +83,28 @@ logger = get_logger(__name__)
 # ============================================================
 # 状态
 # ============================================================
+#: 认领租约的默认时长（秒）。
+#:
+#: 【它是什么】
+#:     一个 worker 认领消息之后，这个认领**有效多久**。
+#:     超过之后别的 worker 可以接手 —— 这解决「worker 崩了、
+#:     认领永远卡住」的问题。
+#:
+#: 【它不是什么】
+#:     ❌ 不是「处理超时就会失败」
+#:     ❌ 不是「超时就把消息删掉」
+#:     ❌ 不是「超时就算处理失败」
+#:     ❌ 不是 retry 调度
+#:     它只决定「这个临时占用还算不算数」。
+#:
+#: 【为什么默认 5 分钟】
+#:     太短 → 正常处理中的消息被别的 worker 抢走 → 重复处理
+#:     太长 → worker 崩溃后要等很久才恢复
+#:     5 分钟对本地消息处理是很宽松的上限。
+#:     真实部署应该按最慢的 handler 来调。
+DEFAULT_CLAIM_LEASE_SECONDS = 300
+
+
 class MessageStatus:
     """
     消息生命周期状态。
@@ -312,6 +336,40 @@ class RecordedEvent:
         }
 
 
+def _iso_seconds_before(timestamp: str, seconds: int) -> str:
+    """
+    把一个 ISO 时间戳往前推 N 秒，返回同样格式的字符串。
+
+    【为什么可以直接用字符串比较时间】
+        core.identity.utc_now_iso() 产出的格式是**恒定**的：
+
+            YYYY-MM-DDTHH:MM:SS.ffffff+00:00
+
+        永远是 32 个字符、永远是 UTC、永远是 6 位微秒。
+        这种格式下字典序 == 时间序，所以 SQL 里可以直接
+        `claimed_at < ?` 比较。
+
+        （有测试专门验证这个格式前提；如果哪天格式变了，
+          那条测试会先红，而不是让租约判断悄悄失灵。）
+
+    【为什么不用 julianday()】
+        SQLite 能解析这个格式，但那样每次比较都要做一次函数调用，
+        而且用不上 claimed_at 上的索引。
+        字符串比较既直接又能走索引。
+    """
+    from datetime import datetime, timezone
+
+    try:
+        parsed = datetime.fromisoformat(timestamp)
+    except ValueError as exc:
+        raise ValueError(f"时间戳格式不认识：{timestamp!r}") from exc
+
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+
+    return (parsed - timedelta(seconds=seconds)).isoformat()
+
+
 class CommunicationRecorder:
     """
     把通信过程中发生的事记进 SQLite。
@@ -341,17 +399,33 @@ class CommunicationRecorder:
         store_payload: bool = True,
         max_payload_chars: int = 65536,
         strict: bool = False,
+        claim_lease_seconds: int = DEFAULT_CLAIM_LEASE_SECONDS,
     ):
         """
         参数：
             store_payload:     是否保存完整 payload（开发环境建议 True）
             max_payload_chars: payload 超长时截断，防止日志无限膨胀
             strict:            记日志失败时是否抛异常
+            claim_lease_seconds: 认领租约时长（秒），见模块顶部的说明
+
+        【为什么租约配置放在这里，而不是 Handler / 服务里】
+            它是**持久化层**的策略：决定「数据库里那个 claim 还算不算数」。
+            放在 Handler 里就变成每个调用方各写一套，
+            而且换个部署就要改业务代码。
+
+            放在这里之后：
+                组合根按部署需要传一个值 → 全链路一致
+                测试可以传一个很小的值 → 不用真的等 5 分钟
         """
+        if claim_lease_seconds <= 0:
+            raise ValueError(
+                f"claim_lease_seconds 必须大于 0，收到 {claim_lease_seconds}"
+            )
         self.db = db
         self.store_payload = bool(store_payload)
         self.max_payload_chars = int(max_payload_chars)
         self.strict = bool(strict)
+        self.claim_lease_seconds = int(claim_lease_seconds)
 
         self.event_count = 0
         self.message_count = 0
@@ -710,10 +784,14 @@ class CommunicationRecorder:
     #     这和 Task 那边「TaskStore 是唯一边界」是同一个原则。
     # ============================================================
     def claim_message(
-        self, message: Message, owner: str
+        self,
+        message: Message,
+        owner: str,
+        lease_seconds: Optional[int] = None,
+        now: Optional[str] = None,
     ) -> MessageClaim:
         """
-        **原子地**认领一条消息。这是持久化去重的核心。
+        **原子地**认领一条消息（带租约）。这是持久化去重的核心。
 
         ============================================================
         【为什么必须是原子的】
@@ -725,44 +803,64 @@ class CommunicationRecorder:
                     mark_processing(msg_id)       # A、B 都去处理
                     handle(message)               # → 两次副作用
 
-            两个 worker 中间的那段时间就是竞态窗口。
-
-            正确写法是让**数据库**来裁决：
+            正确写法是让**数据库**来裁决 —— 一次带条件的 UPDATE：
 
                 UPDATE communication_messages
                    SET claim_id = ?, claimed_at = ?
                  WHERE message_id = ?
                    AND processed_once = 0
-                   AND claim_id IS NULL
+                   AND (claim_id IS NULL OR claimed_at < <过期线>)
 
-            然后看影响行数：
+            影响行数 1 → 我抢到了（新认领或接手过期的）
+            影响行数 0 → 没抢到，再查一次看是被处理过了还是别人正在处理
 
-                1 → 我抢到了（这个 UPDATE 本身是原子的）
-                0 → 没抢到，再查一次看是被处理过了还是别人正在处理
+        ============================================================
+        【Step 4D.1 → Workspace Phase 0：加上了租约】
+        ============================================================
+
+            4D.1 的条件是 `claim_id IS NULL` —— 那意味着认领**永久**有效。
+            如果 worker 认领之后被 kill -9，这个 claim 就永远卡在那里，
+            消息永远显示 BUSY，再也没人能处理它。
+
+            现在条件变成：
+
+                claim_id IS NULL  OR  claimed_at < now - lease
+
+            也就是「没人认领 **或** 上一个认领已经过期」。
+
+        ============================================================
+        【租约 ≠ 处理结果】
+        ============================================================
+
+            ✅ 租约过期  → 别人可以接手（临时占用失效）
+            ❌ 租约过期  → processed_once 不变（成功事实与租约无关）
+            ❌ 租约过期  → failure_count 不加（worker 崩了 ≠ 业务失败）
+            ❌ 租约过期  → 消息不删除
+
+            这是本阶段最容易搞错的地方：租约只管「谁现在有权处理」，
+            不管「处理成功没有」。
 
         ============================================================
         【为什么先补一行再认领】
         ============================================================
 
             claim 的前提是 communication_messages 里已经有这一行。
-            正常情况下 Manager 在这之前会先记一条 RECEIVED 日志，
-            所以行已经存在。
-
+            正常情况下 Manager 在这之前会先记一条 RECEIVED 日志。
             但这条方法不该依赖「调用方记得先记日志」——
-            所以它自己先做一次 INSERT OR IGNORE 兜底，
-            让认领在任何调用顺序下都成立。
+            所以它自己先 INSERT OR IGNORE 兜底。
 
-        ============================================================
-        【为什么认领时不写 processed_once】
-        ============================================================
-
-            因为「认领」不等于「处理成功」。
-            处理可能失败。只有真的成功之后才该写 processed_once。
-            否则一次失败就会把这条消息永久标记成「已完成」，
-            重试的机会就被抹掉了。
+        参数：
+            lease_seconds: 覆盖默认租约（测试会用很小的值）
+            now:           覆盖当前时间（测试用来模拟「时间流逝」）
         """
         owner = str(owner)
-        now = utc_now_iso()
+        lease = self.claim_lease_seconds if lease_seconds is None else int(lease_seconds)
+        if lease <= 0:
+            raise ValueError(f"lease_seconds 必须大于 0，收到 {lease}")
+
+        timestamp = now or utc_now_iso()
+        # 过期线：claimed_at 早于这个时刻，就算过期
+        cutoff = _iso_seconds_before(timestamp, lease)
 
         with self.db.transaction() as conn:
             # --- 1) 兜底：确保这一行存在 ---
@@ -783,14 +881,14 @@ class CommunicationRecorder:
                     message.from_agent,
                     message.to_agent,
                     message.message_type,
-                    now,
+                    timestamp,
                     "CREATED",
-                    now,
+                    timestamp,
                 ),
             )
 
-            # --- 2) 已经成功处理过了吗？---
-            row = conn.execute(
+            # --- 2) 先看一眼当前状态（用于区分「已处理」和「别人在处理」）---
+            before = conn.execute(
                 f"""
                 SELECT processed_once, claim_id, claimed_at, failure_count
                   FROM {TABLE_COMM_MESSAGES}
@@ -799,42 +897,65 @@ class CommunicationRecorder:
                 (message.message_id,),
             ).fetchone()
 
-            if row is not None and int(row["processed_once"] or 0) == 1:
+            if before is not None and int(before["processed_once"] or 0) == 1:
                 return MessageClaim(
                     status=ClaimStatus.DUPLICATE,
                     message_id=message.message_id,
-                    owner=row["claim_id"],
-                    claimed_at=row["claimed_at"],
-                    failure_count=int(row["failure_count"] or 0),
+                    owner=before["claim_id"],
+                    claimed_at=before["claimed_at"],
+                    failure_count=int(before["failure_count"] or 0),
                     detail="这条消息以前已经成功处理过（持久化事实）",
                 )
 
-            # --- 3) 原子认领 ---
+            previous_owner = before["claim_id"] if before is not None else None
+            previous_claimed_at = (
+                before["claimed_at"] if before is not None else None
+            )
+
+            # --- 3) 原子认领（带租约）---
             #
-            # 【关键】条件里同时排除 processed_once=1 和 claim_id IS NOT NULL。
-            #     前者防「处理完的重发」，后者防「两个 worker 同时处理」。
+            # 【一行就是全部逻辑】
+            #     processed_once = 0        排除已经成功处理过的
+            #     claim_id IS NULL          没人认领 → 直接拿
+            #     claimed_at < cutoff       上一个认领过期 → 接手
+            #
+            #     没有 SELECT-then-UPDATE 的窗口：
+            #     两个进程同时发这条语句，数据库只会让一个 rowcount=1。
             cursor = conn.execute(
                 f"""
                 UPDATE {TABLE_COMM_MESSAGES}
                    SET claim_id = ?, claimed_at = ?, updated_at = ?
                  WHERE message_id = ?
                    AND processed_once = 0
-                   AND claim_id IS NULL
+                   AND (
+                        claim_id IS NULL
+                        OR claimed_at IS NULL
+                        OR claimed_at < ?
+                   )
                 """,
-                (owner, now, now, message.message_id),
+                (owner, timestamp, timestamp, message.message_id, cutoff),
             )
 
             if cursor.rowcount == 1:
+                reclaimed = previous_owner is not None
                 return MessageClaim(
                     status=ClaimStatus.CLAIMED,
                     message_id=message.message_id,
                     owner=owner,
-                    claimed_at=now,
-                    detail="认领成功，可以处理",
+                    claimed_at=timestamp,
+                    failure_count=int(before["failure_count"] or 0)
+                    if before is not None else 0,
+                    reclaimed=reclaimed,
+                    previous_owner=previous_owner if reclaimed else None,
+                    detail=(
+                        f"接手了一个过期认领（原持有者 {previous_owner}，"
+                        f"于 {previous_claimed_at} 认领，租约 {lease} 秒）"
+                        if reclaimed else "认领成功，可以处理"
+                    ),
                 )
 
-            # --- 4) 没抢到：分清是「处理过了」还是「别人正在处理」---
-            row = conn.execute(
+            # --- 4) 没抢到：分清「处理过了」还是「别人正在处理」---
+            after = conn.execute(
                 f"""
                 SELECT processed_once, claim_id, claimed_at, failure_count
                   FROM {TABLE_COMM_MESSAGES}
@@ -843,25 +964,28 @@ class CommunicationRecorder:
                 (message.message_id,),
             ).fetchone()
 
-            if row is not None and int(row["processed_once"] or 0) == 1:
+            if after is not None and int(after["processed_once"] or 0) == 1:
                 return MessageClaim(
                     status=ClaimStatus.DUPLICATE,
                     message_id=message.message_id,
-                    owner=row["claim_id"],
-                    claimed_at=row["claimed_at"],
-                    failure_count=int(row["failure_count"] or 0),
+                    owner=after["claim_id"],
+                    claimed_at=after["claimed_at"],
+                    failure_count=int(after["failure_count"] or 0),
                     detail="这条消息以前已经成功处理过（持久化事实）",
                 )
 
             return MessageClaim(
                 status=ClaimStatus.BUSY,
                 message_id=message.message_id,
-                owner=row["claim_id"] if row is not None else None,
-                claimed_at=row["claimed_at"] if row is not None else None,
+                owner=after["claim_id"] if after is not None else None,
+                claimed_at=after["claimed_at"] if after is not None else None,
                 failure_count=(
-                    int(row["failure_count"] or 0) if row is not None else 0
+                    int(after["failure_count"] or 0) if after is not None else 0
                 ),
-                detail="有别人正在处理这条消息（认领还没释放）",
+                detail=(
+                    f"有别人正在处理这条消息（认领未过期，租约 "
+                    f"{lease} 秒）"
+                ),
             )
 
     def mark_processed(self, message: Message, owner: str) -> bool:

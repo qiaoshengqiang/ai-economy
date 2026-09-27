@@ -748,7 +748,7 @@ extra_body:
 ## 4. 跑测试
 
 ```bash
-# 全部测试（2140 个，不含真实 API 测试）
+# 全部测试（2333 个，不含真实 API 测试）
 ./dev.sh test
 
 # 详细输出，显示每个测试的名字
@@ -809,7 +809,7 @@ extra_body:
 | `tests/test_brain.py` | Brain、Agent 接入、调用记录 | 34 |
 | `tests/test_capability.py` | 能力声明 / 归一化 / 集合匹配 / 无评分 | 77 |
 | `tests/test_capability_guards.py` | Capability 与 Directory 架构守卫 | 56 |
-| `tests/test_cli.py` | 命令行命令（通信 / task / capability / 4D / 可靠性） | 122 |
+| `tests/test_cli.py` | 命令行命令（通信 / task / capability / 4D / 可靠性 / 多进程） | 131 |
 | `tests/test_communication.py` | 完整链路 / 去重 / 可替换传输 / 真 Agent | 44 |
 | `tests/test_communication_guards.py` | 通信层架构守卫（含日志边界） | 27 |
 | `tests/test_communication_recorder.py` | 通信日志 / 脱敏 / 去重 / 查询 | 86 |
@@ -823,8 +823,11 @@ extra_body:
 | `tests/test_llm_provider.py` | LLM 契约 / MockProvider / 注册表 / Router / 架构守卫 | 72 |
 | `tests/test_local_transport.py` | Transport 抽象 / 收发 / 失败路径 | 33 |
 | `tests/test_message.py` | Message 创建 / 校验 / 序列化 / 前向兼容 | 51 |
+| `tests/test_message_claim_lease.py` | Phase 0 认领租约 / 边界 / 原子回收 / 崩溃恢复 / 配置 | 33 |
 | `tests/test_message_persistence.py` | 4D.1 消息持久化去重 / 重复 / 重启 / 失败语义 | 38 |
 | `tests/test_money.py` | 金额值类型 / 跨货币安全 / 与配置一致 | 40 |
+| `tests/test_multiprocess_database.py` | Phase 0 真进程：打开 / 认领 / CAS / 并行 / 压力 / fork | 14 |
+| `tests/test_multiprocess_guards.py` | Phase 0 架构守卫（11 项）+ 迁移 | 137 |
 | `tests/test_negotiation.py` | ACCEPT / COUNTER / REJECT / 角色轮次 / 成交凭证 / 隔离 | 48 |
 | `tests/test_negotiation_guards.py` | 议价层架构守卫（覆盖整个 services 包） | 59 |
 | `tests/test_protocol_payloads.py` | 结构化 payload / ACCEPT 成交价 / task_id≠trace_id / 报价链 | 109 |
@@ -843,7 +846,7 @@ extra_body:
 | `tests/test_transaction_atomicity.py` | 4D.1 可重入事务 / 状态+事件原子性 / 双向回滚 | 19 |
 | `tests/test_transfer.py` | 转账入口与各种拒绝情况 | 27 |
 | `tests/test_wallet.py` | 钱包、余额、扣款 | 15 |
-| | **合计** | **2140** |
+| | **合计** | **2333** |
 
 另有 `tests/test_real_api.py`（30 项）需要真实 API Key，
 默认不跑，见下面的「真实 API 测试」。
@@ -1149,6 +1152,7 @@ economy:
 | `negotiation-demo` | **Step 4C** 自主议价演示 |
 | `task-4d-demo` | **Step 4D** 执行 / 提交 / 验收演示 |
 | `reliability-demo` | **Step 4D.1** 可靠性 / 并发加固演示 |
+| `reliability-multiprocess-demo` | **Workspace Phase 0** 多进程 / 认领租约演示 |
 | `communication-log` | **Step 3.5** 查询通信日志 |
 | `transfer <付款方> <收款方> <金额>` | 转钱 |
 | `balances` | 看余额 |

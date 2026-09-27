@@ -83,6 +83,7 @@ from communication.manager import (
 )
 from communication.message import PROTOCOL_VERSION, Message, MessageType
 from communication.recorder import (
+    DEFAULT_CLAIM_LEASE_SECONDS,
     REDACTED,
     CommunicationRecorder,
     MessageStatus,
@@ -113,6 +114,7 @@ __all__ = [
     "SeenMessageTracker",
     # 通信日志
     "CommunicationRecorder",
+    "DEFAULT_CLAIM_LEASE_SECONDS",
     "MessageStatus",
     "redact",
     "payload_fingerprint",

@@ -121,6 +121,19 @@ class MessageClaim:
     #: 失败过几次（DUPLICATE 时能看出这条消息当初顺利不顺利）
     failure_count: int = 0
 
+    #: 【Workspace Phase 0】这次认领是不是「接手了一个过期的认领」
+    #:
+    #:     为什么要在结果里区分它：
+    #:         新认领     → 正常路径
+    #:         接手过期   → 说明上一个 worker **崩了**（或者卡住了）
+    #:
+    #:     后者是要排查的信号。混在一起的话，日志里看不出
+    #:     「这条消息被处理了两次」到底是重发还是崩溃恢复。
+    reclaimed: bool = False
+
+    #: 接手时，上一个认领是谁持有的（只有 reclaimed=True 时有值）
+    previous_owner: Optional[str] = None
+
     detail: str = ""
 
     @property
@@ -139,6 +152,11 @@ class MessageClaim:
     def __bool__(self) -> bool:
         return self.claimed
 
+    @property
+    def recovered(self) -> bool:
+        """这次认领是不是一次崩溃恢复（接手了过期租约）。"""
+        return self.claimed and self.reclaimed
+
     def to_dict(self) -> dict:
         return {
             "status": self.status,
@@ -146,6 +164,8 @@ class MessageClaim:
             "owner": self.owner,
             "claimed_at": self.claimed_at,
             "failure_count": self.failure_count,
+            "reclaimed": self.reclaimed,
+            "previous_owner": self.previous_owner,
             "detail": self.detail,
         }
 
