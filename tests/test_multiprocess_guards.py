@@ -88,6 +88,43 @@ def flat(path: Path) -> str:
     return " ".join(code_only(path).split())
 
 
+def _sql_strings(node: ast.AST) -> list:
+    """
+    把一段 AST 里**所有字符串参数**取出来（包括 f-string）。
+
+    【为什么要单独一个函数】
+        直接用 ast.unparse 会连**文档字符串**一起输出 ——
+        而文档里常常贴着真实 SQL 的示例。
+
+        这个函数只走 ast.Call 的参数，所以文档字符串
+        （一个 Expr 节点，不是 Call）天然被排除。
+
+        对 f-string，把其中的常量片段拼起来：
+            f"UPDATE {TABLE} SET x = ?"  →  "UPDATE  SET x = ?"
+        （占位符本身取不到值，但关键字还在，够用来数语句。）
+    """
+    found = []
+
+    def render(value) -> str:
+        if isinstance(value, ast.Constant) and isinstance(value.value, str):
+            return value.value
+        if isinstance(value, ast.JoinedStr):
+            return "".join(render(part) for part in value.values)
+        if isinstance(value, ast.FormattedValue):
+            return f"{{{ast.unparse(value.value)}}}"
+        return ""
+
+    for call in ast.walk(node):
+        if not isinstance(call, ast.Call):
+            continue
+        for arg in call.args:
+            text = render(arg)
+            if text:
+                found.append(text)
+
+    return found
+
+
 def imported_modules(path: Path) -> list:
     modules = []
     for node in ast.walk(parse(path)):
@@ -239,15 +276,58 @@ class TestGuard3LeaseInPersistenceLayer:
         )
 
     def test_only_one_update_in_claim_message(self):
-        """claim_message 只应该有一条 UPDATE —— 多条意味着先查再改。"""
+        """
+        claim_message 只应该有一条 UPDATE —— 多条意味着先查再改。
+
+        【这条守卫原来查错了东西 —— 记下来免得再犯】
+
+            原来写的是：
+
+                body = ast.unparse(claim_fn)
+                assert body.count("UPDATE communication_messages") == 1
+
+            它确实通过了，但**不是因为代码正确**：
+
+              · `ast.unparse` **不会去掉文档字符串**
+              · 而 claim_message 的文档里贴了一段 SQL 示例，
+                里面正好有 "UPDATE communication_messages"
+
+            所以那个 1 是**文档里的**，不是代码里的。
+            真正的 SQL 用的是 f-string 常量：
+
+                UPDATE {TABLE_COMM_MESSAGES} SET ...
+
+            unparse 之后它长成 `UPDATE {TABLE_COMM_MESSAGES}` ——
+            根本匹配不到 "communication_messages"。
+
+            【现在的查法】
+                只数**真正传给 execute() 的 SQL 字符串**里
+                有几条 UPDATE。文档字符串不是 Call，自然被排除。
+        """
         tree = parse(COMM_DIR / "recorder.py")
         claim_fn = next(
             node for node in ast.walk(tree)
             if isinstance(node, ast.FunctionDef) and node.name == "claim_message"
         )
-        body = ast.unparse(claim_fn)
 
-        assert body.count("UPDATE communication_messages") == 1
+        # 【必须是「以 UPDATE 开头」，不能只查「含 UPDATE」】
+        #     认领那一段里还有一条 INSERT：
+        #         INSERT INTO ... ON CONFLICT(...) DO UPDATE SET ...
+        #     它里面也有 "UPDATE" 这个词 ——
+        #     只查「含 UPDATE」会把它也算成一条更新语句。
+        #
+        #     按语句开头判断才准：这条 execute() 到底是不是
+        #     一条独立的 UPDATE 语句。
+        updates = [
+            sql for sql in _sql_strings(claim_fn)
+            if sql.strip().upper().startswith("UPDATE")
+        ]
+
+        assert len(updates) == 1, (
+            f"claim_message 里的 UPDATE 语句有 {len(updates)} 条，应该恰好 1 条 —— "
+            f"多条意味着「先查再改」的 TOCTOU 窗口。\n"
+            f"（找到的：{[u.strip()[:60] for u in updates]}）"
+        )
 
     def test_lease_config_lives_on_the_recorder(self):
         """租约时长是持久化层的配置，不是业务层的。"""
