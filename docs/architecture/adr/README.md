@@ -43,6 +43,7 @@
 | [0016](0016-source-of-truth-priority.md) | Source of Truth 优先级 | Accepted | Step 4E | Architecture |
 | [0017](0017-task-shared-context-alignment.md) | Task Shared Context 与 Alignment 分离 | Accepted | Step 4E | Architecture |
 | [0018](0018-guard-verification-standards.md) | Guard 检测手段标准 | Accepted | Step 4E | Engineering |
+| [0019](0019-task-shared-context-alignment.md) | Task Shared Context 与 Alignment 分离 | Accepted | Step 4F | Task / 共享认知 |
 
 ---
 

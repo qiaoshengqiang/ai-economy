@@ -52,6 +52,7 @@ services —— 业务服务层（消息与领域之间的适配）
 
 from services.task_application_service import TaskApplicationService
 from services.task_execution_service import TaskExecutionService
+from services.task_alignment_service import TaskAlignmentService
 from services.task_handlers import (
     AcceptHandler,
     CompleteHandler,
@@ -91,6 +92,7 @@ __all__ = [
     "TaskApplicationService",
     # 执行（Step 4D）
     "TaskExecutionService",
+    "TaskAlignmentService",
     "StartHandler",
     "SubmitHandler",
     "VerifyHandler",

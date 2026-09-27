@@ -11,9 +11,9 @@
 | | |
 |---|---|
 | **文档状态** | 长期维护（不是一次性报告） |
-| **当前阶段** | Post-Workspace-Phase-0 / Pre-Shared-Context |
+| **当前阶段** | Post-Step-4F / Pre-Task-Workspace |
 | **协议版本** | `protocol_version = "1"` |
-| **基线测试** | 2333 passed |
+| **基线测试** | 2519 passed |
 | **最后更新** | Step 4E |
 
 ---
@@ -180,11 +180,11 @@ Agent
 | 5 | `Capability ≠ Economy` | Capability 不认识钱包/账本 |
 | 6 | `Wallet Ownership ≠ Machine Permission` | Wallet 不提供任何文件/执行能力 |
 | 7 | `Task Core ≠ Task Manager` | 守卫禁止 `TaskManager` / `Coordinator` |
-| 8 | `Task Shared Context ≠ Message History` | `DESIGNED`（本文档 §6、§9） |
-| 9 | `Task Shared Context ≠ Agent Private Memory` | `DESIGNED`（§6） |
-| 10 | `Task Shared Context ≠ Task Workspace` | `DESIGNED`（§6、§14） |
+| 8 | `Task Shared Context ≠ Message History` | **`CURRENT`** —— 结构上保证（对齐层不认识 Message） |
+| 9 | `Task Shared Context ≠ Agent Private Memory` | **`CURRENT`** —— 无读写私有记忆的路径 |
+| 10 | `Task Shared Context ≠ Task Workspace` | **`CURRENT`** —— 零文件系统访问 |
 | 11 | `Workspace ≠ Permission` | `workspace_id` 只是引用；守卫禁止文件 I/O |
-| 12 | `Memory ≠ Alignment` | `DESIGNED`（§7） |
+| 12 | `Memory ≠ Alignment` | **`CURRENT`** —— 领域层与 Alignment 层分离（ADR-0019） |
 | 13 | `Agreement ≠ Payment` | `TaskAgreementRecord.describe()["is_payment"] == False` |
 | 14 | `Budget ≠ Price` | `Task.budget` 与 `Task.agreed_price` 是两个字段 |
 
@@ -376,7 +376,7 @@ Heartbeat / 事件唤醒 / 自主循环。
 | Layer | 名字 | 属于谁 | 状态 | 是不是 Source of Truth |
 |---|---|---|---|---|
 | **1** | Agent Private Memory | **单个 Agent** | `DESIGNED` | ❌ 不是 |
-| **2** | Task Shared Context | **Task** | `DESIGNED` | ✅ 是（任务知识层） |
+| **2** | Task Shared Context | **Task** | **`CURRENT`** | ✅ 是（任务知识层） |
 | **3** | Task Workspace | **Task** | `FUTURE` | ✅ 是（实际产物层） |
 | **4** | External / World State | **系统外** | `FUTURE` | ✅ 是（但需记来源） |
 

@@ -32,6 +32,7 @@
 #   ./dev.sh negotiation-demo            Step 4C 自主议价演示
 #   ./dev.sh task-4d-demo                Step 4D 执行 / 提交 / 验收演示
 #   ./dev.sh reliability-demo            Step 4D.1 可靠性 / 并发加固演示
+#   ./dev.sh context-demo                Step 4F 共享上下文 / 对齐演示
 #   ./dev.sh reliability-multiprocess-demo  Workspace Phase 0 多进程 / 租约演示
 #   ./dev.sh communication-log --traces  列出最近的通信链路
 #   ./dev.sh balances                    查看余额
@@ -185,6 +186,7 @@ case "$COMMAND" in
         echo "    ./dev.sh task-4d-demo                      执行/提交/验收演示（Step 4D）"
         echo "    ./dev.sh reliability-demo                  可靠性/并发加固演示（Step 4D.1）"
         echo "    ./dev.sh reliability-multiprocess-demo     多进程/认领租约演示（Phase 0）"
+          echo "    ./dev.sh context-demo                     共享上下文/对齐演示（Step 4F）"
         echo
         echo "LLM（透传给 main.py）："
         echo "    ./dev.sh demo [--prompt 文字] [--agent a]  Step 2 链路演示"

@@ -1,18 +1,50 @@
 # Task Shared Context / Alignment — Specification
 
-> **状态：`DESIGNED`（已设计，尚未实现）**
+> **状态：`CURRENT`（Step 4F 已实现）**
 >
 > 这份文档定义 Task Shared Context 的**数据模型与机制边界**。
-> **它不描述已经存在的代码。** 当前代码里**没有** `TaskSharedContext`、
-> 没有对应的数据库表、没有 Alignment 实现。
+> **Step 4F 已经把它实现出来了** —— 见下面的「实现映射」。
 >
 > 上游：[`ARCHITECTURE_CONSTITUTION.md`](ARCHITECTURE_CONSTITUTION.md)
 > （Memory 四层、Source of Truth、Memory ≠ Alignment 在那里定义）
+>
+> 决策记录：[ADR-0019](adr/0019-task-shared-context-alignment.md)
+
+---
+
+## 实现映射（Step 4F）
+
+| 本文档的设计 | 实际实现在 |
+|---|---|
+| `TaskSharedContext` | [`core/task_shared_context.py`](../../core/task_shared_context.py) |
+| `ContextRevision` | 同上（`task_context_revisions` 表，**只增不改**） |
+| `ContextChange` | 同上（`task_context_changes` 表） |
+| `DecisionRecord` / `AssumptionRecord` / `OpenQuestion` / `AssignmentRecord` / `SharedFact` | 同上 |
+| `ContextSnapshot` | 同上 + `TaskAlignmentService.snapshot()` |
+| Revision / Change 持久化 + 乐观锁 | [`core/task_context_store.py`](../../core/task_context_store.py) |
+| Alignment 流程 | [`services/task_alignment_service.py`](../../services/task_alignment_service.py) |
+| 端点 | `./dev.sh context-demo` |
+
+**实现时确认的几点**（原设计留白，现已决定）：
+
+| 空白 | 决定 |
+|---|---|
+| Change 生命周期 | 独立。`PROPOSED` → `ACCEPTED` / `REJECTED`（终态） |
+| 参与者定义 | 复用 `Task.is_participant()`。`DECIDE` 要求批准人 ≠ 提案人 |
+| 表拆分 | 3 张（见实现映射） |
+| 持久化方式 | Revision 存**物化全文** JSON |
+| 同步方式 | read-time（accept 时物化），无后台同步 |
+| `expected_revision` 冲突 | 抛 `ConcurrentContextModification`，不重试不合并 |
+| `artifact_refs` 与 `result_ref` | **同一条**安全规则，共用 `core/logical_ref.py` |
+
+**一条与原设计不同的地方**：`task_context_changes` **不是**纯 append-only ——
+它有一次 `status` 转移（那正是「裁决」本身）。但**没有 DELETE**：
+被拒绝的提议要留着。`task_context_revisions` 才是纯 append-only。
 
 | | |
 |---|---|
 | **文档状态** | 长期维护 |
-| **实现状态** | **`DESIGNED` — 零实现** |
+| **实现状态** | **`CURRENT`** —— Step 4F 已实现（持久化 + 修订历史 + Alignment + 乐观锁） |
 | **前置阅读** | Constitution §6（Memory 四层）· §7（Memory ≠ Alignment）· §9（Source of Truth） |
 | **最后更新** | Step 4E |
 

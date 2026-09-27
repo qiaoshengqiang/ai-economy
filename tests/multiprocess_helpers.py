@@ -340,3 +340,114 @@ def rollback_worker(path: str, task_id: str, name: str, out) -> None:
     except Exception as exc:  # noqa: BLE001
         record(out, worker=name, outcome="ERROR",
                error=f"{type(exc).__name__}: {exc}")
+
+
+# ============================================================
+# 八、Task Shared Context 的并发提交（Step 4F）
+# ============================================================
+def context_change_worker(
+    path: str,
+    task_id: str,
+    agent_id: str,
+    expected_revision: int,
+    constraint: str,
+    barrier,
+    out,
+) -> None:
+    """
+    独立进程：基于同一个 revision 提议并尝试接受一条变更。
+
+    【为什么要 barrier】
+        不做对齐起跑的话，A 可能在 B 开始之前就跑完了 ——
+        那测的是「串行」，不是「并发」。
+        两个进程都在 barrier 上等到齐了再冲，才是真的竞争。
+
+    【为什么结果要分步骤记录】
+        「提议失败」和「接受失败」是两件不同的事：
+            提议失败 = 版本在开口之前就变了
+            接受失败 = 版本在提议之后、接受之前变了
+        只记一个「失败」就分不出是哪种，测试也就说不清在测什么。
+
+    【spawn 安全】
+        只接收可 pickle 的东西（str / int / Barrier / Queue）。
+        Database 对象在子进程里自己创建 —— 绝不跨进程传。
+    """
+    try:
+        from core.task_context_store import TaskContextStore
+        from core.task_shared_context import ContextChangeType
+        from core.task_store import TaskStore
+        from services.task_alignment_service import TaskAlignmentService
+
+        db = open_database(path)
+        tasks = TaskStore(db)
+        contexts = TaskContextStore(db)
+        svc = TaskAlignmentService(tasks, contexts)
+
+        # ---- 对齐起跑 ----
+        barrier.wait()
+
+        step = "propose"
+        try:
+            change = svc.propose(
+                task_id,
+                proposed_by=agent_id,
+                change_type=ContextChangeType.ADD_CONSTRAINT,
+                new_value=constraint,
+                expected_revision=expected_revision,
+                reason=f"{agent_id} 的要求",
+            )
+        except Exception as exc:  # noqa: BLE001
+            record(out, worker=agent_id, step=step, ok=False,
+                   error=type(exc).__name__, detail=str(exc)[:120])
+            db.close()
+            return
+
+        step = "accept"
+        try:
+            # 用**另一个**参与方来批准，避开 DECIDE 的自批限制
+            # （ADD_CONSTRAINT 本来允许自批，这里用对方更贴近真实协作）
+            rev = svc.accept(task_id, change.change_id,
+                             decided_by=("agent_b" if agent_id == "agent_a"
+                                         else "agent_a"))
+            record(out, worker=agent_id, step=step, ok=True,
+                   change_id=change.change_id, revision=rev.revision)
+        except Exception as exc:  # noqa: BLE001
+            # 【change_id 必须一起记】
+            #   accept 失败时，change 已经写进库了 ——
+            #   测试要用这个 id 去查它停在什么状态。
+            #   第一版漏了这里，结果测试拿不到 id 就 KeyError。
+            record(out, worker=agent_id, step=step, ok=False,
+                   change_id=change.change_id,
+                   error=type(exc).__name__, detail=str(exc)[:120])
+
+        db.close()
+
+    except Exception as exc:  # noqa: BLE001
+        record(out, worker=agent_id, step="fatal",
+               error=f"{type(exc).__name__}: {exc}")
+
+
+def context_reject_worker(path: str, task_id: str, change_id: str,
+                          agent_id: str, barrier, out) -> None:
+    """
+    独立进程：尝试拒绝同一条变更。用于验证「只有一个人能裁决」。
+    """
+    try:
+        from core.task_context_store import TaskContextStore
+        from core.task_store import TaskStore
+        from services.task_alignment_service import TaskAlignmentService
+
+        db = open_database(path)
+        svc = TaskAlignmentService(TaskStore(db), TaskContextStore(db))
+
+        barrier.wait()
+        try:
+            svc.reject(task_id, change_id, decided_by=agent_id, reason="并发裁决")
+            record(out, worker=agent_id, step="reject", ok=True)
+        except Exception as exc:  # noqa: BLE001
+            record(out, worker=agent_id, step="reject", ok=False,
+                   error=type(exc).__name__, detail=str(exc)[:120])
+        db.close()
+    except Exception as exc:  # noqa: BLE001
+        record(out, worker=agent_id, step="fatal",
+               error=f"{type(exc).__name__}: {exc}")

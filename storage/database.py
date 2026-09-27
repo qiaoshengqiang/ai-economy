@@ -538,7 +538,55 @@ class Database:
     # 便捷查询
     # ------------------------------------------------------------
     def execute(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:
+        """
+        单条写语句的便捷入口。**事务感知。**
+
+        ============================================================
+        【Step 4F 修掉的一个真实原子性缺口】
+        ============================================================
+
+            原来写的是：
+
+                conn = self.connect()
+                with conn:                    # ← sqlite3 的事务上下文
+                    return conn.execute(sql, params)
+
+            `with conn:` 在退出时**无条件 commit**。
+            于是只要有人在显式事务里调 `db.execute()`：
+
+                with db.transaction():
+                    db.execute("UPDATE a ...")     # ← 这里就提交了！
+                    db.execute("UPDATE b ...")     # ← 之后失败
+                    # 回滚 → 但 a 已经提交，回不去了
+
+            → **半成功状态**。而且它不报错，只是让数据悄悄不对。
+
+            这个缺口一直存在，只是之前没人踩到：
+            `TaskStore` 在事务里总是用 `with db.transaction() as conn`
+            拿到的那个 conn，从不调 `db.execute()`。
+            Step 4F 的 `decide_change` 第一次踩上了 ——
+            表现为「change 是 ACCEPTED，但对应的 revision 没提交」。
+
+        ------------------------------------------------------------
+        【现在的行为】
+        ------------------------------------------------------------
+
+            事务深度 0  → 和以前完全一样：执行 + 提交
+            事务深度 >0 → 只执行，**不提交** ——
+                          边界由外层事务拥有
+
+            所以：
+                · 事务外的调用方：行为不变
+                · 事务内的调用方：终于真的是原子的
+
+        想显式控制事务边界，用 `transaction()`，别依赖 `execute()` 提交。
+        """
         conn = self.connect()
+
+        if self._tx_depth > 0:
+            # 已经在显式事务里 —— 提交权归外层
+            return conn.execute(sql, params)
+
         with conn:
             return conn.execute(sql, params)
 

@@ -32,11 +32,11 @@
 
 | | |
 |---|---|
-| **阶段** | `Post-Workspace-Phase-0 / Pre-Shared-Context` |
-| **测试基线** | **2333 passed, 30 deselected** |
+| **阶段** | `Post-Step-4F / Pre-Task-Workspace` |
+| **测试基线** | **2519 passed, 30 deselected** |
 | **协议版本** | `protocol_version = "1"` |
-| **命令数** | 15（`./dev.sh` 查看全部） |
-| **数据库表** | 10 |
+| **命令数** | 16（`./dev.sh` 查看全部） |
+| **数据库表** | 13 |
 | **工作区状态** | 应当干净 |
 
 ### 已完成
@@ -52,14 +52,16 @@ Refactor      Task 应用层拆分（门面 / Handler / Mapper / Negotiation）
 Step 4D       START / SUBMIT / VERIFY / COMPLETE + TaskExecutionService
 Step 4D.1     持久化消息幂等 + Task 乐观锁 + 事务原子性
 Phase 0       真实多进程验证 + Message Claim Lease
-Step 4E       Architecture Constitution + Shared Context 设计  ← 当前
+Step 4E       Architecture Constitution + Shared Context 设计
+Step 4F       Task Shared Context / Alignment 最小可运行原型  ← 当前
 ```
 
 ### 下一步
 
-> **Task Shared Context / Alignment 的最小可运行原型设计。**
+> **Task Workspace**（含 Permission / Artifact）。
 >
-> **不是** Workspace 实现。
+> **Task Shared Context 已经实现** —— 下一步不再是设计它，
+> 而是它下面的 Workspace 层。
 
 ---
 
@@ -142,7 +144,7 @@ llm/            →  core/ + storage/
 | Layer | 属于谁 | 状态 | 是什么 |
 |---|---|---|---|
 | **1** Agent Private Memory | 单个 Agent | `DESIGNED` | 私人经验 / 判断 / 策略。**其他 Agent 默认无权读** |
-| **2** Task Shared Context | **Task** | `DESIGNED` | 共同的任务世界模型（决策 / 假设 / 问题 / 分工） |
+| **2** Task Shared Context | **Task** | **`CURRENT`** | 共同的任务世界模型（决策 / 假设 / 问题 / 分工） |
 | **3** Task Workspace | Task | `FUTURE` | 实际共享的文件与代码 |
 | **4** External / World State | 系统外 | `FUTURE` | 外部 API / 网络 / Git remote |
 
@@ -151,7 +153,7 @@ llm/            →  core/ + storage/
 | | 状态 | 说明 |
 |---|---|---|
 | Agent Private Memory | `DESIGNED` | 有目录与极简文件读写（`Workspace.write_memory`），**没有**结构化记忆、检索、经验积累 |
-| Task Shared Context | `DESIGNED` | 只有设计，见 [`TASK_SHARED_CONTEXT.md`](docs/architecture/TASK_SHARED_CONTEXT.md) |
+| Task Shared Context | **`CURRENT`** | **已实现**：持久化 + 修订历史 + Alignment + 乐观锁。见 [`TASK_SHARED_CONTEXT.md`](docs/architecture/TASK_SHARED_CONTEXT.md) |
 | Task Workspace | `FUTURE` | **只有 `TaskWorkspaceRef`** —— 一个 `workspace_id` 字符串 |
 | External / World State | `FUTURE` | 无 |
 
@@ -247,7 +249,7 @@ A 说「我觉得用方案 B」   →   Communication History 里有这句话
 | `Capability ≠ Economy` | 用能力推断财富 |
 | `Wallet Ownership ≠ Machine Permission` | 有钱就能操作宿主机 |
 | `Task Core ≠ Task Manager` | 领域层变成调度器 |
-| `Task Shared Context ≠ Message History` | 把「说过」当成「确认过」 |
+| `Task Shared Context ≠ Message History` | 把「说过」当成「确认过」· **有守卫** |
 | `Task Shared Context ≠ Private Memory` | 私人偏见变成共识 |
 | `Task Shared Context ≠ Task Workspace` | 把「认为是什么」和「实际有什么」混起来 |
 | `Workspace ≠ Permission` | 有 `workspace_id` 就以为能读文件 |
@@ -257,7 +259,7 @@ A 说「我觉得用方案 B」   →   Communication History 里有这句话
 | `DecisionPolicy ≠ Decision Execution` | 策略开始改状态 |
 | `Domain ≠ Infrastructure` | `core/` 依赖 `services/` |
 | **`Agent Strategy ≠ Negotiation Mechanism`** | 把 Agent 的价格阈值硬编码进系统 |
-| **`Task Shared Context ≠ 第二套 Task Core`** | 出现两个都声称正确的 `status` |
+| **`Task Shared Context ≠ 第二套 Task Core`** | 出现两个都声称正确的 `status` · **有守卫** |
 | **`Agent Private Memory ≠ Agent Private Workspace`** | 把「知道什么」和「有哪些文件」混起来 |
 
 ---
@@ -304,7 +306,7 @@ Shared Context 可以**引用、解释、总结、补充**共同知识，
 | 谁 | 拥有什么 |
 |---|---|
 | **Task Core**（`CURRENT`） | `task_id` · `state` · `budget` · `agreed_price` · `initiator` · `contractor` · lifecycle · `TaskAgreement` 的正式结果 |
-| **Shared Context**（`DESIGNED`） | objective · constraints · acceptance 的**解释** · decisions · assumptions · open questions · assignments · terminology · facts · verification feedback · **对 Domain State 的引用** |
+| **Shared Context**（**`CURRENT`**） | objective · constraints · acceptance 的**解释** · decisions · assumptions · open questions · assignments · terminology · facts · verification feedback · **对 Domain State 的引用** |
 
 ```text
 ❌  Task.status                = SUBMITTED
@@ -352,7 +354,7 @@ Vector DB · Knowledge graph · 分布式共识 · Multi-agent 投票 · 复杂 
         ↓
 2. 先调查真实代码（不要凭空设计）
         ↓
-3. 跑基线：./dev.sh test   （必须是 2333 passed）
+3. 跑基线：./dev.sh test   （必须是 2519 passed）
         ↓
 4. 实施最小修改
         ↓
@@ -371,6 +373,7 @@ Vector DB · Knowledge graph · 分布式共识 · Multi-agent 投票 · 复杂 
 
 1. **先调查，再动手。** 不要在设计之前改代码。
 2. **每一步结束跑全量测试。** 不是只跑自己改的那个文件。
+   基线现在是 **2519 passed**。
 3. **新增守卫必须配反向测试。** 把违规注入进去，确认守卫**真的变红**。
 
 ---
@@ -385,9 +388,9 @@ Vector DB · Knowledge graph · 分布式共识 · Multi-agent 投票 · 复杂 
 
 | | |
 |---|---|
-| **基线** | **2333 passed, 30 deselected** |
-| **测试文件** | 48 个 |
-| **守卫文件** | 8 个，265 项 |
+| **基线** | **2519 passed, 30 deselected** |
+| **测试文件** | 51 个 |
+| **守卫文件** | 10 个，约 390 项 |
 | **真实 API 测试** | 30 项，单独跑（需要 Key） |
 
 **必须用 `./dev.sh test`，不要直接 `pytest`** ——
@@ -406,7 +409,7 @@ AGENTS.md → 判断任务领域 → 只读相关 Specification → 必要时读
 
 | 我要做… | 重点读 | 不必读 |
 |---|---|---|
-| **Shared Context / Alignment** | [`TASK_SHARED_CONTEXT.md`](docs/architecture/TASK_SHARED_CONTEXT.md) + §4 · §6.2 | Storage / Reliability ADR |
+| **Shared Context / Alignment** | [`TASK_SHARED_CONTEXT.md`](docs/architecture/TASK_SHARED_CONTEXT.md) + §4 · §6.2 · ADR-0019 | Storage / Reliability ADR |
 | **SQLite / 并发 / 事务** | ADR-0012 · ADR-0014 · §3 · §11 | TASK_SHARED_CONTEXT.md |
 | **Negotiation / DecisionPolicy** | §6.1 · `core/decision_policy.py` · `task_negotiation_service.py` | Workspace 相关 |
 | **Execution（START/SUBMIT/…）** | `task_execution_service.py` · `core/task_execution.py` · `core/task.py` | Alignment 设计 |
@@ -430,6 +433,9 @@ AGENTS.md → 判断任务领域 → 只读相关 Specification → 必要时读
 ### 第二优先（理解当前实现）
 
 4. [`core/task.py`](core/task.py) —— 状态机（**唯一的**生命周期定义）
+4.5 [`core/task_shared_context.py`](core/task_shared_context.py) —— 共享上下文领域模型（Step 4F）
+    · [`core/task_context_store.py`](core/task_context_store.py) —— 它的持久化 + 乐观锁
+    · [`services/task_alignment_service.py`](services/task_alignment_service.py) —— Alignment
 5. [`services/task_service.py`](services/task_service.py) —— 薄门面（看它多薄）
 6. [`services/task_execution_service.py`](services/task_execution_service.py) —— 执行阶段
 7. [`communication/message.py`](communication/message.py) —— 协议

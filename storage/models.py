@@ -41,6 +41,11 @@ TABLE_TASK_OFFERS: Final = "task_offers"
 TABLE_TASK_AGREEMENTS: Final = "task_agreements"
 TABLE_TASK_EXECUTIONS: Final = "task_executions"
 
+# ---- Step 4F：Task Shared Context / Alignment ----
+TABLE_SHARED_CONTEXTS: Final = "task_shared_contexts"
+TABLE_CONTEXT_REVISIONS: Final = "task_context_revisions"
+TABLE_CONTEXT_CHANGES: Final = "task_context_changes"
+
 
 # ============================================================
 # 建表 SQL
@@ -650,6 +655,120 @@ SCHEMA_STATEMENTS: Final[tuple[str, ...]] = (
 
     "CREATE INDEX IF NOT EXISTS idx_agreements_task ON task_agreements (task_id)",
     "CREATE INDEX IF NOT EXISTS idx_agreements_time ON task_agreements (created_at)",
+
+    # ========================================================
+    # Step 4F：Task Shared Context / Alignment（三张表）
+    # ========================================================
+    #
+    # 【为什么是三张而不是一张】
+    #
+    #     一张表（tasks 上加一个 context JSON 列）做不到这三件事：
+    #
+    #         ① 保留修订历史
+    #            「Revision 3 取代 2」不等于「2 可以删掉」。
+    #            一个 Agent 看到 Revision 7 时必须能追溯它是怎么来的。
+    #
+    #         ② 记录「提议过但没通过」的东西
+    #            被拒绝的 Change 本身就是有价值的历史 ——
+    #            「当时讨论过 Redis，但因为 X 否掉了」
+    #            能防止三周后有人再提一遍同样的方案。
+    #
+    #         ③ 让乐观锁有一个明确的落点
+    #            CAS 需要一个「当前版本」的单行事实，
+    #            而历史需要一个 append-only 的序列。两者形态不同。
+    #
+    #     所以拆成：
+    #         task_shared_contexts   当前版本（**唯一会被 UPDATE 的表**）
+    #         task_context_revisions 历史版本（**append-only，永不 UPDATE**）
+    #         task_context_changes   提议与裁决（**append-only**）
+    #
+    # 【为什么 payload 存物化全文而不是 diff】
+    #     读「Revision 5 长什么样」应该是 O(1) 的，不该回放 5 条 diff。
+    #     代价是存储冗余 —— 但 Shared Context 是**小**对象
+    #     （目标/约束/若干决策假设问题），不是大文档。
+    #     diff 链断裂会丢历史；物化全文明天也读得出来。
+    #
+    # 【注意：这里没有 status 列】
+    #     Task Core 才是生命周期的唯一权威。
+    #     Shared Context 存 status 就会出现「两个都声称正确」的值。
+    #     要展示任务状态时，Snapshot 现场读 Task Core（引用，不是副本）。
+    # --------------------------------------------------------
+    """
+    CREATE TABLE IF NOT EXISTS task_shared_contexts (
+        -- 一个 Task 一个 Context。task_id 直接当主键。
+        task_id         TEXT PRIMARY KEY,
+
+        -- Context 自己的标识（和 task_id 不同：任务身份 vs 上下文身份）
+        context_id      TEXT NOT NULL,
+
+        -- 当前版本。**乐观锁的落点**：CAS 就在这一列上。
+        current_revision INTEGER NOT NULL DEFAULT 1,
+
+        created_at      TEXT NOT NULL,
+        updated_at      TEXT NOT NULL,
+
+        FOREIGN KEY (task_id) REFERENCES tasks (task_id)
+    )
+    """,
+
+    """
+    CREATE TABLE IF NOT EXISTS task_context_revisions (
+        task_id         TEXT NOT NULL,
+        revision        INTEGER NOT NULL,
+
+        context_id      TEXT NOT NULL,
+
+        -- 这一版的**物化全文**（JSON）
+        payload         TEXT NOT NULL,
+
+        created_at      TEXT NOT NULL,
+        created_by      TEXT,
+        parent_revision INTEGER,
+
+        -- 由哪条 Change 产生（Revision 1 为 NULL：初始版不是变更产生的）
+        change_id       TEXT,
+        change_reason   TEXT,
+
+        PRIMARY KEY (task_id, revision),
+
+        FOREIGN KEY (task_id) REFERENCES tasks (task_id)
+    )
+    """,
+
+    """
+    CREATE TABLE IF NOT EXISTS task_context_changes (
+        change_id       TEXT PRIMARY KEY,
+        task_id         TEXT NOT NULL,
+
+        proposed_by     TEXT NOT NULL,
+        change_type     TEXT NOT NULL,
+
+        -- 提议者基于哪一版（乐观锁快照）
+        target_revision INTEGER NOT NULL,
+
+        -- 变更载荷（载荷形状随 change_type 变化）
+        payload         TEXT NOT NULL,
+
+        -- 针对哪条已有记录（RESOLVE_QUESTION / CONFIRM_ASSUMPTION）
+        target          TEXT,
+        expected_value  TEXT,
+
+        -- 为什么改 / 依据是什么
+        reason          TEXT NOT NULL,
+        source          TEXT,
+
+        created_at      TEXT NOT NULL,
+
+        -- PROPOSED / ACCEPTED / REJECTED
+        status          TEXT NOT NULL DEFAULT 'PROPOSED',
+        decided_at      TEXT,
+        decided_by      TEXT,
+        decided_reason  TEXT,
+        result_revision INTEGER,
+
+        FOREIGN KEY (task_id) REFERENCES tasks (task_id)
+    )
+    """,
 )
 
 
@@ -675,6 +794,17 @@ POST_MIGRATION_INDEXES: Final[tuple[str, ...]] = (
     "ON task_executions (from_agent)",
     "CREATE INDEX IF NOT EXISTS idx_task_offers_msg  ON task_offers (message_id)",
     "CREATE INDEX IF NOT EXISTS idx_task_offers_from ON task_offers (from_agent)",
+
+    # ---- Step 4F：Shared Context 的三个查询方向 ----
+    #     按任务列出历史版本（"这个任务经历过哪些版本"）
+    "CREATE INDEX IF NOT EXISTS idx_context_revisions_task "
+    "ON task_context_revisions (task_id, revision)",
+    #     按任务列出提议（含被拒绝的）
+    "CREATE INDEX IF NOT EXISTS idx_context_changes_task "
+    "ON task_context_changes (task_id, created_at)",
+    #     按状态找待裁决的提议
+    "CREATE INDEX IF NOT EXISTS idx_context_changes_status "
+    "ON task_context_changes (task_id, status)",
 )
 
 

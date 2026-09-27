@@ -62,8 +62,10 @@ from core.decision_policy import RuleBasedDecisionPolicy        # noqa: E402
 from core.money import Money                                    # noqa: E402
 from core.task import OfferType, Task, TaskStatus               # noqa: E402
 from core.task_store import TaskStore                           # noqa: E402
+from core.task_context_store import TaskContextStore             # noqa: E402
 from services import (
     TaskExecutionService,  # noqa: E402
+    TaskAlignmentService,  # noqa: E402
     TaskService,  # noqa: E402
 )
 from core.paths import ensure_runtime_dirs                      # noqa: E402
@@ -134,6 +136,8 @@ class Runtime:
     task_service: TaskService
     task_execution: TaskExecutionService
     decision_policies: Dict[str, Any]
+    contexts: TaskContextStore
+    alignment: TaskAlignmentService
 
     def agent(self, agent_id: str):
         return self.economy.agent(agent_id)
@@ -466,6 +470,19 @@ def build_runtime(db_path: Optional[str] = None) -> Runtime:
     # 但互相不知道对方存在。有架构守卫盯着这条线。
     task_execution = TaskExecutionService(store=tasks)
 
+    # ---- Step 4F：Task Shared Context / Alignment ----
+    #
+    # 【为什么共享上下文不塞进 TaskStore】
+    #     TaskStore 已经 958 行、7 张表。再加 3 张表和一套对齐语义，
+    #     它就会变成什么都管的 God Store ——
+    #     而 TaskService 曾经因为同样的原因被拆开（ADR-0006）。
+    #
+    # 【注意它复用的是同一个 Database】
+    #     没有 SharedContextDatabase，没有独立事务系统。
+    #     同一个连接、同一个可重入 transaction()、同一个 BEGIN IMMEDIATE。
+    contexts = TaskContextStore(db=economy.db)
+    alignment = TaskAlignmentService(tasks=tasks, contexts=contexts)
+
     task_service = TaskService(
         store=tasks,
         directory=directory,
@@ -493,6 +510,8 @@ def build_runtime(db_path: Optional[str] = None) -> Runtime:
         task_service=task_service,
         task_execution=task_execution,
         decision_policies=decision_policies,
+        contexts=contexts,
+        alignment=alignment,
     )
 
 
@@ -3140,6 +3159,267 @@ def _run_async(coro):
 
 
 # ============================================================
+# 命令：context-demo（Step 4F）
+# ============================================================
+def cmd_context_demo(runtime: Runtime, args: argparse.Namespace) -> int:
+    """
+    Task Shared Context / Alignment 演示（Step 4F）。
+
+    【演示什么】
+        1. 两个 Agent 对一个 Task 建立共享上下文
+        2. Agent A 提议一个**决定** → 需要 B 确认 → Revision 2
+        3. Agent B 提议一个**假设**（声明类，可自批）→ Revision 3
+        4. 一条被拒绝的提议 —— **版本号一点都不变**
+        5. Snapshot 读取（含现场引用的 Task Core 状态）
+        6. Revision 历史可追溯
+        7. 并发：两个 Agent 基于同一版本同时提交 → 只有一个成功
+
+    【为什么不用真消息】
+        规范 §11 明确：Message **不会**自动变成 Shared Context。
+        所以这里直接调应用服务 —— 演示的是「对齐机制」本身，
+        而不是「消息怎么送达」（那在 4D 已经演示过了）。
+        如果这里用消息演示，反而会暗示「发消息=进上下文」，
+        那正是被禁止的。
+    """
+    from core.task import Task
+    from core.task_shared_context import (
+        ContextChangeType, ConcurrentContextModification,
+        NotAParticipantError, SelfAlignmentError,
+    )
+
+    economy = runtime.economy
+    tasks = runtime.tasks
+    svc = runtime.alignment
+
+    for agent_id in ("agent_a", "agent_b"):
+        runtime.agent(agent_id)   # 确保 Agent 存在（会从配置 bootstrap）
+
+    task_id = "TASK-4F-001"
+
+    # 清理上次运行的残留（外键要求先删子表）
+    with economy.db.transaction() as conn:
+        for table in ("task_context_changes", "task_context_revisions",
+                      "task_shared_contexts", "task_executions",
+                      "task_agreements", "task_offers", "tasks"):
+            conn.execute(f"DELETE FROM {table} WHERE task_id = ?", (task_id,))
+
+    print()
+    print("=" * 62)
+    print("  Task Shared Context / Alignment 演示（Step 4F）")
+    print("=" * 62)
+
+    # ---- Task ----
+    task = Task.create(
+        task_id=task_id,
+        creator="agent_a",
+        description="实现一个 CSV parser",
+        budget=Money(amount=50.0, currency="AIC"),
+    )
+    task.participants = ["agent_a", "agent_b"]
+    task.contractor = "agent_b"
+    tasks.save(task)
+
+    print(f"\nTask: {task_id}")
+    print(f"  creator    = agent_a")
+    print(f"  contractor = agent_b")
+    print(f"  status     = {task.status}   ← Task Core 是唯一权威")
+
+    # ---- Revision 1 ----
+    rev1 = svc.create_context(
+        task_id,
+        by="agent_a",
+        objective="实现一个能处理引号内逗号的 CSV parser",
+        constraints=["只用 Python 标准库", "必须处理 UTF-8"],
+        acceptance_criteria=["空文件返回空列表", "引号内逗号不分割"],
+    )
+    print(f"\n{'─' * 62}")
+    print(f"Revision {rev1.revision}  (by agent_a)")
+    print(f"{'─' * 62}")
+    print(f"  Objective:  {rev1.context.objective}")
+    for c in rev1.context.constraints:
+        print(f"  Constraint: {c}")
+    for a in rev1.context.acceptance_criteria:
+        print(f"  Accept:     {a}")
+
+    # ---- A 提议一个决定 ----
+    print(f"\n{'─' * 62}")
+    print("Agent A 提议一个 DECIDE")
+    print(f"{'─' * 62}")
+
+    change1 = svc.propose(
+        task_id,
+        proposed_by="agent_a",
+        change_type=ContextChangeType.DECIDE,
+        new_value={"statement": "用状态机而不是正则解析",
+                   "reason": "正则处理嵌套引号会失控"},
+        expected_revision=1,
+        reason="正则方案在嵌套引号上不可靠",
+        source="msg-4f-001",
+    )
+    print(f"  change_id  = {change1.change_id}")
+    print(f"  status     = {change1.status}   ← 只是提议，Context 没变")
+    print(f"  context 仍是 revision {svc.current(task_id).revision}")
+
+    # A 自己不能批
+    try:
+        svc.accept(task_id, change1.change_id, decided_by="agent_a")
+        print("  ❌ 意外：自批成功了")
+    except SelfAlignmentError:
+        print("  ✗ agent_a 自批被拒绝（「决定」需要别人确认）")
+
+    rev2 = svc.accept(task_id, change1.change_id, decided_by="agent_b",
+                      reason="同意，状态机更可控")
+    print(f"  ✓ agent_b 确认 → Revision {rev2.revision}")
+    d = rev2.context.decisions[0]
+    print(f"      Decision:  {d.statement}")
+    print(f"      Reason:    {d.reason}")
+    print(f"      Proposed:  {d.proposed_by}")
+    print(f"      Accepted:  {', '.join(d.accepted_by)}")
+
+    # ---- B 提议一个假设 ----
+    print(f"\n{'─' * 62}")
+    print("Agent B 提议一个 ASSUME（声明类，可自批）")
+    print(f"{'─' * 62}")
+
+    change2 = svc.propose(
+        task_id,
+        proposed_by="agent_b",
+        change_type=ContextChangeType.ASSUME,
+        new_value={"statement": "输入文件的编码一定是 UTF-8"},
+        expected_revision=rev2.revision,
+        reason="上游文档没写，先按最常见情况做",
+    )
+    rev3 = svc.accept(task_id, change2.change_id, decided_by="agent_b")
+    a = rev3.context.assumptions[0]
+    print(f"  ✓ Revision {rev3.revision}")
+    print(f"      Assumption: {a.statement}")
+    print(f"      Status:     {a.status}   ← 未验证，**不是** Fact")
+
+    # ---- 一条被拒绝的提议 ----
+    print(f"\n{'─' * 62}")
+    print("一条被拒绝的提议（版本号必须不变）")
+    print(f"{'─' * 62}")
+
+    change3 = svc.propose(
+        task_id,
+        proposed_by="agent_a",
+        change_type=ContextChangeType.ADD_CONSTRAINT,
+        new_value="必须支持 GBK 编码",
+        expected_revision=rev3.revision,
+        reason="担心老系统",
+    )
+    before = svc.current(task_id).revision
+    svc.reject(task_id, change3.change_id, decided_by="agent_b",
+               reason="超出本任务范围")
+    after = svc.current(task_id).revision
+    print(f"  change_id = {change3.change_id}")
+    print(f"  status    = {svc.contexts.get_change(change3.change_id).status}")
+    print(f"  revision  : {before} → {after}   ← 拒绝**不改变** Context")
+
+    # ---- 开放问题 ----
+    q = svc.propose(
+        task_id,
+        proposed_by="agent_b",
+        change_type=ContextChangeType.QUESTION,
+        new_value={"question": "空 CSV 应该返回 [] 还是报错？",
+                   "owner": "agent_a"},
+        expected_revision=after,
+        reason="验收标准里有歧义",
+    )
+    rev4 = svc.accept(task_id, q.change_id, decided_by="agent_a")
+    print(f"\n  ✓ Revision {rev4.revision}：记录了一个开放问题")
+    print(f"      {rev4.context.open_questions[0].question}")
+
+    # ---- Snapshot ----
+    print(f"\n{'=' * 62}")
+    print("Context Snapshot")
+    print("=" * 62)
+
+    for who in ("agent_a", "agent_b"):
+        snap = svc.snapshot(task_id)
+        print(f"\n--- {who} 看到的（Revision {snap.revision} @ {snap.taken_at}）---")
+        print(f"  Objective:   {snap.context.objective}")
+        print(f"  Decisions:   {len(snap.context.decisions)}")
+        print(f"  Assumptions: {len(snap.context.assumptions)}"
+              f"（未验证 {snap.context.unverified_assumption_count}）")
+        print(f"  Questions:   {snap.context.open_question_count} 个待解决")
+        print(f"  ── 以下**引用**自 Task Core（不是 Context 拥有的）──")
+        print(f"  status:      {snap.domain_state['status']}"
+              f"   source={snap.domain_state_source}")
+
+    # ---- 历史 ----
+    print(f"\n{'=' * 62}")
+    print("Revision History")
+    print("=" * 62)
+    for r in svc.history(task_id):
+        who = r.created_by or "?"
+        reason = r.change_reason or "（初始版本）"
+        print(f"  Revision {r.revision}  by {who:<8} ← {reason}")
+
+    # ---- 并发 ----
+    print(f"\n{'=' * 62}")
+    print("并发：两个 Agent 基于**同一个** revision 同时提交")
+    print("=" * 62)
+
+    base = svc.current(task_id).revision
+    print(f"  基准 revision = {base}")
+
+    ca = svc.propose(task_id, proposed_by="agent_a",
+                     change_type=ContextChangeType.ADD_CONSTRAINT,
+                     new_value="必须支持流式读取",
+                     expected_revision=base, reason="大文件")
+    cb = svc.propose(task_id, proposed_by="agent_b",
+                     change_type=ContextChangeType.ADD_CONSTRAINT,
+                     new_value="必须有 100% 测试覆盖",
+                     expected_revision=base, reason="质量要求")
+
+    print(f"  A 提议 {ca.change_id}（基于 {base}）")
+    print(f"  B 提议 {cb.change_id}（基于 {base}）")
+
+    ra = svc.accept(task_id, ca.change_id, decided_by="agent_b")
+    print(f"\n  A 的提议 → ✓ SUCCESS（Revision {ra.revision}）")
+
+    try:
+        svc.accept(task_id, cb.change_id, decided_by="agent_a")
+        print("  B 的提议 → ❌ 意外成功（不应该）")
+    except ConcurrentContextModification:
+        print(f"  B 的提议 → ✗ ConcurrentContextModification")
+
+    print(f"\n  A 的变更在 Revision {ra.revision} 里吗: "
+          f"{'必须支持流式读取' in svc.current(task_id).context.constraints}")
+    print(f"  B 的变更在 Revision {ra.revision} 里吗: "
+          f"{'必须有 100% 测试覆盖' in svc.current(task_id).context.constraints}"
+          f"   ← 没有被静默写入")
+    print(f"  B 的提议状态: "
+          f"{svc.contexts.get_change(cb.change_id).status}")
+
+    # ---- 非参与方 ----
+    print(f"\n{'=' * 62}")
+    print("参与方边界")
+    print("=" * 62)
+    try:
+        svc.propose(task_id, proposed_by="agent_c",
+                    change_type=ContextChangeType.FACT,
+                    new_value={"statement": "x", "source": "y"},
+                    expected_revision=svc.current(task_id).revision,
+                    reason="路人甲")
+        print("  ❌ 意外：非参与方成功提交")
+    except NotAParticipantError:
+        print("  ✗ agent_c（非参与方）被拒绝")
+
+    final = svc.current(task_id)
+    print(f"\n{'=' * 62}")
+    print(f"最终 Revision: {final.revision}")
+    print(f"  历史深度:   {len(svc.history(task_id))} 版")
+    print(f"  提议总数:   {svc.contexts.count_changes(task_id)}"
+          f"（含被拒绝的）")
+    print(f"  待裁决:     {len(svc.pending(task_id))}")
+    print("=" * 62)
+
+    return 0
+
+
+# ============================================================
 # 命令：reliability-multiprocess-demo（Workspace Phase 0）
 # ============================================================
 def cmd_reliability_multiprocess_demo(
@@ -3760,6 +4040,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="真实多进程 / 认领租约演示（Workspace Phase 0）",
     )
     mp_demo.set_defaults(func=cmd_reliability_multiprocess_demo)
+
+    # --- context-demo（Step 4F）---
+    context_demo = subparsers.add_parser(
+        "context-demo",
+        parents=[shared],
+        help="Task Shared Context / Alignment 演示（Step 4F）",
+    )
+    context_demo.set_defaults(func=cmd_context_demo)
 
     return parser
 

@@ -58,6 +58,7 @@ Task Execution —— 执行 / 提交 / 验收阶段的领域值类型
 
 from __future__ import annotations
 
+from core.logical_ref import validate_logical_ref
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from types import MappingProxyType
@@ -140,16 +141,9 @@ class TaskResultRef:
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
-        # ---- result_ref 必填 ----
-        if not isinstance(self.result_ref, str) or not self.result_ref.strip():
-            raise ValueError(
-                "result_ref 必填，而且不能是空白。\n"
-                "SUBMIT 必须说明「交付的是什么」—— 不能只说「我做好了」。"
-            )
-
-        ref = self.result_ref.strip()
-
-        # ---- 【安全边界】不许把 result_ref 写成路径或 URL ----
+        # ---- result_ref 必填，且必须是**逻辑名字** ----
+        #
+        # 【安全边界】不许把 result_ref 写成路径或 URL。
         #
         # 这不是「洁癖」，是一条安全约束：
         #     如果 result_ref 长得像路径，下游（人或代码）就会倾向于
@@ -157,20 +151,14 @@ class TaskResultRef:
         #     承接方就能让发起方去读任意文件。
         #
         # 所以在数据类型这一层就挡住 —— 让它根本不像一个可访问目标。
-        if ref.startswith(("/", "~", "./", "../", "\\")):
-            raise ValueError(
-                f"result_ref 不能是文件系统路径：{ref!r}\n"
-                f"（它是一个逻辑名字，比如 'analysis-v2'。\n"
-                f" 允许路径会让承接方通过提交一个构造过的名字"
-                f"让发起方去读任意文件。）"
-            )
-        if "://" in ref:
-            raise ValueError(
-                f"result_ref 不能是 URL：{ref!r}\n"
-                f"（它是一个逻辑名字，不代表任何可访问的地址。）"
-            )
-        if "\x00" in ref:
-            raise ValueError("result_ref 不能包含空字节")
+        #
+        # 【Step 4F 的改动：规则抽到了 core/logical_ref.py】
+        #     同一条规则现在有两处要用（result_ref 和 Shared Context 的
+        #     artifact_refs）。复制两遍的话，改了 A 忘了 B 就留下漏洞。
+        #     所以抽成共用函数，这里改为调用它。
+        #     异常类型仍是 ValueError（InvalidLogicalRef 继承它），
+        #     错误信息里仍带 "result_ref"。有回归测试钉住这两点。
+        ref = validate_logical_ref(self.result_ref, field="result_ref")
 
         object.__setattr__(self, "result_ref", ref)
 

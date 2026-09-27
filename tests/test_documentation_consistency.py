@@ -518,26 +518,47 @@ class TestImplementationStatusClaims:
                 f"文档说它「只是引用」，现在是错的"
             )
 
-    def test_shared_context_is_not_implemented(self):
+    def test_shared_context_is_implemented(self, agents):
         """
-        文档说 Task Shared Context 是 `DESIGNED`（零实现）。
+        **Step 4F 之后**：Task Shared Context 是 `CURRENT`（已实现）。
 
-        如果哪天有人实现了它，这条守卫会红 ——
-        提醒同时更新文档的标注。
+        【这条守卫怎么演化的】
+            4E 时它是反向的 —— 断言 `core/task_shared_context.py`
+            **不存在**，用来防止「把设计写成已实现」。
+
+            4F 真的实现了它，那条守卫于是变红（这是设计意图：
+            它逼着人来更新文档）。现在反过来钉住：
+            实现了就必须在文档里说实现了。
+
+            两个方向都不能少 —— 只钉一个方向的话，
+            文档要么落后要么超前，两种都会误导人。
         """
         import importlib.util
 
-        assert importlib.util.find_spec("core.task_shared_context") is None, (
-            "core/task_shared_context.py 出现了 —— "
-            "文档必须从 DESIGNED 改成 CURRENT"
+        assert importlib.util.find_spec("core.task_shared_context") is not None, (
+            "core/task_shared_context.py 不见了 —— "
+            "如果是有意移除，文档必须从 CURRENT 改回 DESIGNED"
         )
+        assert "Task Shared Context" in agents
 
-    def test_no_shared_context_tables(self, db):
-        """文档说 Shared Context 没有建表。"""
-        for forbidden in ("task_shared_context", "context_revisions",
-                          "context_changes", "decision_records"):
-            assert forbidden not in db.table_names(), (
-                f"数据库里出现了 {forbidden} 表 —— 文档必须更新"
+    def test_shared_context_tables_exist(self, db):
+        """3 张表必须真的建出来了（文档说已持久化）。"""
+        names = db.table_names()
+        for required in ("task_shared_contexts", "task_context_revisions",
+                         "task_context_changes"):
+            assert required in names, (
+                f"数据库里缺少 {required} 表 —— 而文档说 Shared Context "
+                f"已经 persistent"
+            )
+
+    def test_workspace_still_not_implemented(self, db):
+        """**反向**：Workspace 相关的表必须仍然不存在。"""
+        names = " ".join(db.table_names())
+        for forbidden in ("workspace_permissions", "workspace_members",
+                          "artifacts", "worktrees"):
+            assert forbidden not in names, (
+                f"数据库里出现了 {forbidden} 表 —— "
+                f"那属于 Task Workspace 阶段，4F 明确禁止"
             )
 
     def test_private_memory_is_designed_not_current(self, agents):
