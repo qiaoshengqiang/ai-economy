@@ -11,6 +11,21 @@
 
 ---
 
+
+---
+
+## 📚 文档导航
+
+| 文档 | 作用 | 什么时候读 |
+|---|---|---|
+| [`AGENTS.md`](AGENTS.md) | **Developer Context** —— 入口与导航 | **开始工作前** |
+| [`docs/architecture/ARCHITECTURE_CONSTITUTION.md`](docs/architecture/ARCHITECTURE_CONSTITUTION.md) | **长期架构 Source of Truth** | 改架构之前 |
+| [`docs/architecture/TASK_SHARED_CONTEXT.md`](docs/architecture/TASK_SHARED_CONTEXT.md) | Task Shared Context / Alignment 规范 | 做 Shared Context 时 |
+| [`docs/architecture/adr/`](docs/architecture/adr/README.md) | **架构决策记录**（为什么这样设计） | 想知道历史理由时 |
+| [`PROTOCOL.md`](PROTOCOL.md) | 消息协议细节 | 改协议时 |
+| [`COMMANDS.md`](COMMANDS.md) | 全部命令 | 想知道能跑什么时 |
+| 本文件 | 怎么把项目跑起来 | 第一次接触时 |
+
 ## 目录
 
 - [核心设计原则](#核心设计原则)
