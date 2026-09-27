@@ -456,6 +456,7 @@ class Task:
         updated_at: Optional[str] = None,
         offers: Optional[List[Offer]] = None,
         note: Optional[str] = None,
+        version: int = 0,
     ):
         # ---------- 校验 ----------
         if not isinstance(task_id, str) or not task_id.strip():
@@ -484,6 +485,29 @@ class Task:
 
         # 【私有字段】状态只能通过转换方法改，见下面的 status property
         self._status = status
+
+        # 乐观锁版本号（Step 4D.1）。
+        #
+        # 【为什么 Task 上要有它】
+        #     TaskStore.save() 需要知道「我手上这份是从哪一版读出来的」，
+        #     才能做 compare-and-set。所以版本号必须随 Task 一起流转 ——
+        #     读出来是多少，写回去时就拿它当条件。
+        #
+        # 【它会被 Task Core 自动推进吗？不会】
+        #     只有**成功保存**之后，TaskStore 才会把手里这份的
+        #     version 推进到新值。领域方法（start/submit/...）不碰它 ——
+        #     因为「保存了几次」是持久化的事实，不是领域概念。
+        #
+        # 【为什么放在 core/task.py 而不是别处】
+        #     它是一个跟随 Task 走的持久化标记。
+        #     放在 Task 上是让它能自然流转，而不是让 Task 变聪明。
+        if not isinstance(version, int) or isinstance(version, bool):
+            raise TaskValidationError(
+                f"version 必须是整数，收到 {version!r}"
+            )
+        if version < 0:
+            raise TaskValidationError(f"version 不能为负：{version}")
+        self.version = int(version)
 
         # task_id 是稳定身份，current_trace_id 是「这一次执行」的链路。
         # 两者刻意分开，因为同一个任务可能重跑多次（每次一个新 trace）。
@@ -932,6 +956,8 @@ class Task:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "note": self.note,
+            # 乐观锁版本号：随 Task 一起流转，save() 拿它当条件
+            "version": self.version,
         }
         if include_offers:
             data["offers"] = [offer.to_dict() for offer in self.offers]
@@ -970,6 +996,7 @@ class Task:
                 Offer.from_dict(item) for item in data.get("offers", [])
             ],
             note=data.get("note"),
+            version=data.get("version", 0),
         )
 
     # ------------------------------------------------------------

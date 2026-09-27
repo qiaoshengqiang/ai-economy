@@ -265,8 +265,54 @@ SCHEMA_STATEMENTS: Final[tuple[str, ...]] = (
         is_remote       INTEGER NOT NULL DEFAULT 0,
 
         -- 当前状态（取最后一个事件的状态）
+        --
+        -- 【注意 status 是「最新状态」，不是「处理过没有」】
+        --     它会被后来的事件覆盖：
+        --         处理成功      → status = PROCESSED
+        --         又来一条重复  → status = DUPLICATE   ← PROCESSED 被抹掉了
+        --     所以 **不能** 拿它当去重依据。
+        --     去重依据是下面的 processed_once。
         status          TEXT NOT NULL DEFAULT 'CREATED',
         retry_count     INTEGER NOT NULL DEFAULT 0,
+
+        -- ============================================================
+        -- 持久化的处理事实（Step 4D.1）
+        -- ============================================================
+        --
+        -- 【原来错在哪】
+        --     「这条消息处理过了吗」只记在进程内存里
+        --     （communication/dedup.py 的 SeenMessageTracker）。
+        --     进程一重启就忘光了 —— 同一条消息会被再处理一遍。
+        --
+        --     单机演示时看不出来。一旦有重发 / 重试 / 多进程，
+        --     后果是「同一个 SUBMIT 交付两次」这类真实业务损坏。
+        --
+        -- 【processed_once：只增不减的成功事实】
+        --     0 → 1 之后**永不回退**（UPSERT 时用 MAX 语义）。
+        --     这才是去重真正的依据：查它，而不是查 status。
+        --
+        --     为什么单独一个字段而不是复用 processed_at？
+        --         processed_at 是时间戳，语义是「什么时候处理完的」；
+        --         而且它也会被 COALESCE 逻辑影响。
+        --         一个专门的 0/1 标志更难被误用。
+        processed_once  INTEGER NOT NULL DEFAULT 0,
+
+        -- 【原子认领】谁正在处理这条消息
+        --     两个 worker 同时收到同一条消息时，
+        --     用带条件的 UPDATE 抢认领：
+        --         UPDATE ... SET claim_id=? WHERE message_id=?
+        --           AND processed_once=0 AND claim_id IS NULL
+        --     影响行数为 1 的那个才算抢到 —— 这是原子的，
+        --     不存在「都发现没人处理 → 都去处理」的 TOCTOU 窗口。
+        claim_id        TEXT,
+        claimed_at      TEXT,
+
+        -- 【失败事实，但不代表永久作废】
+        --     处理失败可能是**临时**的（数据库忙、系统异常），
+        --     所以失败了只累加这个计数，
+        --     **不**把 processed_once 置 1。
+        --     否则重试的机会就被永久抹掉了。
+        failure_count   INTEGER NOT NULL DEFAULT 0,
 
         -- 失败信息。成功时为 NULL。
         error_code      TEXT,
@@ -417,6 +463,26 @@ SCHEMA_STATEMENTS: Final[tuple[str, ...]] = (
         required_capabilities TEXT,
 
         expires_at          TEXT,
+
+        -- 乐观锁版本号（Step 4D.1）
+        --
+        -- 【为什么需要它】
+        --     save() 原本是无条件 UPSERT —— 谁后写谁覆盖，
+        --     而且两边都以为自己成功了。这种 bug 不会报错，
+        --     只会让数据悄悄变错。
+        --
+        --     有了它，save() 变成 compare-and-set：
+        --         UPDATE tasks SET ... version = version + 1
+        --          WHERE task_id = ? AND version = ?
+        --     影响行数为 0 就说明「这个 Task 已经被别人改过了」，
+        --     此时必须抛异常，绝不静默覆盖。
+        --
+        -- 【为什么它不属于 Task Domain State】
+        --     并发冲突是 persistence / application 层的问题，
+        --     不是任务生命周期的一个阶段。
+        --     所以不新增 CONFLICT / PROCESSING 之类的状态。
+        version             INTEGER NOT NULL DEFAULT 0,
+
         created_at          TEXT NOT NULL,
         updated_at          TEXT NOT NULL,
         note                TEXT
@@ -633,6 +699,20 @@ COLUMN_MIGRATIONS: Final[dict] = {
     # 所以只需要加列，不需要回填数据。
     "tasks": [
         ("required_capabilities", "TEXT"),
+        # Step 4D.1：乐观锁版本号。
+        #
+        # 【为什么需要它】
+        #     save() 原本是无条件 UPSERT —— 谁后写谁覆盖，
+        #     而且两边都以为自己成功了。
+        #     有了 version，save() 就变成 compare-and-set：
+        #         UPDATE ... WHERE task_id=? AND version=?
+        #     影响行数为 0 就说明「这个 Task 已经被别人改过了」。
+        #
+        # 【为什么默认 0 是安全的】
+        #     老库里的任务从没被版本化过，
+        #     给它们 version=0 表示「还没人改过」。
+        #     第一次 save() 会把它推到 1 —— 行为正确。
+        ("version", "INTEGER NOT NULL DEFAULT 0"),
     ],
     # Step 4C 给报价历史加了四个关联字段。
     # 老数据是 NULL（表示「不知道关联哪条消息」），这是合理的默认值。
@@ -641,6 +721,36 @@ COLUMN_MIGRATIONS: Final[dict] = {
         ("from_agent", "TEXT"),
         ("trace_id", "TEXT"),
         ("conversation_id", "TEXT"),
+    ],
+    # --------------------------------------------------------
+    # Step 4D.1：把「这条消息处理过了吗」变成持久化事实。
+    #
+    # 【原来的问题】
+    #     SeenMessageTracker 是进程内的 OrderedDict。
+    #     进程重启 → 忘光了 → 同一条消息会被再处理一次。
+    #
+    # 【为什么不能直接用已有的 status 列】
+    #     status 是「最新状态」，会被后来的事件覆盖：
+    #         处理成功  → status = PROCESSED   ✅
+    #         又来一条重复 → status = DUPLICATE   ← PROCESSED 被抹掉了
+    #     用它做去重依据，重复投递反而会把「处理过」这个事实擦掉。
+    #
+    #     所以需要一个**只增不减**的字段。
+    #
+    # 【这四个字段各自的作用】
+    #     processed_once  成功的持久化事实。0 → 1 之后**永不回退**。
+    #                     这是去重真正的依据。
+    #     claim_id        谁认领了这条消息（NULL = 没人）。
+    #                     用条件 UPDATE 原子认领，避免两个 worker 同时处理。
+    #     claimed_at      认领时间（排查用）。
+    #     failure_count   处理失败过几次。**不表示消息永久作废** ——
+    #                     失败可能是临时的，不能把失败误标成完成。
+    # --------------------------------------------------------
+    "communication_messages": [
+        ("processed_once", "INTEGER NOT NULL DEFAULT 0"),
+        ("claim_id", "TEXT"),
+        ("claimed_at", "TEXT"),
+        ("failure_count", "INTEGER NOT NULL DEFAULT 0"),
     ],
 }
 

@@ -52,6 +52,71 @@ from storage.models import (
 logger = get_logger(__name__)
 
 
+# ============================================================
+# 并发冲突
+# ============================================================
+class ConcurrentTaskModification(Exception):
+    """
+    保存一个 Task 时发现它已经被别人改过了。
+
+    【它不是 Task 的一种状态】
+        并发冲突是 persistence / application 层的问题，
+        不是任务生命周期的一个阶段。
+
+        所以：
+            ❌ 不新增 CONFLICT 状态
+            ❌ 不新增 PROCESSING 状态
+            ❌ 不改状态机
+            ✅ 抛一个明确的异常，让调用方知道「你手上这份过期了」
+
+    【为什么必须抛，不能静默覆盖】
+        静默覆盖的后果是：
+            A 读到 task（v5），改成 SUBMITTED
+            B 读到 task（v5），改成 VERIFIED
+            B 先写成功；A 后写 → 把 VERIFIED 覆盖回 SUBMITTED
+            两边都以为自己成功了，没人发现数据已经错了。
+
+        这种 bug **不会报错**，只会让状态悄悄变错 ——
+        所以宁可让调用方拿到一个异常，也不要让它静默发生。
+
+    【本阶段不自动重试】
+        默认**不**自动重新读取 + 重放。
+        原因：状态变化是有语义的，自动重放可能产生
+        重复的状态变化、重复的消息、或者替 Agent 做了决定。
+
+        发现冲突是本阶段的目标；自动解决冲突不是。
+
+        （但这里把两边的 version 和状态都带上，
+          方便调用方或日志判断到底发生了什么。）
+    """
+
+    def __init__(
+        self,
+        task_id: str,
+        expected_version: int,
+        actual_version: Optional[int] = None,
+        detail: str = "",
+    ):
+        self.task_id = task_id
+        self.expected_version = expected_version
+        self.actual_version = actual_version
+
+        message = (
+            f"任务 {task_id} 已被并发修改："
+            f"我手上是 version={expected_version}"
+        )
+        if actual_version is not None:
+            message += f"，数据库里已经是 version={actual_version}"
+        message += (
+            f"。\n（这份 Task 已经过期了。为了避免静默覆盖别人的修改，"
+            f"保存被拒绝。请重新读取最新版本再操作。）"
+        )
+        if detail:
+            message += f"\n{detail}"
+
+        super().__init__(message)
+
+
 class TaskStore:
     """
     Task 的读写。
@@ -76,77 +141,227 @@ class TaskStore:
     # ------------------------------------------------------------
     # 写
     # ------------------------------------------------------------
-    def save(self, task: Task) -> Task:
+    def save(self, task: Task, *, force: bool = False) -> Task:
         """
-        保存 / 更新一个任务。
+        保存 / 更新一个任务。**带乐观锁**。
 
-        用 UPSERT —— 因为同一个任务会被反复保存（每次状态变化）。
-        主键是 task_id，所以不会出现重复行。
+        ============================================================
+        【Step 4D.1 改了什么】
+        ============================================================
+
+            原来是**无条件 UPSERT**：
+
+                INSERT ... ON CONFLICT(task_id) DO UPDATE SET ...
+
+            谁后写谁覆盖，而且两边都以为自己成功了。
+            这种 bug 不报错，只让数据悄悄变错。
+
+            现在分两条路：
+
+                新任务（数据库里没有）
+                    → INSERT，version = 1
+
+                已存在的任务
+                    → UPDATE ... WHERE task_id=? AND version=?
+                      影响行数 1 → 成功，version 推进
+                      影响行数 0 → 有人先改了 → 抛 ConcurrentTaskModification
+
+        【为什么要先分新老，而不是写一条 SQL 搞定】
+
+            UPSERT 的 UPDATE 分支**没法表达**「version 不匹配就失败」——
+            它要么更新、要么什么都不做，而「什么都不做」和
+            「任务不存在」在 UPSERT 里是同一个结果，分不出来。
+
+            所以显式分两步，让「新增」和「更新」各自语义清楚。
+            代价是多一次 SELECT（在同一个事务里）。
+
+        【force=True 是什么】
+
+            给迁移、测试、以及「我确实要覆盖」的场景留的口子。
+            它必须显式传 —— 默认行为永远是「冲突就报错」。
+
+        【注意：这里是事务安全的】
+
+            SELECT + UPDATE + 读回 version 全在**同一个事务**里。
+            而且 db.transaction() 是可重入的，
+            所以调用方可以把 save() 和别的事（比如记执行事件）
+            包在同一个事务里 —— 这正是 4D.1 的第三个目标。
         """
         if not isinstance(task, Task):
             raise TypeError(f"save() 需要 Task，收到 {type(task).__name__}")
 
         with self.db.transaction() as conn:
-            conn.execute(
-                f"""
-                INSERT INTO {TABLE_TASKS} (
-                    task_id, current_trace_id, creator, contractor,
-                    participants, status, description, workspace_id,
-                    budget_amount, budget_currency,
-                    agreed_price_amount, agreed_price_currency,
-                    acceptance, required_capabilities, expires_at,
-                    created_at, updated_at, note
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(task_id) DO UPDATE SET
-                    current_trace_id      = excluded.current_trace_id,
-                    contractor            = excluded.contractor,
-                    participants          = excluded.participants,
-                    status                = excluded.status,
-                    description           = excluded.description,
-                    workspace_id          = excluded.workspace_id,
-                    budget_amount         = excluded.budget_amount,
-                    budget_currency       = excluded.budget_currency,
-                    agreed_price_amount   = excluded.agreed_price_amount,
-                    agreed_price_currency = excluded.agreed_price_currency,
-                    acceptance            = excluded.acceptance,
-                    required_capabilities = excluded.required_capabilities,
-                    expires_at            = excluded.expires_at,
-                    updated_at            = excluded.updated_at,
-                    note                  = excluded.note
-                """,
-                (
-                    task.task_id,
-                    task.current_trace_id,
-                    task.creator,
-                    task.contractor,
-                    json.dumps(task.participants, ensure_ascii=False),
-                    task.status,
-                    task.description,
-                    task.workspace_id,
-                    task.budget.amount if task.budget else None,
-                    task.budget.currency if task.budget else None,
-                    task.agreed_price.amount if task.agreed_price else None,
-                    task.agreed_price.currency if task.agreed_price else None,
-                    (
-                        json.dumps(task.acceptance, ensure_ascii=False)
-                        if task.acceptance else None
-                    ),
-                    json.dumps(
-                        task.required_capabilities.to_list(), ensure_ascii=False
-                    ),
-                    task.expires_at,
-                    task.created_at,
-                    task.updated_at,
-                    task.note,
-                ),
-            )
+            existing = conn.execute(
+                f"SELECT version FROM {TABLE_TASKS} WHERE task_id = ?",
+                (task.task_id,),
+            ).fetchone()
+
+            if existing is None:
+                # ---- 新任务：直接插入，版本从 1 开始 ----
+                #
+                # 为什么不是 0？
+                #     0 表示「还没被保存过」。
+                #     保存成功之后就应该是 1 —— 这样
+                #     「数据库里的 version」永远等于「保存过几次」。
+                new_version = 1
+                self._insert_task(conn, task, new_version)
+            else:
+                current = int(existing["version"])
+
+                if not force and current != task.version:
+                    # ---- 冲突：绝不静默覆盖 ----
+                    raise ConcurrentTaskModification(
+                        task_id=task.task_id,
+                        expected_version=task.version,
+                        actual_version=current,
+                        detail=(
+                            f"（我手上的状态是 {task.status}，"
+                            f"没有写入任何东西。）"
+                        ),
+                    )
+
+                new_version = current + 1
+                # force=True 时**不做**版本比对 ——
+                # 调用方明确说了「我就是要覆盖」。
+                # 否则会走进一个荒谬的状态：跳过了检查，
+                # 却在 UPDATE 的 WHERE 里被拦下来。
+                self._update_task(
+                    conn, task, new_version, check_version=not force
+                )
 
             # 报价历史也一起同步（幂等：offer_id 是主键）
             for offer in task.offers:
                 self._upsert_offer(conn, task.task_id, offer)
 
-        logger.debug("已保存任务 %s（状态 %s）", task.task_id, task.status)
+            # 保存成功才把手里这份的版本推进到新值 ——
+            # 这样同一个 Task 对象可以连续 save() 多次。
+            task.version = new_version
+
+        logger.debug(
+            "已保存任务 %s（状态 %s，version %s）",
+            task.task_id, task.status, task.version,
+        )
         return task
+
+    # ------------------------------------------------------------
+    # save() 的两条具体路径
+    # ------------------------------------------------------------
+    def _insert_task(self, conn, task: Task, version: int) -> None:
+        """插入一个全新的任务。"""
+        conn.execute(
+            f"""
+            INSERT INTO {TABLE_TASKS} (
+                task_id, current_trace_id, creator, contractor,
+                participants, status, description, workspace_id,
+                budget_amount, budget_currency,
+                agreed_price_amount, agreed_price_currency,
+                acceptance, required_capabilities, expires_at,
+                created_at, updated_at, note, version
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (*self._task_columns(task), version),
+        )
+
+    def _update_task(
+        self, conn, task: Task, version: int, check_version: bool = True
+    ) -> None:
+        """
+        更新一个已存在的任务，条件里带上 version（compare-and-set）。
+
+        【WHERE version = ? 是这里最关键的一行】
+            它让「读到的版本」和「写回时的版本」必须一致。
+            影响行数为 0 时说明有人在这中间改过了。
+
+        【check_version=False 是什么】
+            给 save(force=True) 用的 —— 跳过版本条件，
+            但仍然按照「数据库里的当前版本 + 1」来推进版本号，
+            所以覆盖之后版本号不会倒退。
+        """
+        where = "WHERE task_id = ? AND version = ?" if check_version else "WHERE task_id = ?"
+        params_tail = (
+            (task.task_id, task.version) if check_version else (task.task_id,)
+        )
+
+        cursor = conn.execute(
+            f"""
+            UPDATE {TABLE_TASKS} SET
+                current_trace_id      = ?,
+                contractor            = ?,
+                participants          = ?,
+                status                = ?,
+                description           = ?,
+                workspace_id          = ?,
+                budget_amount         = ?,
+                budget_currency       = ?,
+                agreed_price_amount   = ?,
+                agreed_price_currency = ?,
+                acceptance            = ?,
+                required_capabilities = ?,
+                expires_at            = ?,
+                updated_at            = ?,
+                note                  = ?,
+                version               = ?
+            {where}
+            """,
+            (
+                task.current_trace_id,
+                task.contractor,
+                json.dumps(task.participants, ensure_ascii=False),
+                task.status,
+                task.description,
+                task.workspace_id,
+                task.budget.amount if task.budget else None,
+                task.budget.currency if task.budget else None,
+                task.agreed_price.amount if task.agreed_price else None,
+                task.agreed_price.currency if task.agreed_price else None,
+                (
+                    json.dumps(task.acceptance, ensure_ascii=False)
+                    if task.acceptance else None
+                ),
+                json.dumps(task.required_capabilities.to_list(), ensure_ascii=False),
+                task.expires_at,
+                task.updated_at,
+                task.note,
+                version,
+                *params_tail,
+            ),
+        )
+
+        if cursor.rowcount == 0:
+            # 理论上到这里 current 已经校验过了，不该发生。
+            # 但两个进程真的同时 UPDATE 时，第二个会在这里拿到 0 行 ——
+            # 所以这里再兜一次，绝不静默放过。
+            raise ConcurrentTaskModification(
+                task_id=task.task_id,
+                expected_version=task.version,
+            )
+
+    @staticmethod
+    def _task_columns(task: Task) -> tuple:
+        """INSERT 用的列值（顺序和 _insert_task 的 SQL 一致）。"""
+        return (
+            task.task_id,
+            task.current_trace_id,
+            task.creator,
+            task.contractor,
+            json.dumps(task.participants, ensure_ascii=False),
+            task.status,
+            task.description,
+            task.workspace_id,
+            task.budget.amount if task.budget else None,
+            task.budget.currency if task.budget else None,
+            task.agreed_price.amount if task.agreed_price else None,
+            task.agreed_price.currency if task.agreed_price else None,
+            (
+                json.dumps(task.acceptance, ensure_ascii=False)
+                if task.acceptance else None
+            ),
+            json.dumps(task.required_capabilities.to_list(), ensure_ascii=False),
+            task.expires_at,
+            task.created_at,
+            task.updated_at,
+            task.note,
+        )
 
     def _upsert_offer(self, conn, task_id: str, offer: Offer) -> None:
         conn.execute(
@@ -455,6 +670,19 @@ class TaskStore:
             updated_at=row["updated_at"],
             offers=self.offers_for(row["task_id"]),
             note=row["note"],
+            # 【必须把 version 读出来 —— 否则乐观锁形同虚设】
+            #
+            #     乐观锁的前提是「读到的版本」和「写回时的版本」一致。
+            #     如果读的时候不带 version（永远是 0），
+            #     那么任何一次 get() → 改 → save() 都会被判成冲突 ——
+            #     包括完全没有并发的情况。
+            #
+            #     （这个坑实现时就撞上了：save() 的 compare-and-set 写完之后，
+            #       所有「读-改-写」都开始报冲突。原因就是这里没读 version。）
+            #
+            # 用 keys() 判断是为了兼容列还没补齐的极端情况 ——
+            # migrate() 会给老库加上这一列，默认 0。
+            version=row["version"] if "version" in row.keys() else 0,
         )
 
     @staticmethod

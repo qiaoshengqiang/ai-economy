@@ -31,6 +31,7 @@
 #   ./dev.sh capability-demo             Step 4B 能力发现与自主委派演示
 #   ./dev.sh negotiation-demo            Step 4C 自主议价演示
 #   ./dev.sh task-4d-demo                Step 4D 执行 / 提交 / 验收演示
+#   ./dev.sh reliability-demo            Step 4D.1 可靠性 / 并发加固演示
 #   ./dev.sh communication-log --traces  列出最近的通信链路
 #   ./dev.sh balances                    查看余额
 #   ./dev.sh transfer agent_a agent_b 20 让 A 付 20 AI 给 B
@@ -181,6 +182,7 @@ case "$COMMAND" in
         echo "    ./dev.sh capability-demo                   能力发现与自主委派演示"
         echo "    ./dev.sh negotiation-demo                  自主议价演示（Step 4C）"
         echo "    ./dev.sh task-4d-demo                      执行/提交/验收演示（Step 4D）"
+        echo "    ./dev.sh reliability-demo                  可靠性/并发加固演示（Step 4D.1）"
         echo
         echo "LLM（透传给 main.py）："
         echo "    ./dev.sh demo [--prompt 文字] [--agent a]  Step 2 链路演示"

@@ -70,6 +70,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 from core.identity import new_message_id, utc_now_iso
 from core.logging_setup import get_logger
 from communication.address import Address
+from communication.dedup import ClaimStatus, MessageClaim
 from communication.message import Message
 from storage.database import Database
 from storage.models import TABLE_COMM_EVENTS, TABLE_COMM_MESSAGES
@@ -699,6 +700,337 @@ class CommunicationRecorder:
             (int(limit),),
         )
         return [dict(row) for row in rows]
+
+    # ============================================================
+    # 持久化的处理事实（Step 4D.1）
+    #
+    # 【为什么这组方法在这里，而不是在 Manager 里】
+    #     因为 CommunicationRecorder 是通信层**唯一的数据库边界**。
+    #     Manager 负责「消息怎么走」，不该知道有 SQLite。
+    #     这和 Task 那边「TaskStore 是唯一边界」是同一个原则。
+    # ============================================================
+    def claim_message(
+        self, message: Message, owner: str
+    ) -> MessageClaim:
+        """
+        **原子地**认领一条消息。这是持久化去重的核心。
+
+        ============================================================
+        【为什么必须是原子的】
+        ============================================================
+
+            错的写法（经典的 TOCTOU race）：
+
+                if not was_processed(msg_id):     # A、B 都看到 False
+                    mark_processing(msg_id)       # A、B 都去处理
+                    handle(message)               # → 两次副作用
+
+            两个 worker 中间的那段时间就是竞态窗口。
+
+            正确写法是让**数据库**来裁决：
+
+                UPDATE communication_messages
+                   SET claim_id = ?, claimed_at = ?
+                 WHERE message_id = ?
+                   AND processed_once = 0
+                   AND claim_id IS NULL
+
+            然后看影响行数：
+
+                1 → 我抢到了（这个 UPDATE 本身是原子的）
+                0 → 没抢到，再查一次看是被处理过了还是别人正在处理
+
+        ============================================================
+        【为什么先补一行再认领】
+        ============================================================
+
+            claim 的前提是 communication_messages 里已经有这一行。
+            正常情况下 Manager 在这之前会先记一条 RECEIVED 日志，
+            所以行已经存在。
+
+            但这条方法不该依赖「调用方记得先记日志」——
+            所以它自己先做一次 INSERT OR IGNORE 兜底，
+            让认领在任何调用顺序下都成立。
+
+        ============================================================
+        【为什么认领时不写 processed_once】
+        ============================================================
+
+            因为「认领」不等于「处理成功」。
+            处理可能失败。只有真的成功之后才该写 processed_once。
+            否则一次失败就会把这条消息永久标记成「已完成」，
+            重试的机会就被抹掉了。
+        """
+        owner = str(owner)
+        now = utc_now_iso()
+
+        with self.db.transaction() as conn:
+            # --- 1) 兜底：确保这一行存在 ---
+            conn.execute(
+                f"""
+                INSERT INTO {TABLE_COMM_MESSAGES} (
+                    message_id, trace_id, conversation_id,
+                    from_agent, to_agent, message_type,
+                    created_at, status, payload_size, retry_count,
+                    processed_once, failure_count, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0, ?)
+                ON CONFLICT(message_id) DO NOTHING
+                """,
+                (
+                    message.message_id,
+                    message.trace_id,
+                    message.conversation_id,
+                    message.from_agent,
+                    message.to_agent,
+                    message.message_type,
+                    now,
+                    "CREATED",
+                    now,
+                ),
+            )
+
+            # --- 2) 已经成功处理过了吗？---
+            row = conn.execute(
+                f"""
+                SELECT processed_once, claim_id, claimed_at, failure_count
+                  FROM {TABLE_COMM_MESSAGES}
+                 WHERE message_id = ?
+                """,
+                (message.message_id,),
+            ).fetchone()
+
+            if row is not None and int(row["processed_once"] or 0) == 1:
+                return MessageClaim(
+                    status=ClaimStatus.DUPLICATE,
+                    message_id=message.message_id,
+                    owner=row["claim_id"],
+                    claimed_at=row["claimed_at"],
+                    failure_count=int(row["failure_count"] or 0),
+                    detail="这条消息以前已经成功处理过（持久化事实）",
+                )
+
+            # --- 3) 原子认领 ---
+            #
+            # 【关键】条件里同时排除 processed_once=1 和 claim_id IS NOT NULL。
+            #     前者防「处理完的重发」，后者防「两个 worker 同时处理」。
+            cursor = conn.execute(
+                f"""
+                UPDATE {TABLE_COMM_MESSAGES}
+                   SET claim_id = ?, claimed_at = ?, updated_at = ?
+                 WHERE message_id = ?
+                   AND processed_once = 0
+                   AND claim_id IS NULL
+                """,
+                (owner, now, now, message.message_id),
+            )
+
+            if cursor.rowcount == 1:
+                return MessageClaim(
+                    status=ClaimStatus.CLAIMED,
+                    message_id=message.message_id,
+                    owner=owner,
+                    claimed_at=now,
+                    detail="认领成功，可以处理",
+                )
+
+            # --- 4) 没抢到：分清是「处理过了」还是「别人正在处理」---
+            row = conn.execute(
+                f"""
+                SELECT processed_once, claim_id, claimed_at, failure_count
+                  FROM {TABLE_COMM_MESSAGES}
+                 WHERE message_id = ?
+                """,
+                (message.message_id,),
+            ).fetchone()
+
+            if row is not None and int(row["processed_once"] or 0) == 1:
+                return MessageClaim(
+                    status=ClaimStatus.DUPLICATE,
+                    message_id=message.message_id,
+                    owner=row["claim_id"],
+                    claimed_at=row["claimed_at"],
+                    failure_count=int(row["failure_count"] or 0),
+                    detail="这条消息以前已经成功处理过（持久化事实）",
+                )
+
+            return MessageClaim(
+                status=ClaimStatus.BUSY,
+                message_id=message.message_id,
+                owner=row["claim_id"] if row is not None else None,
+                claimed_at=row["claimed_at"] if row is not None else None,
+                failure_count=(
+                    int(row["failure_count"] or 0) if row is not None else 0
+                ),
+                detail="有别人正在处理这条消息（认领还没释放）",
+            )
+
+    def mark_processed(self, message: Message, owner: str) -> bool:
+        """
+        把「成功处理过」变成**持久化事实**。
+
+        【为什么用 MAX 语义（只增不减）】
+
+            processed_once 一旦变成 1，就**永远不该回到 0**。
+
+            为什么？因为后来还会有别的日志事件打到这一行上：
+
+                处理成功       → status = PROCESSED, processed_once = 1
+                又来一条重发   → status = DUPLICATE   ← status 被覆盖了
+
+            如果 processed_once 也跟着被重写，那「处理过」这个事实
+            就会被下一条重发抹掉 —— 去重就失效了。
+
+            所以这里的 UPDATE 里它总是 1，而**别的地方**
+            （recorder 的 UPSERT）用 MAX 保持它单调。
+
+        返回是否真的从 0 翻到了 1（第一次成功）。
+        """
+        owner = str(owner)
+        now = utc_now_iso()
+
+        with self.db.transaction() as conn:
+            cursor = conn.execute(
+                f"""
+                UPDATE {TABLE_COMM_MESSAGES}
+                   SET processed_once = 1,
+                       processed_at  = COALESCE(processed_at, ?),
+                       updated_at    = ?
+                 WHERE message_id = ?
+                   AND processed_once = 0
+                """,
+                (now, now, message.message_id),
+            )
+            first_time = cursor.rowcount == 1
+
+            # 释放认领：处理完了，别人不该再认为「有人在处理」
+            conn.execute(
+                f"""
+                UPDATE {TABLE_COMM_MESSAGES}
+                   SET claim_id = NULL, claimed_at = NULL
+                 WHERE message_id = ? AND claim_id = ?
+                """,
+                (message.message_id, owner),
+            )
+
+        return first_time
+
+    def mark_failed(
+        self,
+        message: Message,
+        owner: str,
+        error_code: Optional[str] = None,
+        error_message: Optional[str] = None,
+    ) -> None:
+        """
+        记录「处理失败了」——**但绝不把它标成已完成**。
+
+        ============================================================
+        【为什么失败不能写 processed_once = 1】
+        ============================================================
+
+            失败可能是**临时**的（数据库忙、系统异常、网络抖动）。
+            一旦把失败也标成「已处理」，这条消息就永远失去了
+            被正确处理的机会 —— 而且没人会发现。
+
+            所以这里只做两件事：
+
+                1. failure_count + 1      （失败是事实，要留痕）
+                2. error_code / error_message（失败原因要留痕）
+
+            而 processed_once **保持 0**。
+
+        ============================================================
+        【为什么要释放认领】
+        ============================================================
+
+            处理失败了，就不该继续占着认领不放。
+            否则这条消息会永远显示「有别人正在处理」，
+            既处理不了，也看不出问题在哪。
+
+            释放之后：如果将来有了重试机制，它可以重新认领；
+            现在没有重试机制，它就停在「失败过一次」这个状态 ——
+            这是一个**如实**的状态，不是一个骗人的状态。
+
+            （注意：本阶段**没有**实现重试。释放认领只是
+              「不撒谎」，不是「自动重来」。）
+        """
+        owner = str(owner)
+        now = utc_now_iso()
+        safe_error = _redact_string(str(error_message)) if error_message else None
+
+        with self.db.transaction() as conn:
+            conn.execute(
+                f"""
+                UPDATE {TABLE_COMM_MESSAGES}
+                   SET failure_count = failure_count + 1,
+                       error_code      = COALESCE(?, error_code),
+                       error_message   = COALESCE(?, error_message),
+                       claim_id        = NULL,
+                       claimed_at      = NULL,
+                       updated_at      = ?
+                 WHERE message_id = ?
+                """,
+                (error_code, safe_error, now, message.message_id),
+            )
+
+    def was_processed(self, message_id: str) -> bool:
+        """
+        这条消息成功处理过吗？—— **持久化事实**。
+
+        这是 4D.1 要补的那个能力：
+        进程重启之后，这个问题仍然答得出来。
+        """
+        if not message_id:
+            return False
+
+        row = self.db.fetchone(
+            f"""
+            SELECT processed_once FROM {TABLE_COMM_MESSAGES}
+             WHERE message_id = ?
+            """,
+            (message_id,),
+        )
+        return bool(row and int(row["processed_once"] or 0) == 1)
+
+    def processing_state(self, message_id: str) -> Optional[Dict[str, Any]]:
+        """
+        这条消息的处理状态（只读，供调试和演示用）。
+
+        返回 None 表示「从来没见过这条消息」。
+        """
+        row = self.db.fetchone(
+            f"""
+            SELECT status, processed_once, processed_at,
+                   claim_id, claimed_at, failure_count,
+                   error_code, error_message
+              FROM {TABLE_COMM_MESSAGES}
+             WHERE message_id = ?
+            """,
+            (message_id,),
+        )
+        if row is None:
+            return None
+
+        return {
+            "status": row["status"],
+            "processed": bool(int(row["processed_once"] or 0)),
+            "processed_at": row["processed_at"],
+            "claimed_by": row["claim_id"],
+            "claimed_at": row["claimed_at"],
+            "failure_count": int(row["failure_count"] or 0),
+            "error_code": row["error_code"],
+            "error_message": row["error_message"],
+        }
+
+    def count_processed(self) -> int:
+        """成功处理过的消息条数（持久化事实）。"""
+        row = self.db.fetchone(
+            f"""
+            SELECT COUNT(*) AS n FROM {TABLE_COMM_MESSAGES}
+             WHERE processed_once = 1
+            """
+        )
+        return int(row["n"]) if row else 0
 
     def count_messages(self) -> int:
         row = self.db.fetchone(f"SELECT COUNT(*) AS n FROM {TABLE_COMM_MESSAGES}")

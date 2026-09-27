@@ -2820,6 +2820,312 @@ def _print_step(sender, message_type, message, note, status):
           f"   reply_to = {message.reply_to or '-'}")
 
 
+# ============================================================
+# 命令：reliability-demo（Step 4D.1）
+# ============================================================
+def cmd_reliability_demo(runtime: Runtime, args: argparse.Namespace) -> int:
+    """
+    可靠性 / 并发加固演示（Step 4D.1）。
+
+    【它要证明的五件事】
+
+        ① 正常处理    消息被处理 → 「处理过」成为持久化事实
+        ② 重复消息    X / X / X → 业务副作用只有 1 次
+        ③ 重启模拟    全新 runtime 收到同一条 → 仍然识别为重复
+        ④ 并发冲突    version 相同的两个写入方 → 后者被拒绝，不静默覆盖
+        ⑤ 事务        状态 + 事件要么一起成功，要么一起失败
+
+    【它刻意不证明的事情】
+        ❌ 不做 retry —— 本阶段只把「处理事实」持久化
+        ❌ 不做多机 / P2P
+        ❌ 不碰 Workspace / Git / 钱
+    """
+    import tempfile
+    from pathlib import Path as _Path
+
+    from communication import CommunicationManager, LocalTransport, Message, MessageType
+    from communication.recorder import CommunicationRecorder
+    from core.money import Money
+    from core.task import Task, TaskStatus
+    from core.task_execution import TaskResultRef
+    from core.task_store import ConcurrentTaskModification, TaskStore
+    from services import TaskExecutionService
+    from storage.database import Database
+
+    print()
+    print("=" * 74)
+    print("        AI Economy OS v0.1")
+    print("        Step 4D.1 — Reliability / Concurrency Hardening")
+    print("=" * 74)
+    print()
+    print("  只解决两个问题：")
+    print("      消息：进程重启以后不要「失忆」")
+    print("      Task：并发写入以后不要「静默互相覆盖」")
+    print()
+
+    workdir = _Path(tempfile.mkdtemp(prefix="dsh-4d1-"))
+    db_path = workdir / "reliability.db"
+
+    def make_runtime(handled):
+        """模拟一次「进程启动」：全新 DB 句柄 / recorder / communication。"""
+        db = Database(str(db_path))
+        db.initialize()
+        recorder = CommunicationRecorder(db)
+        comm = CommunicationManager(LocalTransport(), recorder=recorder)
+
+        def handler(message):
+            handled.append(message.message_id)
+            return None
+
+        for message_type in (MessageType.START, MessageType.SUBMIT,
+                             MessageType.VERIFY, MessageType.COMPLETE):
+            comm.register_type_handler(message_type, handler)
+        comm.register("agent_b")
+        return db, comm, recorder
+
+    def send_and_receive(comm, message, run_async):
+        async def scenario():
+            await comm.send_message(message)
+            return await comm.receive("agent_b", timeout=1.0)
+        return run_async(scenario())
+
+    def sub(message_id):
+        return Message(
+            from_agent="agent_a", to_agent="agent_b",
+            message_type=MessageType.SUBMIT,
+            payload={"task_id": "T-4D1", "result": {"result_ref": "v1"}},
+            message_id=message_id,
+        )
+
+    # ============================================================
+    # 第一部分：正常处理
+    # ============================================================
+    print("=" * 74)
+    print("第一部分：正常处理 —— 「处理过」变成持久化事实")
+    print("=" * 74)
+    print()
+
+    handled: list = []
+    db_a, comm_a, rec_a = make_runtime(handled)
+    _ = (runtime, args)  # 演示自带独立数据库，不用运行时那个
+
+    result = send_and_receive(comm_a, sub("msg_demo_1"), _run_async)
+    print(f"  收到 msg_demo_1          → {result.status}")
+    print(f"  业务处理次数             → {len(handled)}")
+    state = rec_a.processing_state("msg_demo_1")
+    print(f"  processed（持久化事实）  → {state['processed']}")
+    print(f"  status（最新状态）       → {state['status']}")
+    print(f"  processed_at             → {state['processed_at']}")
+    print()
+    print("  【注意】status 是「最新状态」，会被后来的事件覆盖；")
+    print("         processed_once 是「只增不减的成功事实」，去重依据是它。")
+    print()
+
+    # ============================================================
+    # 第二部分：重复消息
+    # ============================================================
+    print("=" * 74)
+    print("第二部分：重复消息 —— X / X / X，业务副作用只有 1 次")
+    print("=" * 74)
+    print()
+
+    before = len(handled)
+    print(f"  当前业务处理总次数: {before}")
+    print()
+
+    for index in range(1, 4):
+        r = send_and_receive(comm_a, sub("msg_demo_1"), _run_async)
+        print(f"  第 {index + 1} 次投递 msg_demo_1 → {r.status}")
+
+    print()
+    print(f"  业务处理总次数: {len(handled)}   （必须还是 {before}）")
+    print(f"  duplicate 计数: {comm_a.duplicate_count}")
+    print("  ✅ 重复消息没有产生第二次副作用" if len(handled) == before
+          else "  ❌ 重复处理了！")
+    print()
+
+    # ============================================================
+    # 第三部分：重启模拟
+    # ============================================================
+    print("=" * 74)
+    print("第三部分：重启模拟 —— 全新 runtime，内存全空")
+    print("=" * 74)
+    print()
+
+    db_a.close()
+    print("  实例 A 已关闭（相当于进程退出）")
+    print()
+
+    handled_b: list = []
+    db_b, comm_b, rec_b = make_runtime(handled_b)
+    tracker = comm_b.seen_tracker("agent_b")
+    print(f"  实例 B 启动：")
+    print(f"      内存 tracker 大小      → {tracker.size if tracker else 0}")
+    print(f"      但知道 msg_demo_1 吗   → {comm_b.was_processed('msg_demo_1')}")
+    print()
+
+    r = send_and_receive(comm_b, sub("msg_demo_1"), _run_async)
+    print(f"  实例 B 收到同一条消息      → {r.status}")
+    print(f"  实例 B 的业务处理次数      → {len(handled_b)}")
+    print()
+    print("  ✅ 去重事实来自数据库，不是内存" if len(handled_b) == 0
+          else "  ❌ 重启后失忆了")
+    print()
+
+    # ============================================================
+    # 第四部分：并发冲突
+    # ============================================================
+    print("=" * 74)
+    print("第四部分：并发冲突 —— stale write 必须被拒绝")
+    print("=" * 74)
+    print()
+
+    store = TaskStore(db_b)
+    task = Task.create(
+        task_id="T-CONFLICT", creator="agent_a", description="并发演示",
+        budget=Money(100), participants=["agent_a", "agent_b"],
+    )
+    task.offer()
+    store.save(task)
+    print(f"  任务初始状态: version={task.version} status={task.status}")
+    print()
+
+    writer_a = store.get("T-CONFLICT")
+    writer_b = store.get("T-CONFLICT")
+    print(f"  两个写入方同时读到: A.version={writer_a.version} "
+          f"B.version={writer_b.version}")
+    print()
+
+    writer_a.accept(Money(25), contractor="agent_b")
+    store.save(writer_a)
+    print(f"  Writer A 保存 → ✅ 成功，version={writer_a.version} "
+          f"status={writer_a.status}")
+
+    writer_b.note = "B 的修改"
+    try:
+        store.save(writer_b)
+        print("  Writer B 保存 → ❌ 也成功了（静默覆盖！）")
+    except ConcurrentTaskModification as exc:
+        print(f"  Writer B 保存 → 🚫 被拒绝")
+        print(f"      expected_version = {exc.expected_version}")
+        print(f"      actual_version   = {exc.actual_version}")
+        print(f"      原因: 这份 Task 已经过期")
+    print()
+
+    final = store.get("T-CONFLICT")
+    print(f"  数据库最终: version={final.version} status={final.status} "
+          f"note={final.note!r}")
+    print("  ✅ A 的修改完好，B 没有静默覆盖" if final.note is None
+          else "  ❌ 被覆盖了")
+    print()
+    print("  冲突之后**不会**自动重试、也不会自动重放 ——")
+    print("  状态变化有语义，自动重放可能产生重复状态变化。")
+    print()
+
+    # ============================================================
+    # 第五部分：事务
+    # ============================================================
+    print("=" * 74)
+    print("第五部分：事务 —— 状态 + 事件要么一起成功，要么一起失败")
+    print("=" * 74)
+    print()
+
+    execution = TaskExecutionService(store)
+
+    exec_task = Task.create(
+        task_id="T-TX", creator="agent_a", description="事务演示",
+        budget=Money(100), participants=["agent_a", "agent_b"],
+    )
+    exec_task.offer()
+    exec_task.accept(Money(25), contractor="agent_b")
+    exec_task.start()
+    store.save(exec_task)
+
+    incoming = Message(from_agent="agent_b", to_agent="agent_a",
+                       message_type=MessageType.SUBMIT,
+                       payload={"task_id": "T-TX"})
+
+    print("  ⑤-1 成功路径")
+    execution.apply_submit(store.get("T-TX"), TaskResultRef(result_ref="v1"),
+                           incoming=incoming)
+    print(f"       状态 → {store.get('T-TX').status}")
+    print(f"       执行事件数 → {store.count_executions('T-TX')}")
+    print(f"       ✅ 两者都成功")
+    print()
+
+    print("  ⑤-2 失败路径（强制让事件写入抛异常）")
+    exec_task2 = Task.create(
+        task_id="T-TX2", creator="agent_a", description="事务演示 2",
+        budget=Money(100), participants=["agent_a", "agent_b"],
+    )
+    exec_task2.offer()
+    exec_task2.accept(Money(25), contractor="agent_b")
+    exec_task2.start()
+    store.save(exec_task2)
+
+    original_record = store.record_execution
+
+    def boom(record):
+        raise RuntimeError("模拟：写执行事件时磁盘满了")
+
+    store.record_execution = boom
+    incoming2 = Message(from_agent="agent_b", to_agent="agent_a",
+                        message_type=MessageType.SUBMIT,
+                        payload={"task_id": "T-TX2"})
+    try:
+        execution.apply_submit(store.get("T-TX2"), TaskResultRef(result_ref="v1"),
+                               incoming=incoming2)
+    except RuntimeError as exc:
+        print(f"       捕获异常: {exc}")
+    finally:
+        store.record_execution = original_record
+
+    print(f"       状态 → {store.get('T-TX2').status}   （必须还是 IN_PROGRESS）")
+    print(f"       执行事件数 → {store.count_executions('T-TX2')}   （必须是 0）")
+    rollback_ok = (store.get("T-TX2").status == TaskStatus.IN_PROGRESS
+                   and store.count_executions("T-TX2") == 0)
+    print("       ✅ 状态和事件都回滚了，没有半成功状态"
+          if rollback_ok else "       ❌ 出现半成功状态！")
+    print()
+
+    # ============================================================
+    # 边界证明
+    # ============================================================
+    print("=" * 74)
+    print("边界证明")
+    print("=" * 74)
+    print()
+
+    ledger_before = runtime.economy.ledger.count()
+    a_balance = runtime.economy.agent("agent_a").balance
+    b_balance = runtime.economy.agent("agent_b").balance
+
+    print(f"  Wallet A   : {a_balance}   ✅ 未被 4D.1 触碰")
+    print(f"  Wallet B   : {b_balance}   ✅ 未被 4D.1 触碰")
+    print(f"  Ledger     : {ledger_before} 条   ✅ 未变")
+    print(f"  Workspace  : 未创建、未授权   ✅")
+    print(f"  Git        : 未触碰           ✅")
+    print(f"  代码执行   : 未执行           ✅（没有 subprocess）")
+    print(f"  Retry      : 未实现           ✅（只持久化事实）")
+    print()
+    print("  · 消息去重的事实现在是**持久化**的 —— 重启后仍然有效")
+    print("  · Task 的并发写入会被**拒绝**，不会静默覆盖")
+    print("  · 状态变化和执行事件在**同一个事务**里")
+    print()
+
+    db_b.close()
+    print(f"  演示数据库: {db_path}")
+    print()
+
+    return 0
+
+
+def _run_async(coro):
+    """在同步的 CLI 命令里跑一小段 async 流程。"""
+    import asyncio
+    return asyncio.run(coro)
+
+
 def build_parser() -> argparse.ArgumentParser:
     """
     构建命令行解析器。
@@ -3098,6 +3404,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="执行 / 提交 / 验收 / 完结演示（不调 LLM、不转账、不执行代码）",
     )
     d4_demo.set_defaults(func=cmd_task_4d_demo)
+
+    # --- reliability-demo（Step 4D.1）---
+    rel_demo = subparsers.add_parser(
+        "reliability-demo",
+        parents=[shared],
+        help="可靠性 / 并发加固演示（持久化去重 + 乐观锁 + 事务）",
+    )
+    rel_demo.set_defaults(func=cmd_reliability_demo)
 
     return parser
 

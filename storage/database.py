@@ -43,6 +43,8 @@ class Database:
     def __init__(self, path: Union[str, Path] = ":memory:"):
         self.path = str(path)
         self._conn: Optional[sqlite3.Connection] = None
+        # 事务嵌套深度（见 transaction() 的说明）
+        self._tx_depth = 0
 
     # ------------------------------------------------------------
     # 连接管理
@@ -208,7 +210,7 @@ class Database:
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
         """
-        事务上下文。
+        事务上下文。**可重入**（嵌套时自动加入外层事务）。
 
         为什么这个很重要？
             转账必须「扣款 + 入账」同时成功或同时失败。
@@ -220,15 +222,90 @@ class Database:
                 conn.execute(...)
                 conn.execute(...)
             # 到这里自动 COMMIT；中途抛异常则自动 ROLLBACK
+
+        ============================================================
+        【为什么必须可重入 —— Step 4D.1 补上的一个真实缺口】
+        ============================================================
+
+            SQLite 不允许嵌套 BEGIN：
+
+                with db.transaction():
+                    with db.transaction():     # ❌ OperationalError:
+                        ...                    #    cannot start a transaction
+                                           #    within a transaction
+
+            而这个项目的每一层都在自己开事务：
+
+                TaskStore.save()              with db.transaction()
+                TaskStore.record_execution()  with db.transaction()
+
+            于是「把两件事放进同一个事务」在 4D 是**做不到的** ——
+            不是因为没人想写，而是因为写了会直接报错。
+
+            结果是 TaskExecutionService 只能这样：
+
+                record_execution(...)   # 事务 1：写事件
+                save(task)              # 事务 2：改状态
+
+            两个事务之间崩溃 → 半成功状态：
+                ✅ 事件写了，❌ 状态没改
+            或者反过来。
+
+            【现在的行为】
+
+                深度 0 → BEGIN，并在退出时 COMMIT / ROLLBACK
+                深度 >0 → 直接复用外层连接，不 BEGIN、不 COMMIT
+
+                内层抛异常 → 异常继续向上传播 →
+                最外层看到异常 → ROLLBACK 整个事务
+
+            所以「要么都成功，要么都不发生」对嵌套块同样成立。
+
+        【为什么用简单嵌套而不是 SAVEPOINT】
+
+            SAVEPOINT 能让内层独立回滚而外层继续提交。
+            但本项目的语义是「这两件事必须一起成功」——
+            内层失败时外层**不该**继续提交。
+
+            所以简单嵌套（内层失败 → 整个事务失败）正是想要的语义，
+            而且更简单。需要独立回滚语义时再加 SAVEPOINT 不迟。
         """
         conn = self.connect()
-        try:
+        depth = self._tx_depth
+
+        if depth == 0:
             conn.execute("BEGIN")
+
+        self._tx_depth = depth + 1
+        try:
             yield conn
-            conn.commit()
         except Exception:
-            conn.rollback()
+            self._tx_depth = depth
+            if depth == 0:
+                # 最外层：整个事务回滚
+                conn.rollback()
+            # 内层失败时不在这里回滚 —— 异常继续向上传播，
+            # 由最外层统一回滚。这样不会出现「内层回滚了、
+            # 外层以为还活着、继续写」的错乱状态。
             raise
+        else:
+            self._tx_depth = depth
+            if depth == 0:
+                conn.commit()
+
+    @property
+    def transaction_depth(self) -> int:
+        """
+        当前事务嵌套深度（0 表示不在事务里）。
+
+        主要用于测试和守卫 —— 让「这两件事在同一个事务里」
+        可以被**断言**，而不是只能靠读代码相信。
+        """
+        return self._tx_depth
+
+    def in_transaction(self) -> bool:
+        """当前是否处于事务中。"""
+        return self._tx_depth > 0
 
     # ------------------------------------------------------------
     # 便捷查询

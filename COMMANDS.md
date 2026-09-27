@@ -748,7 +748,7 @@ extra_body:
 ## 4. 跑测试
 
 ```bash
-# 全部测试（1915 个，不含真实 API 测试）
+# 全部测试（2140 个，不含真实 API 测试）
 ./dev.sh test
 
 # 详细输出，显示每个测试的名字
@@ -809,7 +809,7 @@ extra_body:
 | `tests/test_brain.py` | Brain、Agent 接入、调用记录 | 34 |
 | `tests/test_capability.py` | 能力声明 / 归一化 / 集合匹配 / 无评分 | 77 |
 | `tests/test_capability_guards.py` | Capability 与 Directory 架构守卫 | 56 |
-| `tests/test_cli.py` | 命令行命令（通信日志 / task / capability / negotiation / 4D） | 112 |
+| `tests/test_cli.py` | 命令行命令（通信 / task / capability / 4D / 可靠性） | 122 |
 | `tests/test_communication.py` | 完整链路 / 去重 / 可替换传输 / 真 Agent | 44 |
 | `tests/test_communication_guards.py` | 通信层架构守卫（含日志边界） | 27 |
 | `tests/test_communication_recorder.py` | 通信日志 / 脱敏 / 去重 / 查询 | 86 |
@@ -823,23 +823,27 @@ extra_body:
 | `tests/test_llm_provider.py` | LLM 契约 / MockProvider / 注册表 / Router / 架构守卫 | 72 |
 | `tests/test_local_transport.py` | Transport 抽象 / 收发 / 失败路径 | 33 |
 | `tests/test_message.py` | Message 创建 / 校验 / 序列化 / 前向兼容 | 51 |
+| `tests/test_message_persistence.py` | 4D.1 消息持久化去重 / 重复 / 重启 / 失败语义 | 38 |
 | `tests/test_money.py` | 金额值类型 / 跨货币安全 / 与配置一致 | 40 |
 | `tests/test_negotiation.py` | ACCEPT / COUNTER / REJECT / 角色轮次 / 成交凭证 / 隔离 | 48 |
 | `tests/test_negotiation_guards.py` | 议价层架构守卫（覆盖整个 services 包） | 59 |
 | `tests/test_protocol_payloads.py` | 结构化 payload / ACCEPT 成交价 / task_id≠trace_id / 报价链 | 109 |
 | `tests/test_provider_contract.py` | 两家共用的契约（同一批断言参数化跑两遍） | 80 |
 | `tests/test_registry.py` | 注册表纯数据 / 本地远端 / 状态分离 | 34 |
+| `tests/test_reliability_guards.py` | 4D.1 架构守卫（10 项）+ 迁移顺序 | 131 |
 | `tests/test_service_layer_guards.py` | 应用层重构守卫：薄门面 / 无 God Module / 扩展点 / API 兼容 | 77 |
 | `tests/test_startup.py` | 启动流程、重启不重复发钱 | 6 |
 | `tests/test_task.py` | Task 身份 / 状态机 / budget≠price / 报价链 / 能力要求 / 边界 | 132 |
+| `tests/test_task_concurrency.py` | 4D.1 乐观锁 / compare-and-set / 冲突拒绝 / 不自动重试 | 27 |
 | `tests/test_task_execution.py` | 4D 业务规则：角色 / 状态 / 返工 / 幂等 / 结果引用 | 52 |
 | `tests/test_task_guards.py` | Task Core 架构守卫（八种消息已接入） | 44 |
 | `tests/test_task_service.py` | TASK_OFFER handler / 校验 / 链路关联 / 隔离性 | 57 |
 | `tests/test_task_store.py` | Task 持久化 / 往返无损 / 报价历史 / 成交凭证 / 执行事件 | 47 |
 | `tests/test_task_workspace.py` | Task Workspace：无 I/O、无权限、与私有空间分离 | 55 |
+| `tests/test_transaction_atomicity.py` | 4D.1 可重入事务 / 状态+事件原子性 / 双向回滚 | 19 |
 | `tests/test_transfer.py` | 转账入口与各种拒绝情况 | 27 |
 | `tests/test_wallet.py` | 钱包、余额、扣款 | 15 |
-| | **合计** | **1915** |
+| | **合计** | **2140** |
 
 另有 `tests/test_real_api.py`（30 项）需要真实 API Key，
 默认不跑，见下面的「真实 API 测试」。
@@ -1144,6 +1148,7 @@ economy:
 | `capability-demo` | **Step 4B** 能力发现与自主委派演示 |
 | `negotiation-demo` | **Step 4C** 自主议价演示 |
 | `task-4d-demo` | **Step 4D** 执行 / 提交 / 验收演示 |
+| `reliability-demo` | **Step 4D.1** 可靠性 / 并发加固演示 |
 | `communication-log` | **Step 3.5** 查询通信日志 |
 | `transfer <付款方> <收款方> <金额>` | 转钱 |
 | `balances` | 看余额 |

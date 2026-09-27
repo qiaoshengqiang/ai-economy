@@ -150,7 +150,7 @@ LLM 只能**提出意图**，永远不能**直接改账**。
 - [x] SQLite 数据库（4 张表）
 - [x] 启动横幅
 - [x] **命令行经济操作**（转账 / 余额 / 流水 / 对账）
-- [x] 1915 个 pytest 测试全绿（另有 30 个真实 API 测试单独跑）
+- [x] 2140 个 pytest 测试全绿（另有 30 个真实 API 测试单独跑）
 
 **验收标准**（已达成）：
 
@@ -1465,6 +1465,139 @@ feedback 落进 `task_executions` 表，所以「上一轮为什么不通过」�
 
 **10 项新守卫全部做了反向测试**，全部抓到。
 
+### ✅ Step 4D.1：可靠性 / 并发加固（已完成）
+
+**不是新功能。** 只修两个「不报错但会悄悄变错」的问题，
+为进入 Workspace 之前把地基补上。
+
+#### 问题 A：消息去重是进程内的
+
+```
+进程运行 → 收到 X → 记住 X → 处理 X
+进程重启 → Tracker 丢失
+再次收到 X → **系统不知道处理过** → 再处理一遍
+```
+
+3.x 时重复处理一条报价只是「多记一条」。**4D 之后重复处理一条
+`SUBMIT` 就是多交付一次成果** —— 而 Workspace 阶段之后还会变成
+「多写一个文件」。所以必须修。
+
+**修法**：复用已有的 `communication_messages` 表，新增四个字段：
+
+| 字段 | 含义 |
+|---|---|
+| `processed_once` | **成功的持久化事实**。0 → 1 之后永不回退 |
+| `claim_id` / `claimed_at` | 原子认领（谁在处理） |
+| `failure_count` | 失败过几次（**不**表示永久作废） |
+
+> 🔒 **为什么不直接复用 `status` 列？**
+> `status` 是「最新状态」，会被后来的事件覆盖：
+>
+> ```
+> 处理成功      → status = PROCESSED
+> 又来一条重复  → status = DUPLICATE   ← PROCESSED 被抹掉了
+> ```
+>
+> 用它做去重依据，重复投递反而会把「处理过」这个事实擦掉。
+> 所以需要一个**只增不减**的字段。
+
+**原子认领**（避免 TOCTOU race）：
+
+```sql
+UPDATE communication_messages
+   SET claim_id = ?, claimed_at = ?
+ WHERE message_id = ?
+   AND processed_once = 0
+   AND claim_id IS NULL
+-- 影响行数 1 → 我抢到了；0 → 别人在处理，或已经处理过
+```
+
+**失败 ≠ 完成**：`mark_failed` 只累加 `failure_count`、记错误、
+释放认领 —— `processed_once` **保持 0**。否则一次临时失败
+就会让这条消息永远失去被正确处理的机会，而且没人发现。
+
+**内存 tracker 的定位变了**：从「正确性来源」降级为「快路径缓存」。
+清空它、换新实例、进程重启 —— 正确性都不受影响（有测试证明）。
+
+#### 问题 B：Task 保存是静默覆盖
+
+```
+A 读 task(v=5) → 改成 SUBMITTED
+B 读 task(v=5) → 改成 VERIFIED
+B 先写成功；A 后写 → 把 VERIFIED 覆盖回 SUBMITTED
+两边都以为自己成功了。**不报错**。
+```
+
+**修法**：`tasks` 加 `version`，`save()` 变成 compare-and-set：
+
+```sql
+UPDATE tasks SET ..., version = version + 1
+ WHERE task_id = ? AND version = ?
+```
+
+影响行数为 0 → 抛 `ConcurrentTaskModification`。
+
+**不自动重试、不自动重放。** 状态变化有语义，自动重放可能产生
+重复状态变化、重复消息，或者替 Agent 做了决定。
+本阶段的目标是**正确发现冲突**，不是自动解决所有冲突。
+
+**并发冲突不是 Task 状态** —— 不新增 `CONFLICT` / `PROCESSING` /
+`RETRY`。它是 persistence/application 层的问题。
+
+#### 问题 C：状态变化和事件记录不在一个事务里
+
+```python
+self.store.record_execution(record)   # 事务 1
+self.store.save(task)                 # 事务 2
+```
+
+两个事务之间崩溃 → 半成功（事件有、状态没有，或反过来）。
+
+**为什么 4D 没做**：做不到。`Database.transaction()` 不可重入：
+
+```
+with db.transaction():
+    with db.transaction():   # ❌ cannot start a transaction within a transaction
+```
+
+而 `TaskStore` 每个方法都自己开事务。
+
+**修法**：让 `transaction()` **可重入**（按深度判断 BEGIN/COMMIT），
+然后把「状态 + 事件」包进一个事务。
+
+| 结果 | 保证 |
+|---|---|
+| 成功 | ✅ 状态改了 **且** 事件写了 |
+| 失败 | ❌ 状态没改 **且** 事件没写 |
+
+#### 验收结果
+
+| 项 | 状态 |
+|---|---|
+| 处理事实跨进程重启保留 | ✅ 有测试（新 runtime / 新 tracker / 同一个库） |
+| 重复消息业务副作用只有一次 | ✅ X/X/X 三次投递只有一次副作用 |
+| 并发认领只有一个成功 | ✅ 原子条件 UPDATE |
+| 失败不被标成完成 | ✅ `processed_once` 保持 0 |
+| stale write 被拒绝、不静默覆盖 | ✅ 抛 `ConcurrentTaskModification` |
+| 不自动重试 / 不自动重放 | ✅ 有守卫 + 有测试 |
+| 状态 + 事件事务一致 | ✅ 双向失败路径都测了回滚 |
+| 协议仍是 v1 | ✅ 全部在存储/应用层解决 |
+| Wallet / Ledger 不变 | ✅ |
+| 迁移顺序（先列后索引） | ✅ 有专门的测试 |
+
+**测试：1915 → 2140（新增 225）**
+
+| 新增 | 数量 | 测什么 |
+|---|---|---|
+| `test_message_persistence.py` | 38 | 持久化去重 / 重复 / 重启 / 失败语义 / 降级模式 |
+| `test_task_concurrency.py` | 27 | 版本号 / compare-and-set / 冲突 / 不自动重试 |
+| `test_transaction_atomicity.py` | 19 | 可重入事务 / 成功路径 / 双向失败回滚 |
+| `test_reliability_guards.py` | 131 | 10 组守卫 + 迁移顺序 |
+| `test_cli.py` | +10 | `reliability-demo` |
+
+**10 组守卫全部做了反向测试。** 其中两条一开始太弱
+（匹配到了自己的方法名 / 文档里的 SQL 示例），加强后才真正抓到。
+
 ### ⏳ 后续阶段
 
 | 阶段 | 内容 | 状态 |
@@ -1742,7 +1875,7 @@ ai-economy/
 │   ├── database.py            ← SQLite 连接、事务、迁移
 │   └── models.py              ← 表结构定义
 │
-├── tests/                     ← 1915 个测试 + 30 个真实 API 测试
+├── tests/                     ← 2140 个测试 + 30 个真实 API 测试
 └── data/
     └── economy.db             ← SQLite 数据库（运行产物，不进 git）
 ```

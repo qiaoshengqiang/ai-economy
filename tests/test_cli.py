@@ -1353,3 +1353,86 @@ class TestTask4DDemo:
 
         assert result.returncode == EXIT_OK
         assert "TASK-4D-1" in result.stdout
+
+
+# ============================================================
+# Step 4D.1：reliability-demo
+# ============================================================
+class TestReliabilityDemo:
+    """
+    【这个演示用自己临时的数据库】
+        所以不需要 db_path 参数 —— 每次跑都是干净的环境。
+    """
+
+    @staticmethod
+    def _run():
+        return run_cli("reliability-demo")
+
+    def test_runs(self):
+        result = self._run()
+
+        assert result.returncode == EXIT_OK
+        assert "Step 4D.1" in result.stdout
+        assert "Reliability" in result.stdout
+
+    def test_shows_all_five_parts(self):
+        out = self._run().stdout
+
+        for marker in ("第一部分", "第二部分", "第三部分",
+                       "第四部分", "第五部分"):
+            assert marker in out, f"演示缺少 {marker}"
+
+    def test_part1_persistent_fact(self):
+        out = self._run().stdout
+
+        assert "processed（持久化事实）" in out
+        assert "processed_at" in out
+        assert "status（最新状态）" in out
+
+    def test_part2_duplicate_only_one_effect(self):
+        out = self._run().stdout
+
+        assert "duplicate" in out
+        assert "重复消息没有产生第二次副作用" in out
+
+    def test_part3_restart_with_empty_tracker(self):
+        out = self._run().stdout
+
+        assert "内存 tracker 大小" in out
+        assert "去重事实来自数据库，不是内存" in out
+
+    def test_part4_conflict_rejected(self):
+        out = self._run().stdout
+
+        assert "被拒绝" in out
+        assert "expected_version" in out
+        assert "actual_version" in out
+        assert "没有静默覆盖" in out
+
+    def test_part4_no_automatic_retry(self):
+        out = self._run().stdout
+
+        assert "不会自动重试" in out or "不会**自动重试" in out
+
+    def test_part5_transaction_rollback(self):
+        out = self._run().stdout
+
+        assert "都回滚了" in out
+        assert "没有半成功状态" in out
+
+    def test_boundary_proofs(self):
+        out = self._run().stdout
+
+        assert "Wallet A" in out
+        assert "Ledger" in out
+        assert "Workspace" in out
+        assert "Git" in out
+        assert "Retry" in out
+
+    def test_repeatable(self):
+        """演示用临时目录，跑多少次都该成功。"""
+        first = self._run()
+        second = self._run()
+
+        assert first.returncode == EXIT_OK
+        assert second.returncode == EXIT_OK

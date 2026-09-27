@@ -488,23 +488,53 @@ class TaskExecutionService(TaskApplicationService):
         """
         trace_changed = self.sync_trace(task, incoming)
 
-        # 状态转移 —— Task Core 会校验合法性，不合法直接抛
-        task = transition()
+        # ============================================================
+        # 【Step 4D.1：状态变化 + 事件记录必须在同一个事务里】
+        # ============================================================
+        #
+        # 4D 时这里是两个独立的事务：
+        #
+        #     self.store.record_execution(record)   # 事务 1
+        #     self.store.save(task)                 # 事务 2
+        #
+        # 两个事务之间崩溃 → 半成功状态：
+        #     ✅ 事件写了，❌ 状态没改
+        # 或者反过来。而这种不一致**不会报错**，只会让数据慢慢变质。
+        #
+        # 为什么 4D 没做？因为那时候做不到 ——
+        # Database.transaction() 不可重入，嵌套 BEGIN 会直接抛
+        # "cannot start a transaction within a transaction"。
+        # 4D.1 先把它变成可重入的，这里才可能包起来。
+        #
+        # 【现在的保证】
+        #     要么 (状态改了 + 事件写了)
+        #     要么 (状态没改 + 事件没写)
+        # 没有中间状态。
+        #
+        # 【状态转移放在事务里还是外】
+        #     transition() 改的是**内存里**的 Task，
+        #     它不碰数据库（Task Core 不依赖存储）。
+        #     所以放在事务外也不会造成半成功 ——
+        #     真正落库的只有下面两件事，那才是需要原子的部分。
+        #     但为了读起来清楚，整段一起包住。
+        with self.store.db.transaction():
+            # 状态转移 —— Task Core 会校验合法性，不合法直接抛
+            task = transition()
 
-        record = TaskExecutionRecord(
-            message_id=incoming.message_id,
-            task_id=task.task_id,
-            event_type=event_type,
-            result=result,
-            verification=verification,
-            reply_to=incoming.reply_to,
-            from_agent=incoming.from_agent,
-            trace_id=incoming.trace_id,
-            conversation_id=incoming.conversation_id,
-            status_after=task.status,
-        )
-        self.store.record_execution(record)
-        self.store.save(task)
+            record = TaskExecutionRecord(
+                message_id=incoming.message_id,
+                task_id=task.task_id,
+                event_type=event_type,
+                result=result,
+                verification=verification,
+                reply_to=incoming.reply_to,
+                from_agent=incoming.from_agent,
+                trace_id=incoming.trace_id,
+                conversation_id=incoming.conversation_id,
+                status_after=task.status,
+            )
+            self.store.record_execution(record)
+            self.store.save(task)
 
         logger.debug(
             "任务 %s：%s → %s（来自 %s）",

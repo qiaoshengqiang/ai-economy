@@ -65,7 +65,12 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple, Union
 from core.identity import utc_now_iso
 from core.logging_setup import get_logger
 from communication.address import Address
-from communication.dedup import DEFAULT_MEMORY_SIZE, SeenMessageTracker
+from communication.dedup import (
+    DEFAULT_MEMORY_SIZE,
+    ClaimStatus,
+    MessageClaim,
+    SeenMessageTracker,
+)
 from communication.errors import (
     AgentNotFoundError,
     DuplicateMessageError,
@@ -504,13 +509,24 @@ class CommunicationManager:
                 detail=f"消息的收件人是 {message.to_agent}，不是 {key}",
             )
 
-        # --- 去重 ---
-        tracker = self._seen.get(key)
-        if tracker is None:
-            tracker = SeenMessageTracker(self.seen_memory_size)
-            self._seen[key] = tracker
+        # --- 去重（Step 4D.1：以持久化事实为准）---
+        #
+        # 【这里原来是内存 tracker 说了算】
+        #     进程内 OrderedDict —— 重启就忘光了，
+        #     同一条消息会被再处理一遍。
+        #
+        # 【现在谁说了算】
+        #     有持久层（recorder）时 → **数据库**说了算：
+        #         communication_messages.processed_once
+        #         + claim_id 的原子认领
+        #     内存 tracker 退化成快路径缓存，丢了也不影响正确性。
+        #
+        #     没有持久层时（比如纯粹测通信的单元测试）
+        #     → 退回内存 tracker。这是一条**降级路径**，
+        #       适用边界见 _claim_message 的说明。
+        claim = self._claim_message(message, key)
 
-        if not tracker.check_and_add(message.message_id):
+        if not claim.claimed:
             self.duplicate_count += 1
 
             # 重复投递必须留痕。
@@ -521,10 +537,10 @@ class CommunicationManager:
                 message, MessageStatus.DUPLICATE,
                 actor=key,
                 transport=self.transport.scheme,
-                detail=f"重复投递（{message.message_id} 已处理过），已跳过",
+                detail=(claim.detail or f"重复投递（{message.message_id}），已跳过"),
             )
 
-            logger.debug("跳过重复消息 %s", message.message_id)
+            logger.debug("跳过消息 %s（%s）", message.message_id, claim.status)
 
             if strict_dedup:
                 raise DuplicateMessageError(
@@ -534,7 +550,7 @@ class CommunicationManager:
             return InboundResult(
                 status=ReceiveStatus.DUPLICATE,
                 message=message,
-                detail="这条消息以前处理过，已跳过",
+                detail=f"这条消息不需要再处理（{claim.status}）",
             )
 
         # --- 找处理函数 ---
@@ -567,6 +583,31 @@ class CommunicationManager:
             # 处理函数抛异常 = 这条消息处理失败。
             # 这类失败最容易被忽略（异常被上层吞掉就查不到了），
             # 所以必须在这里留一条 FAILED。
+            #
+            # 【Step 4D.1：失败也要落成持久化事实】
+            #     但**绝不**把失败标成「已处理」——
+            #     失败可能是临时的，标成完成会让这条消息
+            #     永远失去被正确处理的机会，而且没人发现。
+            #
+            #     mark_failed 只做三件事：
+            #         failure_count + 1
+            #         记下错误信息
+            #         释放认领（不占着不放）
+            #     processed_once 保持 0。
+            if self.recorder is not None:
+                try:
+                    self.recorder.mark_failed(
+                        message, key,
+                        error_code=type(exc).__name__,
+                        error_message=str(exc),
+                    )
+                except Exception:  # noqa: BLE001
+                    # 记录失败时又失败：不能让这个异常盖住原始异常 ——
+                    # 原始异常才是调用方需要看到的。
+                    logger.exception(
+                        "记录消息 %s 的失败状态时又出错了", message.message_id
+                    )
+
             self._journal(
                 message, MessageStatus.FAILED,
                 actor=key,
@@ -578,6 +619,31 @@ class CommunicationManager:
             raise
 
         self.delivered_count += 1
+
+        # --- 把「处理成功」变成持久化事实 ---
+        #
+        # 【为什么必须在记日志之前做】
+        #     mark_processed 是去重的事实来源。
+        #     如果先记日志、再标成功，中间崩溃就会出现
+        #     「日志说处理完了，但去重不知道」——
+        #     下次重发又会被处理一遍。
+        #
+        #     反过来（先标成功、再记日志）即使崩溃也安全：
+        #     最坏是少一条日志，但**不会重复处理**。
+        #     宁可日志缺一条，也不要副作用发生两次。
+        if self.recorder is not None:
+            first = self.recorder.mark_processed(message, key)
+            # 同步内存缓存：这里才是「可以放进快路径」的唯一时机 ——
+            # 因为此刻数据库已经确认成功了。
+            self._tracker_for(key).remember(message.message_id)
+            logger.debug(
+                "消息 %s 处理成功（%s）",
+                message.message_id,
+                "首次成功" if first else "之前已成功过",
+            )
+        else:
+            # 没有持久层：内存就是全部事实（降级路径）
+            self._tracker_for(key).remember(message.message_id)
 
         # --- 日志：处理完成 ---
         self._journal(
@@ -601,6 +667,102 @@ class CommunicationManager:
             reply=reply,
             detail=f"已交给 {key} 处理",
         )
+
+    # ------------------------------------------------------------
+    # 去重（Step 4D.1）
+    # ------------------------------------------------------------
+    def _tracker_for(self, agent_id: str) -> SeenMessageTracker:
+        """取（必要时创建）某个 Agent 的内存去重缓存。"""
+        tracker = self._seen.get(agent_id)
+        if tracker is None:
+            tracker = SeenMessageTracker(self.seen_memory_size)
+            self._seen[agent_id] = tracker
+        return tracker
+
+    def _claim_message(self, message: Message, owner: str) -> MessageClaim:
+        """
+        认领一条消息 —— 决定「这条消息该不该被处理」。
+
+        ============================================================
+        【两种模式，必须分清哪个是正确性来源】
+        ============================================================
+
+            ① 有持久层（recorder 存在）—— 正常模式
+
+                数据库说了算：
+                    communication_messages.processed_once  （成功事实）
+                    claim_id 的条件 UPDATE                （原子认领）
+
+                内存 tracker 只是**加速**：
+                    已经确认处理过的 message_id 记在内存里，
+                    下次直接跳过，不必查库。
+
+                所以清空 tracker、换新实例、进程重启 ——
+                正确性都不受影响。这正是 4D.1 要的效果。
+
+            ② 没有持久层（recorder is None）—— 降级模式
+
+                比如只测通信层、不接数据库的场景。
+                这时内存 tracker 是**唯一**的事实来源。
+
+                这是一条明确的降级路径，不是设计目标。
+                它的局限（重启失忆）就是 4D.1 要修的问题本身 ——
+                所以**生产路径必须注入 recorder**。
+
+        【为什么不能只用内存 tracker 做快路径判断】
+
+            内存说「见过」不等于「处理成功过」：
+            比如第一次处理失败了，内存记下了 id，但数据库里
+            processed_once 还是 0。此时直接跳过就错了。
+
+            所以快路径只在**数据库确认过成功**的消息上生效
+            （见 _claim_message 下面那行 tracker.remember 的位置 ——
+             它只在 mark_processed 之后才被调用）。
+        """
+        if self.recorder is None:
+            # ---- 降级模式：内存是唯一事实 ----
+            tracker = self._tracker_for(owner)
+            if tracker.check_and_add(message.message_id):
+                return MessageClaim(
+                    status=ClaimStatus.CLAIMED,
+                    message_id=message.message_id,
+                    owner=owner,
+                    detail="认领成功（内存模式，无持久层）",
+                )
+            return MessageClaim(
+                status=ClaimStatus.DUPLICATE,
+                message_id=message.message_id,
+                owner=owner,
+                detail="内存记录显示这条消息见过（降级模式）",
+            )
+
+        # ---- 正常模式：数据库裁决 ----
+        #
+        # 快路径：内存里已经确认过「处理成功」的直接跳过，
+        # 省掉一次数据库往返。
+        tracker = self._tracker_for(owner)
+        if tracker.seen(message.message_id):
+            return MessageClaim(
+                status=ClaimStatus.DUPLICATE,
+                message_id=message.message_id,
+                owner=owner,
+                detail="内存缓存命中（数据库已确认处理过）",
+            )
+
+        return self.recorder.claim_message(message, owner)
+
+    def was_processed(self, message_id: str) -> bool:
+        """
+        这条消息成功处理过吗 —— **跨进程重启仍然有效**。
+
+        没有持久层时退回内存判断（降级模式，重启后会失忆）。
+        """
+        if self.recorder is not None:
+            return self.recorder.was_processed(message_id)
+        for tracker in self._seen.values():
+            if tracker.seen(message_id):
+                return True
+        return False
 
     # ------------------------------------------------------------
     # 类型路由（扩展点）

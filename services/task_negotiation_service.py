@@ -711,20 +711,36 @@ class TaskNegotiationService(TaskApplicationService):
             note="成交",
         )
 
-        self.store.save(task)
+        # ============================================================
+        # 【Step 4D.1：任务状态 + 成交凭证也必须在同一个事务里】
+        # ============================================================
+        #
+        # 和 TaskExecutionService 是同一类问题：
+        #     save(task)           → 任务变成 ACCEPTED
+        #     record_agreement()   → 成交凭证
+        #
+        # 中间崩溃 → 「任务说成交了，但找不到成交凭证」。
+        # 凭证是审计与将来结算的依据，不能丢。
+        #
+        # 成交凭证在事务里构造 —— 它的 agreement_id 是从
+        # 被接受的报价 message_id 推导的（确定性），
+        # 所以失败重放时 id 相同，不会产生第二份。
+        with self.store.db.transaction():
+            self.store.save(task)
 
-        # 3) 成交凭证（不可变、append-only）
-        agreement = TaskAgreementRecord(
-            agreement_id=self.agreement_id_for(task, accepted_offer_message_id),
-            task_id=task.task_id,
-            initiator=task.creator,
-            contractor=task.contractor or contractor,
-            agreed_price=price,
-            accepted_offer_message_id=accepted_offer_message_id,
-            trace_id=incoming.trace_id,
-            conversation_id=incoming.conversation_id,
-        )
-        self.store.record_agreement(agreement)
+            agreement = TaskAgreementRecord(
+                agreement_id=self.agreement_id_for(
+                    task, accepted_offer_message_id
+                ),
+                task_id=task.task_id,
+                initiator=task.creator,
+                contractor=task.contractor or contractor,
+                agreed_price=price,
+                accepted_offer_message_id=accepted_offer_message_id,
+                trace_id=incoming.trace_id,
+                conversation_id=incoming.conversation_id,
+            )
+            self.store.record_agreement(agreement)
 
         logger.debug(
             "任务 %s 成交：%s @ %s（依据报价 %s）",
