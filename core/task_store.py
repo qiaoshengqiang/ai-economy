@@ -35,9 +35,16 @@ from core.logging_setup import get_logger
 from core.money import Money
 from core.task import Offer, Task, TaskStatus
 from core.task_agreement import TaskAgreementRecord
+from core.task_execution import (
+    ExecutionEvent,
+    TaskExecutionRecord,
+    TaskResultRef,
+    TaskVerification,
+)
 from storage.database import Database
 from storage.models import (
     TABLE_TASK_AGREEMENTS,
+    TABLE_TASK_EXECUTIONS,
     TABLE_TASK_OFFERS,
     TABLE_TASKS,
 )
@@ -487,6 +494,230 @@ class TaskStore:
                 )
             }),
         }
+
+    # ============================================================
+    # 执行事件（Step 4D）
+    #
+    # 【为什么这组方法在这里，而不是在 TaskExecutionService 里】
+    #     因为 TaskStore 是数据库的**唯一**边界。
+    #     应用服务只负责业务规则，不该知道有 SQLite 这回事。
+    #     有架构守卫盯着：services/ 里不许出现 sqlite3 / INSERT。
+    # ============================================================
+    def record_execution(
+        self, record: TaskExecutionRecord
+    ) -> TaskExecutionRecord:
+        """
+        记一条执行事件。
+
+        【append-only】
+            只 INSERT，不改写 —— 执行历史不允许被改写。
+
+        【幂等是结构性的，不是靠 if 判断】
+            message_id 是主键，重复写同一条会撞主键被忽略。
+            所以「同一条 SUBMIT 送达两次」在**数据库层面**
+            就不可能产生两条记录 ——
+            不依赖应用层是否记得先做幂等检查。
+            （应用层仍然会先检查，那是为了给出友好的幂等响应。）
+        """
+        if not isinstance(record, TaskExecutionRecord):
+            raise TypeError(
+                f"record_execution 需要 TaskExecutionRecord，"
+                f"收到 {type(record).__name__}"
+            )
+
+        result = record.result
+        verification = record.verification
+
+        with self.db.transaction() as conn:
+            conn.execute(
+                f"""
+                INSERT INTO {TABLE_TASK_EXECUTIONS} (
+                    message_id, task_id, event_type,
+                    result_type, result_ref, result_summary, result_metadata,
+                    passed, feedback,
+                    reply_to, from_agent, trace_id, conversation_id,
+                    status_after, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(message_id) DO NOTHING
+                """,
+                (
+                    record.message_id,
+                    record.task_id,
+                    record.event_type,
+                    result.result_type if result else None,
+                    result.result_ref if result else None,
+                    result.summary if result else None,
+                    (
+                        json.dumps(dict(result.metadata), ensure_ascii=False)
+                        if result and result.metadata else None
+                    ),
+                    (
+                        None if verification is None
+                        else (1 if verification.passed else 0)
+                    ),
+                    verification.feedback if verification else None,
+                    record.reply_to,
+                    record.from_agent,
+                    record.trace_id,
+                    record.conversation_id,
+                    record.status_after,
+                    record.created_at,
+                ),
+            )
+
+        logger.debug(
+            "记录执行事件：%s %s（message=%s）",
+            record.event_type, record.task_id, record.message_id,
+        )
+        return record
+
+    def executions_for(self, task_id: str) -> List[TaskExecutionRecord]:
+        """
+        这个任务的全部执行事件，按时间顺序。
+
+        【为什么返回**全部**而不是「最新一条」】
+            返工流程下会有多组 SUBMIT / VERIFY。
+            「上一轮为什么不通过」正是承接方最需要的信息 ——
+            只给最新一条就把它丢了。
+        """
+        with self.db.transaction() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT * FROM {TABLE_TASK_EXECUTIONS}
+                WHERE task_id = ?
+                ORDER BY created_at, rowid
+                """,
+                (task_id,),
+            ).fetchall()
+
+        return [self._row_to_execution(row) for row in rows]
+
+    def find_execution_by_message(
+        self, message_id: str
+    ) -> Optional[TaskExecutionRecord]:
+        """
+        按 message_id 找执行事件 —— 这就是幂等检查的依据。
+
+        【注意它和 Task.find_offer_by_message 的区别】
+            报价历史在 Task 对象里也能按 message_id 查，
+            而执行事件直接在库里查（Task 上不存执行记录）。
+            原因见 storage/models.py 里 task_executions 的注释。
+        """
+        if not message_id:
+            return None
+
+        with self.db.transaction() as conn:
+            row = conn.execute(
+                f"""
+                SELECT * FROM {TABLE_TASK_EXECUTIONS}
+                WHERE message_id = ?
+                """,
+                (message_id,),
+            ).fetchone()
+
+        return self._row_to_execution(row) if row else None
+
+    def submissions_for(self, task_id: str) -> List[TaskExecutionRecord]:
+        """这个任务的全部提交，按时间顺序。"""
+        return [
+            record for record in self.executions_for(task_id)
+            if record.event_type == ExecutionEvent.SUBMIT
+        ]
+
+    def verifications_for(self, task_id: str) -> List[TaskExecutionRecord]:
+        """这个任务的全部验收结论，按时间顺序。"""
+        return [
+            record for record in self.executions_for(task_id)
+            if record.event_type == ExecutionEvent.VERIFY
+        ]
+
+    def latest_submission(
+        self, task_id: str
+    ) -> Optional[TaskExecutionRecord]:
+        """最近一次提交。"""
+        submissions = self.submissions_for(task_id)
+        return submissions[-1] if submissions else None
+
+    def latest_verification(
+        self, task_id: str
+    ) -> Optional[TaskExecutionRecord]:
+        """
+        最近一次验收结论。
+
+        【它有实际用途】
+            承接到一条 SUBMIT 时，发起方往往想知道
+            「上一轮是不是因为某个原因被打回过」——
+            直接查这个比翻整条历史方便。
+        """
+        verifications = self.verifications_for(task_id)
+        return verifications[-1] if verifications else None
+
+    def attempt_count(self, task_id: str) -> int:
+        """
+        这是第几轮执行。
+
+        【为什么是**算出来**的，而不是存在字段里】
+            如果存一个 attempt 字段，它就可能和实际事件数漂移
+            （某条记录写失败、或者有人手工改了库）。
+            数 SUBMIT 的条数永远不会和事实不一致。
+
+            而且这样也就不用发明 revision_id / round_id ——
+            「第几轮」是历史的函数，不是一个新的身份。
+        """
+        return len(self.submissions_for(task_id))
+
+    def count_executions(self, task_id: Optional[str] = None) -> int:
+        """执行事件总数（可限定某个任务）。"""
+        with self.db.transaction() as conn:
+            if task_id is None:
+                row = conn.execute(
+                    f"SELECT COUNT(*) AS n FROM {TABLE_TASK_EXECUTIONS}"
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    f"""
+                    SELECT COUNT(*) AS n FROM {TABLE_TASK_EXECUTIONS}
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                ).fetchone()
+        return int(row["n"]) if row else 0
+
+    @staticmethod
+    def _row_to_execution(row: Any) -> TaskExecutionRecord:
+        """数据库行 → TaskExecutionRecord。"""
+        raw_metadata = row["result_metadata"]
+        metadata = json.loads(raw_metadata) if raw_metadata else {}
+
+        result = None
+        if row["result_ref"] is not None:
+            result = TaskResultRef(
+                result_type=row["result_type"] or "artifact",
+                result_ref=row["result_ref"],
+                summary=row["result_summary"] or "",
+                metadata=metadata,
+            )
+
+        verification = None
+        if row["passed"] is not None:
+            verification = TaskVerification(
+                passed=bool(row["passed"]),
+                feedback=row["feedback"] or "",
+            )
+
+        return TaskExecutionRecord(
+            message_id=row["message_id"],
+            task_id=row["task_id"],
+            event_type=row["event_type"],
+            result=result,
+            verification=verification,
+            reply_to=row["reply_to"],
+            from_agent=row["from_agent"],
+            trace_id=row["trace_id"],
+            conversation_id=row["conversation_id"],
+            created_at=row["created_at"],
+            status_after=row["status_after"],
+        )
 
     def describe(self) -> Dict[str, Any]:
         return {

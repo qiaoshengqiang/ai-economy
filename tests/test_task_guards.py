@@ -486,17 +486,29 @@ class TestEconomicMessagesAreWiredCorrectly:
     """
 
     #: 到 Step 4C 为止，允许接入通信层的经济消息
-    WIRED = ("TASK_OFFER", "COUNTER_OFFER", "ACCEPT", "REJECT")
-
-    #: 仍然禁止接入的（属于后续步骤）
-    STILL_UNWIRED = (
-        "SUBMIT", "VERIFY", "PAYMENT_REQUEST", "PAYMENT_RESULT",
+    #: 到 Step 4D 为止，允许接入通信层的全部消息类型。
+    #:
+    #: 【这个列表每走一步都要显式改一次】
+    #:     4B：+TASK_OFFER / COUNTER_OFFER
+    #:     4C：+ACCEPT / REJECT
+    #:     4D：+START / SUBMIT / VERIFY / COMPLETE
+    #:
+    #: 这正是这条守卫的价值：多接一个类型必须是一个**刻意的决定**，
+    #: 而不是顺手就接上了。
+    WIRED = (
+        "TASK_OFFER", "COUNTER_OFFER", "ACCEPT", "REJECT",
+        "START", "SUBMIT", "VERIFY", "COMPLETE",
     )
+
+    #: 仍然禁止接入的（属于后续步骤 —— 结算）
+    STILL_UNWIRED = ("PAYMENT_REQUEST", "PAYMENT_RESULT")
 
     def test_future_message_types_are_still_not_wired(self):
         """
-        【仍然禁止】ACCEPT / REJECT / SUBMIT / VERIFY / PAYMENT_*
-        一个都不能接入 —— 它们属于 Step 4C 及以后。
+        【仍然禁止】PAYMENT_REQUEST / PAYMENT_RESULT
+        一个都不能接入 —— 结算属于后续阶段。
+
+        （4D 之后这里只剩结算两种。SUBMIT / VERIFY 已经合法接入了。）
         """
         violations = []
 
@@ -516,9 +528,10 @@ class TestEconomicMessagesAreWiredCorrectly:
 
     def test_only_the_approved_types_are_wired(self):
         """
-        【只许这两个】接入了的类型必须正好是 TASK_OFFER / COUNTER_OFFER。
+        【只许这八个】接入了的类型必须正好是 WIRED 里列的那些。
 
         多接一个都会让这条测试变红 —— 从而被迫先想清楚那属于哪一步。
+        4D 之后是「议价四种 + 执行四种」。
         """
         wired = set()
 

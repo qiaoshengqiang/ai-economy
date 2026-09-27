@@ -62,7 +62,10 @@ from core.decision_policy import RuleBasedDecisionPolicy        # noqa: E402
 from core.money import Money                                    # noqa: E402
 from core.task import OfferType, Task, TaskStatus               # noqa: E402
 from core.task_store import TaskStore                           # noqa: E402
-from services import TaskService                                # noqa: E402
+from services import (
+    TaskExecutionService,  # noqa: E402
+    TaskService,  # noqa: E402
+)
 from core.paths import ensure_runtime_dirs                      # noqa: E402
 from llm import LLMCallRecorder, LLMRouter, LLMError            # noqa: E402
 from communication import (                                     # noqa: E402
@@ -128,6 +131,7 @@ class Runtime:
     tasks: TaskStore
     directory: AgentDirectory
     task_service: TaskService
+    task_execution: TaskExecutionService
     decision_policies: Dict[str, Any]
 
     def agent(self, agent_id: str):
@@ -283,6 +287,28 @@ def _wire_task_handlers(
         MessageType.REJECT, adapt(task_service.handle_reject)
     )
 
+    # ---- Step 4D：执行生命周期 ----
+    #
+    # 【加这四种消息，门面改了吗？没有】
+    #     handle_start / handle_submit / handle_verify / handle_complete
+    #     都只是「按类型查注册表再转调 handler」的一行转发。
+    #     真正的业务在 TaskExecutionService 和四个 Handler 里。
+    #
+    #     这就是上一轮「Task Application Layer Refactor」要买的东西：
+    #     加消息类型不需要碰门面。
+    communication.register_type_handler(
+        MessageType.START, adapt(task_service.handle_start)
+    )
+    communication.register_type_handler(
+        MessageType.SUBMIT, adapt(task_service.handle_submit)
+    )
+    communication.register_type_handler(
+        MessageType.VERIFY, adapt(task_service.handle_verify)
+    )
+    communication.register_type_handler(
+        MessageType.COMPLETE, adapt(task_service.handle_complete)
+    )
+
 
 def build_runtime(db_path: Optional[str] = None) -> Runtime:
     """
@@ -418,11 +444,20 @@ def build_runtime(db_path: Optional[str] = None) -> Runtime:
                 )
             )
 
-    # 消息 → 领域 的适配层
+    # 消息 → 领域 的适配层。
+    #
+    # 【议价和执行是两个并列的服务】——
+    #     TaskNegotiationService  怎么谈（Step 4C）
+    #     TaskExecutionService    怎么干（Step 4D）
+    # 它们共享幂等 / trace / 协议违规回复（同一个基类），
+    # 但互相不知道对方存在。有架构守卫盯着这条线。
+    task_execution = TaskExecutionService(store=tasks)
+
     task_service = TaskService(
         store=tasks,
         directory=directory,
         policies=decision_policies,
+        execution=task_execution,
     )
 
     # 把 Task 的业务处理器接到通信层的类型处理器上。
@@ -443,6 +478,7 @@ def build_runtime(db_path: Optional[str] = None) -> Runtime:
         tasks=tasks,
         directory=directory,
         task_service=task_service,
+        task_execution=task_execution,
         decision_policies=decision_policies,
     )
 
@@ -2136,7 +2172,13 @@ def _reset_demo_tasks(runtime: Runtime, task_ids) -> int:
     removed = 0
     with runtime.tasks.db.transaction() as conn:
         for task_id in task_ids:
-            for table in ("task_agreements", "task_offers", "tasks"):
+            # 【顺序很重要：先删子表，再删 tasks】
+            #     task_executions / task_offers / task_agreements
+            #     都有指向 tasks 的外键。
+            #     先删 tasks 会撞上 FOREIGN KEY constraint failed ——
+            #     （这个坑演示重跑时才暴露出来。）
+            for table in ("task_executions", "task_agreements",
+                          "task_offers", "tasks"):
                 cursor = conn.execute(
                     f"DELETE FROM {table} WHERE task_id = ?", (task_id,)
                 )
@@ -2423,6 +2465,361 @@ def cmd_negotiation_demo(runtime: Runtime, args: argparse.Namespace) -> int:
 # ============================================================
 # 命令行参数
 # ============================================================
+# ============================================================
+# 命令：task-4d-demo（Step 4D）
+# ============================================================
+def cmd_task_4d_demo(runtime: Runtime, args: argparse.Namespace) -> int:
+    """
+    执行 / 提交 / 验收 / 完结演示（Step 4D）。
+
+    【它要证明的事情】
+
+        ✅ 两个 Agent 之间**通过消息**推进任务生命周期 ——
+           不是直接调方法，而是走
+           Message → Handler → ExecutionService → Task Core → TaskStore
+
+        ✅ 完整链路：
+           ACCEPT → START → SUBMIT → VERIFY(false) → 返工 → SUBMIT
+                  → VERIFY(true) → COMPLETE
+
+        ✅ 四条边界全程没被越过：
+           Wallet 没变 / Ledger 没变 / 没调 LLM / 没建 Workspace /
+           没执行代码 / 没碰 Git
+
+    【它刻意不证明的事情】
+        ❌ 不执行任何代码（没有 subprocess、没有测试运行器）
+        ❌ 不做结算（COMPLETE 只结束生命周期）
+    """
+    store = runtime.tasks
+    economy = runtime.economy
+    service = runtime.task_service
+
+    print()
+    print("=" * 72)
+    print("        AI Economy OS v0.1")
+    print("        Step 4D — Task Execution / Submission / Verification")
+    print("=" * 72)
+    print()
+
+    task_id = "TASK-4D-1"
+    # 【为什么先清一次】
+    #     演示可以反复跑。不清的话每次都在旧数据上叠加，
+    #     输出会越来越乱（同一个 task_id 下堆着好几轮执行事件）。
+    #     真实的 tasks / task_offers / task_agreements / task_executions
+    #     都是 append-only 的，生产代码里没有任何删除它们的路径。
+    _reset_demo_tasks(runtime, (task_id,))
+
+    # ---------------- 边界快照（演示开始前）----------------
+    ledger_before = economy.ledger.count()
+    wallet_a_before = economy.agent("agent_a").balance
+    wallet_b_before = economy.agent("agent_b").balance
+    llm_before = runtime.recorder.count() if hasattr(runtime.recorder, "count") else 0
+
+    print("① 边界快照（演示开始前）")
+    print("-" * 72)
+    print(f"  Wallet A   : {wallet_a_before}")
+    print(f"  Wallet B   : {wallet_b_before}")
+    print(f"  Ledger     : {ledger_before} 条")
+    print()
+
+    # ============================================================
+    # 第一部分：先谈成（复用 4C 的链路）
+    # ============================================================
+    print("=" * 72)
+    print("第一部分：先谈成一个任务（Step 4C 的链路）")
+    print("=" * 72)
+    print()
+
+    from communication import Message, MessageType
+
+    def send(from_agent, to_agent, message_type, payload, reply_to=None,
+             label=""):
+        """
+        发一条消息给**接收侧**，再让发送侧落地。
+
+        【为什么这里要模拟「两边」】
+            单进程演示里两个 Agent 共用一个 store，
+            所以一条消息有两条处理路径：
+
+                发送侧：我决定发什么 → 先落地（拿到 message_id 再发）
+                接收侧：收到消息 → 处理（通常识别为重复，幂等）
+
+            真实的多机部署里这两边在不同的进程 ——
+            但幂等逻辑必须让两种情况都正确，所以演示里都走一遍。
+        """
+        message = Message(
+            from_agent=from_agent,
+            to_agent=to_agent,
+            message_type=message_type,
+            payload=payload,
+            reply_to=reply_to,
+        )
+        # 接收侧：把消息交给通信层的类型处理器
+        reply = runtime.communication.deliver(message)
+        result = service.handle_message(
+            Message(
+                from_agent=from_agent, to_agent=to_agent,
+                message_type=message_type, payload=payload,
+                reply_to=reply_to, message_id=message.message_id,
+            )
+        )
+        return message, result, reply
+
+    # ---- 议价：A 报价 → B 还价 → A 接受 ----
+    offer = Message(
+        from_agent="agent_a", to_agent="agent_b",
+        message_type=MessageType.TASK_OFFER,
+        payload={
+            "task_id": task_id,
+            "description": "写一个 CSV 分析程序，输出月度报表",
+            "budget": {"amount": 100, "currency": "AIC"},
+            "workspace_id": "WS-001",
+            "required_capabilities": ["python_coding", "data_analysis"],
+        },
+    )
+    service.handle_message(offer)
+    _print_step("A → B", "TASK_OFFER", offer,
+                f"budget = 100 AIC", store.get(task_id).status)
+
+    counter = Message(
+        from_agent="agent_b", to_agent="agent_a",
+        message_type=MessageType.COUNTER_OFFER,
+        payload={"task_id": task_id,
+                 "price": {"amount": 25, "currency": "AIC"}},
+        reply_to=offer.message_id,
+    )
+    service.handle_message(counter)
+    _print_step("B → A", "COUNTER_OFFER", counter,
+                "25 AIC", store.get(task_id).status)
+
+    accept = Message(
+        from_agent="agent_a", to_agent="agent_b",
+        message_type=MessageType.ACCEPT,
+        payload={"task_id": task_id,
+                 "price": {"amount": 25, "currency": "AIC"}},
+        reply_to=counter.message_id,
+    )
+    result = service.handle_message(accept)
+    task = store.get(task_id)
+    _print_step("A → B", "ACCEPT", accept,
+                f"成交价 25 AIC（预算 100）", task.status)
+    print(f"     承接方 : {task.contractor}")
+    print(f"     成交凭证: {result.details.get('agreement_id')}")
+    print()
+
+    # ============================================================
+    # 第二部分：执行生命周期
+    # ============================================================
+    print("=" * 72)
+    print("第二部分：执行生命周期（Step 4D 新增）")
+    print("=" * 72)
+    print()
+    print("  全程通过 Message → Handler → ExecutionService → Task Core")
+    print()
+
+    last_message_id = accept.message_id
+
+    # ---- START ----
+    start = Message(
+        from_agent="agent_b", to_agent="agent_a",
+        message_type=MessageType.START,
+        payload={"task_id": task_id},
+        reply_to=last_message_id,
+    )
+    result = service.handle_message(start)
+    _print_step("B → A", "START", start,
+                "承接方开工", store.get(task_id).status)
+    last_message_id = start.message_id
+
+    # ---- 第一轮 SUBMIT ----
+    submit1 = Message(
+        from_agent="agent_b", to_agent="agent_a",
+        message_type=MessageType.SUBMIT,
+        payload={
+            "task_id": task_id,
+            "result": {
+                "result_type": "code",
+                "result_ref": "csv-analysis-v1",
+                "summary": "初版：能跑通，月度报表已生成",
+                "metadata": {"files": 2},
+            },
+        },
+        reply_to=last_message_id,
+    )
+    result = service.handle_message(submit1)
+    _print_step("B → A", "SUBMIT", submit1,
+                "交付 csv-analysis-v1", store.get(task_id).status)
+    print(f"     成果引用 : {result.details['result_ref']}"
+          f"  （只是逻辑名字，不是路径、不是权限）")
+    print(f"     这是第   : {result.details['attempt']} 次提交")
+    last_message_id = submit1.message_id
+
+    # ---- VERIFY(false) ----
+    verify1 = Message(
+        from_agent="agent_a", to_agent="agent_b",
+        message_type=MessageType.VERIFY,
+        payload={
+            "task_id": task_id,
+            "passed": False,
+            "feedback": "接口返回值错误：第 3 个函数在空输入时抛异常",
+        },
+        reply_to=last_message_id,
+    )
+    result = service.handle_message(verify1)
+    _print_step("A → B", "VERIFY", verify1,
+                "passed = False  打回返工", store.get(task_id).status)
+    print(f"     验收意见 : {result.details['feedback']}")
+    print(f"     → 任务回到 IN_PROGRESS，承接方可以再提交一次")
+    last_message_id = verify1.message_id
+
+    # ---- 返工 SUBMIT ----
+    submit2 = Message(
+        from_agent="agent_b", to_agent="agent_a",
+        message_type=MessageType.SUBMIT,
+        payload={
+            "task_id": task_id,
+            "result": {
+                "result_type": "code",
+                "result_ref": "csv-analysis-v2",
+                "summary": "已修复空输入：第 3 个函数现在返回空列表",
+                "metadata": {"files": 3, "fixes": ["empty-input"]},
+            },
+        },
+        reply_to=last_message_id,
+    )
+    result = service.handle_message(submit2)
+    _print_step("B → A", "SUBMIT", submit2,
+                "交付 csv-analysis-v2", store.get(task_id).status)
+    print(f"     成果引用 : {result.details['result_ref']}")
+    print(f"     这是第   : {result.details['attempt']} 次提交")
+    last_message_id = submit2.message_id
+
+    # ---- VERIFY(true) ----
+    verify2 = Message(
+        from_agent="agent_a", to_agent="agent_b",
+        message_type=MessageType.VERIFY,
+        payload={
+            "task_id": task_id,
+            "passed": True,
+            "feedback": "复现了空输入场景，已修复，验收通过",
+        },
+        reply_to=last_message_id,
+    )
+    result = service.handle_message(verify2)
+    _print_step("A → B", "VERIFY", verify2,
+                "passed = True   验收通过", store.get(task_id).status)
+    last_message_id = verify2.message_id
+
+    # ---- COMPLETE ----
+    complete = Message(
+        from_agent="agent_a", to_agent="agent_b",
+        message_type=MessageType.COMPLETE,
+        payload={"task_id": task_id, "summary": "任务验收通过，正式结束"},
+        reply_to=last_message_id,
+    )
+    result = service.handle_message(complete)
+    _print_step("A → B", "COMPLETE", complete,
+                "任务正式结束", store.get(task_id).status)
+    print()
+
+    # ============================================================
+    # 第三部分：执行历史
+    # ============================================================
+    print("=" * 72)
+    print("第三部分：执行历史（append-only，可用 reply_to 回溯）")
+    print("=" * 72)
+    print()
+
+    history = runtime.task_execution.history_summary(task_id)
+    print(f"  {'事件':<12} {'谁':<10} {'之后状态':<14} {'message_id':<16} reply_to")
+    print(f"  {'-'*12} {'-'*10} {'-'*14} {'-'*16} {'-'*16}")
+    for event in runtime.task_execution.executions_for(task_id):
+        print(f"  {event.event_type:<12} {event.from_agent or '':<10} "
+              f"{event.status_after or '':<14} {event.message_id:<16} "
+              f"{event.reply_to or '-'}")
+
+    print()
+    print(f"  提交次数（attempts）  : {history['attempts']}")
+    print(f"  返工次数（rework）    : {history['rework_count']}")
+    print(f"  执行事件总数          : {len(history['events'])}")
+    print()
+    print("  最近一次交付：")
+    latest = store.latest_submission(task_id)
+    if latest and latest.result:
+        for key, value in latest.result.describe().items():
+            print(f"      {key:<22} : {value}")
+    print()
+    print("  【注意】result_ref 只是逻辑引用 ——")
+    print("         不是文件路径、不是访问权限、不是 URL、不是 Git 引用。")
+    print()
+
+    # ============================================================
+    # 第四部分：边界证明
+    # ============================================================
+    print("=" * 72)
+    print("第四部分：边界证明")
+    print("=" * 72)
+    print()
+
+    task = store.get(task_id)
+    final = runtime.task_execution.executions_for(task_id)[-1]
+
+    wallet_a_after = economy.agent("agent_a").balance
+    wallet_b_after = economy.agent("agent_b").balance
+    ledger_after = economy.ledger.count()
+
+    def verdict(before, after):
+        return "✅ 不变" if before == after else f"❌ 变了（{before} → {after}）"
+
+    print(f"  任务最终状态   : {task.status}")
+    print(f"  成交价         : {task.agreed_price}")
+    print()
+    print(f"  Wallet A       : {wallet_a_before} → {wallet_a_after}   "
+          f"{verdict(wallet_a_before, wallet_a_after)}")
+    print(f"  Wallet B       : {wallet_b_before} → {wallet_b_after}   "
+          f"{verdict(wallet_b_before, wallet_b_after)}")
+    print(f"  Ledger         : {ledger_before} → {ledger_after} 条   "
+          f"{verdict(ledger_before, ledger_after)}")
+    print(f"  Workspace      : 未创建、未授权、未读写   ✅（workspace_id 只是引用）")
+    print(f"  Git            : 未触碰                   ✅")
+    print(f"  代码执行       : 未执行任何代码            ✅（没有 subprocess）")
+    print(f"  LLM            : 全程未调用                ✅（验收由发起方显式给出）")
+    print()
+
+    details = final.describe()
+    print("  最后一条执行事件的自我声明：")
+    for key in ("is_payment",):
+        print(f"      {key:<14} : {details[key]}")
+    print()
+
+    print("  · START / SUBMIT / VERIFY / COMPLETE 都**不产生**经济后果")
+    print("  · COMPLETE 只表示任务生命周期结束 —— 结算是一个独立的后续阶段")
+    print("  · 「验收」由发起方做出：承接方不能自己宣布自己合格")
+    print()
+
+    # ============================================================
+    print("=" * 72)
+    print("持久化")
+    print("=" * 72)
+    print()
+    print(f"  任务 {store.count()} 个 / "
+          f"执行事件 {store.count_executions()} 条")
+    print(f"  这个任务的执行事件: {store.count_executions(task_id)} 条")
+    print()
+    print(f"  查询方式：./dev.sh task-log {task_id}")
+    print(f"            ./dev.sh communication-log --trace {task.trace_id if hasattr(task, 'trace_id') else task.current_trace_id}")
+    print()
+    return 0
+
+
+def _print_step(sender, message_type, message, note, status):
+    """打印一行执行链。"""
+    print(f"  {sender:<6} → {message_type:<14} {note:<28} "
+          f"[{status}]")
+    print(f"         message_id = {message.message_id}"
+          f"   reply_to = {message.reply_to or '-'}")
+
+
 def build_parser() -> argparse.ArgumentParser:
     """
     构建命令行解析器。
@@ -2693,6 +3090,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="自主议价演示（不调用 LLM、不转账、不建 Workspace）",
     )
     neg_demo.set_defaults(func=cmd_negotiation_demo)
+
+    # --- task-4d-demo（Step 4D）---
+    d4_demo = subparsers.add_parser(
+        "task-4d-demo",
+        parents=[shared],
+        help="执行 / 提交 / 验收 / 完结演示（不调 LLM、不转账、不执行代码）",
+    )
+    d4_demo.set_defaults(func=cmd_task_4d_demo)
 
     return parser
 

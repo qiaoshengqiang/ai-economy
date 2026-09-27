@@ -351,8 +351,8 @@ Task / Economy 负责「解释消息里的含义」
 | `COUNTER_OFFER` | 承接方 → 需求方 | 还价 / 报价 | [7.3](#73-counter_offer) |
 | `ACCEPT` | 需求方 → 承接方 | 接受报价（形成成交价） | [7.4](#74-accept--reject) |
 | `REJECT` | 双向 | 拒绝 | [7.4](#74-accept--reject) |
-| `SUBMIT` | 承接方 → 需求方 | 提交成果 | [7.5](#75-submit--verify预留) |
-| `VERIFY` | 需求方 → 承接方 | 验收结论 | [7.5](#75-submit--verify预留) |
+| `SUBMIT` | 承接方 → 需求方 | 提交成果 | [7.5](#75-执行阶段start--submit--verify--complete) |
+| `VERIFY` | 需求方 → 承接方 | 验收结论 | [7.5](#75-执行阶段start--submit--verify--complete) |
 | `PAYMENT_REQUEST` | 收款方 → 付款方 | 请求付款 | 🔒 未定义形状 |
 | `PAYMENT_RESULT` | 付款方 → 收款方 | 付款结果 | 🔒 未定义形状 |
 
@@ -742,7 +742,26 @@ Task（状态 ACCEPTED，agreed_price = 25 AIC）
 > 还价超过预算 → 那条消息**无效**，回 `ERROR`，任务状态**不变**。
 > 两者在 Task 层严格区分（有测试）。
 
-### 7.5 `SUBMIT` / `VERIFY`（预留）
+### 7.5 执行阶段：`START` / `SUBMIT` / `VERIFY` / `COMPLETE`
+
+> ✅ **Step 4D 起这一节已在代码里实现**，并且新增了 `START` / `COMPLETE`。
+> 这是 **additive** 变更：只增加新类型，没有改任何已有类型的语义或形状，
+> 所以 `protocol_version` **仍然是 1**。
+
+**`START`** —— 承接方开工：
+
+```json
+{
+  "message_type": "START",
+  "from_agent": "agent_b",
+  "to_agent": "agent_a",
+  "reply_to": "msg_accept_003",
+  "payload": { "task_id": "TASK-001" }
+}
+```
+
+`ACCEPTED → IN_PROGRESS`。**只有承接方能发** ——
+发起方不能替承接方宣布开工。
 
 **`SUBMIT`** —— 承接方提交成果：
 
@@ -754,12 +773,32 @@ Task（状态 ACCEPTED，agreed_price = 25 AIC）
   "reply_to": "msg_accept_003",
   "payload": {
     "task_id": "TASK-001",
-    "workspace_id": "WS-001",
-    "artifacts": ["analysis.py", "report.md"],
-    "result_commit": "def456"
+    "result": {
+      "result_type": "code",
+      "result_ref": "csv-analysis-v2",
+      "summary": "已修复空输入",
+      "metadata": { "files": 3 }
+    }
   }
 }
 ```
+
+`IN_PROGRESS → SUBMITTED`。**`result` 是必填的** ——
+不能只发「我做好了」，验收需要一个**对象**。
+
+> 🔒 **`result_ref` 是逻辑名字，不是权限**
+>
+> 它**不是**文件路径、URL、访问令牌、Workspace token、Git 引用。
+> `core/task_execution.py` 里的 `TaskResultRef` 会**拒绝**
+> 以 `/`、`~`、`./`、`../` 开头或含 `://` 的值。
+>
+> 为什么要把这条做成硬约束：
+> 如果 `result_ref` 长得像路径，下游就会倾向于把它当路径用。
+> 一旦真的 `open(result_ref)`，承接方就能通过提交一个精心构造的名字
+> **让发起方去读任意文件** —— 一次典型的路径注入。
+>
+> 早期草案里的 `artifacts` / `result_commit` 字段已由
+> `result` 取代（后者更结构化，且不暗示文件系统或 Git 语义）。
 
 **`VERIFY`** —— 需求方给出验收结论：
 
@@ -771,15 +810,50 @@ Task（状态 ACCEPTED，agreed_price = 25 AIC）
   "reply_to": "msg_submit_004",
   "payload": {
     "task_id": "TASK-001",
-    "passed": true,
-    "acceptance_type": "tests"
+    "passed": false,
+    "feedback": "接口返回值错误：第 3 个函数在空输入时抛异常"
   }
 }
 ```
 
-> 🔒 **这两个形状是预留的**，将来可能调整。
-> 特别是 `VERIFY.passed` 只是布尔值 —— 真实的验收结论可能需要
-> 更细的结构（哪条测试失败、证据在哪）。等 Step 5 再定。
+- `passed = true`  → `SUBMITTED → VERIFIED`
+- `passed = false` → `SUBMITTED → IN_PROGRESS`（**返工**，不是判死）
+
+**只有发起方能发** —— 承接方不能自己宣布「我验收自己通过」。
+**`passed=false` 时必须给 `feedback`**，否则承接方只能盲改。
+
+**`COMPLETE`** —— 发起方结项：
+
+```json
+{
+  "message_type": "COMPLETE",
+  "from_agent": "agent_a",
+  "to_agent": "agent_b",
+  "reply_to": "msg_verify_005",
+  "payload": { "task_id": "TASK-001", "summary": "验收通过，正式结束" }
+}
+```
+
+`VERIFIED → COMPLETED`。**只结束生命周期，不做结算** ——
+没有 Payment / Escrow / Wallet / Ledger 变化。
+
+#### 执行链的 reply_to
+
+```
+ACCEPT   msg_3
+  ↓ START.reply_to    = msg_3
+  ↓ SUBMIT.reply_to   = msg_4
+  ↓ VERIFY.reply_to   = msg_5
+  ↓ COMPLETE.reply_to = msg_6
+```
+
+和议价链一样，执行链也可以一路回溯到成交。
+
+> 🔒 **这个形状仍然可能调整。**
+> `VERIFY.passed` 目前只是布尔值 —— 真实的验收结论将来可能需要
+> 更细的结构（哪条测试失败、证据在哪）。
+> 但**第一版刻意保持简单**：验收由发起方显式给出，
+> 系统不自动执行测试、不调用模型判断。
 
 ### 7.6 预留字段：`base_commit` / `acceptance` / `expires_at`
 

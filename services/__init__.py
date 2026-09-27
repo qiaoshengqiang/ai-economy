@@ -50,22 +50,34 @@ services —— 业务服务层（消息与领域之间的适配）
         返回结构变了 → task_result
 """
 
+from services.task_application_service import TaskApplicationService
+from services.task_execution_service import TaskExecutionService
 from services.task_handlers import (
     AcceptHandler,
+    CompleteHandler,
     CounterOfferHandler,
+    ExecutionMessageHandler,
+    NegotiationMessageHandler,
     OfferHandler,
     RejectHandler,
+    StartHandler,
+    SubmitHandler,
     TaskHandlerRegistry,
     TaskMessageHandler,
+    VerifyHandler,
     default_handler_registry,
 )
 from services.task_message_mapper import (
     AcceptIntent,
+    CompleteIntent,
     CounterOfferIntent,
     MessageIntent,
     OfferIntent,
     RejectIntent,
+    StartIntent,
+    SubmitIntent,
     TaskMessageMapper,
+    VerifyIntent,
     parse_money,
 )
 from services.task_negotiation_service import TaskNegotiationService
@@ -75,6 +87,20 @@ from services.task_service import TaskService
 __all__ = [
     # 门面
     "TaskService",
+    # 应用服务基类
+    "TaskApplicationService",
+    # 执行（Step 4D）
+    "TaskExecutionService",
+    "StartHandler",
+    "SubmitHandler",
+    "VerifyHandler",
+    "CompleteHandler",
+    "ExecutionMessageHandler",
+    "NegotiationMessageHandler",
+    "StartIntent",
+    "SubmitIntent",
+    "VerifyIntent",
+    "CompleteIntent",
     # 结果
     "HandlerResult",
     "HandlerAction",

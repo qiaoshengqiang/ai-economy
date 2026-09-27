@@ -71,6 +71,7 @@ from core.task_store import TaskStore
 
 from communication.message import Message
 
+from services.task_execution_service import TaskExecutionService
 from services.task_handlers import (
     TaskHandlerRegistry,
     default_handler_registry,
@@ -108,6 +109,7 @@ class TaskService:
         policies: Optional[Mapping[str, DecisionPolicy]] = None,
         mapper: Optional[TaskMessageMapper] = None,
         handlers: Optional[TaskHandlerRegistry] = None,
+        execution: Optional[TaskExecutionService] = None,
     ):
         self.store = store
         self.directory = directory
@@ -120,14 +122,31 @@ class TaskService:
             store=store, policies=policies, mapper=self.mapper
         )
 
+        # 执行阶段的业务组件（Step 4D）。
+        #
+        # 【它和议价服务完全并列，互相不知道】
+        #     议价：OFFER / COUNTER_OFFER / ACCEPT / REJECT
+        #     执行：START / SUBMIT / VERIFY / COMPLETE
+        #     两者都继承 TaskApplicationService，
+        #     共享幂等 / trace 缝合 / 协议违规回复，但不互相引用。
+        self.execution = execution or TaskExecutionService(
+            store=store, mapper=self.mapper
+        )
+
         # 消息处理器。
         #
+        # 【Step 4D 加了四种消息，这里改了什么】
+        #     只是把 execution 多传了一个参数 ——
+        #     门面的路由代码**一行都没改**。
+        #     这正是上一轮重构要保住的扩展点。
+        #
         # 【为什么允许注入】
-        #     Step 4D 要加 START / SUBMIT / VERIFY。
         #     组合根可以传一个已经注册好的 registry 进来，
-        #     门面不需要任何改动。
+        #     门面不需要任何改动（测试就是这么造扩展点探针的）。
         self.handlers = handlers or default_handler_registry(
-            self.negotiation, self.mapper
+            negotiation=self.negotiation,
+            execution=self.execution,
+            mapper=self.mapper,
         )
 
     # ============================================================
@@ -274,6 +293,23 @@ class TaskService:
         """处理 REJECT（兼容入口）。"""
         return self.handlers.require("REJECT").handle(message)
 
+    # --- Step 4D：执行阶段的四个兼容入口 ---
+    def handle_start(self, message: Message) -> HandlerResult:
+        """处理 START（兼容入口，内部转调 StartHandler）。"""
+        return self.handlers.require("START").handle(message)
+
+    def handle_submit(self, message: Message) -> HandlerResult:
+        """处理 SUBMIT（兼容入口）。"""
+        return self.handlers.require("SUBMIT").handle(message)
+
+    def handle_verify(self, message: Message) -> HandlerResult:
+        """处理 VERIFY（兼容入口）。"""
+        return self.handlers.require("VERIFY").handle(message)
+
+    def handle_complete(self, message: Message) -> HandlerResult:
+        """处理 COMPLETE（兼容入口）。"""
+        return self.handlers.require("COMPLETE").handle(message)
+
     # ============================================================
     # 决策（转发给协商服务）
     # ============================================================
@@ -361,6 +397,9 @@ class TaskService:
                 accepted_offer_message_id=message.message_id,
                 accepted_offer_type=message.message_type,
                 outgoing=outgoing,
+                # 【发送侧】是**我**决定接受对方的报价，
+                # 所以接受方是这条消息的收件人（我）。
+                accept_author=message.to_agent,
             )
 
         if decision.countered:
@@ -388,6 +427,7 @@ class TaskService:
             "tasks": self.store.count(),
             "handlers": self.handlers.types(),
             "policies": sorted(self.policies),
+            "execution": type(self.execution).__name__,
         }
 
     def __repr__(self) -> str:

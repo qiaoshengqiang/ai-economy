@@ -65,13 +65,14 @@ from core.task_store import TaskStore
 
 from communication.message import Message, MessageType
 
+from services.task_application_service import TaskApplicationService
 from services.task_message_mapper import TaskMessageMapper
 from services.task_result import HandlerAction, HandlerResult
 
 logger = get_logger(__name__)
 
 
-class TaskNegotiationService:
+class TaskNegotiationService(TaskApplicationService):
     """
     议价规则 + 状态落地。
 
@@ -88,7 +89,10 @@ class TaskNegotiationService:
         policies: Optional[Mapping[str, DecisionPolicy]] = None,
         mapper: Optional[TaskMessageMapper] = None,
     ):
-        self.store = store
+        # store / mapper 由基类持有 —— 幂等、trace 缝合、协议违规回复
+        # 都在基类里，议价和执行两个服务共用同一份实现（不复制）。
+        super().__init__(store=store, mapper=mapper)
+
         # 每个 Agent 自己的决策策略。
         #
         # 【为什么是一本「按 agent_id 查」的字典，而不是一个全局策略】
@@ -101,7 +105,6 @@ class TaskNegotiationService:
         #     策略由**组合根**按每个 Agent 的配置构造，
         #     这里只负责查表 —— 它不认识任何具体 Agent。
         self.policies: Dict[str, DecisionPolicy] = dict(policies or {})
-        self.mapper = mapper or TaskMessageMapper()
 
     # ============================================================
     # 一、业务规则（校验）
@@ -251,32 +254,6 @@ class TaskNegotiationService:
             return False
         return task.find_offer_by_message(message.message_id) is not None
 
-    @staticmethod
-    def already_processed(task: Task, message: Message) -> HandlerResult:
-        """
-        这条消息之前已经处理过了 —— 幂等返回，不改任何状态。
-
-        【它不是错误】
-            重复投递在分布式系统里是常态（重发、重试、网络抖动）。
-            正确的反应是「认出来，什么也不做」，而不是报错。
-        """
-        logger.debug(
-            "任务 %s 已经处理过消息 %s，跳过",
-            task.task_id, message.message_id,
-        )
-        return HandlerResult(
-            ok=True,
-            action=HandlerAction.ALREADY_PROCESSED,
-            task_id=task.task_id,
-            reply_type=None,
-            reply_payload=None,
-            details={
-                "status": task.status,
-                "message_id": message.message_id,
-                "note": "这条消息之前已经记录过（幂等，未重复处理）",
-            },
-        )
-
     def already_accepted(self, task: Task, price: Money) -> Optional[HandlerResult]:
         """
         任务已经成交、且价格一致 → 这是一条重复的 ACCEPT。
@@ -368,13 +345,15 @@ class TaskNegotiationService:
         """
         从消息里取出「对方这次给的价格」。
 
-        【TASK_OFFER 为什么用 budget】
-            协议 §14 规定：reply_to 指向 TASK_OFFER 时，接受即按 budget 成交。
-            所以对策略来说，TASK_OFFER 报出来的就是这个 budget。
+        【实现已经搬到 Mapper】
+            因为「TASK_OFFER 报的是 budget、COUNTER_OFFER 报的是 price」
+            是**协议语义**，不是议价规则。
+            放在这里会让「按消息类型分派」散落到业务代码中。
+
+            这个方法保留下来只是因为 build_context 读起来更顺，
+            它本身不含任何判断。
         """
-        if message.message_type == MessageType.TASK_OFFER:
-            return self.mapper.parse_offer(message).budget  # type: ignore[return-value]
-        return self.mapper.parse_counter_offer(message).price  # type: ignore[return-value]
+        return self.mapper.offered_price(message)
 
     def decide(self, message: Message) -> Decision:
         """
@@ -654,6 +633,7 @@ class TaskNegotiationService:
         accepted_offer_message_id: Optional[str],
         accepted_offer_type: str,
         outgoing: Optional[Message] = None,
+        accept_author: Optional[str] = None,
     ) -> HandlerResult:
         """
         把「成交」落到 Task 状态 + 报价历史 + 成交凭证。
@@ -698,14 +678,20 @@ class TaskNegotiationService:
 
         # 2) 报价历史里记下这次成交
         #
-        # 【ACCEPT 是谁发的】
-        #     发送侧：是我在接受对方的报价 → 接受方 = incoming.to_agent（我）
-        #     接收侧：是对方接受了我的报价 → 接受方 = incoming.from_agent（对方）
-        #     用 message_type 区分这两种情况，不需要知道任何具体 Agent 的名字。
-        is_receiving_accept = incoming.message_type == MessageType.ACCEPT
-        accept_author = (
-            incoming.from_agent if is_receiving_accept else incoming.to_agent
-        )
+        # 【ACCEPT 是谁做出的 —— 由调用方显式告知】
+        #
+        #     接收侧（对方接受了我的报价）→ accept_author = message.from_agent
+        #     发送侧（我自己决定接受）    → accept_author = message.to_agent
+        #
+        #     【为什么不在方法里猜】
+        #         两种情况下 incoming 都是「我收到的那条消息」，
+        #         从消息本身看不出「我是哪一边」——
+        #         只有调用方知道。硬猜就要去嗅探 message_type，
+        #         那会让「按消息类型分派」散落到业务代码里。
+        #
+        #         （这个坑 4C 踩过一次：接收侧和发送侧的「行动方」
+        #           正好相反。当时的解法也是让调用方显式传 actor。）
+        author = accept_author or incoming.from_agent
 
         # 【ACCEPT 记录该用哪个 message_id】
         #     用**这条 ACCEPT 消息自己**的 id，而不是被接受的那条报价的 id。
@@ -719,7 +705,7 @@ class TaskNegotiationService:
                 outgoing.message_id if outgoing else incoming.message_id
             ),
             reply_to=accepted_offer_message_id or incoming.reply_to,
-            from_agent=accept_author,
+            from_agent=author,
             trace_id=incoming.trace_id,
             conversation_id=incoming.conversation_id,
             note="成交",
@@ -746,8 +732,10 @@ class TaskNegotiationService:
             accepted_offer_message_id,
         )
 
-        # 发送侧需要把 ACCEPT 发出去；接收侧不需要（reply_type 会被忽略）
-        is_sender_side = incoming.message_type != MessageType.ACCEPT
+        # 【发送侧需要把 ACCEPT 发出去；接收侧不需要】
+        #     判断依据就是「调用方有没有给我一条要发出去的消息」——
+        #     不需要去比对 message_type。
+        is_sender_side = outgoing is not None
 
         return HandlerResult(
             ok=True,
@@ -804,37 +792,6 @@ class TaskNegotiationService:
     # ============================================================
     # 六、共用小工具
     # ============================================================
-    def sync_trace(self, task: Task, message: Message) -> bool:
-        """
-        把任务的 current_trace_id 对齐到消息的 trace_id。
-
-        【为什么需要这个】
-            Step 4A 里 task_id 和 trace_id 是**分开**的：
-                task_id          任务的稳定身份
-                current_trace_id 这一次执行的链路
-
-            收到消息时，消息带的是「这一次执行」的 trace。
-            把它同步过来，两个系统就缝合了：
-                任务 → 报价 → message_id → 通信日志
-            这条链上的 trace_id 是同一个。
-
-        【换 trace 是正常的】
-            重试意味着新的一次执行、新的 trace，
-            但 task_id 不变 —— 这正是两个字段分开的目的。
-
-        返回是否真的发生了同步。
-        """
-        if task.current_trace_id == message.trace_id:
-            return False
-
-        previous = task.current_trace_id
-        task.current_trace_id = message.trace_id
-        logger.debug(
-            "任务 %s 的 trace 从 %s 切换到 %s（收到新执行的 %s）",
-            task.task_id, previous, message.trace_id, message.message_type,
-        )
-        return True
-
     def record_offer(
         self, task: Task, offer_type: str, amount: Money, message: Message
     ) -> None:
@@ -856,51 +813,6 @@ class TaskNegotiationService:
             trace_id=message.trace_id,
             conversation_id=message.conversation_id,
             note=f"来自 {message.from_agent}",
-        )
-
-    # ============================================================
-    # 七、协议违规的统一回复
-    # ============================================================
-    def reject_message(
-        self,
-        message: Message,
-        errors,
-        warnings=(),
-        task_id: Optional[str] = None,
-    ) -> HandlerResult:
-        """
-        这条消息**不合法**（协议违规 / 业务规则不允许）。
-
-        【它和「业务拒绝」的区别 —— 这个区别很重要】
-
-            业务拒绝（REJECT 消息）：任务 → REJECTED ✅
-                含义：「我理解这个请求，但我不愿意承接。」
-
-            协议违规（本方法）：任务状态**不变**，回 ERROR
-                含义：「你这条消息本身不成立。」
-
-            把两者混成一回事，就再也分不清
-            「对方不想干」和「对方发错了」。
-        """
-        logger.warning(
-            "拒绝一条 %s（来自 %s）：%s",
-            message.message_type, message.from_agent, "; ".join(errors),
-        )
-
-        return HandlerResult(
-            ok=False,
-            action=HandlerAction.REJECTED,
-            task_id=task_id,
-            errors=tuple(errors),
-            warnings=tuple(warnings),
-            reply_type=MessageType.ERROR,
-            reply_payload=self.mapper.error_reply_payload(
-                message, task_id, errors
-            ),
-            details={
-                "message_id": message.message_id,
-                "from_agent": message.from_agent,
-            },
         )
 
     # ============================================================

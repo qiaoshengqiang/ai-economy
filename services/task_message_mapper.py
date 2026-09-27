@@ -46,6 +46,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from core.money import Money, MoneyError
+from core.task_execution import TaskResultRef, TaskVerification
 
 from communication.message import Message, MessageType
 
@@ -110,6 +111,62 @@ class RejectIntent(MessageIntent):
 
     task_id: Optional[str] = None
     reason: Optional[str] = None
+
+
+# ============================================================
+# Step 4D：执行阶段的四种消息
+# ============================================================
+@dataclass(frozen=True)
+class StartIntent(MessageIntent):
+    """START 解析结果 —— 承接方说「我开工了」。"""
+
+    task_id: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class SubmitIntent(MessageIntent):
+    """
+    SUBMIT 解析结果 —— 承接方说「我交付了这份成果」。
+
+    【result 是必填的】
+        不能只发「我做好了」：发起方需要知道
+        **验收的是哪一份成果**，否则验收结论没有对象。
+    """
+
+    task_id: Optional[str] = None
+    result: Optional["TaskResultRef"] = None
+
+
+@dataclass(frozen=True)
+class VerifyIntent(MessageIntent):
+    """
+    VERIFY 解析结果 —— 发起方说「验收通过 / 不通过」。
+
+    【passed 用 Optional[bool] 而不是 bool】
+        因为 `False` 和「字段缺失」必须区分：
+            字段缺失 → 协议错误（这条消息不完整）
+            False    → 明确的「不通过」，要求返工
+        如果用 bool 加默认值，两者就分不开了。
+    """
+
+    task_id: Optional[str] = None
+    passed: Optional[bool] = None
+    feedback: str = ""
+
+    @property
+    def verification(self) -> "TaskVerification":
+        """转成领域类型（会校验 passed 是布尔、失败必有 feedback）。"""
+        from core.task_execution import TaskVerification
+
+        return TaskVerification(passed=self.passed, feedback=self.feedback)
+
+
+@dataclass(frozen=True)
+class CompleteIntent(MessageIntent):
+    """COMPLETE 解析结果 —— 发起方说「任务正式结束」。"""
+
+    task_id: Optional[str] = None
+    summary: str = ""
 
 
 # ============================================================
@@ -264,6 +321,131 @@ class TaskMessageMapper:
         )
 
     # ------------------------------------------------------------
+    # 解析：执行阶段的四种消息（Step 4D）
+    # ------------------------------------------------------------
+    def parse_start(self, message: Message) -> StartIntent:
+        """START → StartIntent"""
+        payload = dict(message.payload)
+        errors: List[str] = []
+        task_id = _parse_task_id(payload, errors)
+        return StartIntent(errors=tuple(errors), task_id=task_id)
+
+    def parse_submit(self, message: Message) -> SubmitIntent:
+        """
+        SUBMIT → SubmitIntent
+
+        【result_ref 的解析】
+            协议允许多种写法，按宽松到严格的顺序尝试：
+                1. payload.result = {result_type, result_ref, summary, metadata}
+                2. payload.result_ref = "..."  （扁平写法，更省事）
+            两种都支持是因为这是个新字段，
+            还没有形成唯一惯例 —— 强行只认一种只会让人踩坑。
+        """
+        payload = dict(message.payload)
+        errors: List[str] = []
+
+        task_id = _parse_task_id(payload, errors)
+        result: Optional[TaskResultRef] = None
+
+        raw_result = payload.get("result")
+        if isinstance(raw_result, Mapping):
+            try:
+                result = TaskResultRef.from_dict(raw_result)
+            except ValueError as exc:
+                errors.append(f"result 不合法：{exc}")
+        elif raw_result is not None:
+            errors.append(
+                "result 必须是 {{result_type, result_ref, summary, metadata}} "
+                "形式的对象"
+            )
+        elif payload.get("result_ref") is not None:
+            # 扁平写法
+            try:
+                result = TaskResultRef(
+                    result_ref=payload.get("result_ref"),
+                    result_type=payload.get("result_type", "artifact"),
+                    summary=payload.get("summary", "") or "",
+                    metadata=payload.get("metadata") or {},
+                )
+            except ValueError as exc:
+                errors.append(f"result_ref 不合法：{exc}")
+        # 两种都没给 → result 保持 None，
+        # 由 ExecutionService.validate_result 给出业务语义的错误信息
+        # （「SUBMIT 必须携带成果引用」比「缺少 result_ref」更说明问题）
+
+        return SubmitIntent(errors=tuple(errors), task_id=task_id, result=result)
+
+    def parse_verify(self, message: Message) -> VerifyIntent:
+        """VERIFY → VerifyIntent"""
+        payload = dict(message.payload)
+        errors: List[str] = []
+
+        task_id = _parse_task_id(payload, errors)
+
+        # 【这里只看「形状」】
+        #     passed 是不是布尔值是**形状**问题 → Mapper
+        #     passed=False 时有没有 feedback 是**业务**问题 → ExecutionService
+        passed: Optional[bool] = None
+        if "passed" not in payload:
+            pass  # 交给业务层报错（「必须携带 passed」更有指导性）
+        elif isinstance(payload["passed"], bool):
+            passed = payload["passed"]
+        else:
+            errors.append(
+                f"passed 必须是布尔值（true / false），"
+                f"收到 {payload['passed']!r}。\n"
+                f"（接受 1 / 0 会让「没传」和「传了不通过」分不清。）"
+            )
+
+        feedback = payload.get("feedback", "") or ""
+        if not isinstance(feedback, str):
+            errors.append(f"feedback 必须是字符串，收到 {type(feedback).__name__}")
+            feedback = ""
+
+        return VerifyIntent(
+            errors=tuple(errors),
+            task_id=task_id,
+            passed=passed,
+            feedback=feedback,
+        )
+
+    def parse_complete(self, message: Message) -> CompleteIntent:
+        """COMPLETE → CompleteIntent"""
+        payload = dict(message.payload)
+        errors: List[str] = []
+        task_id = _parse_task_id(payload, errors)
+
+        summary = payload.get("summary", "") or ""
+        if not isinstance(summary, str):
+            errors.append("summary 必须是字符串")
+            summary = ""
+
+        return CompleteIntent(errors=tuple(errors), task_id=task_id,
+                              summary=summary)
+
+    def offered_price(self, message: Message) -> Money:
+        """
+        这条消息「报出来的价格」是多少。
+
+        【为什么这件事属于 Mapper】
+            因为它是**协议语义**，不是业务规则：
+
+                TASK_OFFER      → 报的是 budget（协议 §14：接受即按 budget 成交）
+                COUNTER_OFFER   → 报的是 price
+
+            这正是 Mapper 的职责范围 ——「这条消息在说什么」。
+            业务规则（这个价格允不允许）仍然在 NegotiationService。
+
+        【为什么不让调用方自己 if 一下】
+            那样「按消息类型分派」就会散落在业务代码里。
+            协议语义集中在这儿，守卫才能检查
+            「services 里除了注册表没有别的按类型分支」。
+        """
+        if message.message_type == MessageType.TASK_OFFER:
+            return self.parse_offer(message).budget  # type: ignore[return-value]
+        return self.parse_counter_offer(message).price  # type: ignore[return-value]
+
+    # ------------------------------------------------------------
     # 构造：应用数据 → 回复消息
     # ------------------------------------------------------------
     @staticmethod
@@ -313,7 +495,10 @@ class TaskMessageMapper:
     def describe(self) -> Dict[str, Any]:
         return {
             "mapper": type(self).__name__,
-            "parses": ["TASK_OFFER", "COUNTER_OFFER", "ACCEPT", "REJECT"],
+            "parses": [
+                "TASK_OFFER", "COUNTER_OFFER", "ACCEPT", "REJECT",
+                "START", "SUBMIT", "VERIFY", "COMPLETE",
+            ],
             "decides_business_rules": False,
         }
 

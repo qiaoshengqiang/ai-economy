@@ -56,6 +56,8 @@ SERVICE_FILES = (
     "task_service.py",
     "task_handlers.py",
     "task_negotiation_service.py",
+    "task_execution_service.py",
+    "task_application_service.py",
     "task_message_mapper.py",
     "task_result.py",
 )
@@ -343,13 +345,39 @@ class TestTaskServiceBoundaries:
         assert any(m.startswith("communication") for m in all_modules)
         assert any(m.startswith("core.task") for m in all_modules)
 
+    def test_does_not_depend_on_economy_or_workspace(self):
+        """
+        应用层不许**依赖**钱包 / 账本 / 经济系统。
+
+        【为什么看 import 而不是看字面量】
+            服务会**合法地**声明「我没有碰钱」：
+
+                {"payment": None, "ledger": None, "workspace": None}
+
+            那是明确告诉调用方「这些都没发生」，是好的实践。
+            如果连这些词都不许出现，就会逼着大家删掉这种声明 ——
+            反而更难验证边界。
+
+            而一个服务**真的**碰钱，必然要先 import 钱包或账本。
+            所以依赖方向才是真正的信号。
+        """
+        for path in service_sources():
+            for module in imported_modules(parse(path)):
+                for forbidden in ("core.wallet", "core.ledger", "core.economy",
+                                  "core.workspace", "core.git"):
+                    assert not (module == forbidden
+                                or module.startswith(forbidden + ".")), (
+                        f"services/{path.name} 导入了 {module} —— "
+                        f"应用层不该依赖经济系统或 Workspace"
+                    )
+
     def test_does_not_pay_or_grant(self):
-        """但它不能直接付款、不能创建 Workspace。"""
+        """代码里也不许出现真正的付款 / 授权操作。"""
         for path in service_sources():
             code = code_only(path).lower()
-            for forbidden in ("wallet", "ledger", "transfer(", "escrow",
-                              "mkdir", "create_workspace", "grant(",
-                              "subprocess", "git "):
+            for forbidden in ("transfer(", "escrow", "mkdir",
+                              "create_workspace", "grant(", "authorize(",
+                              "subprocess", "git ", "settle("):
                 assert forbidden not in code, (
                     f"services/{path.name} 里出现了 {forbidden!r}"
                 )

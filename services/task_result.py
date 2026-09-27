@@ -65,6 +65,13 @@ class HandlerAction:
     REJECTED = "rejected"                # 拒绝（业务行为 或 校验失败）
     ALREADY_REJECTED = "already_rejected"  # 重复的拒绝（幂等）
 
+    # ---- Step 4D：执行阶段 ----
+    STARTED = "started"                  # 承接方开工（ACCEPTED → IN_PROGRESS）
+    SUBMITTED = "submitted"              # 承接方提交成果（IN_PROGRESS → SUBMITTED）
+    VERIFIED = "verified"                # 发起方验收通过（SUBMITTED → VERIFIED）
+    REWORK = "rework"                    # 发起方验收不通过，打回重做（→ IN_PROGRESS）
+    COMPLETED = "completed"              # 发起方结项（VERIFIED → COMPLETED）
+
     # 通用
     ALREADY_PROCESSED = "already_processed"  # 这条消息之前处理过（幂等）
 

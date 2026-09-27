@@ -150,7 +150,7 @@ LLM 只能**提出意图**，永远不能**直接改账**。
 - [x] SQLite 数据库（4 张表）
 - [x] 启动横幅
 - [x] **命令行经济操作**（转账 / 余额 / 流水 / 对账）
-- [x] 1709 个 pytest 测试全绿（另有 30 个真实 API 测试单独跑）
+- [x] 1915 个 pytest 测试全绿（另有 30 个真实 API 测试单独跑）
 
 **验收标准**（已达成）：
 
@@ -1327,11 +1327,150 @@ A → ACCEPT          25 AIC   ✅ 成交
 
 **测试：1635 → 1709（新增 74）** —— 原有 1635 项**一项没改**，全部继续通过。
 
+### ✅ Step 4D：任务执行 / 提交 / 验收 / 完结（已完成）
+
+**一句话目标**：让「任务已经谈成」第一次真正进入
+「另一个 Agent 正在执行、提交、验收、完成」的状态 ——
+而**不是**让系统开始跑代码。
+
+#### 完整生命周期
+
+```
+ACCEPTED ──START──→ IN_PROGRESS ──SUBMIT──→ SUBMITTED
+                        ↑                       │
+                        │                  VERIFY│
+                        └──── passed=false ─────┤
+                                                │passed=true
+                                                ↓
+                                            VERIFIED ──COMPLETE──→ COMPLETED
+```
+
+**返工是正常流程，不是异常。** 交付不合格通常可以修，
+所以 `VERIFY(false)` 让任务回到 `IN_PROGRESS`，而不是判死。
+
+#### 四个新消息
+
+| 消息 | 谁发 | 状态变化 | 必需字段 |
+|---|---|---|---|
+| `START` | 承接方 | `ACCEPTED → IN_PROGRESS` | `task_id` |
+| `SUBMIT` | 承接方 | `IN_PROGRESS → SUBMITTED` | `task_id` + **`result_ref`** |
+| `VERIFY` | 发起方 | `SUBMITTED → VERIFIED` 或 `→ IN_PROGRESS` | `task_id` + **`passed`** |
+| `COMPLETE` | 发起方 | `VERIFIED → COMPLETED` | `task_id` |
+
+**角色边界**：`START`/`SUBMIT` 只能承接方发，`VERIFY`/`COMPLETE` 只能发起方发。
+承接方**不能自己宣布「我验收自己通过」** —— 干活的不能既当运动员又当裁判。
+
+#### 议价与执行彻底分开
+
+```
+Message
+   ↓
+Handler（按类型）
+   ├──→ TaskNegotiationService   OFFER / COUNTER_OFFER / ACCEPT / REJECT
+   └──→ TaskExecutionService     START / SUBMIT / VERIFY / COMPLETE
+             ↓
+          Task Core（复用 4A 已有的状态机，不建第二套）
+             ↓
+          TaskStore
+```
+
+两者都继承 `TaskApplicationService`（共享幂等 / trace 缝合 / 协议违规回复），
+但**互相不知道**。因为：
+
+- **议价怎么谈** 会随 Agent 的智能程度不断演化（Agent 的私有策略）
+- **执行怎么走** 由协议和状态机固定（系统硬约束）
+
+混在一起就会出现「想改议价策略时得动执行代码」。
+
+#### SUBMIT 的成果引用
+
+```json
+{
+  "task_id": "TASK-4D-1",
+  "result": {
+    "result_type": "code",
+    "result_ref": "csv-analysis-v2",
+    "summary": "已修复空输入",
+    "metadata": {"files": 3}
+  }
+}
+```
+
+> 🔒 **`result_ref` 是逻辑名字，不是权限。**
+> 它不是文件路径、不是 URL、不是访问令牌、不是 Git 引用。
+> `TaskResultRef` 会**拒绝**长得像路径或 URL 的值 ——
+> 否则承接方就能通过提交一个构造过的名字让发起方去读任意文件。
+
+#### VERIFY 是第一版人工验收
+
+`passed` 由发起方**显式**给出。**不会**收到 SUBMIT 就自动跑测试或问模型。
+
+这不是偷懒，是刻意的边界：「什么算通过」是业务判断，
+不该由系统替 Agent 决定。未来的自动验收会是**另一个可选组件**，
+而不是把这个语义改掉。
+
+**`passed=false` 时必须给出 `feedback`** —— 否则承接方只能盲改。
+feedback 落进 `task_executions` 表，所以「上一轮为什么不通过」是**可查询**的。
+
+#### 执行历史（append-only）
+
+新增 `task_executions` 表，主键就是 `message_id`：
+
+- 幂等是**结构性**的 —— 重复投递撞主键，数据库层面就不可能写第二条
+- **不发明新 ID** —— 没有 `execution_id` / `revision_id`
+- **「第几轮」是算出来的**（数 SUBMIT 有几条），不是存出来的字段，所以不会漂移
+
+#### COMPLETE 不做结算
+
+```
+「活干完了」和「钱给了」是两件事。
+```
+
+`COMPLETE` 只结束生命周期。没有 Payment / Escrow / Wallet / Ledger 变化 ——
+有测试**直接跑完整个流程**然后断言钱包、账本、审计全部不变。
+
+#### 协议版本仍是 1
+
+4D 是 **additive** 变更：只增加新的消息类型，
+没有改任何已有类型的语义、字段或形状。有守卫断言这一点。
+
+#### 验收结果（对照 §二十八）
+
+| 组 | 状态 |
+|---|---|
+| 功能：完整走通 ACCEPTED → … → COMPLETED | ✅ |
+| 功能：VERIFY(false) → 返工 → VERIFY(true) | ✅ |
+| Message：四种新消息通过统一 Registry 路由 | ✅ 8 种 |
+| Domain：复用 4A 状态机，无第二套生命周期 | ✅ 有测试钉住两者不漂移 |
+| Negotiation：仍然只负责议价 | ✅ 有守卫 |
+| Strategy：DecisionPolicy 保持独立、无副作用 | ✅ |
+| Verification：人工验收，不自动执行 | ✅ 有守卫 |
+| Result：SUBMIT 有结构化成果引用 | ✅ |
+| Economy：Wallet / Ledger 不变 | ✅ 有测试直接验证 |
+| Workspace：不创建、不授权、不读写 | ✅ 有守卫 |
+| Git：无 | ✅ |
+| LLM：不是 4D 必需依赖 | ✅ 有守卫 |
+| Reliability：无 retry / queue | ✅ |
+| Architecture：门面不变胖、无循环依赖、无 God Module | ✅ 有守卫 |
+| 测试：原有 1709 + 新增全部通过 | ✅ |
+
+**测试：1709 → 1915（新增 206）**
+
+| 新增 | 数量 | 测什么 |
+|---|---|---|
+| `test_task_execution.py` | 52 | 业务规则 / 角色 / 状态 / 返工 / 幂等 |
+| `test_execution_handlers.py` | 36 | 消息路由 / 完整生命周期 / 边界 |
+| `test_execution_guards.py` | 99 | 10 项架构守卫 |
+| `test_cli.py` | +19 | `task-4d-demo` |
+
+**10 项新守卫全部做了反向测试**，全部抓到。
+
 ### ⏳ 后续阶段
 
 | 阶段 | 内容 | 状态 |
 |---|---|---|
-| Step 4D | 验收（SUBMIT / VERIFY）或 Task Workspace | 待开始 |
+| Step 5 | Task Workspace + Permission（真正的执行环境） | 待开始 |
+| 结算 | Payment / Escrow / Settlement（可引用 `TaskAgreementRecord`） | 待开始 |
 | Step 5 | 完整经济交易 Demo（A 外包给 B，结算） | 待开始 |
 | Step 6 | Cost Calculator（把 token 用量接到经济系统） | 待开始 |
 
@@ -1553,6 +1692,7 @@ ai-economy/
 │   ├── capability.py          ←   能力声明与匹配（Step 4B）
 │   ├── decision_policy.py     ←   议价决策策略（Step 4C）
 │   ├── task_agreement.py      ←   成交凭证（Step 4C）
+│   ├── task_execution.py      ←   成果引用 / 验收结论 / 执行记录（Step 4D）
 │   ├── agent_directory.py     ←   能力发现目录（Step 4B）
 │   ├── task.py                ←   Task 领域对象 + 状态机（Step 4A）
 │   ├── task_store.py          ←   Task 持久化（Step 4A）
@@ -1581,8 +1721,10 @@ ai-economy/
 │
 ├── services/                  ← Task 应用层（消息 → 领域）
 │   ├── task_service.py        ←   门面 / 编排（对外唯一入口）
-│   ├── task_handlers.py       ←   按消息类型隔离的处理器 + 注册表
-│   ├── task_negotiation_service.py ← 议价规则 + 状态落地
+│   ├── task_handlers.py       ←   8 个处理器 + 注册表（议价 4 + 执行 4）
+│   ├── task_application_service.py ← 应用服务基类（幂等/trace/协议违规）
+│   ├── task_negotiation_service.py ← 议价规则 + 状态落地（Step 4C）
+│   ├── task_execution_service.py   ← 执行/提交/验收/完成（Step 4D）
 │   ├── task_message_mapper.py ←   协议 payload ↔ 应用数据
 │   └── task_result.py         ←   所有处理器的返回类型
 │
@@ -1600,7 +1742,7 @@ ai-economy/
 │   ├── database.py            ← SQLite 连接、事务、迁移
 │   └── models.py              ← 表结构定义
 │
-├── tests/                     ← 1709 个测试 + 30 个真实 API 测试
+├── tests/                     ← 1915 个测试 + 30 个真实 API 测试
 └── data/
     └── economy.db             ← SQLite 数据库（运行产物，不进 git）
 ```

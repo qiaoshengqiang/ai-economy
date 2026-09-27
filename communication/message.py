@@ -78,10 +78,24 @@ class MessageType:
     COUNTER_OFFER = "COUNTER_OFFER"      # 还价（Step 4）
     ACCEPT = "ACCEPT"                    # 接受（Step 4）
     REJECT = "REJECT"                    # 拒绝（Step 4）
-    SUBMIT = "SUBMIT"                    # 提交成果（Step 5）
-    VERIFY = "VERIFY"                    # 验收（Step 5）
-    PAYMENT_REQUEST = "PAYMENT_REQUEST"  # 请求付款（Step 6）
-    PAYMENT_RESULT = "PAYMENT_RESULT"    # 付款结果（Step 6）
+    # ---- 执行生命周期（Step 4D 接入）----
+    #
+    # 【为什么 START / COMPLETE 是这次才加的】
+    #     3.6 冻结协议时只预留了 SUBMIT / VERIFY，
+    #     因为那时以为「开工」和「结项」可以靠状态推断。
+    #     4D 实际接消息时发现不行：状态变化必须由**一条明确的消息**触发，
+    #     否则接收方无从知道「对方开工了」。
+    #
+    #     这是 **additive** 变更 —— 只增加新类型，不改任何已有类型
+    #     的语义或形状，所以 protocol_version 保持 1（见 PROTOCOL.md §7.5）。
+    START = "START"                      # 开工（承接方 → 发起方）
+    SUBMIT = "SUBMIT"                    # 提交成果（承接方 → 发起方）
+    VERIFY = "VERIFY"                    # 验收结论（发起方 → 承接方）
+    COMPLETE = "COMPLETE"                # 结项（发起方 → 承接方）
+
+    # ---- 后续步骤预留（现在只有名字，没有实现）----
+    PAYMENT_REQUEST = "PAYMENT_REQUEST"  # 请求付款（结算阶段）
+    PAYMENT_RESULT = "PAYMENT_RESULT"    # 付款结果（结算阶段）
 
     @classmethod
     def known(cls) -> List[str]:

@@ -176,7 +176,9 @@ def policies():
 SERVICE_MODULES = (
     "task_result.py",
     "task_message_mapper.py",
+    "task_application_service.py",
     "task_negotiation_service.py",
+    "task_execution_service.py",
     "task_handlers.py",
     "task_service.py",
 )
@@ -305,15 +307,55 @@ class TestNoGodModule:
         Mapper 只解析形状，不做业务判断。
 
         【怎么用守卫表达「不做业务判断」】
-            业务判断需要领域知识 —— 所以 Mapper **不许认识 Task**。
-            它连 Task 是什么都不知道，自然判不了「这个价格允不允许」。
+            业务判断需要**聚合**知识（这个任务现在什么状态、谁有资格做什么）。
+            所以 Mapper 不许认识 Task / TaskStore。
+
+            它连 Task 是什么都不知道，自然判不了
+            「这个价格允不允许」「现在能不能提交」。
+
+        【Step 4D 之后为什么允许 core.task_execution】
+            SUBMIT 要解析成一个成果引用（TaskResultRef），
+            VERIFY 要解析成一个验收结论（TaskVerification）——
+            这两个是**值类型**，不是聚合：
+
+                TaskResultRef     只校验自己「非空、不像路径、类型已知」
+                TaskVerification  只校验自己「passed 是布尔、失败要有 feedback」
+
+            它们不知道任何任务的当前状态，也判不了业务是否成立。
+            所以 Mapper 构造它们，仍然是在做「协议 → 数据」的翻译，
+            而不是在做业务判断。
+
+            （一个可检验的判据：这两个类型都不 import core.task。）
         """
         modules = imported_modules(parse(service_path("task_message_mapper.py")))
 
-        for forbidden in ("core.task", "core.task_store", "core.task_agreement"):
+        for forbidden in ("core.task_store", "core.task_agreement"):
             assert not any(m.startswith(forbidden) for m in modules), (
                 f"task_message_mapper.py 导入了 {forbidden} —— "
-                f"Mapper 只做协议形状解析，不碰领域对象"
+                f"Mapper 不碰持久化，也不碰成交凭证"
+            )
+
+        # core.task 只允许以 core.task_execution 的形式出现（子串会误伤）
+        for module in modules:
+            assert module != "core.task", (
+                "task_message_mapper.py 导入了 core.task（聚合根）—— "
+                "Mapper 一旦认识 Task 就能做业务判断了"
+            )
+
+    def test_mapper_value_types_do_not_know_tasks(self):
+        """
+        验证上面那条放宽是安全的：
+        Mapper 引入的那两个值类型，自己不许认识 Task。
+
+        如果哪天有人给 TaskResultRef 加了 `task.status` 这种判断，
+        这条会红 —— 于是「Mapper 不做业务判断」仍然守得住。
+        """
+        for name in ("core/task_execution.py",):
+            modules = imported_modules(parse(PROJECT_ROOT / name))
+            assert not any(m == "core.task" or m.startswith("core.task_store")
+                           for m in modules), (
+                f"{name} 导入了 Task / TaskStore —— "
+                f"它就变成能做业务判断的类型了，不能再被 Mapper 使用"
             )
 
 
@@ -700,25 +742,33 @@ class TestApiCompatibility:
 class TestStep4DIsNotImplemented:
     @pytest.mark.parametrize(
         "forbidden",
-        ["SubmitHandler", "VerifyHandler", "StartHandler", "CompleteHandler",
-         "submit_task", "verify_task", "run_tests", "execute_tests",
-         "auto_verify"],
+        # 【重构阶段禁止的是这些】——
+        #     「执行」的一切真实能力。
+        #     4D 只接状态机，不执行代码、不跑测试、不自动判断。
+        ["subprocess", "run_tests", "execute_tests", "auto_verify",
+         "sandbox", "docker", "shell", "Popen", "os.system"],
     )
-    def test_no_4d_handlers(self, forbidden):
+    def test_4d_handlers_exist_but_do_not_execute_code(self, forbidden):
         """
-        本次是重构，不实现 4D。
+        【这条守卫随 Step 4D 演进了】
 
-        【看的是纯代码，不是原文】
-            文档里会**合法地**举例子说明扩展点：
-                registry.register(SubmitHandler(negotiation))
-            那是在解释「未来怎么加」，不是实现它。
-            守卫必须只看代码，否则会被自己的说明文字绊倒。
+            重构阶段它守的是「一个 4D handler 都不许有」。
+            现在 4D 就是要实现这四个 handler ——
+            所以守卫的内容换成**4D 不许越界**：
+
+                ✅ 允许：接收 START / SUBMIT / VERIFY / COMPLETE 消息，
+                        校验规则，推进状态机
+                ❌ 禁止：执行代码、跑测试、自动判断验收、沙箱
+
+            守卫没有变松 —— 它只是从「守住这一阶段不做」
+            变成「守住做的时候不越界」。
         """
-        code = code_only(service_path("task_handlers.py"))
-
-        assert forbidden not in code, (
-            f"task_handlers.py 的代码里出现了 {forbidden!r} —— 属于 Step 4D"
-        )
+        for name in SERVICE_MODULES:
+            code = code_only(service_path(name))
+            assert forbidden not in code, (
+                f"services/{name} 的代码里出现了 {forbidden!r} —— "
+                f"4D 只接状态机，不执行代码"
+            )
 
     @pytest.mark.parametrize(
         "forbidden",

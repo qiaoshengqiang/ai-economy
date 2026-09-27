@@ -39,6 +39,7 @@ TABLE_COMM_EVENTS: Final = "communication_events"
 TABLE_TASKS: Final = "tasks"
 TABLE_TASK_OFFERS: Final = "task_offers"
 TABLE_TASK_AGREEMENTS: Final = "task_agreements"
+TABLE_TASK_EXECUTIONS: Final = "task_executions"
 
 
 # ============================================================
@@ -517,6 +518,70 @@ SCHEMA_STATEMENTS: Final[tuple[str, ...]] = (
     )
     """,
 
+    # --------------------------------------------------------
+    # task_executions —— 执行阶段的事件记录（Step 4D）
+    #
+    # 【为什么是 append-only 的事件表，而不是在 tasks 上加几个字段】
+    #
+    #     1. 返工是正常流程
+    #            VERIFY(false) → 返工 → 再 SUBMIT → 再 VERIFY
+    #        所以一个任务会**多组** SUBMIT / VERIFY。
+    #        如果只在 tasks 上存「最近一次」，上一轮为什么不通过就丢了 ——
+    #        而那正是承接方返工时最需要的信息。
+    #
+    #     2. 不许把 Task 变成大 JSON 袋子
+    #        把 submission / verification 塞成 tasks 上的两个 JSON 列，
+    #        会让 Task 慢慢变成一个什么都装的容器。
+    #        执行事件是**独立的事实**，值得独立一张表。
+    #
+    #     3. 沿用 task_offers 已经验证过的模式
+    #        议价阶段用「事件表 + 四 ID 关联」记录报价历史，效果很好。
+    #        执行阶段用同一个模式，架构上是一致的。
+    #
+    # 【主键为什么是 message_id】
+    #     每个事件对应且只对应一条消息，所以 message_id 天然唯一。
+    #     把它当主键让**幂等变成结构性的**：
+    #     重复投递会撞主键，数据库层面就不可能写入第二条 ——
+    #     不依赖应用层的判断是否记得做。
+    #
+    #     而且这样**不需要发明新 ID**（没有 execution_id / revision_id）。
+    #     「第几轮」是推导出来的（数 SUBMIT 有几条），不单独存，
+    #     所以不会出现「记录的轮次和实际事件数对不上」的漂移。
+    # --------------------------------------------------------
+    """
+    CREATE TABLE IF NOT EXISTS task_executions (
+        -- 触发这条记录的消息。同时是幂等键。
+        message_id      TEXT PRIMARY KEY,
+
+        task_id         TEXT NOT NULL,
+
+        -- START / SUBMIT / VERIFY / COMPLETE
+        event_type      TEXT NOT NULL,
+
+        -- ---- SUBMIT 专有 ----
+        result_type     TEXT,
+        result_ref      TEXT,
+        result_summary  TEXT,
+        result_metadata TEXT,
+
+        -- ---- VERIFY 专有 ----
+        passed          INTEGER,       -- 0 / 1，NULL 表示不是 VERIFY
+        feedback        TEXT,
+
+        reply_to        TEXT,
+        from_agent      TEXT,
+        trace_id        TEXT,
+        conversation_id TEXT,
+
+        -- 事件之后任务处于什么状态（审计时不必回放）
+        status_after    TEXT,
+
+        created_at      TEXT NOT NULL,
+
+        FOREIGN KEY (task_id) REFERENCES tasks (task_id)
+    )
+    """,
+
     "CREATE INDEX IF NOT EXISTS idx_agreements_task ON task_agreements (task_id)",
     "CREATE INDEX IF NOT EXISTS idx_agreements_time ON task_agreements (created_at)",
 )
@@ -535,6 +600,13 @@ SCHEMA_STATEMENTS: Final[tuple[str, ...]] = (
 #     Step 4C 第一次踩到这个坑：给 task_offers 加了 from_agent 列
 #     并顺手在同一批里建索引，结果老库一启动就崩。
 POST_MIGRATION_INDEXES: Final[tuple[str, ...]] = (
+    # ---- Step 4D：执行事件的两个常用查询方向 ----
+    #     按任务查（"这个任务经历了什么"）
+    #     按发送方查（"这个 Agent 提交过什么"）
+    "CREATE INDEX IF NOT EXISTS idx_task_executions_task "
+    "ON task_executions (task_id)",
+    "CREATE INDEX IF NOT EXISTS idx_task_executions_from "
+    "ON task_executions (from_agent)",
     "CREATE INDEX IF NOT EXISTS idx_task_offers_msg  ON task_offers (message_id)",
     "CREATE INDEX IF NOT EXISTS idx_task_offers_from ON task_offers (from_agent)",
 )

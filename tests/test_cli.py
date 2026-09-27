@@ -1235,3 +1235,121 @@ class TestNegotiationDemo:
 
         assert "ACCEPTED" in result.stdout
         assert "REJECTED" in result.stdout
+
+
+# ============================================================
+# Step 4D：task-4d-demo
+# ============================================================
+class TestTask4DDemo:
+    @staticmethod
+    def _run(tmp_path, name="d4.db"):
+        return run_cli("task-4d-demo", db_path=tmp_path / name)
+
+    def test_runs(self, tmp_path):
+        result = self._run(tmp_path)
+
+        assert result.returncode == EXIT_OK
+        assert "Step 4D" in result.stdout
+        assert "Task Execution" in result.stdout
+
+    def test_shows_full_chain(self, tmp_path):
+        """完整链路：ACCEPT → START → SUBMIT → VERIFY(false) → 返工 → VERIFY(true) → COMPLETE"""
+        out = self._run(tmp_path, "d4b.db").stdout
+
+        for marker in ("TASK_OFFER", "COUNTER_OFFER", "ACCEPT",
+                       "START", "SUBMIT", "VERIFY", "COMPLETE"):
+            assert marker in out, f"演示里没有 {marker}"
+
+    def test_shows_every_status(self, tmp_path):
+        out = self._run(tmp_path, "d4c.db").stdout
+
+        for status in ("OFFERED", "NEGOTIATING", "ACCEPTED", "IN_PROGRESS",
+                       "SUBMITTED", "VERIFIED", "COMPLETED"):
+            assert status in out, f"演示里没有状态 {status}"
+
+    def test_shows_rework(self, tmp_path):
+        out = self._run(tmp_path, "d4d.db").stdout
+
+        assert "passed = False" in out
+        assert "返工" in out
+        assert "打回" in out or "IN_PROGRESS" in out
+
+    def test_shows_feedback(self, tmp_path):
+        out = self._run(tmp_path, "d4e.db").stdout
+
+        assert "验收意见" in out
+        assert "第 3 个函数" in out
+
+    def test_shows_result_ref(self, tmp_path):
+        out = self._run(tmp_path, "d4f.db").stdout
+
+        assert "csv-analysis-v1" in out
+        assert "csv-analysis-v2" in out
+        assert "成果引用" in out
+
+    def test_shows_message_ids_and_reply_to(self, tmp_path):
+        out = self._run(tmp_path, "d4g.db").stdout
+
+        assert "message_id" in out
+        assert "reply_to" in out
+
+    def test_shows_attempts(self, tmp_path):
+        out = self._run(tmp_path, "d4h.db").stdout
+
+        assert "提交次数" in out
+        assert "返工次数" in out
+
+    def test_proves_wallet_unchanged(self, tmp_path):
+        out = self._run(tmp_path, "d4i.db").stdout
+
+        assert "Wallet A" in out
+        assert "Wallet B" in out
+        assert "✅ 不变" in out
+
+    def test_proves_ledger_unchanged(self, tmp_path):
+        out = self._run(tmp_path, "d4j.db").stdout
+
+        assert "Ledger" in out
+        assert "✅ 不变" in out
+
+    def test_proves_no_llm(self, tmp_path):
+        out = self._run(tmp_path, "d4k.db").stdout
+
+        assert "LLM" in out
+        assert "全程未调用" in out
+
+    def test_proves_no_workspace(self, tmp_path):
+        out = self._run(tmp_path, "d4l.db").stdout
+
+        assert "Workspace" in out
+        assert "未创建" in out
+
+    def test_proves_no_code_execution_or_git(self, tmp_path):
+        out = self._run(tmp_path, "d4m.db").stdout
+
+        assert "代码执行" in out
+        assert "未执行" in out
+        assert "Git" in out
+
+    def test_repeatable(self, tmp_path):
+        """演示可以反复跑，结果不应该叠加。"""
+        db_file = tmp_path / "d4n.db"
+        first = run_cli("task-4d-demo", db_path=db_file)
+        second = run_cli("task-4d-demo", db_path=db_file)
+
+        assert first.returncode == EXIT_OK
+        assert second.returncode == EXIT_OK
+        # 【为什么这条很重要】
+        #     task_executions 有指向 tasks 的外键，
+        #     清理顺序错了会在重跑时抛 FOREIGN KEY constraint failed。
+        assert "FOREIGN KEY" not in second.stdout
+        assert "执行事件 6 条" in second.stdout
+
+    def test_persists_execution_history(self, tmp_path):
+        db_file = tmp_path / "d4o.db"
+        run_cli("task-4d-demo", db_path=db_file)
+
+        result = run_cli("task-log", "TASK-4D-1", db_path=db_file)
+
+        assert result.returncode == EXIT_OK
+        assert "TASK-4D-1" in result.stdout

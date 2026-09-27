@@ -60,6 +60,10 @@ from core.task import TaskStatus
 
 from communication.message import Message, MessageType
 
+from core.task_execution import ExecutionEvent
+
+from services.task_application_service import TaskApplicationService
+from services.task_execution_service import TaskExecutionService
 from services.task_message_mapper import TaskMessageMapper
 from services.task_negotiation_service import TaskNegotiationService
 from services.task_result import HandlerResult
@@ -87,11 +91,20 @@ class TaskMessageHandler(ABC):
 
     def __init__(
         self,
-        negotiation: TaskNegotiationService,
+        service: "TaskApplicationService",
         mapper: Optional[TaskMessageMapper] = None,
     ):
-        self.negotiation = negotiation
-        self.mapper = mapper or negotiation.mapper
+        """
+        【为什么参数叫 service 而不是 negotiation】
+            Step 4D 引入了第二个应用服务（执行）。
+            两类 handler 的骨架完全一样 —— 都需要
+            「一个能落地状态的 service」+「一个能解析的 mapper」。
+
+            所以基类只认抽象的 service，具体是哪一个
+            由两个语义化的中间基类声明（见下）。
+        """
+        self.service = service
+        self.mapper = mapper or service.mapper
 
     # ------------------------------------------------------------
     def accepts(self, message: Message) -> bool:
@@ -118,10 +131,30 @@ class TaskMessageHandler(ABC):
         return f"{type(self).__name__}()"
 
 
+class NegotiationMessageHandler(TaskMessageHandler):
+    """
+    议价消息的 handler。
+
+    【它存在的意义】
+        声明「我的 service 一定是 TaskNegotiationService」，
+        并把它暴露成语义化的 self.negotiation ——
+        这样四个议价 handler 里的代码读起来是
+        「问协商服务」，而不是笼统的「问 service」。
+    """
+
+    def __init__(
+        self,
+        negotiation: "TaskNegotiationService",
+        mapper: Optional[TaskMessageMapper] = None,
+    ):
+        super().__init__(negotiation, mapper)
+        self.negotiation = negotiation
+
+
 # ============================================================
 # TASK_OFFER
 # ============================================================
-class OfferHandler(TaskMessageHandler):
+class OfferHandler(NegotiationMessageHandler):
     """
     处理收到的 TASK_OFFER。
 
@@ -173,7 +206,7 @@ class OfferHandler(TaskMessageHandler):
 # ============================================================
 # COUNTER_OFFER
 # ============================================================
-class CounterOfferHandler(TaskMessageHandler):
+class CounterOfferHandler(NegotiationMessageHandler):
     """
     处理收到的 COUNTER_OFFER（还价）。
 
@@ -246,7 +279,7 @@ class CounterOfferHandler(TaskMessageHandler):
 # ============================================================
 # ACCEPT
 # ============================================================
-class AcceptHandler(TaskMessageHandler):
+class AcceptHandler(NegotiationMessageHandler):
     """
     处理收到的 ACCEPT。
 
@@ -341,13 +374,16 @@ class AcceptHandler(TaskMessageHandler):
             incoming=message,
             accepted_offer_message_id=accepted_offer.message_id,
             accepted_offer_type=accepted_offer.offer_type,
+            # 【接收侧】我们收到的是**对方**发来的 ACCEPT，
+            # 所以「做出接受这个动作的人」是消息的发送者。
+            accept_author=message.from_agent,
         )
 
 
 # ============================================================
 # REJECT
 # ============================================================
-class RejectHandler(TaskMessageHandler):
+class RejectHandler(NegotiationMessageHandler):
     """
     处理收到的 REJECT。
 
@@ -400,6 +436,225 @@ class RejectHandler(TaskMessageHandler):
         return self.negotiation.apply_reject(
             task, intent.reason, incoming=message
         )
+
+
+# ============================================================
+# 执行阶段（Step 4D）
+#
+# 【四个 handler 的骨架完全一样】
+#
+#     校验消息类型 → 解析 → 取任务 → 幂等 → 业务校验 → 落地
+#
+# 所以公共骨架放在 ExecutionMessageHandler 里，
+# 每个具体 handler 只写「自己特有的那两件事」：
+#
+#     parse()        这条消息解析成什么（用 Mapper）
+#     extra_errors() 这条消息特有的业务校验
+#     apply()        怎么落地（用 ExecutionService）
+#
+# 【这就是上一轮重构买来的东西】
+#     加四种消息类型，TaskService 一行没改；
+#     每个新 handler 只有十几行。
+# ============================================================
+class ExecutionMessageHandler(TaskMessageHandler):
+    """
+    执行阶段消息的 handler 骨架。
+
+    【它不做什么 —— 和议价 handler 一样】
+        ❌ 不解析 payload      → Mapper
+        ❌ 不实现业务规则      → TaskExecutionService
+        ❌ 不直接改数据库      → TaskStore
+        ❌ 不发消息            → 只返回 HandlerResult
+        ❌ 不执行代码、不调 LLM、不碰钱、不碰 Workspace
+    """
+
+    #: 这个 handler 对应哪个执行事件（见 core.task_execution.ExecutionEvent）
+    event_type: str = ""
+
+    def __init__(
+        self,
+        execution: TaskExecutionService,
+        mapper: Optional[TaskMessageMapper] = None,
+    ):
+        super().__init__(execution, mapper)
+        self.execution = execution
+
+    # ------------------------------------------------------------
+    # 子类要实现的三个钩子
+    # ------------------------------------------------------------
+    @abstractmethod
+    def parse(self, message: Message):
+        """把消息解析成 intent（用 Mapper）。"""
+
+    def extra_errors(self, task: Any, intent: Any) -> List[str]:
+        """
+        这条消息**特有**的业务校验。
+
+        默认没有。需要的话由子类覆盖
+        （比如 SUBMIT 要求 result_ref 必填）。
+        """
+        return []
+
+    @abstractmethod
+    def apply(self, task: Any, intent: Any, message: Message) -> HandlerResult:
+        """落地（用 ExecutionService）。"""
+
+    # ------------------------------------------------------------
+    def handle(self, message: Message) -> HandlerResult:
+        self.check_type(message)
+
+        # ---- 1) 解析 ----
+        intent = self.parse(message)
+        if not intent.ok:
+            return self.execution.reject_message(
+                message, list(intent.errors), [], intent.task_id
+            )
+
+        # ---- 2) 取任务 ----
+        task, error = self.execution.load_task(message, intent.task_id)
+        if error is not None:
+            return error
+
+        # ---- 3) 幂等（必须排在状态 / 角色校验之前）----
+        #
+        # 【顺序为什么重要】
+        #     发送侧落地之后任务状态已经变了。
+        #     对方收到同一条消息再走一遍时，会先撞上「状态不允许」，
+        #     被误判成一次非法操作 ——
+        #     但它其实只是**同一条消息的接收侧**，应该识别为重复。
+        if self.execution.already_recorded(task, message):
+            return self.execution.already_processed(task, message)
+
+        # ---- 4) 业务校验 ----
+        #
+        # 【两类错误一起报】
+        #     特有的（result_ref 缺失）+ 通用的（状态 / 角色）
+        #     一次全告诉对方，免得它改一条跑一次。
+        errors = self.extra_errors(task, intent)
+        errors.extend(
+            self.execution.validate(
+                task, message.from_agent, self.event_type, message
+            )
+        )
+        if errors:
+            return self.execution.reject_message(
+                message, errors, [], intent.task_id
+            )
+
+        # ---- 5) 落地 ----
+        return self.apply(task, intent, message)
+
+
+class StartHandler(ExecutionMessageHandler):
+    """
+    START —— 承接方说「我开工了」。
+
+        ACCEPTED → IN_PROGRESS
+
+    【为什么开工要单独发一条消息】
+        发起方需要知道承接方**确实开始做了**。
+        如果只看状态推断，发起方只能靠猜 ——
+        而「已成交」和「已在做」是两件不同的事
+        （承接方可能一直没开始）。
+    """
+
+    message_type = MessageType.START
+    event_type = ExecutionEvent.START
+
+    def parse(self, message: Message):
+        return self.mapper.parse_start(message)
+
+    def apply(self, task, intent, message: Message) -> HandlerResult:
+        return self.execution.apply_start(task, incoming=message)
+
+
+class SubmitHandler(ExecutionMessageHandler):
+    """
+    SUBMIT —— 承接方说「我交付了这份成果」。
+
+        IN_PROGRESS → SUBMITTED
+
+    【成果引用是必填的】
+        不能只发「我做好了」：发起方需要知道
+        **验收的是哪一份成果**，否则验收结论没有对象。
+
+    【本阶段不上传文件】
+        result_ref 只是一个逻辑名字（比如 "analysis-v2"）。
+        它**不是**路径、不是权限、不是 URL、不是 Git 引用。
+        TaskResultRef 会拒绝长得像路径或 URL 的值 ——
+        那是一道安全边界，见 core/task_execution.py。
+    """
+
+    message_type = MessageType.SUBMIT
+    event_type = ExecutionEvent.SUBMIT
+
+    def parse(self, message: Message):
+        return self.mapper.parse_submit(message)
+
+    def extra_errors(self, task, intent) -> List[str]:
+        return self.execution.validate_result(intent)
+
+    def apply(self, task, intent, message: Message) -> HandlerResult:
+        return self.execution.apply_submit(
+            task, intent.result, incoming=message
+        )
+
+
+class VerifyHandler(ExecutionMessageHandler):
+    """
+    VERIFY —— 发起方说「验收通过 / 不通过」。
+
+        passed=True   → VERIFIED
+        passed=False  → IN_PROGRESS（返工）
+
+    【只有发起方能发】
+        承接方不能自己宣布「我验收自己通过」——
+        干活的不能既当运动员又当裁判。
+        这条规则在 ExecutionService.validate_role 里，有守卫。
+
+    【第一版是人工验收】
+        passed 由发起方显式给出。
+        **不会**收到 SUBMIT 就自动跑测试或问模型。
+    """
+
+    message_type = MessageType.VERIFY
+    event_type = ExecutionEvent.VERIFY
+
+    def parse(self, message: Message):
+        return self.mapper.parse_verify(message)
+
+    def extra_errors(self, task, intent) -> List[str]:
+        return self.execution.validate_verification(intent)
+
+    def apply(self, task, intent, message: Message) -> HandlerResult:
+        return self.execution.apply_verify(
+            task, intent.verification, incoming=message
+        )
+
+
+class CompleteHandler(ExecutionMessageHandler):
+    """
+    COMPLETE —— 发起方说「任务正式结束」。
+
+        VERIFIED → COMPLETED
+
+    【它只结束生命周期】
+        ❌ 不付款、不转账、不释放托管、不结算
+        ❌ 不动 Wallet / Ledger
+
+        「活干完了」和「钱给了」是两件事。
+        结算是一个独立的后续阶段，它可以引用
+        TaskAgreementRecord 里约定的 agreed_price。
+    """
+
+    message_type = MessageType.COMPLETE
+    event_type = ExecutionEvent.COMPLETE
+
+    def parse(self, message: Message):
+        return self.mapper.parse_complete(message)
+
+    def apply(self, task, intent, message: Message) -> HandlerResult:
+        return self.execution.apply_complete(task, incoming=message)
 
 
 # ============================================================
@@ -489,20 +744,38 @@ class TaskHandlerRegistry:
 
 def default_handler_registry(
     negotiation: TaskNegotiationService,
+    execution: Optional[TaskExecutionService] = None,
     mapper: Optional[TaskMessageMapper] = None,
 ) -> TaskHandlerRegistry:
     """
-    构造 Step 4C 默认的四个处理器。
+    构造默认的处理器集合。
 
-    【Step 4D 要加新类型时，改的是这里 + 组合根】
-        比如：
-            registry.register(SubmitHandler(negotiation))
+    【Step 4D 加执行 handler 时改了什么】
+        就只改了这个函数 —— 加了四行 register。
+        TaskService（门面）**一行都没改**。
 
-        门面（TaskService）不需要任何改动 —— 这就是本次重构要保住的扩展点。
+        这正是上一轮重构要保住的扩展点：加消息类型不用碰门面。
+
+    【参数 execution 为什么是可选的】
+        保留 4C 的调用方式（只传 negotiation）仍然可用 ——
+        那时注册表只有四个议价 handler。
+        这让已有的测试和调用方不用改。
     """
-    return TaskHandlerRegistry([
+    handlers = [
+        # ---- 议价（Step 4C）----
         OfferHandler(negotiation, mapper),
         CounterOfferHandler(negotiation, mapper),
         AcceptHandler(negotiation, mapper),
         RejectHandler(negotiation, mapper),
-    ])
+    ]
+
+    # ---- 执行（Step 4D）----
+    if execution is not None:
+        handlers.extend([
+            StartHandler(execution, mapper),
+            SubmitHandler(execution, mapper),
+            VerifyHandler(execution, mapper),
+            CompleteHandler(execution, mapper),
+        ])
+
+    return TaskHandlerRegistry(handlers)
