@@ -748,7 +748,7 @@ extra_body:
 ## 4. 跑测试
 
 ```bash
-# 全部测试（1635 个，不含真实 API 测试）
+# 全部测试（1709 个，不含真实 API 测试）
 ./dev.sh test
 
 # 详细输出，显示每个测试的名字
@@ -823,19 +823,20 @@ extra_body:
 | `tests/test_message.py` | Message 创建 / 校验 / 序列化 / 前向兼容 | 51 |
 | `tests/test_money.py` | 金额值类型 / 跨货币安全 / 与配置一致 | 40 |
 | `tests/test_negotiation.py` | ACCEPT / COUNTER / REJECT / 角色轮次 / 成交凭证 / 隔离 | 48 |
-| `tests/test_negotiation_guards.py` | 议价层架构守卫（7 类） | 58 |
+| `tests/test_negotiation_guards.py` | 议价层架构守卫（覆盖整个 services 包） | 58 |
 | `tests/test_protocol_payloads.py` | 结构化 payload / ACCEPT 成交价 / task_id≠trace_id / 报价链 | 109 |
 | `tests/test_provider_contract.py` | 两家共用的契约（同一批断言参数化跑两遍） | 80 |
 | `tests/test_registry.py` | 注册表纯数据 / 本地远端 / 状态分离 | 34 |
+| `tests/test_service_layer_guards.py` | 应用层重构守卫：薄门面 / 无 God Module / 扩展点 / API 兼容 | 74 |
 | `tests/test_startup.py` | 启动流程、重启不重复发钱 | 6 |
 | `tests/test_task.py` | Task 身份 / 状态机 / budget≠price / 报价链 / 能力要求 / 边界 | 132 |
-| `tests/test_task_guards.py` | Task Core 架构守卫（随 4C 演进：四个类型已接入） | 44 |
+| `tests/test_task_guards.py` | Task Core 架构守卫（随步骤演进） | 44 |
 | `tests/test_task_service.py` | TASK_OFFER handler / 校验 / 链路关联 / 隔离性 | 57 |
 | `tests/test_task_store.py` | Task 持久化 / 往返无损 / 报价历史 / 成交凭证 | 47 |
 | `tests/test_task_workspace.py` | Task Workspace：无 I/O、无权限、与私有空间分离 | 55 |
 | `tests/test_transfer.py` | 转账入口与各种拒绝情况 | 27 |
 | `tests/test_wallet.py` | 钱包、余额、扣款 | 15 |
-| | **合计** | **1635** |
+| | **合计** | **1709** |
 
 另有 `tests/test_real_api.py`（30 项）需要真实 API Key，
 默认不跑，见下面的「真实 API 测试」。

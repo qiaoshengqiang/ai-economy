@@ -150,7 +150,7 @@ LLM 只能**提出意图**，永远不能**直接改账**。
 - [x] SQLite 数据库（4 张表）
 - [x] 启动横幅
 - [x] **命令行经济操作**（转账 / 余额 / 流水 / 对账）
-- [x] 1635 个 pytest 测试全绿（另有 30 个真实 API 测试单独跑）
+- [x] 1709 个 pytest 测试全绿（另有 30 个真实 API 测试单独跑）
 
 **验收标准**（已达成）：
 
@@ -1237,6 +1237,96 @@ Task（ACCEPTED）
 > Step 4C 增加了 `ACCEPT` / `REJECT`。每多接一个类型都必须**显式改守卫**，
 > 这正是它的价值。`SUBMIT` / `VERIFY` / `PAYMENT_*` 仍然禁止。
 
+### ✅ 架构重构：Task Application Layer Refactor（已完成）
+
+**不是新功能，是重构。** 目标：让 Step 4C 的代码在进入 4D、Workspace、Git、
+Settlement、Agent Life Loop 之后**仍然能继续演化**，而不是每走一步就推翻 TaskService。
+
+#### 问题
+
+Step 4C 结束时 `services/task_service.py` 是 **1453 行**，一个类承担了 **19 项职责**：
+
+```
+Message 接收 · 类型判断 · Task 查找/创建/链接 · TASK_OFFER 处理
+COUNTER_OFFER 处理 · ACCEPT 处理 · REJECT 处理 · Negotiation 逻辑
+DecisionPolicy 调用 · Offer History 写入 · Task 状态变化 · TaskAgreement 创建
+角色处理 · 同进程 Task Link · 本地 Task 创建 · 消息业务校验
+重复消息防护 · 与 Communication 连接 · payload ↔ Domain 转换
+```
+
+继续往里加 `START` / `SUBMIT` / `VERIFY` / `COMPLETE`，它就会变成 **Task God Object**。
+
+#### 重构后
+
+```
+                    Communication
+                          │
+                          ▼
+                    TaskService          398 行（代码 158）← 薄门面
+                   /     |      \
+                  ▼      ▼       ▼
+              Handlers  Negotiation  Mapper
+              (按类型)   (规则+落地)  (协议↔数据)
+                          │
+                          ▼
+                    DecisionPolicy       ← 只做决定
+                          │
+                          ▼
+                       Decision
+                          │
+                          ▼
+                      Task Core          ← 只有它改状态
+                          │
+                          ▼
+                      TaskStore          ← 只有它碰数据库
+```
+
+| 模块 | 总行 | 纯代码 | 唯一职责 | 变了才改它 |
+|---|---|---|---|---|
+| `task_service.py` | 398 | **158** | 门面 / 路由 / 公开 API | 对外 API 变了 |
+| `task_handlers.py` | 508 | 259 | 一种消息一个 Handler | 加消息类型 |
+| `task_negotiation_service.py` | 915 | 507 | 议价规则 + 状态落地 | 议价业务变了 |
+| `task_message_mapper.py` | 321 | 159 | payload ↔ 应用数据 | 协议变了 |
+| `task_result.py` | 142 | 48 | 处理器返回类型 | 返回结构变了 |
+
+**门面从 1453 行 → 398 行（纯代码 1174 → 158，降到 13%）。**
+
+#### 最重要的成果：4D 扩展点
+
+```python
+# Step 4D 要加一个消息类型时，只需要：
+registry.register(SubmitHandler(negotiation))
+
+# TaskService 一行都不用改。
+```
+
+有测试**现场验证**这一点：定义一个假 Handler、注册、`handle_message` 正确路由 ——
+门面完全没动。这是本次重构最核心的验收点。
+
+#### 三条边界（守卫 + 8 项反向测试）
+
+| 边界 | 守卫 |
+|---|---|
+| 门面保持薄 | 纯代码行数 ≤ 250（现在 158）；不许出现 `_accept_locally` 之类实现细节 |
+| 无 God Module | 单模块纯代码 ≤ 700；最大模块 ≤ 全包 55% |
+| 依赖单向 | `core` 不许 import `services`；`handlers → negotiation` 不能反；`services` 内部无环 |
+
+**守卫覆盖整个 `services/` 包**（原来只看 `task_service.py` —— 那样把逻辑挪到别的文件就能绕过）。
+
+#### 行为 100% 不变
+
+**Refactor, not redesign.** 重构前后 `negotiation-demo` 的输出**逐字节一致**：
+
+```
+A → TASK_OFFER      budget = 100 AIC
+B → COUNTER_OFFER   60 AIC
+A → COUNTER_OFFER   40 AIC
+B → COUNTER_OFFER   25 AIC
+A → ACCEPT          25 AIC   ✅ 成交
+```
+
+**测试：1635 → 1709（新增 74）** —— 原有 1635 项**一项没改**，全部继续通过。
+
 ### ⏳ 后续阶段
 
 | 阶段 | 内容 | 状态 |
@@ -1489,8 +1579,12 @@ ai-economy/
 │   ├── router.py              ←   ProviderRegistry + LLMRouter
 │   └── recorder.py            ←   调用记录（token 用量）
 │
-├── services/                  ← 消息 → 领域 适配层（Step 4B）
-│   └── task_service.py        ←   TASK_OFFER / COUNTER_OFFER 处理器
+├── services/                  ← Task 应用层（消息 → 领域）
+│   ├── task_service.py        ←   门面 / 编排（对外唯一入口）
+│   ├── task_handlers.py       ←   按消息类型隔离的处理器 + 注册表
+│   ├── task_negotiation_service.py ← 议价规则 + 状态落地
+│   ├── task_message_mapper.py ←   协议 payload ↔ 应用数据
+│   └── task_result.py         ←   所有处理器的返回类型
 │
 ├── communication/             ← Agent-to-Agent 通信（Step 3 已完成）
 │   ├── message.py             ←   Message（可序列化、可扩展）
@@ -1506,7 +1600,7 @@ ai-economy/
 │   ├── database.py            ← SQLite 连接、事务、迁移
 │   └── models.py              ← 表结构定义
 │
-├── tests/                     ← 1635 个测试 + 30 个真实 API 测试
+├── tests/                     ← 1709 个测试 + 30 个真实 API 测试
 └── data/
     └── economy.db             ← SQLite 数据库（运行产物，不进 git）
 ```

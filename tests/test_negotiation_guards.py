@@ -50,7 +50,24 @@ COMM_DIR = PROJECT_ROOT / "communication"
 
 POLICY_FILE = CORE_DIR / "decision_policy.py"
 AGREEMENT_FILE = CORE_DIR / "task_agreement.py"
-SERVICE_FILE = SERVICES_DIR / "task_service.py"
+#: 【重构后】services/ 现在是多个模块，守卫必须覆盖全部 ——
+#: 只看 task_service.py 的话，把逻辑挪到别的文件就能绕过守卫。
+SERVICE_FILES = (
+    "task_service.py",
+    "task_handlers.py",
+    "task_negotiation_service.py",
+    "task_message_mapper.py",
+    "task_result.py",
+)
+
+
+def service_sources():
+    return [SERVICES_DIR / name for name in SERVICE_FILES]
+
+
+def all_service_code() -> str:
+    """整个 services 包的纯代码（去文档字符串与注释）。"""
+    return "\n".join(code_only(path) for path in service_sources())
 
 
 def parse(path: Path) -> ast.Module:
@@ -230,34 +247,35 @@ class TestNoHardcodedAgents:
             code = code_only(PROJECT_ROOT / path)
             assert forbidden not in code, f"{path} 里出现了 {forbidden!r}"
 
-    def test_task_service_has_no_price_rules(self):
+    def test_service_layer_has_no_price_rules(self):
         """
-        §31：不许把 Agent B 的具体价格策略写进 TaskService。
+        §31：不许把某个 Agent 的具体价格策略写进应用层。
 
-        TaskService 只负责「查表问策略」和「校验执行」，
-        它自己不该包含任何价格数字或比价逻辑。
+        【重构后这条守卫覆盖整个 services/】
+            原来只看 task_service.py —— 那么把逻辑挪到
+            task_negotiation_service.py 就能绕过它。
+            现在整个包一起扫。
         """
-        code = code_only(SERVICE_FILE)
+        for path in service_sources():
+            code = code_only(path)
+            for pattern, label in (
+                (r"accept_price", "接受线"),
+                (r"opening_ask", "开口价"),
+                (r"walk_away", "底线"),
+            ):
+                assert not re.search(pattern, code), (
+                    f"{path.name} 里出现了 {label}（{pattern}）—— "
+                    f"价格策略属于 Agent 自己的 DecisionPolicy"
+                )
 
-        # 不该出现价格阈值比较（策略里才有这些）
-        for pattern, label in (
-            (r"accept_price", "接受线"),
-            (r"opening_ask", "开口价"),
-            (r"walk_away", "底线"),
-        ):
-            assert not re.search(pattern, code), (
-                f"TaskService 里出现了 {label}（{pattern}）—— "
-                f"价格策略属于 Agent 自己的 DecisionPolicy"
+    def test_service_layer_only_looks_policies_up(self):
+        """应用层只能按 agent_id 查策略，不能自己造一个。"""
+        for path in service_sources():
+            code = code_only(path)
+            assert "RuleBasedDecisionPolicy" not in code, (
+                f"{path.name} 里出现了具体策略类 —— "
+                f"它应该只依赖 DecisionPolicy 这个抽象"
             )
-
-    def test_task_service_only_looks_policies_up(self):
-        """TaskService 只能按 agent_id 查策略，不能自己造一个。"""
-        code = code_only(SERVICE_FILE)
-
-        assert "RuleBasedDecisionPolicy" not in code, (
-            "TaskService 里出现了具体策略类 —— "
-            "它应该只依赖 DecisionPolicy 这个抽象"
-        )
 
 
 # ============================================================
@@ -308,29 +326,41 @@ class TestTaskCoreIsIndependentOfPolicy:
 # ============================================================
 class TestTaskServiceBoundaries:
     def test_can_connect_communication_and_task(self):
-        """§31：TaskService 可以同时连通信和 Task Core —— 它就是适配层。"""
-        modules = imported_modules(parse(SERVICE_FILE))
+        """
+        应用层可以同时连通信和 Task Core —— 它就是适配层。
 
-        assert any(m.startswith("communication") for m in modules)
-        assert any(m.startswith("core.task") for m in modules)
+        【重构后】不是每一个模块都要同时连两边，
+        而是**整个 services 包**合起来能连两边：
+            task_handlers / task_service      → communication + core.task
+            task_negotiation_service          → communication + core.task
+            task_message_mapper               → communication（不碰 Task）
+            task_result                       → communication
+        """
+        all_modules = []
+        for path in service_sources():
+            all_modules.extend(imported_modules(parse(path)))
+
+        assert any(m.startswith("communication") for m in all_modules)
+        assert any(m.startswith("core.task") for m in all_modules)
 
     def test_does_not_pay_or_grant(self):
         """但它不能直接付款、不能创建 Workspace。"""
-        code = code_only(SERVICE_FILE).lower()
-
-        for forbidden in ("wallet", "ledger", "transfer(", "escrow",
-                          "mkdir", "create_workspace", "grant(",
-                          "subprocess", "git "):
-            assert forbidden not in code, (
-                f"services/task_service.py 里出现了 {forbidden!r}"
-            )
+        for path in service_sources():
+            code = code_only(path).lower()
+            for forbidden in ("wallet", "ledger", "transfer(", "escrow",
+                              "mkdir", "create_workspace", "grant(",
+                              "subprocess", "git "):
+                assert forbidden not in code, (
+                    f"services/{path.name} 里出现了 {forbidden!r}"
+                )
 
     def test_does_not_import_llm(self):
-        for module in imported_modules(parse(SERVICE_FILE)):
-            assert not module.startswith("llm"), (
-                f"services/task_service.py 导入了 {module} —— "
-                f"§25：不要让每轮谈判自动唤醒 LLM"
-            )
+        for path in service_sources():
+            for module in imported_modules(parse(path)):
+                assert not module.startswith("llm"), (
+                    f"services/{path.name} 导入了 {module} —— "
+                    f"§25：不要让每轮谈判自动唤醒 LLM"
+                )
 
     def test_no_workspace_permission_api(self):
         from services import TaskService
@@ -482,7 +512,7 @@ class TestAcceptHasNoSideEffects:
         """
         用源码级守卫再加一道：ACCEPT 的落地点不该出现经济调用。
         """
-        code = code_only(SERVICE_FILE)
+        code = all_service_code()
 
         for forbidden in ("ledger.", "wallet.", "transfer",
                           "record_transaction", "mint"):
@@ -492,12 +522,18 @@ class TestAcceptHasNoSideEffects:
             )
 
     def test_accept_locally_returns_no_payment(self):
-        """成交结果里必须明说「没有付款、没有授权」。"""
+        """
+        成交结果里必须明说「没有付款、没有授权」。
+
+        【重构后】ACCEPT 的落地点从 TaskService 搬到了
+        TaskNegotiationService.apply_accept —— 守卫跟着搬，
+        保护的内容完全一样。
+        """
         import inspect
 
-        from services import TaskService
+        from services import TaskNegotiationService
 
-        source = inspect.getsource(TaskService._accept_locally)
+        source = inspect.getsource(TaskNegotiationService.apply_accept)
 
         assert '"payment": None' in source
         assert '"workspace": None' in source

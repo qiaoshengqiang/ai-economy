@@ -577,21 +577,24 @@ class TestRoleAndTurnValidation:
         import ast
         from pathlib import Path
 
-        source = (
-            Path(__file__).resolve().parent.parent / "services" / "task_service.py"
-        )
-        tree = ast.parse(source.read_text(encoding="utf-8"))
+        services_dir = Path(__file__).resolve().parent.parent / "services"
+        problems = []
 
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Compare):
-                for comparator in node.comparators:
-                    if isinstance(comparator, ast.Constant) and isinstance(
-                        comparator.value, str
-                    ):
-                        assert not comparator.value.startswith("agent_"), (
-                            f"task_service.py 里出现了硬编码的 Agent 名："
-                            f"{comparator.value!r}"
-                        )
+        for source in sorted(services_dir.rglob("*.py")):
+            tree = ast.parse(source.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Compare):
+                    for comparator in node.comparators:
+                        if isinstance(comparator, ast.Constant) and isinstance(
+                            comparator.value, str
+                        ) and comparator.value.startswith("agent_"):
+                            problems.append(
+                                f"{source.name}: {comparator.value!r}"
+                            )
+
+        assert not problems, (
+            f"services/ 里出现了硬编码的 Agent 名：{problems}"
+        )
 
 
 # ============================================================
