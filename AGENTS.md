@@ -94,20 +94,50 @@ Step 4E       Architecture Constitution + Shared Context 设计  ← 当前
                SQLite
 ```
 
-### 依赖方向（单向，无环）
+### 依赖方向（**真实 import graph**，AST 扫出来的）
 
 ```
-core/           →  不依赖任何人
-communication/  →  不依赖 services/、不依赖 core/task
-services/       →  core/ + communication/ + storage/
-storage/        →  只被 core/task_store 与 communication/recorder 使用
+agents/         →  core/ + llm/
+services/       →  core/ + communication/     ← 不直接依赖 storage/
+communication/  →  core/ + storage/
+core/           →  storage/ + agents/         ← 不是「谁都不依赖」
+storage/        →  core/ 的**叶子**（paths / logging_setup / config）
+llm/            →  core/ + storage/
 ```
 
-**有守卫自动检查这些方向。**
+**四条有守卫的规则**：
+
+| 规则 | 状态 |
+|---|---|
+| `core/` **不**依赖 `services/` | ✅ |
+| `communication/` **不**依赖 `services/` | ✅ |
+| `services/` **不直接**依赖 `storage/`（只经 `core/task_store`） | ✅ |
+| 只有 `main.py` 调用 `register_type_handler`（唯一组合根） | ✅ |
+
+**三个最容易被写错的地方**：
+
+1. `services → storage` ❌ —— 真实是 `services → core → task_store → storage`
+2. `core/` **确实**依赖 `storage/`（`economy` / `ledger` / `wallet` / `task_store`）。
+   `core/` 的**领域规则**不依赖上层，但**持久化访问就在 core 里**
+3. `storage/ → core/` 是允许的 —— 它只依赖三个**基础设施叶子**，不是聚合根
+
+**两个已知例外**（历史遗留，**不要顺手改**）：
+
+| 例外 | 说明 |
+|---|---|
+| `core/economy.py` → `agents/base_agent.py` | `Economy` 负责 bootstrap Agent，形成 `core → agents → core` 可达环 |
+| `storage/database.py` 内部 import `core.config` | 在**函数内** import，用来打破顶层循环 |
+
+> 重新扫描用 **AST**，不要用 `grep "import storage"`
+> —— 那会把注释、文档字符串、`from storage.models import` 混在一起数。
+> 完整方法与字段说明见 [Constitution §4](docs/architecture/ARCHITECTURE_CONSTITUTION.md)。
 
 ---
 
-## 4. Memory 四层（`DESIGNED` —— 只有设计，没有实现）
+## 4. Memory 四层
+
+> ⚠️ **先记住一件事：Agent Private Workspace 不在这四层里。**
+> 它是**独立的资源/文件空间概念**，见本节末尾。
 
 | Layer | 属于谁 | 状态 | 是什么 |
 |---|---|---|---|
@@ -116,11 +146,58 @@ storage/        →  只被 core/task_store 与 communication/recorder 使用
 | **3** Task Workspace | Task | `FUTURE` | 实际共享的文件与代码 |
 | **4** External / World State | 系统外 | `FUTURE` | 外部 API / 网络 / Git remote |
 
-> **当前代码里这四层都没有实现。**
-> 唯一相关的是 `TaskWorkspaceRef` —— 它只是**一个 `workspace_id` 字符串**。
+**这四层的实现状态**：
+
+| | 状态 | 说明 |
+|---|---|---|
+| Agent Private Memory | `DESIGNED` | 有目录与极简文件读写（`Workspace.write_memory`），**没有**结构化记忆、检索、经验积累 |
+| Task Shared Context | `DESIGNED` | 只有设计，见 [`TASK_SHARED_CONTEXT.md`](docs/architecture/TASK_SHARED_CONTEXT.md) |
+| Task Workspace | `FUTURE` | **只有 `TaskWorkspaceRef`** —— 一个 `workspace_id` 字符串 |
+| External / World State | `FUTURE` | 无 |
 
 **`Memory ≠ Alignment`** —— Shared Context 是**结果**，
 Alignment 是**产生和更新它的机制**。两者必须分开。
+
+---
+
+### 4.1 ⚠️ Agent Private Memory ≠ Agent Private Workspace
+
+**最容易被搞混的一对。** `core/workspace.py` **已经存在**，
+它是**机器资源访问边界**，不是 Memory。
+
+| | **Private Memory** | **Private Workspace** |
+|---|---|---|
+| 回答 | 这个 Agent **知道什么、相信什么、采用什么策略** | 这个 Agent **有哪些私有文件 / 代码 / 工具 / 实验空间** |
+| 内容 | 经验 · 判断 · 偏好 · 私人知识 · 经济经验 · **议价策略** · 私人评价 · 私人规划 | 文件 · 代码 · 工具 · 运行数据 · 实验产物 |
+| 位置 | `agents/<id>/memory/` | `agents/<id>/workspace/` |
+| 状态 | **`DESIGNED`**（只有目录与极简文件读写，无结构化记忆） | **`CURRENT`** —— `Workspace.for_agent()`，由 `Economy` 创建 |
+| 属于 | Memory 四层 **Layer 1** | **不在这四层里** |
+| 边界 | 其他 Agent **默认无权读** | `WorkspaceViolationError` —— 路径不许跑出根目录 |
+
+**三条不许越过的推论**：
+
+```text
+❌ 把 Agent Private Workspace 当成 Memory 的一层
+❌ 把 Agent Private Workspace 当成 Task Workspace（后者是任务共享的）
+❌ 因为「有 workspace 目录」就以为 Workspace Permission 已实现
+```
+
+> **`Workspace ≠ Permission`。** `core/workspace.py` 给的是一个 Agent
+> **对自己**目录的访问，**没有**「谁能看什么」的授权体系（`FUTURE`）。
+> **有私有 workspace 目录 ≠ Task Workspace 已实现。**
+
+```text
+Agent Private Memory      Agent Private Workspace
+   （知道什么）                （有哪些文件）
+        │                          │
+        ▼                          ▼
+────────────────────────────────────────────
+Task Shared Context   ← 共同任务认知
+        ▼
+Task Workspace        ← 实际共享资源
+        ▼
+External / World State
+```
 
 ---
 
@@ -179,6 +256,67 @@ A 说「我觉得用方案 B」   →   Communication History 里有这句话
 | `Budget ≠ Price` | 预算被当成成交价 |
 | `DecisionPolicy ≠ Decision Execution` | 策略开始改状态 |
 | `Domain ≠ Infrastructure` | `core/` 依赖 `services/` |
+| **`Agent Strategy ≠ Negotiation Mechanism`** | 把 Agent 的价格阈值硬编码进系统 |
+| **`Task Shared Context ≠ 第二套 Task Core`** | 出现两个都声称正确的 `status` |
+| **`Agent Private Memory ≠ Agent Private Workspace`** | 把「知道什么」和「有哪些文件」混起来 |
+
+---
+
+## 6.1 Negotiation Strategy ≠ Negotiation Mechanism
+
+```text
+Agent Negotiation Strategy   ← 属于 Agent 自己
+        ↓
+DecisionPolicy               ← 把策略变成决定（纯函数）
+        ↓
+Decision                     ← ACCEPT / COUNTER / REJECT
+        ↓
+TaskNegotiationService       ← 系统机制（协议 + 硬约束 + 落地）
+```
+
+| | **Strategy**（Agent 自己） | **Mechanism**（系统） |
+|---|---|---|
+| 回答 | 「我**想怎么谈**」 | 「什么谈判行为在系统规则上**有效**」 |
+| 内容 | 最低价 · 目标价 · 保留价 · 风险溢价 · 最大轮数 · 工作量偏好 · 现金压力 · 截止期敏感度 · 历史合作经验 | 协议合法性 · 谁能响应 · 轮次 · 报价是否**突破硬约束** · Agreement 落地 · 状态变化 · Offer 持久化 |
+
+**`DecisionPolicy` 不能**修改 Task / Wallet / Ledger / Workspace，
+也不能发 Message —— 它**只返回一个 `Decision`**。
+
+```text
+❌ 不要把 Agent 的价格阈值 / 风险偏好 / 让价策略硬编码进 TaskNegotiationService
+❌ 不要让未来的 Strategy 绕过系统硬约束直接改 Task
+```
+
+> **实测**：`TaskNegotiationService` 里**没有**任何价格阈值
+> （`accept_price` / `opening_ask` / `walk_away` 都不出现）；
+> 那些参数全在 `RuleBasedDecisionPolicy` 上，来自**每个 Agent 自己的 config**。
+> 有守卫在盯这条线。
+
+---
+
+## 6.2 Task Shared Context 不能成为第二套 Task Core
+
+> **Task Core 是 Task 客观生命周期和领域状态的唯一权威来源。**
+
+Shared Context 可以**引用、解释、总结、补充**共同知识，
+但**不能建立一套可独立修改、独立生效的第二 Task 状态机**。
+
+| 谁 | 拥有什么 |
+|---|---|
+| **Task Core**（`CURRENT`） | `task_id` · `state` · `budget` · `agreed_price` · `initiator` · `contractor` · lifecycle · `TaskAgreement` 的正式结果 |
+| **Shared Context**（`DESIGNED`） | objective · constraints · acceptance 的**解释** · decisions · assumptions · open questions · assignments · terminology · facts · verification feedback · **对 Domain State 的引用** |
+
+```text
+❌  Task.status                = SUBMITTED
+    SharedContext.current_status = IN_PROGRESS   ← 两个都声称自己正确
+
+✅  Task Core:       status = SUBMITTED
+    Shared Context:  「当前处于等待发起方验收阶段。」   ← 语义解释
+```
+
+> **Shared Context 可以解释 Domain State，但不能取代 Domain State。**
+> 有守卫禁止 Shared Context 复制 `status` / `agreed_price` / `contractor`
+> 作为第二个可独立修改的事实源。
 
 ---
 
@@ -257,6 +395,30 @@ Vector DB · Knowledge graph · 分布式共识 · Multi-agent 投票 · 复杂 
 
 ---
 
+## 9.5 ⚠️ Context Loading Rule —— 不要一次加载全部文档
+
+**为什么有这一节**：为了解决「上下文不足」，很容易反过来把所有架构文档
+一次性塞进 Coding Agent —— 那浪费上下文，而且淹没真正相关的那几页。
+
+```text
+AGENTS.md → 判断任务领域 → 只读相关 Specification → 必要时读对应 ADR
+```
+
+| 我要做… | 重点读 | 不必读 |
+|---|---|---|
+| **Shared Context / Alignment** | [`TASK_SHARED_CONTEXT.md`](docs/architecture/TASK_SHARED_CONTEXT.md) + §4 · §6.2 | Storage / Reliability ADR |
+| **SQLite / 并发 / 事务** | ADR-0012 · ADR-0014 · §3 · §11 | TASK_SHARED_CONTEXT.md |
+| **Negotiation / DecisionPolicy** | §6.1 · `core/decision_policy.py` · `task_negotiation_service.py` | Workspace 相关 |
+| **Execution（START/SUBMIT/…）** | `task_execution_service.py` · `core/task_execution.py` · `core/task.py` | Alignment 设计 |
+| **Communication / 协议** | [`PROTOCOL.md`](PROTOCOL.md) · `communication/` · ADR-0002 · ADR-0003 | Economy |
+| **Workspace（未来）** | §4.1 · §7 | — |
+| **Guard / 测试** | ADR-0018 · `tests/*guards*.py` | — |
+
+**Constitution 只在三种情况下通读**：第一次接触项目 · 要**新增**一条边界 ·
+要**推翻**某条边界。日常改一个模块读对应章节 + 相关 ADR 就够。
+
+---
+
 ## 10. 必读文件（按优先级）
 
 ### 第一优先（理解架构）
@@ -317,6 +479,20 @@ Vector DB · Knowledge graph · 分布式共识 · Multi-agent 投票 · 复杂 
 4. **把业务逻辑写进门面** —— `TaskService` 必须保持薄（有行数守卫）
 5. **单进程测试当多进程证据** —— `BEGIN` 的缺陷单进程测不出来
 6. **忘了 `store.get()` 返回的是新对象** —— 读-改-写必须对**同一个**对象操作
+
+---
+
+## 12.5 关于 Agent Economy 的长期理念（**不是当前功能**）
+
+> **经济表现不是 Intelligence 本身**，
+> 但**长期收入、成本控制、任务成功率、返工率、谈判表现和生存能力**，
+> 是观察 Agent 实际行为能力的**重要外部信号**。
+
+**这只是长期架构理念。** 不要因此实现：
+
+❌ Reputation 评分 · ❌ Ranking · ❌ 自动最优选择 · ❌ 策略学习
+
+`Capability ≠ Economy` 仍然成立 —— 会做什么和赚多少钱是两件事。
 
 ---
 

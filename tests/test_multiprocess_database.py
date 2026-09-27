@@ -121,12 +121,38 @@ class TestMultipleProcessesOpenDatabase:
         # 必须是两个**不同的**进程
         assert len({r["pid"] for r in results}) == 2
 
-        # 两个都成功写入，而且各自都看到了对方的写入（before/after 相差 1）
+        # ------------------------------------------------------------
+        # 【断言的是「增量」，不是「精确值」—— 这里踩过一次 flaky】
+        #
+        # 原来写的是：
+        #     assert item["after"] == item["before"] + 1
+        #
+        # 它在多数情况下成立，但**偶尔会失败**（20 次里挂了 1 次），
+        # 报的是 `assert 2 == (0 + 1)`：
+        #
+        #     B: before = 0
+        #     A: 插入了 T-A            ← 发生在 B 读和 B 写之间
+        #     B: 插入 T-B
+        #     B: after = 2             ← 增量是 2，不是 1
+        #
+        # 也就是说：**这个断言把「真实并发」当成了 bug。**
+        # 两个进程本来就可能交错 —— 那正是我们想看到的。
+        #
+        # 正确的断言是：
+        #     ① 每个进程都至少看到了自己那一次写入（增量 ≥ 1）
+        #     ② 最终总行数正好是 2（没有丢失、没有重复）
+        #
+        # 这两条都不会因为交错时序而误报。
         for item in done:
-            assert item["after"] == item["before"] + 1, item
-        # 数据库一开始是空的，所以两个进程看到的行数是 0 和 1
-        # （谁先谁后不一定）—— 这说明它们确实在看同一份数据。
-        assert {item["before"] for item in done} == {0, 1}, done
+            assert item["after"] - item["before"] >= 1, item
+
+        assert sum(1 for item in done) == 2
+
+        # 数据库里必须正好两行 —— 两个进程的写入都落盘了
+        final = Database(db_file)
+        rows = final.fetchall("SELECT task_id FROM tasks ORDER BY task_id")
+        final.close()
+        assert [row["task_id"] for row in rows] == ["T-A", "T-B"]
 
         # 两行都写进去了
         db = Database(db_file)
