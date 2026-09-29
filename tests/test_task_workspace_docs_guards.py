@@ -932,19 +932,267 @@ class TestOpenQuestionsDocumented:
 
     def test_no_invented_answers(self, workspace_doc):
         """
-        未决定的问题不许写成已决定。
+        **未决定的问题不许写成已决定。**
 
-        【只查 lifecycle 那一节】
-            §15 明确说「本阶段不决定」。
-            如果那里出现了「ACCEPTED 时创建」这种断言式结论，
-            就说明有人猜了一个实现。
+        ============================================================
+        【这条守卫的语义随架构演进而更新过】
+        ============================================================
+
+            上一轮任务时，§15 的状态是「候选模型，本阶段不决定」，
+            所以守卫查的是 `"不决定" in §15`。
+
+            本轮**生命周期模型已经正式确定**（ADR-0022）：
+            `UNPROVISIONED → PROVISIONING → READY → FROZEN → ARCHIVED`。
+
+            如果继续查「不决定」，守卫会**误报** ——
+            它会把「模型已定」当成「有人瞎猜」。
+
+            所以现在查的是**新的真实状态**：
+                ① §15 有 `SETTLED` 的生命周期模型
+                ② **但** Reopen 的细节明确标 `OPEN`（§15.9）
+                ③ **并且**不得出现「Reopen 细节已定」式的断言
         """
         block = flat(section(workspace_doc, "15."))
 
-        assert "OPEN" in block, "§15 Workspace Lifecycle 必须标 OPEN"
-        assert "不决定" in block or "没有决定" in block, (
-            "§15 必须明确说明本阶段不做这些决定"
+        # ① 模型是 SETTLED 的（不是候选）
+        assert "SETTLED" in block, (
+            "§15 必须标明生命周期模型是 SETTLED（ADR-0022）"
         )
+        for state in ("UNPROVISIONED", "PROVISIONING", "READY",
+                      "FROZEN", "ARCHIVED"):
+            assert state in block, f"§15 缺少生命周期状态 {state}"
+
+        # ② 但 Reopen 的细节仍然 OPEN
+        assert "OPEN" in block, (
+            "§15 必须标明 Reopen 的细节仍然 OPEN（§15.9）"
+        )
+        for question in ("是谁可以 Reopen", "什么时候必须新建 Task",
+                         "Permission 是否重新评估"):
+            assert question in block, (
+                f"§15.9 的 Open 清单里缺少：{question}"
+            )
+
+        # ③ 不许把 Reopen 细节写成已决定
+        for invented in ("Reopen 规则已确定", "Reopen 细节已完成"):
+            assert invented not in block, (
+                f"§15 出现了断言式的 {invented!r} —— 那些细节仍是 OPEN"
+            )
+
+    def test_lifecycle_section_is_settled_and_lazy(self, workspace_doc):
+        """
+        §15 必须写明 Lazy Provisioning 与「不要因为 ACCEPTED 就创建」。
+
+        【这条守卫第一版是弱的（反向测试时发现）】
+
+            第一版查 `"不要" in §15 and "ACCEPTED" in §15` ——
+            但 §15 里有**很多**「不要」（§15.6 等），
+            把 Lazy 那句改成「ACCEPTED 就立即创建」之后守卫照样绿。
+
+            「这一节某处有『不要』」≠「这一节禁止了那件事」。
+
+        现在查**具体的规范句**。
+        """
+        block = flat(section(workspace_doc, "15."))
+
+        assert "Lazy Provisioning" in block, "§15 必须写明 Lazy Provisioning"
+        assert "不要**因为 Task 被创建 / `ACCEPTED` 就无条件创建一个物理 Workspace" in block, (
+            "§15 必须写出**那句**禁止：不要因为 Task 被创建/ACCEPTED "
+            "就无条件创建物理 Workspace"
+        )
+        assert "Physical Workspace 不需要提前存在" in block or (
+            "Logical Workspace Identity 可以存在" in block
+        ), "§15 必须写明 Logical 可以先存在而 Physical 不必提前存在"
+
+        # 不许出现肯定式的「ACCEPTED 就创建」
+        for invented in ("立即创建物理 Workspace", "无条件创建物理 Workspace 目录"):
+            assert invented not in block, (
+                f"§15 出现了肯定式的 {invented!r} —— 那是被禁止的"
+            )
+
+    def test_lifecycle_section_separates_from_task(self, workspace_doc):
+        """
+        §15 必须写明 Workspace Lifecycle ≠ Task Lifecycle，
+        且**不得**把 Task 的状态列成 Workspace 的状态。
+
+        【反向测试时发现需要这一条】
+            把 §15.3 的 `READY` 描述改成「等同于 Task 的 IN_PROGRESS」之后，
+            别的守卫都不变红 —— 因为 `test_workspace_lifecycle_not_task_lifecycle`
+            查的是 §3，不是 §15。
+        """
+        block = flat(section(workspace_doc, "15."))
+
+        assert "Workspace Lifecycle ≠ Task Lifecycle" in block, (
+            "§15.4 必须写出 Workspace Lifecycle ≠ Task Lifecycle"
+        )
+        assert "只描述" in block and "是否可以被正常操作" in block, (
+            "§15 必须说明 Workspace Lifecycle 只描述"
+            "「这个资源空间当前是否可以被正常操作」"
+        )
+
+        # ---- 禁止把 Task 状态当成 Workspace 状态 ----
+        #
+        # 【这条检查第一版是错的（逐行扫描）】
+        #     §15 里的禁止清单是**跨行**的：
+        #
+        #         ❌ CREATED / OFFERED / NEGOTIATING / ACCEPTED / IN_PROGRESS /
+        #            SUBMITTED / VERIFIED / COMPLETED
+        #
+        #     第二行没有 ❌，逐行检查就把它误判成「肯定式声明」。
+        #
+        #     改成查**肯定式的等价表述** —— 那才是真正要禁止的东西。
+        for invented in ("等同于 Task 的", "复用 Task 状态机",
+                         "Workspace 状态机就是 Task 状态机",
+                         "Workspace.status 与 Task.status 相同"):
+            assert invented not in block, (
+                f"§15 出现了肯定式的 {invented!r} —— "
+                f"Workspace 不得复用 Task 生命周期"
+            )
+
+        # 而**禁止清单本身**必须在（用 ❌ 标记的跨行块）
+        assert "❌ CREATED / OFFERED / NEGOTIATING / ACCEPTED / IN_PROGRESS /" in section(
+            workspace_doc, "15."
+        ), "§15 必须用 ❌ 明确列出不得复制的 Task 状态"
+
+    def test_iteration_preserves_history(self, workspace_doc):
+        """Reopen 必须保留历史，不得清空/覆盖。"""
+        block = flat(section(workspace_doc, "15."))
+
+        assert "清空原历史" in block, "§15.8 必须明确禁止清空原历史"
+        assert "覆盖旧执行" in block, "§15.8 必须明确禁止覆盖旧执行"
+        assert "覆盖旧 Verification" in block, (
+            "§15.8 必须明确禁止覆盖旧 Verification"
+        )
+
+    def test_frozen_is_not_permanent_readonly(self, workspace_doc):
+        """FROZEN 不能是永久只读。"""
+        block = flat(section(workspace_doc, "15."))
+
+        # 【否定盲防范】
+        #     第一版查 `"永久只读" in block and "不能恢复" in block` ——
+        #     但把原文改成「FROZEN = 永久只读、永远不能恢复」之后，
+        #     这两个词**都还在**，守卫照样绿。
+        #
+        #     所以要查**否定式的整体表述**，而不是那两个词。
+        assert "不应该被设计成" in block and "永久只读" in block, (
+            "§15.7 必须写出**否定式**表述："
+            "「Workspace 也不应该被设计成 FROZEN = 永久只读、永远不能恢复」"
+        )
+        assert "Task 完成不是 Task 永久死亡" in block, (
+            "§15.7 必须写明「Task 完成不是 Task 永久死亡」"
+        )
+        assert "Reopen" in block, "§15.7 必须写明允许 Reopen"
+
+    def test_no_delete_lifecycle(self, workspace_doc):
+        """第一版不建立 Delete Lifecycle，不提前实现 GC/TTL。"""
+        block = flat(section(workspace_doc, "15."))
+
+        assert "不建立普通 Task Workspace Delete Lifecycle" in block, (
+            "§15.6 必须明确第一版不建立 Delete Lifecycle"
+        )
+        for forbidden in ("GC", "TTL", "自动物理删除"):
+            assert forbidden in block, (
+                f"§15.6 必须明确禁止提前实现 {forbidden}"
+            )
+
+    def test_human_participation_is_supported(self, workspace_doc):
+        """Human Participation 必须被**支持**，不是被禁止。"""
+        block = flat(section(workspace_doc, "14.5"))
+
+        assert block, "找不到 §14.5 Human Participation"
+        assert "Authorized Human Modification" in block or (
+            "Authorized" in block and "Human" in block
+        ), "§14.5 必须写明 Authorized Human Modification"
+        assert "一等协作方式" in block or "正式协作" in block, (
+            "§14.5 必须写明 Human 是正式协作 Actor"
+        )
+
+    def test_human_participation_is_not_forbidden(self, workspace_doc):
+        """
+        **反向语义**：Human 不许被写成「禁止修改 Workspace」。
+
+        【否定盲防范】只查肯定式断言。
+        """
+        block = section(workspace_doc, "14.5")
+
+        for line in block.splitlines():
+            low = line.lower()
+            if "human" not in low and "人类" not in line:
+                continue
+            if "禁止" not in line and "不允许" not in line:
+                continue
+            # 允许「禁止 Human 之外的东西」，但不允许禁止 Human 本身
+            assert "禁止 Human" not in line and "不允许 Human" not in line, (
+                f"这一行把 Human Participation 写成了禁止：\n    {line.strip()}"
+            )
+
+    def test_unauthorized_monitoring_is_future(self, workspace_doc):
+        """Unauthorized / out-of-band 修改的监控必须是 FUTURE，不是 CURRENT。"""
+        block = flat(section(workspace_doc, "14.5"))
+
+        # 【不能只查 "FUTURE" 这个词】
+        #     §14.5 里有多个 `FUTURE` 标记（章节标题等）。
+        #     把结论句改成「监控已经是 CURRENT」之后，
+        #     别的 FUTURE 还在 → 守卫照样绿。
+        #     所以查**那句结论**本身。
+        assert "Unauthorized Physical Modification 是 `Future Concern`" in block, (
+            "§14.5 必须写出结论句："
+            "「Unauthorized Physical Modification 是 Future Concern」"
+        )
+        assert "监控已经是 `CURRENT`" not in block, (
+            "§14.5 不许声称 Unauthorized 监控已经是 CURRENT"
+        )
+        for not_done in ("Filesystem Watcher", "Hash Tamper Detection",
+                         "Kernel-level Enforcement"):
+            assert not_done in block, (
+                f"§14.5 必须明确不做：{not_done}"
+            )
+
+    def test_workspace_protocol_layered_from_host_os(self, workspace_doc):
+        """Workspace Protocol 与 Host OS 权限必须分层。"""
+        block = flat(section(workspace_doc, "14.5"))
+
+        assert "Workspace Protocol-level authorization" in block, (
+            "§14.5 必须写明 Workspace Protocol-level authorization"
+        )
+        assert "Host OS" in block, (
+            "§14.5 必须写明与 Host OS Filesystem Permission 的分层"
+        )
+
+    def test_task_lineage_is_open_topic_not_implemented(self, workspace_doc):
+        """Task Origin / Lineage 必须是 OPEN DESIGN TOPIC，不得写成已实现。"""
+        doc = workspace_doc
+        text = flat(doc)
+
+        assert "OPEN DESIGN TOPIC" in text, (
+            "必须把 Task Origin & Task Lineage 标为 OPEN DESIGN TOPIC"
+        )
+        for forbidden in ("parent_task_id", "root_task_id", "task tree",
+                          "task graph", "delegation lifecycle"):
+            assert forbidden in text, (
+                f"必须明确列出**不要实现**的东西：{forbidden}"
+            )
+
+        # 不许声称已经实现
+        for invented in ("Task Lineage 已实现", "Lineage 已完成"):
+            assert invented not in text, (
+                f"文档里出现了 {invented!r} —— Task Lineage 还没设计"
+            )
+
+    def test_iteration_is_not_child_task(self, workspace_doc):
+        """Iteration ≠ Child Task。"""
+        block = flat(section(workspace_doc, "15."))
+
+        assert "Iteration ≠ Child Task" in block, (
+            "§15.10 必须显式写出 Iteration ≠ Child Task"
+        )
+
+    def test_message_is_not_task_creation(self, workspace_doc):
+        """Message ≠ Task Creation。"""
+        block = flat(section(workspace_doc, "15."))
+
+        assert "Message ≠ Task Creation" in block or (
+            "不要把 Task Creation 和普通 Message 混在一起" in block
+        ), "§15.12 必须写明 Message ≠ Task Creation"
 
 
 # ============================================================

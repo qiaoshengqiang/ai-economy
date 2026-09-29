@@ -30,7 +30,7 @@
 | | |
 |---|---|
 | **阶段** | `Post-Step-4F / Pre-Task-Workspace` |
-| **测试基线** | **2620 passed, 30 deselected** |
+| **测试基线** | **2632 passed, 30 deselected** |
 | **协议版本** | `protocol_version = "1"` |
 | **命令数** | 16（`./dev.sh` 查看全部） |
 | **数据库表** | 13 |
@@ -104,14 +104,9 @@ storage/        →  core/ 的**叶子**（paths / logging_setup / config）
 llm/            →  core/ + storage/
 ```
 
-**四条有守卫的规则**：
-
-| 规则 | 状态 |
-|---|---|
-| `core/` **不**依赖 `services/` | ✅ |
-| `communication/` **不**依赖 `services/` | ✅ |
-| `services/` **不直接**依赖 `storage/`（只经 `core/task_store`） | ✅ |
-| 只有 `main.py` 调用 `register_type_handler`（唯一组合根） | ✅ |
+**四条有守卫的规则**（✅ 全部成立）：`core/` 与 `communication/`
+**不**依赖 `services/`；`services/` **不直接**依赖 `storage/`（只经
+`core/task_store`）；只有 `main.py` 调用 `register_type_handler`。
 
 **三个最容易被写错的**：`services → storage` ❌（真实是经 `core/task_store`）；
 `core/` **确实**依赖 `storage/`（领域规则不依赖上层，但持久化访问就在 core 里）；
@@ -241,6 +236,8 @@ A 说「我觉得用方案 B」   →   Communication History 里有这句话
 | **`Observation ≠ Conclusion`** | 把「2 小时没活动」当成「Agent 已死」 |
 | **`Permission ≠ Force Unlock`** | 有 `WRITE` 就以为自己能强解锁 |
 | **`Guardian 判断 ≠ Domain Fact`** | 让 Guardian 的评估自动改写 Task Core |
+| **`Logical Workspace ≠ Physical Workspace`** | 以为 `workspace_id` 存在就代表物理目录已建 |
+| **`Workspace Protocol ≠ Host OS Permission`** | 把 Write Lock 说成宿主机物理不可触碰 |
 
 ---
 
@@ -318,6 +315,9 @@ Shared Context 可以**引用、解释、总结、补充**共同知识，
 | **Guardian** | Guardian Agent 实体代码 · crash detector · 基于 inactivity 的自动判死 · 自动 Lock Expiry · Lease Renewal |
 | **智能演化** | Adaptive Negotiation · RL · 策略自学习 |
 | **协调** | TaskManager · Coordinator |
+| **生命周期清理** | GC · TTL · 自动物理删除 · Workspace Delete Lifecycle |
+| **篡改监控** | Filesystem Watcher · Hash Tamper Detection · Kernel-level Enforcement · 阻止管理员直接改文件 |
+| **Task Lineage** | `parent_task_id` · `root_task_id` · child task · task tree · task graph · delegation lifecycle（**`OPEN DESIGN TOPIC`**） |
 
 ### 也不要过度设计
 
@@ -335,7 +335,7 @@ Vector DB · Knowledge graph · 分布式共识 · Multi-agent 投票 · 复杂 
         ↓
 2. 先调查真实代码（不要凭空设计）
         ↓
-3. 跑基线：./dev.sh test   （必须是 2620 passed）
+3. 跑基线：./dev.sh test   （必须是 2632 passed）
         ↓
 4. 实施最小修改
         ↓
@@ -354,7 +354,7 @@ Vector DB · Knowledge graph · 分布式共识 · Multi-agent 投票 · 复杂 
 
 1. **先调查，再动手。** 不要在设计之前改代码。
 2. **每一步结束跑全量测试。** 不是只跑自己改的那个文件。
-   基线现在是 **2620 passed**。
+   基线现在是 **2632 passed**。
 3. **新增守卫必须配反向测试。** 把违规注入进去，确认守卫**真的变红**。
 
 ---
@@ -369,7 +369,7 @@ Vector DB · Knowledge graph · 分布式共识 · Multi-agent 投票 · 复杂 
 
 | | |
 |---|---|
-| **基线** | **2620 passed, 30 deselected** |
+| **基线** | **2632 passed, 30 deselected** |
 | **测试文件** | 51 个 |
 | **守卫文件** | 10 个，约 390 项 |
 | **真实 API 测试** | 30 项，单独跑（需要 Key） |
@@ -396,6 +396,9 @@ AGENTS.md → 判断任务领域 → 只读相关 Specification → 必要时读
 | **Execution（START/SUBMIT/…）** | `task_execution_service.py` · `core/task_execution.py` · `core/task.py` | Alignment 设计 |
 | **Communication / 协议** | [`PROTOCOL.md`](PROTOCOL.md) · `communication/` · ADR-0002 · ADR-0003 | Economy |
 | **Workspace（`FUTURE`）** | [`TASK_WORKSPACE.md`](docs/architecture/TASK_WORKSPACE.md) + ADR-0020 · §4.1 · §7 | TASK_SHARED_CONTEXT.md |
+| **Lifecycle / Reopen / Iteration** | `TASK_WORKSPACE.md` §15 + **ADR-0022** | — |
+| **Human Participation** | `TASK_WORKSPACE.md` §14.5 + ADR-0022 | — |
+| **Task Origin / Task Lineage**（`OPEN DESIGN TOPIC`） | `TASK_WORKSPACE.md` §15.11 —— **尚未设计，不要实现** | — |
 | **Guard / 测试** | ADR-0018 · `tests/*guards*.py` | — |
 
 **Constitution 只在三种情况下通读**：第一次接触项目 · 要**新增**一条边界 ·
@@ -437,6 +440,8 @@ docs/architecture/adr/0020-*.md            ← 为什么是共享资源模型 + 
     ↓
 docs/architecture/adr/0021-*.md            ← 为什么 Lock 不用自动过期 + Human Force Unlock
     ↓
+docs/architecture/adr/0022-*.md            ← Lazy Provisioning · Lifecycle · Human Participation
+    ↓
 docs/architecture/adr/0012 / 0014 / 0019   ← 并发 · 租约 · 对齐（前置）
 ```
 
@@ -445,7 +450,16 @@ docs/architecture/adr/0012 / 0014 / 0019   ← 并发 · 租约 · 对齐（前�
 >
 > **Write Lock Recovery 的 v1 语义已定**（ADR-0021）：
 > 显式持有 + 锁主释放 + **Human Force Unlock** + 审计。
-> **不需要**等 Heartbeat / Lease Renewal / 自动崩溃检测就能进入 Workspace 实现。
+>
+> **Lifecycle 模型已定**（ADR-0022）：**Lazy Provisioning** ——
+> `workspace_id` 可以先存在而物理 Workspace **尚未创建**；
+> `UNPROVISIONED → PROVISIONING → READY → FROZEN → ARCHIVED`。
+> Task 结束后进 `FROZEN`（**不删除**），且**允许 Reopen 迭代**。
+>
+> **Human 是正式协作 Actor**：Authorized Human Modification 经
+> Workspace Protocol + Permission + Write Lock 生效。
+> Unauthorized / out-of-band 修改的**监控**是 `FUTURE`（第一版不做）。
+>
 > 其余 Open Design Questions 见
 > [`TASK_WORKSPACE.md`](docs/architecture/TASK_WORKSPACE.md) §21。
 
@@ -500,6 +514,12 @@ docs/architecture/adr/0012 / 0014 / 0019   ← 并发 · 租约 · 对齐（前�
 | Lock 状态集 | ✅ `SETTLED`：`ACTIVE` / `RELEASED` / `REVOKED`（**无 `EXPIRED`**） |
 | Automatic recovery · Guardian Agent | `FUTURE` |
 | Heartbeat / Lease Renewal | **Not implemented**（**不得**因 Guardian 提前实现） |
+| **Lifecycle 模型** | ✅ `SETTLED` —— Lazy Provisioning + `UNPROVISIONED → … → ARCHIVED`（ADR-0022） |
+| Task 结束后 | ✅ `SETTLED` —— `FROZEN`，**不删除**；**允许 Reopen 迭代** |
+| Reopen 的 6 个细节 | `OPEN`（谁可 reopen / 何时新建 Task / …，见文档 §15.9） |
+| Human 协作 | ✅ `SETTLED`（Authorized Human Modification 是一等方式）；实现为 `FUTURE` |
+| Unauthorized 修改监控 | **Not implemented** —— 第一版**不阻止、不监控**（`Future Concern`） |
+| Task Origin / Task Lineage | **`OPEN DESIGN TOPIC`** —— 下一轮讨论，**不要实现** |
 | Task Workspace 实现 | **`FUTURE`** —— 生产代码一行 Lock 都没有 |
 
 > **v1 不需要等自动恢复机制就能进入 Workspace 实现。**
@@ -521,15 +541,11 @@ docs/architecture/adr/0012 / 0014 / 0019   ← 并发 · 租约 · 对齐（前�
 
 ## 12.5 关于 Agent Economy 的长期理念（**不是当前功能**）
 
-> **经济表现不是 Intelligence 本身**，
-> 但**长期收入、成本控制、任务成功率、返工率、谈判表现和生存能力**，
-> 是观察 Agent 实际行为能力的**重要外部信号**。
+> **经济表现不是 Intelligence 本身**，但**长期收入、成本控制、任务成功率、
+> 返工率、谈判表现和生存能力**是观察 Agent 实际行为能力的**重要外部信号**。
 
-**这只是长期架构理念。** 不要因此实现：
-
-❌ Reputation 评分 · ❌ Ranking · ❌ 自动最优选择 · ❌ 策略学习
-
-`Capability ≠ Economy` 仍然成立 —— 会做什么和赚多少钱是两件事。
+**只是长期理念。** 不要因此实现：❌ Reputation 评分 · ❌ Ranking ·
+❌ 自动最优选择 · ❌ 策略学习。`Capability ≠ Economy` 仍然成立。
 
 ---
 

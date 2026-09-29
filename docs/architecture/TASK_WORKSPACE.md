@@ -323,7 +323,28 @@ Task → Task Workspace
 第一版**不实现**时间 Lease / Lease Renewal / Heartbeat /
 自动 Lock Expiry / 自动判断 Agent 已死亡。见 §16。
 
-### 2.12 Observation ≠ Conclusion（`SETTLED`）
+### 2.12 Lazy Provisioning（`SETTLED`）
+
+**Logical Workspace 与 Physical Workspace 分离。**
+
+`workspace_id = WS-001` **不代表**物理目录 / Backend 已经创建。
+物理 Workspace 在**第一次真正需要**时才 provision。见 §15。
+
+### 2.13 Workspace Protocol ≠ Host OS Filesystem Permission（`SETTLED`）
+
+```
+Workspace Permission / Write Lock  =  Workspace Protocol-level authorization
+Host OS Filesystem Permission      =  Infrastructure / OS-level control
+```
+
+**两者不能混为一谈。** 见 §14.5.8。
+
+### 2.14 Human 是正式协作 Actor（`SETTLED`）
+
+**Authorized Human Modification 是一等协作方式**，
+不是「Workspace 外面的神秘管理员」所为。见 §14.5。
+
+### 2.15 Observation ≠ Conclusion（`SETTLED`）
 
 **系统不假装知道 Agent 是否「死了」。**
 
@@ -1003,43 +1024,485 @@ Resource
 
 ---
 
+## 14.5 Human Participation —— Human 是正式协作 Actor
+
+> **状态：`SETTLED`（定位已定）；实现为 `FUTURE`**
+>
+> 决策记录：[ADR-0022](adr/0022-lazy-provisioning-and-workspace-lifecycle.md)
+
+### 14.5.1 不要假设 Human 永远不能直接修改 Workspace（`SETTLED`）
+
+第一版 AI Economy OS 的初始用户群体是
+**熟悉 AI Agent 使用的专业用户**。
+
+因此 Workspace 应支持 **Human 作为正式协作参与者**：
+
+```
+Human
+  ↓
+Task Workspace
+  ↓
+Permission
+  ↓
+Write Lock
+  ↓
+Resource Modification
+```
+
+**这种修改属于 `Authorized Human Modification`。**
+
+### 14.5.2 Authorized vs Unauthorized Modification（`SETTLED`）
+
+> ⚠️ **不要使用法律意义上的「合法 / 违法」作为系统内部术语。**
+
+建议使用：
+
+| 术语 | 含义 |
+|---|---|
+| **`Authorized Modification`** | Human Operator **拥有相应 Permission**，**通过 Workspace 正式机制**修改资源 |
+| **`Unauthorized / Out-of-band Modification`** | Finder / Terminal / 其他程序**直接修改物理文件**，没有经过 Workspace Protocol |
+
+`Authorized` 是**正常协作行为**，不是例外。
+
+### 14.5.3 第一版不负责阻止 Unauthorized Physical Modification（`SETTLED`）
+
+> **第一版不试图建立宿主机级别的绝对文件系统防篡改。**
+
+Workspace Permission / Write Lock 约束的是：
+
+```
+✅ 通过 AI Economy OS Workspace Protocol 执行的操作
+```
+
+而**不是**：
+
+```
+❌ 宿主操作系统超级用户也绝对无法绕过的物理文件系统控制
+```
+
+### 14.5.4 第一版不主动监控（`SETTLED`）
+
+本阶段**不做**：
+
+| ❌ |
+|---|
+| Filesystem Watcher |
+| Hash Tamper Detection |
+| Kernel-level Enforcement |
+| Sandbox 强制隔离 |
+| 试图阻止管理员直接改文件 |
+
+**原因**：
+
+- 初期用户是**熟悉 Agent 的专业人士**
+- 当前优先验证 **Agent / Human 正常协作路径**
+- 绕过系统的异常情况**未来再处理**
+
+因此：
+
+> **Unauthorized Physical Modification 是 `Future Concern`。**
+
+### 14.5.5 Authorized Human Modification 是一等协作方式（`SETTLED`）
+
+> **不要把 Human 理解成「Workspace 外面的神秘管理员」。**
+
+未来 Human 可以作为**正式 Workspace Actor**：
+
+```
+Workspace Actor
+├── Agent
+├── Human
+├── System
+└── Future Guardian
+```
+
+**不同 Actor 拥有不同 Permission。**
+
+### 14.5.6 Human Force Unlock 保持现有定义（`SETTLED`）
+
+上一阶段（ADR-0021）已经正式确定，**本次不变**：
+
+```
+Agent Owner:        UNLOCK
+Authorized Human:   FORCE_UNLOCK
+```
+
+`Force Unlock`：
+
+- ❌ 不是普通文件写权限
+- ❌ 不是 Agent 权限
+- ❌ 不是自动超时
+
+而是**治理操作**，并且**要求有审计记录**（§16.10）。
+
+### 14.5.7 Human 也遵守 Permission + Write Lock（`SETTLED`）
+
+> ⚠️ **不要改变此前已正式确定的 `Permission ≠ Write Lock`。**
+
+```
+Human A
+    WRITE Permission  ✅
+    但没有 Lock        ❌
+→ 不能通过 Workspace Protocol 写
+```
+
+如果 Human 是高权限治理者：
+
+> **`FORCE_UNLOCK` 也必须是独立的 `Governance Capability`** ——
+> 它不由 `WRITE Permission` 推导而来。
+
+### 14.5.8 Workspace Protocol ≠ Host OS Filesystem Permission（`SETTLED`）
+
+**必须明确分层**：
+
+| | 属于 |
+|---|---|
+| **Workspace Permission / Write Lock** | **Workspace Protocol-level authorization** |
+| **Host OS Filesystem Permission** | **Infrastructure / OS-level control** |
+
+**两者不能混为一谈。**
+
+这也意味着：
+
+```
+Write Lock 表达的是：
+    「在 Workspace Protocol 中谁拥有排他写入权」
+
+不是：
+    「谁在整个 MacBook 上物理上绝对不能碰这个文件」
+```
+
+### 14.5.9 Future audit direction（`FUTURE` —— 本次不实现）
+
+目前**不实现监控**。但文档记录未来方向：
+
+未来**可能**区分：
+
+- `Agent Operation`
+- `Human Authorized Operation`
+- `External / Unknown Operation`
+
+未来**再考虑**：
+
+- Resource Fingerprint
+- Version
+- Mutation Detection
+- Audit
+- Out-of-band Detection
+
+> **本次不要实现。**
+
+---
+
 ## 15. Workspace Lifecycle
 
-### 15.1 候选模型（`OPEN` —— 只是候选，不是决定）
+> **状态：`SETTLED`（生命周期模型已定）**
+>
+> 决策记录：[ADR-0022](adr/0022-lazy-provisioning-and-workspace-lifecycle.md)
+
+### 15.1 Logical Workspace 与 Physical Workspace 分离（`SETTLED`）
+
+> **Task 可以拥有一个逻辑 Workspace Identity，而物理 Workspace 采用
+> Lazy Provisioning。**
 
 ```
-Created → Provisioning → Ready → ... → Archived
+Task
+  ↓
+workspace_id = WS-001
 ```
 
-### 15.2 与 Task Lifecycle 的关系（`SETTLED`）
+**这并不意味着物理目录 / Backend 已经创建。**
 
-**Workspace Lifecycle ≠ Task Lifecycle。** 见 §3.3。
+初始状态可能是：
 
-### 15.3 本阶段**不决定**的问题（`OPEN`）
+```
+Workspace = UNPROVISIONED
+```
 
-> 规范 §21 明确要求：**如果尚未有足够架构依据，不要擅自决定。**
+只有当 Task **第一次真正需要** Workspace Resource 时，才：
 
-| # | 问题 | 状态 |
-|---|---|---|
-| 1 | 什么时候自动创建 Workspace？ | **OPEN** |
-| 2 | 在 Task `ACCEPTED` 时创建，还是 **lazy provision**（第一次访问时）？ | **OPEN** |
-| 3 | Task 完成后 Workspace 是否**冻结**（不可写）？ | **OPEN** |
-| 4 | Task 完成后**何时**归档？ | **OPEN** |
-| 5 | Agent **中途加入**如何处理（拿到什么权限、看见什么）？ | **OPEN** |
-| 6 | Agent **中途退出**如何处理（锁怎么办、已写的资源怎么办）？ | **OPEN** |
-| 7 | 归档后资源是保留、迁移还是删除？ | **OPEN** |
-| 8 | Workspace 能否被**显式销毁**？谁有权？ | **OPEN** |
+```
+UNPROVISIONED
+      ↓
+PROVISIONING
+      ↓
+READY
+```
 
-**§15.4 为什么不现在决定**
+```
+Agent A
+    ↓
+第一次需要访问 / 创建 Workspace Resource
+    ↓
+Provision Workspace
+    ↓
+READY
+```
 
-这些问题**互相耦合**，而且都取决于实现阶段才会知道的事实：
+### 15.2 为什么采用 Lazy Provisioning（`SETTLED`）
 
-- 「何时创建」取决于 provisioning 的成本（本地几乎为零，远程不低）
-- 「是否冻结」取决于 Task 完成后是否还可能返工（4D 的 VERIFY→返工流程说明**可能**）
-- 「中途加入」取决于 §9.3 的权限授予模型（还没定）
+**AI Economy OS 的 Task 是通用 Task，不是所有 Task 都需要 Workspace。**
 
-**先猜一个再改，比晚一点再定更贵** —— 因为文档一旦写了
-「ACCEPTED 时创建」，后续实现就会围着它写代码。
+例如这些可能**完全不需要**真实 Workspace Resource：
+
+- 查询
+- 比较
+- 简单计算
+- 翻译
+- 普通问答
+
+因此：
+
+> ❌ **不要**因为 Task 被创建 / `ACCEPTED` 就无条件创建一个物理 Workspace。
+>
+> ✅ **Logical Workspace Identity 可以存在。
+> Physical Workspace 不需要提前存在。**
+
+### 15.3 生命周期模型（`SETTLED`）
+
+```
+UNPROVISIONED
+      ↓
+PROVISIONING
+      ↓
+READY
+      ↓
+FROZEN
+      ↓
+ARCHIVED
+```
+
+| 状态 | 语义 |
+|---|---|
+| `UNPROVISIONED` | Logical Workspace 已经存在，但实际 Backend / Resource Space **尚未 provision** |
+| `PROVISIONING` | 系统正在建立实际 Workspace Backend / Resource Space |
+| `READY` | Workspace 可以按照 **Permission + Write Lock** 规则正常使用 |
+| `FROZEN` | Workspace **保留、可读**，但**不允许普通写入** |
+| `ARCHIVED` | Workspace 进入**长期历史 / 保存**状态，不再作为正常活跃 Task Resource 使用 |
+
+> ⚠️ **这套状态描述的是「这个资源空间当前是否可以被正常操作」**，
+> 不是任务进展。见 §15.4。
+
+### 15.4 Workspace Lifecycle ≠ Task Lifecycle（`SETTLED`）
+
+**再强调一次**：`Task.status` 和 `Workspace.lifecycle` **不是同一个状态机**。
+
+```
+✅ 正常：
+    Task:       IN_PROGRESS
+    Workspace:  READY
+
+✅ 也允许：
+    Task:       COMPLETED
+    Workspace:  FROZEN
+```
+
+**禁止**在 Workspace 里复制 Task 的生命周期：
+
+```
+❌ CREATED / OFFERED / NEGOTIATING / ACCEPTED / IN_PROGRESS /
+   SUBMITTED / VERIFIED / COMPLETED
+```
+
+> **Workspace Lifecycle 只描述：这个资源空间当前是否可以被正常操作。**
+> 见 §3.3。
+
+### 15.5 Task 结束后的 Workspace（`SETTLED`）
+
+| Task 状态 | Workspace 原则上 |
+|---|---|
+| `COMPLETED` | → `FROZEN` |
+| `FAILED` | → `FROZEN` |
+| `CANCELLED` | → `FROZEN` |
+
+**而不是立即删除。**
+
+保留：
+
+- files
+- artifacts
+- history
+- evidence
+
+供未来使用：
+
+- 复盘
+- 审计
+- 经验学习
+- Artifact 查询
+
+### 15.6 不因 Task 结束立即删除（`SETTLED`）
+
+> **Task 完成、失败或取消，不等于 Workspace 立即删除。**
+>
+> **第一版不建立普通 Task Workspace Delete Lifecycle。**
+
+如果未来需要：
+
+- storage cleanup
+- retention policy
+- physical deletion
+
+**单独设计。**
+
+> ❌ **不要**因为生命周期设计就提前实现：
+> **GC · TTL · 自动物理删除**
+
+### 15.7 Task Workspace 可以重新打开进行迭代（`SETTLED`）
+
+> **Task 不是一次性执行、完成之后永远不能继续修改的对象。**
+
+允许：
+
+```
+Task
+    ↓
+Iteration 1
+    ↓
+COMPLETED
+    ↓
+Reopen
+    ↓
+Iteration 2
+    ↓
+继续执行
+```
+
+因此：
+
+> **Task 完成不是 Task 永久死亡。**
+>
+> **Workspace 也不应该被设计成
+> `FROZEN` = 永久只读、永远不能恢复。**
+>
+> **当前正式原则：允许对已完成 Task 重新打开进行后续迭代。**
+
+### 15.8 Iteration 必须保留历史（`SETTLED`）
+
+**重新打开不能**：
+
+- ❌ 清空原历史
+- ❌ 覆盖旧执行
+- ❌ 覆盖旧 Verification
+
+而应该：
+
+```
+Task-001
+
+    Iteration 1
+        execution history
+        submissions
+        verification
+        completion
+
+    Iteration 2
+        new execution
+        new submissions
+        new verification
+```
+
+**旧历史必须保留。**
+
+这样未来 Agent 才可以知道：
+
+- 上一次为什么失败？
+- 为什么再次打开？
+- **人类修改了什么要求？**
+- 之前用了什么方案？
+
+> 这也是未来 **Agent Experience / Learning** 的潜在数据来源。
+
+### 15.9 Reopen 的具体细节仍然是 `OPEN`（`OPEN`）
+
+**当前只正式确定：允许重新打开。**
+
+以下问题**目前仍保持 `OPEN`**：
+
+| # | 问题 |
+|---|---|
+| 1 | 是谁可以 Reopen？ |
+| 2 | 什么时候必须新建 Task？ |
+| 3 | Reopen 是否产生新的 Iteration ID？ |
+| 4 | 是否恢复原 Workspace？ |
+| 5 | Reopen 时旧 Lock 是否全部无效？ |
+| 6 | Permission 是否重新评估？ |
+
+> ⚠️ **不要凭感觉把这些细节一次性决定。**
+> 把它们列入 [§21 Open Design Questions](#21-open-design-questions)，
+> 等待后续 Task / Iteration 设计讨论。
+
+### 15.10 Iteration ≠ Child Task（`SETTLED`）
+
+以后会存在**两个**概念：
+
+| | 含义 |
+|---|---|
+| **Iteration** | **仍然是 same Task**。`Iteration 1 / 2 / 3` 表示同一个任务不断改进 |
+| **Child Task** | 从 Parent Task **独立派生**出来的局部任务 |
+
+```
+Iteration：            Child Task：
+    Task-001               Parent Task
+      Iteration 1              ↓
+      Iteration 2          new Task
+      Iteration 3
+```
+
+> **Iteration ≠ Child Task**
+>
+> **本次不实现 Child Task。**
+> 但必须知道：后续架构设计将专门讨论
+> **Task Origin / Task Lineage / Parent-Child Task**（见 §15.11）。
+
+### 15.11 Task Origin / Task Lineage 是 `OPEN DESIGN TOPIC`（`OPEN`）
+
+近期架构讨论已经发现：**Task 的来源将不一定只有 Human。**
+
+目前只正式保持：
+
+| 概念 | 当前说法 |
+|---|---|
+| **Root Task** | 初始的大任务，原则上从 **Human Demand / Human-created Task** 开始 |
+| **Child Task** | 未来执行中：`Agent A → 需要局部工作 → Create Child Task → Agent B` |
+
+这意味着未来需要正式定义：
+
+```
+Task Origin · Task Creator · Parent Task · Root Task
+Task Lineage · Iteration
+以及 Parent Task ↔ Child Task 之间的关系
+```
+
+> ⚠️ **本次绝对不要自行决定 Task Lineage。**
+> 这是下一轮专门讨论的架构主题。
+>
+> **目前只记录**：
+>
+> ```
+> OPEN DESIGN TOPIC: Task Origin & Task Lineage
+> ```
+>
+> ❌ **不要自行实现**：`parent_task_id` · `root_task_id` · `child task` ·
+> `task tree` · `task graph` · `delegation lifecycle`
+> （除非当前项目已经存在明确设计）。
+
+### 15.12 Message ≠ Task Creation（`SETTLED`）
+
+**不要把 Task Creation 和普通 Message 混在一起。**
+
+```
+Agent → 「帮我看看数据库」          → 只是 **Message**
+
+Agent → 正式创建 Child Task
+      → Agreement
+      → Agent B 接受                 → 才是 **Task Creation**
+```
+
+> **本次只记录**：未来需要区分
+> **Message · Task Proposal · 正式 Child Task**。
+>
+> 这个边界以后会在 Task Origin / Lineage 主题中正式讨论。
 
 ---
 
@@ -1565,6 +2028,9 @@ Agent → Workspace API → execute(resource, sandbox policy) → result
 | **Artifact** | Artifact Store · resolver |
 | **Git** | branch · worktree · merge · rebase |
 | **执行** | Code Execution · Sandbox · 测试运行器 |
+| **生命周期** | GC · TTL · 自动物理删除 · Workspace Delete Lifecycle |
+| **篡改监控** | Filesystem Watcher · Hash Tamper Detection · Kernel-level Enforcement · Sandbox 强制隔离 · 阻止管理员直接改文件 |
+| **Task Lineage** | `parent_task_id` · `root_task_id` · child task · task tree · task graph · delegation lifecycle（**OPEN DESIGN TOPIC**，见 §15.11） |
 
 ### 20.2 也不修改（生产代码）
 
@@ -1597,9 +2063,11 @@ Wallet · Ledger · Communication Protocol。
 
 | # | 问题 | 依赖 |
 |---|---|---|
-| 1 | **Workspace 何时创建？** Accepted 时 vs lazy provision | provisioning 成本 |
-| 2 | **Workspace lifecycle 的完整状态集** 与转换 | §15.1 候选模型 |
-| 3 | **Task 完成后是否冻结？何时归档？** | 返工流程（4D 的 VERIFY→返工说明可能返工） |
+| 1 | ~~Workspace 何时创建？~~ → **已 SETTLED：Lazy Provisioning**（§15.1/§15.2）。**仅剩**「第一次真正需要」的精确定义 | 实现阶段 |
+| 1b | **Reopen 的 6 个细节**（谁可 reopen / 何时新建 Task / 新 Iteration ID / 是否恢复原 Workspace / 旧 Lock 是否失效 / Permission 是否重评）—— 见 §15.9 | Task / Iteration 设计讨论 |
+| 1c | **Task Origin & Task Lineage** —— `OPEN DESIGN TOPIC`，见 §15.11。需定义 Task Origin / Task Creator / Parent Task / Root Task / Task Lineage / Iteration 及其关系 | **下一轮专门讨论** |
+| 2 | ~~Workspace lifecycle 的完整状态集~~ → **已 SETTLED**：`UNPROVISIONED → PROVISIONING → READY → FROZEN → ARCHIVED`（§15.3） | 转换触发条件仍待实现阶段确认 |
+| 3 | ~~Task 完成后是否冻结？~~ → **已 SETTLED**：`COMPLETED/FAILED/CANCELLED → FROZEN`（§15.5），**不删除**（§15.6）。**何时 → `ARCHIVED` 仍 OPEN** | Archive policy |
 | 4 | ~~Lock lease / 崩溃恢复~~ → **v1 已确定**，见 §16 + ADR-0021。**仅剩 Future 部分 OPEN**（Guardian / Automated Recovery / Crash Detection / Lease·Renewal） | 见 §21.2 |
 | 5 | **多资源锁** —— 一个操作需要改多个文件时怎么办？ | 死锁避免 vs 原子性 |
 | 6 | **目录锁语义** —— 锁一个目录是否等于锁其下所有资源？ | 与 #5 相关 |
@@ -1693,6 +2161,43 @@ Future（`FUTURE`）：
 > **最重要的一条**：
 > **Guardian 的判断不是系统事实，也不天然拥有最高权限。**
 > （§16.5.5、§16.5.6）
+
+### 22.1.8 生命周期与人的位置（`SETTLED` 模型 / `FUTURE` 实现）
+
+```
+Task
+│
+├── Shared Context        「我们共同知道什么」
+│
+└── Workspace             「我们共同操作什么」
+      │
+      ├── Permission
+      └── Write Lock
+              │
+    ┌─────────┴──────────┐
+    │                    │
+Agent Unlock      Authorized Human
+                       Force Unlock
+                            │
+                        Audit Event
+
+Workspace Lifecycle：
+    Logical Workspace
+        ↓
+    UNPROVISIONED → PROVISIONING → READY → FROZEN → ARCHIVED
+                                            │
+                                       允许 Reopen
+                                            ↓
+                                      Iteration N+1
+
+Human 作为正式协作 Actor：
+    Authorized Human
+        ↓
+    Workspace Protocol → Permission → Write Lock → Modification
+```
+
+**第一版不承担**：`Unauthorized Physical Modification Detection`。
+**下一阶段独立主题**：`Task Origin / Task Lineage`。
 
 ### 22.2 最终目标（规范 §30）
 
