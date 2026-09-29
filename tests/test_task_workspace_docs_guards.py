@@ -37,6 +37,8 @@ from pathlib import Path
 
 import pytest
 
+from tests import markdown_guard_helpers as markdown
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 AGENTS_FILE = PROJECT_ROOT / "AGENTS.md"
@@ -59,49 +61,48 @@ LAYERS = ("core", "communication", "storage", "services", "llm", "agents")
 # ============================================================
 # 工具
 # ============================================================
-def read(path: Path) -> str:
-    return path.read_text(encoding="utf-8")
+def read(path):
+    return markdown.read(path)
 
 
-def section(document: str, heading_prefix: str) -> str:
+def section(document, heading_prefix):
     """
-    取出一个标题及其**所有子小节**。
+    取一个小节（**fence-aware**）。
 
-    【注意必须包含子小节】
-        第一版曾写成「到下一个 `#` 标题为止」，
-        结果 `## 4` 在 `### 4.1` 处就停了 ——
-        `#{1,4}` 也匹配 `###`。守卫于是在**被截断的段落**上断言。
+    ============================================================
+    【本函数曾经有一个真实 bug，现在改为共用 helper】
+    ============================================================
 
-        现在按层级：取标题自身的 `#` 数 N，到下一个
-        `#` 数 **≤ N** 的标题为止。
+        旧实现只查 `line.startswith("#")`，于是 ``` 代码块里的
+        `# ❌ 不要` 被当成同级 heading，整节在那里被截断。
+
+        实测：对下面这段，`section("Real Section A")` **只取到 28 字符**。
+
+            ## Real Section A
+
+            ```python
+            # ❌ fake heading inside code block
+            ```
+
+            content after the fence that MUST be in section A
+
+        后果是所有「查这一节里有没有 X」的守卫
+        **在截断的段落上断言** —— 假绿或假红。
+
+        现在委托给 `tests/markdown_guard_helpers.py`，
+        该 helper 有独立的单元测试（`test_markdown_guard_helpers.py`），
+        包括把旧实现抄进来做对照的反向测试。
+
+    ⚠️ **调用方纪律**：helper 对找不到的标题返回 `""`。
+        `assert "X" not in section(...)` 在空串上**恒真** ——
+        必须先断言 section 非空，再做内容断言。
+        （见 `test_markdown_guard_helpers.py::test_missing_section_would_make_substring_check_vacuous`）
     """
-    lines = document.splitlines()
-    start = level = None
-
-    for index, line in enumerate(lines):
-        if line.startswith("#") and heading_prefix in line:
-            start = index
-            level = len(line) - len(line.lstrip("#"))
-            break
-
-    if start is None:
-        return ""
-
-    end = len(lines)
-    for index in range(start + 1, len(lines)):
-        line = lines[index]
-        if not line.startswith("#"):
-            continue
-        if len(line) - len(line.lstrip("#")) <= level:
-            end = index
-            break
-
-    return "\n".join(lines[start:end])
+    return markdown.section(document, heading_prefix)
 
 
-def flat(text: str) -> str:
-    """压平空白，便于在跨行的 Markdown 里匹配短语。"""
-    return " ".join(text.split())
+def flat(text):
+    return markdown.flat(text)
 
 
 def module_imports(path: Path) -> set:

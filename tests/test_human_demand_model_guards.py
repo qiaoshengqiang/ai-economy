@@ -56,6 +56,8 @@ from pathlib import Path
 
 import pytest
 
+from tests import markdown_guard_helpers as markdown
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 ARCH_DIR = PROJECT_ROOT / "docs" / "architecture"
@@ -138,67 +140,17 @@ def code_only(text: str) -> str:
 
 def section(document: str, heading_prefix: str) -> str:
     """
-    取出一个标题及其子小节，**跳过围栏代码块**。
+    取一个小节（**fence-aware**）—— 委托给共享 helper。
 
-    （与 test_task_origin_lineage_guards.py 里修好的版本一致 ——
-      代码块里的 `#` 不是标题。）
+    （本文件原有一份 fence-aware 实现；现在三个 guard 共用
+      `tests/markdown_guard_helpers.py`，避免同一逻辑多份漂移。）
     """
-    lines = document.splitlines()
-    start = level = None
-    in_fence, fence = False, ""
-
-    for index, line in enumerate(lines):
-        stripped = line.strip()
-        if stripped.startswith("```") or stripped.startswith("~~~"):
-            marker = stripped[:3]
-            if not in_fence:
-                in_fence, fence = True, marker
-            elif marker == fence:
-                in_fence, fence = False, ""
-            continue
-        if in_fence:
-            continue
-        if line.startswith("#") and heading_prefix in line:
-            start = index
-            level = len(line) - len(line.lstrip("#"))
-            break
-
-    if start is None:
-        return ""
-
-    end = len(lines)
-    in_fence, fence = False, ""
-    for index in range(start + 1, len(lines)):
-        line = lines[index]
-        stripped = line.strip()
-        if stripped.startswith("```") or stripped.startswith("~~~"):
-            marker = stripped[:3]
-            if not in_fence:
-                in_fence, fence = True, marker
-            elif marker == fence:
-                in_fence, fence = False, ""
-            continue
-        if in_fence:
-            continue
-        if not line.startswith("#"):
-            continue
-        if len(line) - len(line.lstrip("#")) <= level:
-            end = index
-            break
-
-    return "\n".join(lines[start:end])
+    return markdown.section(document, heading_prefix)
 
 
 def enclosing_section(document: str, index: int) -> str:
-    """取出 `index` 所在的那个小节（用于判断上下文）。"""
-    before = document[:index]
-    headings = [
-        (m.start(), m.group(0))
-        for m in re.finditer(r"^#+\s+.*$", before, re.M)
-    ]
-    if not headings:
-        return before
-    return section(document, headings[-1][1].lstrip("#").strip())
+    """取 `index` 所在的小节 —— 委托给共享 helper。"""
+    return markdown.section_of(document, index)
 
 
 def is_affirmative(document: str, index: int, match_text: str) -> bool:

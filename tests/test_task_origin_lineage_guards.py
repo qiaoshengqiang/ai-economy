@@ -42,6 +42,8 @@ from pathlib import Path
 
 import pytest
 
+from tests import markdown_guard_helpers as markdown
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 LINEAGE_FILE = PROJECT_ROOT / "docs" / "architecture" / "TASK_ORIGIN_LINEAGE.md"
@@ -58,115 +60,53 @@ LAYERS = ("core", "communication", "storage", "services", "llm", "agents")
 # ============================================================
 # 工具 —— 结构化解析（不是子串匹配）
 # ============================================================
-def read(path: Path) -> str:
-    return path.read_text(encoding="utf-8")
+def read(path):
+    return markdown.read(path)
 
 
-def section(document: str, heading_prefix: str) -> str:
+def section(document, heading_prefix):
     """
-    取出一个标题及其**所有子小节**（按层级，并且**跳过围栏代码块**）。
+    取一个小节（**fence-aware**）—— 委托给共享 helper。
 
-    【两个真实踩过的坑 —— 都发生在同一个函数上】
-
-    坑 1：必须包含子小节
-        第一版写成「到下一个 `#` 标题为止」，
-        结果 `## 4` 在 `### 4.1` 处就停了（`#{1,4}` 也匹配 `###`）。
-
-    坑 2：**围栏代码块里的 `#` 不是标题**（本文件开发时踩到）
-        §15.3 的内容是：
-
-            ### 15.3 不要在 Task Creation Mechanism 里写策略判断
-
-            ```python
-            # ❌ 不要
-            if outsourcing_roi > X:
-                allow
-            ```
-
-        代码块里的 `# ❌ 不要` **以 `#` 开头** ——
-        第一版把它当成了同级标题，于是在那里截断，
-        整个 §15.3 只剩 54 个字符。
-
-        结果：查 `outsourcing_roi` 永远找不到 → 守卫假红/假绿。
-
-    现在按 ``` / ~~~ 围栏跟踪「是否在代码块里」。
+    （本文件原有一份 fence-aware 实现；现在三个 guard 共用
+      `tests/markdown_guard_helpers.py`，避免同一逻辑三份漂移。）
     """
-    lines = document.splitlines()
-    start = level = None
-    in_fence = False
-    fence = ""
-
-    for index, line in enumerate(lines):
-        stripped = line.strip()
-
-        # ---- 围栏状态跟踪 ----
-        if stripped.startswith("```") or stripped.startswith("~~~"):
-            marker = stripped[:3]
-            if not in_fence:
-                in_fence, fence = True, marker
-            elif marker == fence:
-                in_fence, fence = False, ""
-            continue
-
-        if in_fence:
-            continue
-
-        if line.startswith("#") and heading_prefix in line:
-            start = index
-            level = len(line) - len(line.lstrip("#"))
-            break
-
-    if start is None:
-        return ""
-
-    end = len(lines)
-    in_fence, fence = False, ""
-    for index in range(start + 1, len(lines)):
-        line = lines[index]
-        stripped = line.strip()
-
-        if stripped.startswith("```") or stripped.startswith("~~~"):
-            marker = stripped[:3]
-            if not in_fence:
-                in_fence, fence = True, marker
-            elif marker == fence:
-                in_fence, fence = False, ""
-            continue
-
-        if in_fence:
-            continue
-
-        if not line.startswith("#"):
-            continue
-        if len(line) - len(line.lstrip("#")) <= level:
-            end = index
-            break
-
-    return "\n".join(lines[start:end])
+    return markdown.section(document, heading_prefix)
 
 
-def flat(text: str) -> str:
-    """压平空白，便于在跨行 Markdown 里匹配**完整规范句**。"""
-    return " ".join(text.split())
+def flat(text):
+    return markdown.flat(text)
 
 
-def plain(text: str) -> str:
+def heading_texts(document):
     """
-    去 Markdown 强调标记后压平 —— 用于匹配**跨粗体边界**的短语。
+    取所有**真正的** heading 文字（跳过 fenced code block）。
 
-    【为什么需要它（又一个真实踩到的坑）】
-        文档里写的是：
+    【为什么需要它】
+        本文件原先有 4 处这样的写法：
 
-            而**不是**：
+            [l for l in doc.splitlines() if l.startswith("#")]
 
-        而守卫查的是 `"而不是" in block` ——
-        因为中间夹着 `**`，**子串匹配找不到**。
+        它和旧 `section()` 是**同一个 bug** ——
+        ```python 块里的 `# ❌ 不要` 会被当成 heading。
 
-        `plain()` 把 `*` / `_` / `` ` `` 去掉再压平，
-        于是 `而**不是**` → `而不是`。
+        那 4 处用来回答「有没有一个讲 X 的小节」，
+        如果代码块里的注释恰好也含 X，就会**假绿**。
     """
-    stripped = re.sub(r"[*_`]", "", text)
-    return " ".join(stripped.split())
+    return [h.raw for h in markdown.iter_headings(document)]
+
+
+def table_rows(document, header_cell):
+    return markdown.table_rows(document, header_cell)
+
+
+def parse_table(document, header_cell):
+    return markdown.parse_table(document, header_cell)
+
+
+def plain(text):
+    """去掉 Markdown 强调标记后压平 —— 委托给共享 helper。"""
+    return markdown.plain(text)
 
 
 def table_rows(document: str, header_cell: str):
@@ -371,9 +311,7 @@ class TestSevenConceptsAreIndependent:
             标题里必须同时出现两个概念名
             **并且**有明确的区分符号（≠ / 不同 / 独立）。
         """
-        headings = [
-            line for line in lineage_doc.splitlines() if line.startswith("#")
-        ]
+        headings = heading_texts(lineage_doc)
 
         distinct = [
             h for h in headings
@@ -398,9 +336,7 @@ class TestSevenConceptsAreIndependent:
             §3.3 里有一行 `❌ 不要设计成 Creator = Origin` ——
             那是**禁止**，不是声称。所以只在标题里查。
         """
-        headings = [
-            line for line in lineage_doc.splitlines() if line.startswith("#")
-        ]
+        headings = heading_texts(lineage_doc)
 
         for heading in headings:
             for left, right in self.DISTINCT_PAIRS:
@@ -417,8 +353,8 @@ class TestSevenConceptsAreIndependent:
     def test_origin_not_equal_creator_is_stated(self, lineage_doc):
         """Origin ≠ Creator 是本主题最重要的概念，必须是**章节标题**。"""
         headings = [
-            l for l in lineage_doc.splitlines()
-            if l.startswith("#") and "Origin" in l and "Creator" in l
+            h for h in heading_texts(lineage_doc)
+            if "Origin" in h and "Creator" in h
         ]
 
         assert headings, "必须有专门讲「Origin ≠ Creator」的小节"
@@ -461,8 +397,8 @@ class TestSevenConceptsAreIndependent:
     def test_funding_not_equal_creator_stated(self, lineage_doc):
         """Funding ≠ Creator 必须有小节的标题级说明。"""
         headings = [
-            l for l in lineage_doc.splitlines()
-            if l.startswith("#") and "Funding" in l and "Creator" in l
+            h for h in heading_texts(lineage_doc)
+            if "Funding" in h and "Creator" in h
         ]
 
         assert headings, "必须有专门讲「Funding ≠ Creator」的小节"
