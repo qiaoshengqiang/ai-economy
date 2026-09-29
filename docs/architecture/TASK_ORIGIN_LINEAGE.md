@@ -61,17 +61,22 @@ Workspace（`FUTURE`）。
 随着系统发展，Task 不会永远只有：
 
 ```
-Human → Task → Agent
+Human Demand → Agent → Task
 ```
+
+> ⚠️ **注意「Human Demand」不是「Human」。**
+> Human 提供的是 **Demand**；**Agent** 才创建 Task。见 §2.4。
 
 未来会出现：
 
 ```
-Human
+Human                （提供 Demand）
   ↓
-Root Task
+Demand
   ↓
-Agent A
+Agent A              （Interpretation / Structuring / Decision）
+  ↓
+Root Task            （由 Agent A 创建）
   ↓
 Child Task
   ↓
@@ -121,6 +126,160 @@ Agent A
 | **Funding** / Economic Responsibility | 谁承担它的**经济资源**？ |
 | **Responsible Agent** | 谁对**实际执行结果**负责？ |
 | **Participant** | 谁**参与**这个 Task？ |
+
+### 2.4 ⚠️ Human Demand ≠ Task；Human ≠ Task Creator（`SETTLED` —— 本轮核心修正）
+
+> **这是 Task 模型中的职责边界，不是措辞调整。**
+
+#### 正确链路
+
+```
+Human Demand
+      ↓
+Agent Interpretation / Structuring / Decision
+      ↓
+Agent creates Root Task
+      ↓
+Task Execution / Collaboration
+      ↓
+Result
+      ↓
+Human receives result / provides feedback
+```
+
+#### Human 提供的是 **Demand**，不是 Task
+
+Human 提供：
+
+- 需求 · 目标 · 约束 · 偏好 · 验收标准 · 反馈 · 必要时的治理指令
+
+**这些属于「外部输入 / Demand 层」。**
+
+而 **Task** 是 AI Economy OS **内部**的：
+
+> 可执行、可协作、可跟踪、**可产生经济责任**的工作单元。
+
+因此：
+
+```
+❌ Human Demand = Task
+❌ Human = Task Creator
+```
+
+#### Root Task 的正确模型
+
+```
+❌ 旧模型（本轮修正掉）：
+    Human → 创建 Root Task
+
+✅ 正确模型：
+    Human
+      │  Demand
+      ▼
+    Agent
+      │  Interpretation / Structuring / Decision
+      ▼
+    Root Task
+```
+
+> **Root Task 的正式 Creator 默认应该是 Agent，而不是 Human。**
+> **Human 是 Root Demand 的来源之一，但不是 Task 的直接 Creator。**
+
+#### Demand Source ≠ Creator
+
+| | 回答 |
+|---|---|
+| **Demand Source** | 这个需求**从哪来**？（可能是 Human，也可能是 Agent 自己） |
+| **Creator** | 谁把它**正式创建成一个 Task**？（**始终是 Agent**） |
+
+```
+Demand Source = Human
+Creator       = Agent
+```
+
+**两者不能合并。**
+
+### 2.5 Human 的四个角色（`SETTLED`）
+
+> **Human 不应该再作为普通 Task Creator 被建模。**
+
+| # | 角色 | 说明 |
+|---|---|---|
+| **1** | **Demand Provider** | 向系统提供需求、目标、约束和期望。**这是 Human 最主要的入口。** |
+| **2** | **Feedback Provider** | 交付后提供真实体验反馈 / 验收结果 / 指出问题 / 修改需求 / 提出新约束 |
+| **3** | **Optional Collaborator** | 作为 Task **参与者**：提供专业知识 · 特殊信息 · 完成 Agent 当前无法完成的环节 · 人工验证 |
+| **4** | **Governance Authority** | 在系统规定的治理边界内做高权限操作：Force Unlock · 异常恢复 · 治理授权 · 人工裁决 |
+
+**两条关键约束**：
+
+> 🔒 **Feedback 本身不等于直接修改 Task Core。**
+>
+> Agent 根据反馈**决定**：是否继续当前 Task · 是否 Reopen / Iteration ·
+> 是否创建 Derived Task · 是否调整执行方案 · 是否结束当前 Task。
+
+> 🔒 **Governance 不是普通 Task Creation / Execution。**
+> 它属于治理层，见 §2.6。
+
+### 2.6 Human 不应该成为 Task Manager（`SETTLED`）
+
+> **Human 不负责持续拆解、调度、管理 Agent 的 Task Tree。**
+
+原因不是禁止 Human，而是**系统目标本身就是**：
+
+> **Agent 能够独立组织复杂工作。**
+
+| Human 提供 | Agent 负责 |
+|---|---|
+| Demand | Interpretation |
+| Constraints | Task Creation |
+| Feedback | Task Decomposition |
+| Governance | Collaboration |
+| | Negotiation |
+| | Execution |
+| | Iteration |
+
+> ❌ **不要为了方便实现而重新引入**：
+> **Human Task Manager** · **Human Task Coordinator** ·
+> **Human Central Scheduler** · **Human-driven Task Tree Management**。
+> **这些都不应该成为默认架构。**
+
+### 2.7 Root Task 不只有一种来源（`SETTLED`）
+
+#### A. `HUMAN_DEMAND`
+
+```
+Human Demand → Agent（理解并正式创建）→ Root Task
+```
+
+- **Demand Source = Human**
+- **Task Creator = Agent**
+
+**两者不能合并。**
+
+#### B. `AGENT_INITIATIVE`
+
+```
+Agent → 发现机会 → 判断收益 / 成本 / 风险 → 自行创建 Root Task
+```
+
+> **Root Task 不应该天然绑定 Human。**
+> 来源可以是 Human Demand，也可以是 Agent Initiative。
+
+### 2.8 OS 限制结构，Agent 决定策略（`SETTLED`）
+
+| **OS 负责限制结构** | **Agent 决定策略** |
+|---|---|
+| Task 生命周期 | 是否创建 Child Task |
+| Task lineage 结构 | 是否 Outsource / 给谁 |
+| 最大深度 | 是否自己完成 |
+| 权限 | 是否继续迭代 |
+| Workspace 隔离 | 是否投资能力 |
+| Write Lock | 如何分配预算 |
+| Task Agreement | 如何组织团队 |
+| 数据一致性 · 持久化 | |
+
+> ⚠️ **不要因为本次 Human Demand 修正，
+> 而重新增加大量中心化决策逻辑。**
 
 ### 2.2 绝对不要压缩成一个 `owner`
 
@@ -211,19 +370,30 @@ Task-001
     root   = Task-001      ← 它自己就是 Root
 ```
 
-### 5.2 通常来自 Human，但**不是永久硬限制**（`SETTLED`）
+### 5.2 通常来自 Human Demand，但**不是永久硬限制**（`SETTLED`）
+
+> 🔒 **Human Demand ≠ Task；Human ≠ Task Creator。** 见 §2.4。
 
 第一版的现实默认：
 
 ```
-Human → Root Task
+Human（Demand Provider）
+  ↓
+Demand
+  ↓
+Agent（Interpretation / Structuring / Decision）
+  ↓
+Root Task            ← Creator = Agent
 ```
 
-**未来允许**：
+**同时允许**：
 
 ```
 Agent → AGENT_INITIATIVE → Root Task
 ```
+
+> **两种情况下的 Creator 都是 Agent。**
+> 区别只在 **Demand Source**：一个是 Human，另一个是 Agent 自己。
 
 > ✅ 应该写：
 > **「Root Task 通常来自 Human Demand；
@@ -493,11 +663,15 @@ Agent A · Agent B · Agent C
 ### 9.1 任务树
 
 ```
-Human
+Human                （Demand Provider —— 提需求，**不建 Task**）
+  ↓
+Demand
+  ↓
+Agent A              （Interpretation → **创建** Root Task）
   ↓
 Task-001
   ↓
-Agent A
+Agent A              （外包）
   ↓
 Task-002
   ↓
@@ -516,7 +690,7 @@ Agent C
 | **Creator** | Agent A | Agent A | Agent B |
 | **Parent** | `None` | `Task-001` | `Task-002` |
 | **Root** | `Task-001` | `Task-001` | `Task-001` |
-| **Funding** | Human / Root Task budget | Parent Task allocation | `Task-002` allocation |
+| **Funding** | Root Task budget（源自 Human Demand） | Parent Task allocation | `Task-002` allocation |
 | **Responsible** | Agent A | Agent B | Agent C |
 
 ### 9.3 三层之后
@@ -596,7 +770,9 @@ Maximum depth = 3
 **并不意味着 Parent Task 的责任自动消失。**
 
 ```
-Human
+Human（Demand）
+  ↓
+Agent A（创建）
   ↓
 Task-001
   ↓
@@ -820,9 +996,11 @@ Creator / Contractor retains 40
 ```
 
 ```
-Human / Agent
+Human（Demand）/ Agent（Initiative）
      ↓
-Root Task
+     ↓  经 Agent Interpretation / Decision
+     ↓
+Root Task            ← Creator 始终是 Agent
      ↓
 Child Task
      ↓

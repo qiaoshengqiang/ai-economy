@@ -30,7 +30,7 @@
 | | |
 |---|---|
 | **阶段** | `Post-Step-4F / Pre-Task-Workspace` |
-| **测试基线** | **2709 passed, 30 deselected** |
+| **测试基线** | **2765 passed, 30 deselected** |
 | **协议版本** | `protocol_version = "1"` |
 | **命令数** | 16（`./dev.sh` 查看全部） |
 | **数据库表** | 13 |
@@ -238,6 +238,9 @@ A 说「我觉得用方案 B」   →   Communication History 里有这句话
 | **`Origin ≠ Creator`** | 把「谁提的需求」和「谁建的 Task」混为一谈 |
 | **`Parent ≠ Root`** | 把「直接上一层」当成「整条谱系的起点」 |
 | **`Funding ≠ Responsible ≠ Creator`** | 用一个 `owner` 表达三种责任 |
+| **`Human Demand ≠ Task`** | 把「需求」当成「可执行的工作单元」 |
+| **`Human ≠ Task Creator`** | 以为 Human 直接创建 Root Task |
+| **`Demand Source ≠ Creator`** | 把「需求从哪来」和「谁建的 Task」混起来 |
 
 ---
 
@@ -318,6 +321,8 @@ Shared Context 可以**引用、解释、总结、补充**共同知识，
 | **生命周期清理** | GC · TTL · 自动物理删除 · Workspace Delete Lifecycle |
 | **篡改监控** | Filesystem Watcher · Hash Tamper Detection · Kernel-level Enforcement · 阻止管理员直接改文件 |
 | **Task Lineage** | `parent_task_id` · `root_task_id` · child task · task tree · task graph · delegation lifecycle · ChildTaskManager · TaskCreationService（概念见 [TASK_ORIGIN_LINEAGE.md](docs/architecture/TASK_ORIGIN_LINEAGE.md)，**实现为 `FUTURE`**） |
+| **Human 中心化** | Human Task Manager · Human Task Coordinator · Human Central Scheduler · Human-driven Task Tree Management（**系统目标就是 Agent 能独立组织复杂工作**） |
+| **Demand 实现** | Demand DB table · Demand Service · Demand API · Demand lifecycle · Demand persistence（概念见 [TASK_ORIGIN_LINEAGE.md](docs/architecture/TASK_ORIGIN_LINEAGE.md) §2.4，标 `OPEN DESIGN`） |
 | **策略硬编码** | 「超过 X AIC 必须外包」·「必须自己完成至少 N%」·「Child 预算不得超过 Parent 的 N%」·「中间层不得盈利」·「必须找最便宜的承包者」（属于 **Agent Strategy**，不得写进系统） |
 
 ### 也不要过度设计
@@ -336,7 +341,7 @@ Vector DB · Knowledge graph · 分布式共识 · Multi-agent 投票 · 复杂 
         ↓
 2. 先调查真实代码（不要凭空设计）
         ↓
-3. 跑基线：./dev.sh test   （必须是 2709 passed）
+3. 跑基线：./dev.sh test   （必须是 2765 passed）
         ↓
 4. 实施最小修改
         ↓
@@ -355,7 +360,7 @@ Vector DB · Knowledge graph · 分布式共识 · Multi-agent 投票 · 复杂 
 
 1. **先调查，再动手。** 不要在设计之前改代码。
 2. **每一步结束跑全量测试。** 不是只跑自己改的那个文件。
-   基线现在是 **2709 passed**。
+   基线现在是 **2765 passed**。
 3. **新增守卫必须配反向测试。** 把违规注入进去，确认守卫**真的变红**。
 
 ---
@@ -368,7 +373,7 @@ Vector DB · Knowledge graph · 分布式共识 · Multi-agent 投票 · 复杂 
 ./dev.sh test tests/test_xxx.py -k 名字  # 单个测试
 ```
 
-基线 **2709 passed / 30 deselected** · 测试文件 51 个 ·
+基线 **2765 passed / 30 deselected** · 测试文件 51 个 ·
 守卫文件 10 个约 390 项 · 真实 API 测试 30 项（单独跑，需要 Key）。
 
 **必须用 `./dev.sh test`，不要直接 `pytest`** —— 它会正确设置环境。
@@ -450,6 +455,8 @@ Task Origin / Lineage
 docs/architecture/TASK_ORIGIN_LINEAGE.md   ← 7 个逻辑角色 + 深度规则
     ↓
 docs/architecture/adr/0023-*.md            ← 为什么它们是独立概念
+    ↓
+docs/architecture/adr/0024-*.md            ← 为什么 Human ≠ Task Creator
 ```
 
 > ⚠️ **Task Workspace 仍是 `FUTURE`**（只有 `TaskWorkspaceRef`）。
@@ -494,6 +501,7 @@ docs/architecture/adr/0023-*.md            ← 为什么它们是独立概念
 | 5 | **`result_ref` 没有 resolver** | 🟡 | 只保证「不是路径、不是 URL」。**不检查它指向的成果是否真的存在** |
 | 6 | 压力测试规模小 | 🟢 | 4 进程 × 15 轮。证明正确性，不证明性能 |
 | 7 | 写事务全串行 | 🟢 | `BEGIN IMMEDIATE` 的固有代价（SQLite 单写者） |
+| 8 | **ADR 索引有 16 篇断链** | 🟡 | `adr/README.md` 链接了 25 篇，**实际只有 9 篇文件**。缺 0001–0011 · 0013 · 0015 · 0016 · 0017 —— 链接点开是 404。设计确实存在（见 Constitution），但 ADR 文件从未落盘。**有守卫阻止新增断链**，豁免名单见 `test_task_origin_lineage_guards.py` |
 
 ### Phase 0 的遗留决策
 
@@ -507,18 +515,15 @@ docs/architecture/adr/0023-*.md            ← 为什么它们是独立概念
 
 | 项 | 状态 |
 |---|---|
-| **Write Lock Recovery v1** | ✅ `SETTLED` —— Explicit owner release + **Authorized Human Force Unlock**（ADR-0021） |
-| Force Unlock 审计 | ✅ `SETTLED`（**未实现**） |
-| Lock 状态集 | ✅ `SETTLED`：`ACTIVE` / `RELEASED` / `REVOKED`（**无 `EXPIRED`**） |
-| Automatic recovery · Guardian Agent | `FUTURE` |
-| Heartbeat / Lease Renewal | **Not implemented**（**不得**因 Guardian 提前实现） |
-| **Lifecycle 模型** | ✅ `SETTLED` —— Lazy Provisioning + `UNPROVISIONED → … → ARCHIVED`（ADR-0022） |
-| Task 结束后 | ✅ `SETTLED` —— `FROZEN`，**不删除**；**允许 Reopen 迭代** |
-| Reopen 的 6 个细节 | `OPEN`（谁可 reopen / 何时新建 Task / …，见文档 §15.9） |
-| Human 协作 | ✅ `SETTLED`（Authorized Human Modification 是一等方式）；实现为 `FUTURE` |
-| Unauthorized 修改监控 | **Not implemented** —— 第一版**不阻止、不监控**（`Future Concern`） |
-| Task Origin / Task Lineage | ✅ 概念 `SETTLED`（ADR-0023）；**实现 `FUTURE`**。7 个角色独立、`Maximum Depth = 3`（**TEMPORARY**） |
-| Task Workspace 实现 | **`FUTURE`** —— 生产代码一行 Lock 都没有 |
+| **Write Lock v1** | ✅ `SETTLED`：显式持有 + 锁主释放 + **Human Force Unlock** + 审计；状态 `ACTIVE`/`RELEASED`/`REVOKED`（无 `EXPIRED`）（ADR-0021） |
+| **Lifecycle** | ✅ `SETTLED`：Lazy Provisioning + `UNPROVISIONED→…→ARCHIVED`；结束后 `FROZEN`（不删除），**允许 Reopen**（ADR-0022） |
+| **Human 协作** | ✅ `SETTLED`：Authorized Human Modification 是一等方式；out-of-band **不阻止不监控**（ADR-0022） |
+| **7 个角色独立** | ✅ `SETTLED`（ADR-0023）·`Maximum Depth = 3`（**TEMPORARY**） |
+| **Human Demand ≠ Task** | ✅ `SETTLED`（ADR-0024）—— Human 提供 Demand，**Creator 始终是 Agent** |
+| Human 的四角色 | ✅ `SETTLED`：Demand Provider / Feedback Provider / Optional Collaborator / Governance Authority |
+| Guardian · 自动恢复 · Reopen 6 细节 · Demand 实体 · Child Task · Agent 自建 Root Task | `FUTURE` / `OPEN`（见各文档） |
+| Heartbeat / Lease Renewal · Human 作 Task Manager | ❌ **Not implemented / 禁止** |
+| **Task Workspace 实现** | **`FUTURE`** —— 生产代码一行 Lock 都没有 |
 
 > **v1 不需要等自动恢复机制就能进入 Workspace 实现。**
 

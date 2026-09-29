@@ -1463,7 +1463,7 @@ Iteration：            Child Task：
 
 | 概念 | 当前说法 |
 |---|---|
-| **Root Task** | 初始的大任务，原则上从 **Human Demand / Human-created Task** 开始 |
+| **Root Task** | 初始的大任务，通常源自 **Human Demand**；**由 Agent 创建**。见 [TASK_ORIGIN_LINEAGE.md](TASK_ORIGIN_LINEAGE.md) §2.4 |
 | **Child Task** | 未来执行中：`Agent A → 需要局部工作 → Create Child Task → Agent B` |
 
 这意味着未来需要正式定义：

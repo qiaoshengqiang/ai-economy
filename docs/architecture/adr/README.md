@@ -48,6 +48,7 @@
 | [0021](0021-explicit-write-lock-and-human-force-unlock.md) | Write Lock 采用显式持有模型 + Human Force Unlock | Accepted（实现为 FUTURE） | Write Lock Recovery | Task Workspace |
 | [0022](0022-lazy-provisioning-and-workspace-lifecycle.md) | Lazy Provisioning + Workspace Lifecycle + Human Participation | Accepted（实现为 FUTURE） | Lifecycle / Human / Iteration | Task Workspace |
 | [0023](0023-task-origin-and-lineage.md) | Task Origin / Creator / Lineage / Funding 是独立概念 | Accepted（实现为 FUTURE） | Task Origin & Lineage | Task |
+| [0024](0024-human-demand-not-task-creator.md) | **Human Demand ≠ Task；Human ≠ Task Creator** | Accepted（实现为 FUTURE） | Task 起源模型修正 | Task |
 
 ---
 

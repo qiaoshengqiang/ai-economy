@@ -196,7 +196,7 @@ Human A: WRITE Permission ✅ 但没有 Lock ❌
 
 ### 十三、Task Origin / Task Lineage = OPEN DESIGN TOPIC
 
-Root Task 原则上从 **Human Demand / Human-created Task** 开始；
+Root Task 通常源自 **Human Demand**；**由 Agent 创建**（见 [TASK_ORIGIN_LINEAGE.md](TASK_ORIGIN_LINEAGE.md) §2.4）；
 未来 Agent 执行中可能需要 Create Child Task。
 
 未来需正式定义：`Task Origin · Task Creator · Parent Task · Root Task ·

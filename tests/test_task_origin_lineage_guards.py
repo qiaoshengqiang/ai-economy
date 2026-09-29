@@ -941,17 +941,86 @@ class TestADR:
         assert "0023" in index
         assert "0023-task-origin-and-lineage.md" in index
 
-    def test_adr_numbering_continuous(self):
+    #: **已知的、预先存在的**索引断链（不是本轮引入的）
+    #:
+    #: 【这是守卫在调查阶段发现的真实问题 —— 如实记录，不掩盖】
+    #:
+    #:     `adr/README.md` 索引里链接了 25 篇 ADR，
+    #:     但实际只有 9 篇文件存在。
+    #:     缺的是：0001–0011 · 0013 · 0015 · 0016 · 0017。
+    #:
+    #:     这些链接**点开是 404**。它们描述的设计确实存在
+    #:     （见 Constitution / AGENTS.md），但 ADR 文件从未落盘。
+    #:
+    #: ⚠️ **本次不补写这 16 篇 ADR** —— 那超出本步范围，
+    #:    而且补写需要逐篇确认历史决策，不能凭空生成。
+    #:    这里把它们**显式列出来**，让守卫变成
+    #:    「不许再新增断链」而不是「假装没有断链」。
+    KNOWN_MISSING_ADRS = frozenset(
+        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 16, 17]
+    )
+
+    def test_adr_index_has_no_new_broken_links(self):
+        """
+        ADR 索引里的链接必须**真的存在** —— 除了已记录的 16 篇历史缺失。
+
+        【这条守卫替代了原来写死 `max == 23` 的那条】
+            原来那条只查「最大编号是几」，既抓不到断链，
+            又每加一篇 ADR 就会失败一次。
+        """
         adr_dir = PROJECT_ROOT / "docs" / "architecture" / "adr"
-        numbers = sorted(
+        index = read(adr_dir / "README.md")
+
+        linked = sorted({int(m) for m in re.findall(r"\[(\d{4})\]", index)})
+        files = {
             int(p.name[:4]) for p in adr_dir.glob("*.md")
             if p.name[:4].isdigit()
+        }
+
+        assert linked, "索引里一个 ADR 链接都没有 —— 这条守卫是空转的"
+        assert files, "一篇 ADR 文件都没有"
+
+        broken = sorted(set(linked) - files - self.KNOWN_MISSING_ADRS)
+
+        assert not broken, (
+            f"ADR 索引里有**新的**断链：{broken}\n"
+            f"（已有的历史缺失记录在 KNOWN_MISSING_ADRS 里。）"
         )
 
-        assert 23 in numbers, "ADR-0023 不存在"
-        assert 22 in numbers, "ADR-0022 应该先于 0023 存在"
-        assert max(numbers) == 23, (
-            f"当前最大 ADR 编号是 {max(numbers)}，应该恰好是 23"
+    def test_adr_files_are_all_indexed(self):
+        """反向：每一篇**存在的** ADR 都必须被索引链接到。"""
+        adr_dir = PROJECT_ROOT / "docs" / "architecture" / "adr"
+        index = read(adr_dir / "README.md")
+
+        linked = {int(m) for m in re.findall(r"\[(\d{4})\]", index)}
+        files = {
+            int(p.name[:4]) for p in adr_dir.glob("*.md")
+            if p.name[:4].isdigit()
+        }
+
+        missing = sorted(files - linked)
+
+        assert not missing, (
+            f"这些 ADR 文件存在但没有被索引：{missing}"
+        )
+
+    def test_known_missing_list_stays_accurate(self):
+        """
+        反向：`KNOWN_MISSING_ADRS` 不许「过期」——
+        如果某篇被补写了，就必须从豁免名单里删掉，
+        否则豁免名单会慢慢变成掩盖问题的垃圾场。
+        """
+        adr_dir = PROJECT_ROOT / "docs" / "architecture" / "adr"
+        files = {
+            int(p.name[:4]) for p in adr_dir.glob("*.md")
+            if p.name[:4].isdigit()
+        }
+
+        now_written = sorted(self.KNOWN_MISSING_ADRS & files)
+
+        assert not now_written, (
+            f"这些 ADR 已经被补写了，但还留在 KNOWN_MISSING_ADRS 里：{now_written}\n"
+            f"（补写后请从豁免名单删除，让守卫继续收紧。）"
         )
 
 

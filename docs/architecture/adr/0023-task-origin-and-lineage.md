@@ -86,6 +86,11 @@ Task-001 → Task-002 → Task-003
 003: parent=002, root=001
 ```
 
+> ⚠️ **本 ADR 关于「Root Task 通常来自 Human」的表述
+> 已被 [ADR-0024](0024-human-demand-not-task-creator.md) **精确化**：
+> Human 提供的是 **Demand**，**Creator 始终是 Agent**。
+> 本 ADR 的其余决策仍然有效。**
+
 ### 五、Child Task 是**独立** Task
 
 即使 `Task-002 ← Task-001`，它**也不是**一个函数调用，而是：
