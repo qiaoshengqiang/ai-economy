@@ -30,7 +30,7 @@
 | | |
 |---|---|
 | **阶段** | `Post-Step-4F / Pre-Task-Workspace` |
-| **测试基线** | **2632 passed, 30 deselected** |
+| **测试基线** | **2709 passed, 30 deselected** |
 | **协议版本** | `protocol_version = "1"` |
 | **命令数** | 16（`./dev.sh` 查看全部） |
 | **数据库表** | 13 |
@@ -40,8 +40,8 @@
 
 ```
 Step 1        Agent + Economy 基础骨架
-Step 2 / 2.5  Brain / LLM 抽象 + 真实 DeepSeek Provider
-Step 3 / 3.6  Communication + Identity / Address / Transport / Protocol 冻结
+Step 2/2.5    Brain / LLM 抽象 + 真实 DeepSeek Provider
+Step 3/3.6/3.7 Communication + Identity / Address / Transport / Protocol 冻结
 Step 4A       Task Core + Lifecycle + TaskWorkspaceRef + Money
 Step 4B       Capability + AgentDirectory + 自主发现协作者
 Step 4C       DecisionPolicy + 多轮谈判 + ACCEPT / REJECT + TaskAgreement
@@ -189,11 +189,8 @@ Agent Private Memory                ← 个体判断
 Agent Inference                     ← 推测（最不可靠）
 ```
 
-**三条推论**：
-
-1. Domain State 不能被 Agent Memory 推翻
-2. 「有人说过」≠「现在仍然有效」
-3. 推测不能冒充事实
+**三条推论**：① Domain State 不能被 Agent Memory 推翻；
+② 「有人说过」≠「现在仍然有效」；③ 推测不能冒充事实。
 
 **「说过」≠「确认过」**：
 
@@ -238,6 +235,9 @@ A 说「我觉得用方案 B」   →   Communication History 里有这句话
 | **`Guardian 判断 ≠ Domain Fact`** | 让 Guardian 的评估自动改写 Task Core |
 | **`Logical Workspace ≠ Physical Workspace`** | 以为 `workspace_id` 存在就代表物理目录已建 |
 | **`Workspace Protocol ≠ Host OS Permission`** | 把 Write Lock 说成宿主机物理不可触碰 |
+| **`Origin ≠ Creator`** | 把「谁提的需求」和「谁建的 Task」混为一谈 |
+| **`Parent ≠ Root`** | 把「直接上一层」当成「整条谱系的起点」 |
+| **`Funding ≠ Responsible ≠ Creator`** | 用一个 `owner` 表达三种责任 |
 
 ---
 
@@ -317,7 +317,8 @@ Shared Context 可以**引用、解释、总结、补充**共同知识，
 | **协调** | TaskManager · Coordinator |
 | **生命周期清理** | GC · TTL · 自动物理删除 · Workspace Delete Lifecycle |
 | **篡改监控** | Filesystem Watcher · Hash Tamper Detection · Kernel-level Enforcement · 阻止管理员直接改文件 |
-| **Task Lineage** | `parent_task_id` · `root_task_id` · child task · task tree · task graph · delegation lifecycle（**`OPEN DESIGN TOPIC`**） |
+| **Task Lineage** | `parent_task_id` · `root_task_id` · child task · task tree · task graph · delegation lifecycle · ChildTaskManager · TaskCreationService（概念见 [TASK_ORIGIN_LINEAGE.md](docs/architecture/TASK_ORIGIN_LINEAGE.md)，**实现为 `FUTURE`**） |
+| **策略硬编码** | 「超过 X AIC 必须外包」·「必须自己完成至少 N%」·「Child 预算不得超过 Parent 的 N%」·「中间层不得盈利」·「必须找最便宜的承包者」（属于 **Agent Strategy**，不得写进系统） |
 
 ### 也不要过度设计
 
@@ -335,7 +336,7 @@ Vector DB · Knowledge graph · 分布式共识 · Multi-agent 投票 · 复杂 
         ↓
 2. 先调查真实代码（不要凭空设计）
         ↓
-3. 跑基线：./dev.sh test   （必须是 2632 passed）
+3. 跑基线：./dev.sh test   （必须是 2709 passed）
         ↓
 4. 实施最小修改
         ↓
@@ -354,7 +355,7 @@ Vector DB · Knowledge graph · 分布式共识 · Multi-agent 投票 · 复杂 
 
 1. **先调查，再动手。** 不要在设计之前改代码。
 2. **每一步结束跑全量测试。** 不是只跑自己改的那个文件。
-   基线现在是 **2632 passed**。
+   基线现在是 **2709 passed**。
 3. **新增守卫必须配反向测试。** 把违规注入进去，确认守卫**真的变红**。
 
 ---
@@ -362,20 +363,15 @@ Vector DB · Knowledge graph · 分布式共识 · Multi-agent 投票 · 复杂 
 ## 9. 测试要求
 
 ```bash
-./dev.sh test                          # 全量（不含真实 API 测试）
-./dev.sh test tests/test_xxx.py        # 单个文件
-./dev.sh test tests/test_xxx.py -k 名字 # 单个测试
+./dev.sh test                           # 全量（不含真实 API 测试）
+./dev.sh test tests/test_xxx.py         # 单个文件
+./dev.sh test tests/test_xxx.py -k 名字  # 单个测试
 ```
 
-| | |
-|---|---|
-| **基线** | **2632 passed, 30 deselected** |
-| **测试文件** | 51 个 |
-| **守卫文件** | 10 个，约 390 项 |
-| **真实 API 测试** | 30 项，单独跑（需要 Key） |
+基线 **2709 passed / 30 deselected** · 测试文件 51 个 ·
+守卫文件 10 个约 390 项 · 真实 API 测试 30 项（单独跑，需要 Key）。
 
-**必须用 `./dev.sh test`，不要直接 `pytest`** ——
-`dev.sh` 会正确设置虚拟环境和环境变量。
+**必须用 `./dev.sh test`，不要直接 `pytest`** —— 它会正确设置环境。
 
 ---
 
@@ -398,7 +394,7 @@ AGENTS.md → 判断任务领域 → 只读相关 Specification → 必要时读
 | **Workspace（`FUTURE`）** | [`TASK_WORKSPACE.md`](docs/architecture/TASK_WORKSPACE.md) + ADR-0020 · §4.1 · §7 | TASK_SHARED_CONTEXT.md |
 | **Lifecycle / Reopen / Iteration** | `TASK_WORKSPACE.md` §15 + **ADR-0022** | — |
 | **Human Participation** | `TASK_WORKSPACE.md` §14.5 + ADR-0022 | — |
-| **Task Origin / Task Lineage**（`OPEN DESIGN TOPIC`） | `TASK_WORKSPACE.md` §15.11 —— **尚未设计，不要实现** | — |
+| **Task Origin / Task Lineage** | [`TASK_ORIGIN_LINEAGE.md`](docs/architecture/TASK_ORIGIN_LINEAGE.md) + **ADR-0023** —— 概念已定（`SETTLED`），**实现为 `FUTURE`** | — |
 | **Guard / 测试** | ADR-0018 · `tests/*guards*.py` | — |
 
 **Constitution 只在三种情况下通读**：第一次接触项目 · 要**新增**一条边界 ·
@@ -428,6 +424,7 @@ AGENTS.md → 判断任务领域 → 只读相关 Specification → 必要时读
 | Task Shared Context / Alignment | [`TASK_SHARED_CONTEXT.md`](docs/architecture/TASK_SHARED_CONTEXT.md) | **`CURRENT`**（已实现） |
 | **Task Workspace / Permission / Write Lock / Backend** | [`TASK_WORKSPACE.md`](docs/architecture/TASK_WORKSPACE.md) | **`FUTURE`**（只有架构定义） |
 | 消息协议 | [`PROTOCOL.md`](PROTOCOL.md) | `CURRENT` |
+| **Task Origin / Lineage / Funding** | [`TASK_ORIGIN_LINEAGE.md`](docs/architecture/TASK_ORIGIN_LINEAGE.md) | **`FUTURE`**（逻辑模型已定） |
 
 **Workspace 导航**（规范 §23.4）：
 
@@ -445,23 +442,24 @@ docs/architecture/adr/0022-*.md            ← Lazy Provisioning · Lifecycle ·
 docs/architecture/adr/0012 / 0014 / 0019   ← 并发 · 租约 · 对齐（前置）
 ```
 
-> **Task Workspace 是 `FUTURE`，不是 `CURRENT`。**
-> 当前只有 `TaskWorkspaceRef`（一个 `workspace_id` 字符串）。
+**Task Origin / Lineage 导航**：
+
+```text
+Task Origin / Lineage
+    ↓
+docs/architecture/TASK_ORIGIN_LINEAGE.md   ← 7 个逻辑角色 + 深度规则
+    ↓
+docs/architecture/adr/0023-*.md            ← 为什么它们是独立概念
+```
+
+> ⚠️ **Task Workspace 仍是 `FUTURE`**（只有 `TaskWorkspaceRef`）。
 >
-> **Write Lock Recovery 的 v1 语义已定**（ADR-0021）：
-> 显式持有 + 锁主释放 + **Human Force Unlock** + 审计。
->
-> **Lifecycle 模型已定**（ADR-0022）：**Lazy Provisioning** ——
-> `workspace_id` 可以先存在而物理 Workspace **尚未创建**；
-> `UNPROVISIONED → PROVISIONING → READY → FROZEN → ARCHIVED`。
-> Task 结束后进 `FROZEN`（**不删除**），且**允许 Reopen 迭代**。
->
-> **Human 是正式协作 Actor**：Authorized Human Modification 经
-> Workspace Protocol + Permission + Write Lock 生效。
-> Unauthorized / out-of-band 修改的**监控**是 `FUTURE`（第一版不做）。
->
-> 其余 Open Design Questions 见
-> [`TASK_WORKSPACE.md`](docs/architecture/TASK_WORKSPACE.md) §21。
+> | 已定（`SETTLED`） | 仍 `FUTURE` / `OPEN` |
+> |---|---|
+> | Write Lock v1：显式持有 + 锁主释放 + **Human Force Unlock** + 审计（ADR-0021） | Guardian · 自动恢复 · Reopen 的 6 个细节 |
+> | Lifecycle：**Lazy Provisioning** + `UNPROVISIONED→…→ARCHIVED`；结束后 `FROZEN`（不删除），**允许 Reopen**（ADR-0022） | Workspace 实现 |
+> | Human 是正式协作 Actor；out-of-band 修改**不阻止不监控**（ADR-0022） | out-of-band 检测 |
+> | 7 个角色独立（`Origin`/`Creator`/`Parent`/`Root`/`Funding`/`Responsible`/`Participant`）；`Maximum Depth = 3`（**TEMPORARY**）（ADR-0023） | Child Task · Agent 自建 Root Task（12 个 Open 见 `TASK_ORIGIN_LINEAGE.md` §16） |
 
 ### 第二优先（理解当前实现）
 
@@ -519,7 +517,7 @@ docs/architecture/adr/0012 / 0014 / 0019   ← 并发 · 租约 · 对齐（前�
 | Reopen 的 6 个细节 | `OPEN`（谁可 reopen / 何时新建 Task / …，见文档 §15.9） |
 | Human 协作 | ✅ `SETTLED`（Authorized Human Modification 是一等方式）；实现为 `FUTURE` |
 | Unauthorized 修改监控 | **Not implemented** —— 第一版**不阻止、不监控**（`Future Concern`） |
-| Task Origin / Task Lineage | **`OPEN DESIGN TOPIC`** —— 下一轮讨论，**不要实现** |
+| Task Origin / Task Lineage | ✅ 概念 `SETTLED`（ADR-0023）；**实现 `FUTURE`**。7 个角色独立、`Maximum Depth = 3`（**TEMPORARY**） |
 | Task Workspace 实现 | **`FUTURE`** —— 生产代码一行 Lock 都没有 |
 
 > **v1 不需要等自动恢复机制就能进入 Workspace 实现。**

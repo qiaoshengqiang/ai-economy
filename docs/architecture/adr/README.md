@@ -47,6 +47,7 @@
 | [0020](0020-task-workspace-shared-resource-model.md) | Task Workspace 采用共享资源模型；Permission ≠ Write Lock | Accepted（实现为 FUTURE） | Workspace 架构定义 | Task Workspace |
 | [0021](0021-explicit-write-lock-and-human-force-unlock.md) | Write Lock 采用显式持有模型 + Human Force Unlock | Accepted（实现为 FUTURE） | Write Lock Recovery | Task Workspace |
 | [0022](0022-lazy-provisioning-and-workspace-lifecycle.md) | Lazy Provisioning + Workspace Lifecycle + Human Participation | Accepted（实现为 FUTURE） | Lifecycle / Human / Iteration | Task Workspace |
+| [0023](0023-task-origin-and-lineage.md) | Task Origin / Creator / Lineage / Funding 是独立概念 | Accepted（实现为 FUTURE） | Task Origin & Lineage | Task |
 
 ---
 
