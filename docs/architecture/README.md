@@ -24,6 +24,7 @@
 | [`../../AGENTS.md`](../../AGENTS.md) | 短 | **Developer Context** —— 导航与入口 | **每次开始工作前** |
 | [ARCHITECTURE_CONSTITUTION.md](ARCHITECTURE_CONSTITUTION.md) | 长 | **长期 Source of Truth** —— 完整架构事实 | 动手改架构之前 |
 | [TASK_SHARED_CONTEXT.md](TASK_SHARED_CONTEXT.md) | 中 | Task Shared Context / Alignment 的数据模型规范 | 做 Shared Context 相关工作时 |
+| [TASK_WORKSPACE.md](TASK_WORKSPACE.md) | 长 | **Task Workspace 正式架构定义**（`FUTURE`） | 做 Workspace / Permission / Write Lock 时 |
 | [adr/](adr/README.md) | 中 | **单个决策**的历史与理由 | 想知道「为什么当初这样定」时 |
 
 **三层分工，不要重复**：

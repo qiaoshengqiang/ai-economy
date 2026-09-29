@@ -316,6 +316,26 @@ Task → Task Workspace
 
 见 §3。
 
+### 2.11 Write Lock 采用显式持有模型（`SETTLED`）
+
+**Write Lock 不因为 Agent 长时间没有操作而自动失效。**
+
+第一版**不实现**时间 Lease / Lease Renewal / Heartbeat /
+自动 Lock Expiry / 自动判断 Agent 已死亡。见 §16。
+
+### 2.12 Observation ≠ Conclusion（`SETTLED`）
+
+**系统不假装知道 Agent 是否「死了」。**
+
+```
+Agent A 最近 2 小时没有修改文件
+    → 系统只能知道：last activity = 2h ago
+    → 不能推出：Agent A = DEAD          ❌
+```
+
+这与 **`Agent Inference ≠ Domain Fact`**（Constitution §9）
+是同一种架构原则。见 §16.6。
+
 ---
 
 ## 3. Relationship to Task Core
@@ -708,12 +728,35 @@ WRITE  requires  调用方持有该资源的有效 Write Lock
 ❌ 其他 Agent 不能释放别人的锁
 ```
 
-### 10.6 本阶段明确不实现（`NOT IMPLEMENTED`）
+### 10.6 Lock 状态（`SETTLED`）
+
+第一版至少能够表达三种状态：
+
+| 状态 | 语义 |
+|---|---|
+| `ACTIVE` | 当前有效锁 |
+| `RELEASED` | 持有者**正常释放** |
+| `REVOKED` | 由**治理操作**强制解除（见 §16.8） |
+
+> ⚠️ **不要增加 `EXPIRED`。**
+> 那会暗示当前存在自动 Lease —— 而 v1 明确没有（§16.2）。
+
+### 10.7 释放的两种形态（`SETTLED`）
+
+| 操作 | 谁可以 | 条件 |
+|---|---|---|
+| `UNLOCK` | **当前锁主** | `caller == current_lock_owner` |
+| `FORCE_UNLOCK` | **治理主体** | authorized governance actor（v1 = Human Operator） |
+
+> **普通 Agent 不得因为拥有 `WRITE` 就自动拥有 `FORCE_UNLOCK`。**
+> 而且 `FORCE_UNLOCK` 必须留下审计记录（§16.10）。
+
+### 10.8 本阶段明确不实现（`NOT IMPLEMENTED`）
 
 ❌ Lock Manager
 ❌ 锁表（`workspace_locks`）
-❌ 锁的获取 / 释放 API
-❌ 崩溃恢复（§16）
+❌ 锁的获取 / 释放 / Force Unlock API
+❌ 崩溃恢复的**实现**（语义已在 §16 确定）
 
 ---
 
@@ -1002,94 +1045,401 @@ Created → Provisioning → Ready → ... → Archived
 
 ## 16. Lock Recovery
 
-> **§20 of the task spec 明确要求：这一节不要凭感觉决定。**
+> **状态：`SETTLED`（v1 治理方式已定）**
+>
+> v1 的恢复语义**已经确定**。自动恢复属于 `FUTURE`。
+> 决策记录：[ADR-0021](adr/0021-explicit-write-lock-and-human-force-unlock.md)
 
-### 16.1 问题（`OPEN`）
+### 16.1 问题（回顾）
 
-> 如果 Agent 持有 Write Lock 时进程崩溃，
+> 如果 Agent 持有 Write Lock 时进程崩溃 / 失联，
 > Workspace 如何判断锁失效并恢复？
 
-### 16.2 调查结果：Message Claim Lease **不能**直接照搬
+### 16.2 v1 决策：显式持有模型，**不采用自动时间失效**（`SETTLED`）
 
-规范要求先调查现有 `Message Claim Lease` 设计（ADR-0014）。
-调查结论是：**两者语义不同，不能假设相同。**
+> **Write Lock 默认采用显式持有模型。**
+>
+> **Write Lock 不因为 Agent 长时间没有操作而自动失效。**
 
-| | **Message Claim Lease**（`CURRENT`） | **Workspace Write Lock**（`FUTURE`） |
+**明确禁止**把 `5 分钟` / `10 分钟` / `300 秒` 之类的固定时间
+直接作为「**Agent 已经死亡**」的判断依据。
+
+### 16.3 v1 明确不实现（`NOT IMPLEMENTED`）
+
+| ❌ 不实现 | 为什么 |
+|---|---|
+| 时间 Lease | 见 §16.5 |
+| Lease Renewal | 需要心跳（当前禁止） |
+| Heartbeat | 当前阶段明确禁止 |
+| 自动 Lock Expiry | 会把「慢」误判成「死」 |
+| 单纯基于 inactivity 的 Crash Detection | 见 §16.6 |
+| 自动判断 Agent 已死亡 | 见 §16.6 |
+
+> ⚠️ **尤其不能**因为 `Message Claim` 用了 Lease，
+> 就直接复制成 `Workspace Lock Lease`。
+> 两者语义不同（见 §16.4）。
+
+### 16.4 两个问题完全不同（`SETTLED`）
+
+| | **Message Claim** | **Workspace Write Lock** |
 |---|---|---|
-| 保护什么 | 一条**消息**不被重复处理 | 一个**资源**不被并发写入 |
-| 持有者是谁 | 一个正在处理消息的 **worker** | 一个**意图修改资源**的 Agent |
+| 回答 | 谁**暂时负责处理**某条 Message？ | 当前谁**拥有某个可写资源的排他修改权**？ |
+| 持有者 | 一个正在处理消息的 worker | 一个**意图修改资源**的 Agent |
 | 时长量级 | 一次消息处理（秒级） | 一次编辑会话（分钟～小时） |
-| 过期后会发生什么 | 另一个 worker **接手** | 另一个 Agent **开始写** |
-| **过短的失败模式** | **重复处理**（可被幂等吸收） | **丢失写入 / 交错写入**（静默数据损坏） |
-| **过长的失败模式** | 消息卡住（**可见**，可人工干预） | 资源被阻塞（**可见**） |
+| 过短的失败模式 | **重复处理**（幂等可吸收，可见） | **丢失写入 / 静默数据损坏** |
 | 自然终点 | 处理完成 / 失败 | 显式释放 / Task 结束 |
-| 崩溃者需要配合吗 | 不需要（Phase 0 已用真进程验证） | 未知 |
-| 当前是否实现 | ✅ 已实现（ADR-0014） | ❌ 未实现 |
+| 当前状态 | ✅ `CURRENT`（ADR-0014） | `FUTURE`（本设计） |
 
-### 16.3 为什么这个差异是本质的（`OPEN`——分析，非决定）
+> **不要把二者的数据结构、超时逻辑、恢复策略直接复制。**
 
-Message Claim 的失败模式是**不对称**的：
+### 16.5 为什么不能用时间租约（`SETTLED`）
 
-```
-租约太短 → 重复处理（烦，但幂等能兜）
-租约太长 → 消息卡住（烦，但看得见）
-```
+**根本原因**：
 
-Workspace Write Lock 的失败模式**更危险**：
+> 持有写锁的 Agent 可能**长时间没有 CPU 活动** ——
+> 它在等 LLM 响应、在想、在等外部 API、在等其他 Agent、
+> 在做长时间任务。
 
 ```
-租约太短 → A 还在写（比如在等 LLM 生成），锁过期，
-           B 拿到锁开始写，A 的写入覆盖 B 的
-           → **静默数据损坏**，而且可能过很久才被发现
-
-租约太长 → 崩溃的 Agent 长时间占着资源
-           → 可见的阻塞
+Message Claim 的持有者：活跃的 worker   → 「没有活动」≈ 出问题了
+Write Lock 的持有者：可能在想事情的 Agent → 「没有活动」完全正常
 ```
 
-**关键点**：持有写锁的 Agent 可能**长时间没有 CPU 活动**
-（等待 LLM 响应、等待人工输入、在「思考」）。
-「没有活动」**不等于**「已崩溃」——
-而这正是基于时间租约的恢复机制所依赖的假设。
+而基于时间租约的恢复机制**恰恰依赖「没有活动 = 已崩溃」这个假设** ——
+对 Write Lock 来说，**这个假设不成立**。
 
-**Message Claim 没有这个问题**，因为 worker 在处理消息时是活跃的。
-
-### 16.4 候选方向（`OPEN`——列出但不选择）
-
-| # | 候选 | 优点 | 缺点 |
-|---|---|---|---|
-| A | 时间租约（照搬 Message Claim Lease） | 机制已有，简单 | 见 §16.3：可能造成静默数据损坏 |
-| B | **显式释放 + Task 生命周期收尾** | 没有「租约太短」问题 | 崩溃后资源一直被占，直到 Task 结束 |
-| C | 租约 + **显式续租**（心跳） | 能区分「活跃但慢」与「已崩溃」 | 引入心跳机制（**当前明确禁止**） |
-| D | 崩溃检测（进程存活探测） | 精确 | 需要分布式 liveness，极复杂 |
-| E | **乐观并发**（不锁，写入时检测冲突） | 无崩溃恢复问题 | 与 §2.3「写必须独占」矛盾 |
-| F | 锁 + 人工/Task 级解锁 | 简单、可控 | 需要人介入 |
-
-### 16.5 本阶段的结论（`OPEN DESIGN QUESTION`）
-
-**不决定。**
-
-理由：
-
-1. `Message Claim Lease` 不能照搬（§16.2 的差异是本质的，不是量的）
-2. 候选 C 需要心跳，而**心跳当前是被明确禁止的**
-3. 候选 E 与 §2.3 冲突
-4. 剩余候选（A / B / D / F）的取舍取决于**实现阶段才知道的事实**：
-   - 一次写操作的实际时长分布
-   - Agent 是否真的会长时间持有锁
-   - 单机 vs 多机（崩溃检测的代价差别巨大）
-
-> **这个问题被正式记录为 OPEN DESIGN QUESTION。**
-> 它必须在 Workspace 实现阶段**开始之前**解决 ——
-> 因为锁的恢复语义决定了锁的数据结构。
-
-**同时明确**：
+**如果强行用时间租约**：
 
 ```
-Message Claim Lease ≠ Workspace Write Lock
+A 还在写（正在等 LLM 生成）
+    ↓ 锁过期
+B 拿到锁开始写
+    ↓
+A 的写入覆盖 B 的（或反过来）
+    ↓
+**静默数据损坏** —— 可能很久以后才发现
 ```
 
-两者都可能有 lease / recovery，但**语义不同**，
-不得因为一个已存在就假设另一个相同。
+这和「消息被重复处理」不是一个量级的后果。
+
+### 16.6 系统不假装知道 Agent 是否「死了」（`SETTLED`）
+
+> **第一版系统不把「长时间无活动」解释为「Agent 已崩溃」。**
+
+例如：
+
+```
+Agent A 最近 2 小时没有修改文件
+
+系统只能知道：
+    last activity = 2h ago
+
+不能自动推出：
+    Agent A = DEAD          ← ❌ 禁止
+```
+
+**这两个概念必须区分**：
+
+```
+Observation   ≠   Conclusion
+```
+
+> 这与项目已经确立的
+> **`Agent Inference ≠ Domain Fact`**（Constitution §9）
+> 是**同一种**架构原则。
+>
+> 「观察到什么」不等于「事实是什么」。
+
+### 16.7 v1 正常释放模型（`SETTLED`）
+
+```
+Agent A
+  ↓
+LOCK resource
+  ↓
+工作
+  ↓
+完成
+  ↓
+UNLOCK
+```
+
+**只有 Lock Owner 才可以正常释放自己的 Lock。**
+
+```
+Agent A owns Lock X
+    A → UNLOCK X   →  SUCCESS
+
+Agent B → UNLOCK X →  **DENIED**
+```
+
+### 16.8 v1 异常恢复模型：Human Force Unlock（`SETTLED`）
+
+当 Agent 无法继续工作、进程异常退出、长期失联，
+或**人类认为它已经不应继续持有资源**时：
+
+```
+Human / Authorized Operator
+  ↓
+Force Unlock
+  ↓
+Lock Revoked
+  ↓
+Resource becomes available
+```
+
+> ### **Force Unlock 是人为治理操作，**
+> ### **不是系统根据「超时」自动执行。**
+
+这是 v1 唯一可用的异常恢复路径
+（另一条是 Agent 自己 unlock）。
+
+### 16.9 Force Unlock 必须是高权限操作（`SETTLED`）
+
+**普通 `UNLOCK` 和 `FORCE_UNLOCK` 必须严格区分。**
+
+| 操作 | 条件 |
+|---|---|
+| `UNLOCK` | `caller == current_lock_owner` |
+| `FORCE_UNLOCK` | 必须是 **authorized governance actor** |
+
+**v1 的 governance actor = Human / Authorized Human Operator。**
+
+> ⚠️ **普通 Agent 不得因为自己拥有 `WRITE` 就自动拥有 `FORCE_UNLOCK`。**
+
+```
+Agent B: WRITE permission = true
+         FORCE_UNLOCK      = ❌ 不因此获得
+```
+
+### 16.10 Force Unlock 必须可审计（`SETTLED`）
+
+**不能让 Force Unlock 变成一条不可追踪的操作。**
+
+因此定义 **Lock Revocation / Force Unlock Event**，
+至少需要表达：
+
+| 字段 | 含义 |
+|---|---|
+| `lock_id` | 被撤销的锁 |
+| `workspace_id` | 属于哪个 Workspace |
+| `resource_id` | 哪个资源 |
+| `previous_owner` | 原锁主 |
+| `revoked_by` | 谁撤销的（治理主体） |
+| `revoked_at` | 何时 |
+| `reason` | **为什么** |
+
+> 具体字段名可以等实现阶段确定。
+> **核心要求：Force Unlock 必须留下可追踪的治理记录。**
+
+### 16.11 Lock 状态（`SETTLED`）
+
+第一版至少能够表达三种状态：
+
+| 状态 | 语义 |
+|---|---|
+| `ACTIVE` | 当前有效锁 |
+| `RELEASED` | 持有者**正常释放** |
+| `REVOKED` | 由**治理操作**强制解除 |
+
+> ⚠️ **不要增加 `EXPIRED`。**
+> 那会暗示当前存在自动 Lease —— 而 v1 明确没有。
+
+### 16.12 未来演进（`FUTURE`）
+
+```
+v1（`SETTLED`）：
+    Explicit Lock  +  Owner Unlock  +  Human Force Unlock  +  Audit
+
+Future（`FUTURE`）：
+    Guardian Agent  +  Policy  +  Automated Recovery
+```
+
+见 §16.5（下一节）与 §22。
+
+---
+
+### 16.13 Guardian / Observer Agent（`FUTURE`）
+
+> **状态：`FUTURE` —— 本次只记录架构方向，不实现任何代码。**
+>
+> 规范明确：**不实现 Guardian Agent 实体代码**。
+
+#### 16.13.1 是什么（`FUTURE`）
+
+未来 AI Economy OS **可以**存在一种专门的 Agent 角色：
+
+**Observer / Guardian Agent**
+
+它的职责**不是直接完成业务 Task**，而是：
+
+```
+观察其他 Agent 的运行状态
+    ↓
+综合多个运行信号
+    ↓
+进行状态评估
+    ↓
+提出治理建议 / Recovery Request
+```
+
+#### 16.13.2 它可以观察什么（`FUTURE`）
+
+- last message
+- task state
+- LLM activity
+- tool activity
+- workspace lock
+- recent resource operations
+- communication responsiveness
+- runtime information
+- historical behavior
+
+#### 16.13.3 它形成什么（`FUTURE`）
+
+类似这样的判断结果：
+
+```
+NORMAL
+WAITING
+LONG_RUNNING
+SUSPECTED_FAILURE
+UNRESPONSIVE
+UNKNOWN
+```
+
+> ⚠️ **这些只是 Observer 的判断结果，不是 Domain State。**
+>
+> 它们**不写入 Task Core**，也**不取代**任何领域状态。
+
+#### 16.13.4 它可以运行本地小模型（`FUTURE`）
+
+正式允许未来架构考虑：
+
+```
+Guardian Agent
+    +  local small model
+    +  runtime facts
+    +  rules
+```
+
+**它不需要使用与主工作 Agent 同等级别的大模型。**
+
+```
+MacBook
+
+    Agent A
+    Agent B
+    Agent C
+
+    Guardian Agent
+        └── local lightweight model
+```
+
+这符合**低成本运行**与**长期自治**的方向。
+
+> **本次不实现 Guardian Agent。** 只作为未来架构能力记录。
+
+#### 16.13.5 ⚠️ Guardian 的权限边界必须写死（`SETTLED`——这是边界，不是实现）
+
+**Guardian 不是「系统最高权威」。**
+
+```
+❌ 禁止的设计：
+    Guardian says DEAD
+        ↓
+    system blindly kills Agent
+
+✅ 正确的链路：
+    Observation
+        ↓
+    Assessment
+        ↓
+    Recommendation / Recovery Request
+        ↓
+    Policy / Authorization
+        ↓
+    Actual Action
+```
+
+**两条硬约束**：
+
+1. **Guardian 的判断不能自动等于系统事实。**
+2. **Guardian 不能仅因为自己判断异常，就拥有任意系统权限。**
+
+#### 16.13.6 Guardian 与 Source of Truth（`SETTLED`）
+
+必须保持 Constitution §9 的优先级：
+
+```
+Domain State / TaskAgreement
+        >
+Task Shared Context
+        >
+Communication History
+        >
+Agent Private Memory
+        >
+Agent Inference
+```
+
+**Guardian 的判断属于 `Observation / Assessment`，
+不是新的 Source of Truth。**
+
+**不要产生 `Guardian State` 并让它凌驾于 Task Core。**
+
+```
+✅ 允许（两者并存，各说各的）：
+    Task Core:  IN_PROGRESS
+    Guardian:   SUSPECTED_FAILURE
+
+❌ 禁止（Guardian 自动改写领域状态）：
+    Guardian:   DEAD
+    Task Core:  → 自动变成 FAILED
+```
+
+> 「Task Core 自动变成 FAILED」**第一版不能自动发生** ——
+> 必须经过明确的治理机制。
+
+#### 16.13.7 Guardian 的未来 Lock Recovery（`FUTURE`）
+
+```
+Agent A 持有 Lock
+    ↓
+Guardian 观察
+    ↓
+评估：可能异常
+    ↓
+Recovery Request
+    ↓
+Authorization Policy
+    ↓
+Force Unlock / Recovery
+```
+
+> **但当前版本**：
+>
+> | | 状态 |
+> |---|---|
+> | Guardian | `FUTURE` |
+> | 当前真正可用的恢复路径 | **Agent self-unlock** 或 **Authorized Human Force Unlock** |
+
+#### 16.13.8 ⚠️ 不要因为 Guardian 就重新引入 Heartbeat（`SETTLED` 限制）
+
+以后 Guardian 可以观察很多信号，但**本次**：
+
+| ❌ 不实现 |
+|---|
+| heartbeat |
+| periodic ping |
+| automatic lease renewal |
+| crash detector |
+| Guardian runtime |
+
+> ⚠️ **尤其不能**「为了让 Guardian 将来能够工作」，
+> **反向把 Heartbeat 提前实现**。
+>
+> 本次仍然**只做架构文档**。
 
 ---
 
@@ -1250,7 +1600,7 @@ Wallet · Ledger · Communication Protocol。
 | 1 | **Workspace 何时创建？** Accepted 时 vs lazy provision | provisioning 成本 |
 | 2 | **Workspace lifecycle 的完整状态集** 与转换 | §15.1 候选模型 |
 | 3 | **Task 完成后是否冻结？何时归档？** | 返工流程（4D 的 VERIFY→返工说明可能返工） |
-| 4 | **Lock lease / 崩溃恢复** —— 见 §16，6 个候选未选 | 写操作时长分布、单机 vs 多机 |
+| 4 | ~~Lock lease / 崩溃恢复~~ → **v1 已确定**，见 §16 + ADR-0021。**仅剩 Future 部分 OPEN**（Guardian / Automated Recovery / Crash Detection / Lease·Renewal） | 见 §21.2 |
 | 5 | **多资源锁** —— 一个操作需要改多个文件时怎么办？ | 死锁避免 vs 原子性 |
 | 6 | **目录锁语义** —— 锁一个目录是否等于锁其下所有资源？ | 与 #5 相关 |
 | 7 | **Agent 中途加入 / 退出** —— 权限、锁、已写资源如何处理 | §9.3 权限授予模型 |
@@ -1260,7 +1610,31 @@ Wallet · Ledger · Communication Protocol。
 | 11 | **并发创建资源的具体 SQL / CAS 形态** —— 见 §12.4 | 实现阶段 |
 | 12 | **Workspace Root 的物理布局** | 实现阶段 |
 
-### 21.1 处理原则（`SETTLED`）
+### 21.1 Lock Recovery 的状态变化（本次更新）
+
+| | 状态 |
+|---|---|
+| **v1 治理方式** | ✅ **`SETTLED`** —— Explicit Lock + Owner Unlock + Human Force Unlock + Audit（§16） |
+| Guardian Agent | `FUTURE` |
+| Automated Recovery | `FUTURE` |
+| Crash Detection | `FUTURE` |
+| Lease / Renewal | `FUTURE`（且**不得**因为 Guardian 而提前实现，§16.5.8） |
+
+> ⚠️ **不要把未来的自动恢复机制误写成当前已确定实现。**
+>
+> Lock Recovery 解决了「v1 用什么治理方式」，
+> **不代表**所有 Lock 数据结构已经实现 ——
+> 生产代码里**一行 Lock 都没有**（§20）。
+
+### 21.2 为什么其余问题继续保留 OPEN
+
+规范明确要求本次**不要顺手决定**：Workspace creation timing /
+full lifecycle / Task completion freeze / Archive policy /
+Agent join·leave / Multi-resource lock / Directory lock / Artifact design。
+
+理由同 §15.4：这些问题互相耦合，且取决于实现阶段才知道的事实。
+
+### 21.3 处理原则（`SETTLED`）
 
 > 规范 §25 / §30 的原则：
 >
@@ -1291,6 +1665,34 @@ Wallet · Ledger · Communication Protocol。
 
 > **§2.6 的约束**：上层 Agent 不应该因为 backend 改变而改变任务逻辑。
 > 所以第一步就要把抽象放在正确的位置 —— 否则第二步要重写。
+
+### 22.1.5 Guardian / Observer Agent 在演进中的位置（`FUTURE`）
+
+```
+v1（`SETTLED`）：
+    Explicit Lock
+        ├── Agent self-unlock
+        └── Authorized Human Force Unlock
+                └── Audit Event
+
+Future（`FUTURE`）：
+    Guardian / Observer Agent
+        └── Local Small Model + Runtime Facts
+                ↓
+            Observation
+                ↓
+            Assessment
+                ↓
+            Recovery Request
+                ↓
+            Policy / Authority
+                ↓
+            Actual Recovery
+```
+
+> **最重要的一条**：
+> **Guardian 的判断不是系统事实，也不天然拥有最高权限。**
+> （§16.5.5、§16.5.6）
 
 ### 22.2 最终目标（规范 §30）
 

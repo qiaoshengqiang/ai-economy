@@ -19,12 +19,9 @@
 
 **它不是**：Chatbot · Multi-Agent Demo · LLM 工作流 · 并排跑 Agent 的脚本。
 
-**它最关键的一点**：
-
 > **Agent 是独立的经济主体，不是被调用的函数。**
->
-> 系统负责：协议 · 状态 · 业务硬约束 · 持久化 · 消息路由
-> 系统**不**负责：替 Agent 决定「你应该怎么谈价」
+> 系统负责：协议 · 状态 · 业务硬约束 · 持久化 · 消息路由；
+> 系统**不**负责：替 Agent 决定「你应该怎么谈价」。
 
 ---
 
@@ -33,7 +30,7 @@
 | | |
 |---|---|
 | **阶段** | `Post-Step-4F / Pre-Task-Workspace` |
-| **测试基线** | **2519 passed, 30 deselected** |
+| **测试基线** | **2620 passed, 30 deselected** |
 | **协议版本** | `protocol_version = "1"` |
 | **命令数** | 16（`./dev.sh` 查看全部） |
 | **数据库表** | 13 |
@@ -116,30 +113,21 @@ llm/            →  core/ + storage/
 | `services/` **不直接**依赖 `storage/`（只经 `core/task_store`） | ✅ |
 | 只有 `main.py` 调用 `register_type_handler`（唯一组合根） | ✅ |
 
-**三个最容易被写错的地方**：
-
-1. `services → storage` ❌ —— 真实是 `services → core → task_store → storage`
-2. `core/` **确实**依赖 `storage/`（`economy` / `ledger` / `wallet` / `task_store`）。
-   `core/` 的**领域规则**不依赖上层，但**持久化访问就在 core 里**
-3. `storage/ → core/` 是允许的 —— 它只依赖三个**基础设施叶子**，不是聚合根
+**三个最容易被写错的**：`services → storage` ❌（真实是经 `core/task_store`）；
+`core/` **确实**依赖 `storage/`（领域规则不依赖上层，但持久化访问就在 core 里）；
+`storage/ → core/` 是允许的（只依赖三个**基础设施叶子**，不是聚合根）。
 
 **两个已知例外**（历史遗留，**不要顺手改**）：
+① `core/economy.py` → `agents/base_agent.py`（形成 `core → agents → core` 可达环）；
+② `storage/database.py` 在**函数内** import `core.config`（打破顶层循环）。
 
-| 例外 | 说明 |
-|---|---|
-| `core/economy.py` → `agents/base_agent.py` | `Economy` 负责 bootstrap Agent，形成 `core → agents → core` 可达环 |
-| `storage/database.py` 内部 import `core.config` | 在**函数内** import，用来打破顶层循环 |
-
-> 重新扫描用 **AST**，不要用 `grep "import storage"`
-> —— 那会把注释、文档字符串、`from storage.models import` 混在一起数。
-> 完整方法与字段说明见 [Constitution §4](docs/architecture/ARCHITECTURE_CONSTITUTION.md)。
+> 重新扫描用 **AST**，不要用 `grep "import storage"`。方法见 [Constitution §4](docs/architecture/ARCHITECTURE_CONSTITUTION.md)。
 
 ---
 
 ## 4. Memory 四层
 
-> ⚠️ **先记住一件事：Agent Private Workspace 不在这四层里。**
-> 它是**独立的资源/文件空间概念**，见本节末尾。
+> ⚠️ **Agent Private Workspace 不在这四层里**（独立的资源/文件空间概念，见 §4.1）。
 
 | Layer | 属于谁 | 状态 | 是什么 |
 |---|---|---|---|
@@ -176,29 +164,18 @@ Alignment 是**产生和更新它的机制**。两者必须分开。
 | 属于 | Memory 四层 **Layer 1** | **不在这四层里** |
 | 边界 | 其他 Agent **默认无权读** | `WorkspaceViolationError` —— 路径不许跑出根目录 |
 
-**三条不许越过的推论**：
-
-```text
-❌ 把 Agent Private Workspace 当成 Memory 的一层
-❌ 把 Agent Private Workspace 当成 Task Workspace（后者是任务共享的）
-❌ 因为「有 workspace 目录」就以为 Workspace Permission 已实现
-```
+**三条不许越过的推论**：❌ 当成 Memory 的一层 ·
+❌ 当成 Task Workspace（后者是任务共享的）·
+❌ 因为「有 workspace 目录」就以为 Workspace Permission 已实现。
 
 > **`Workspace ≠ Permission`。** `core/workspace.py` 给的是一个 Agent
 > **对自己**目录的访问，**没有**「谁能看什么」的授权体系（`FUTURE`）。
 > **有私有 workspace 目录 ≠ Task Workspace 已实现。**
 
 ```text
-Agent Private Memory      Agent Private Workspace
-   （知道什么）                （有哪些文件）
-        │                          │
-        ▼                          ▼
-────────────────────────────────────────────
-Task Shared Context   ← 共同任务认知
-        ▼
-Task Workspace        ← 实际共享资源
-        ▼
-External / World State
+Memory（知道什么） ──┐                    Private Workspace（有哪些文件）
+                     ├── 不在同一条链路上 ──┘
+Task Shared Context ─┴─▶ Task Workspace ─▶ External / World State
 ```
 
 ---
@@ -261,6 +238,9 @@ A 说「我觉得用方案 B」   →   Communication History 里有这句话
 | **`Agent Strategy ≠ Negotiation Mechanism`** | 把 Agent 的价格阈值硬编码进系统 |
 | **`Task Shared Context ≠ 第二套 Task Core`** | 出现两个都声称正确的 `status` · **有守卫** |
 | **`Agent Private Memory ≠ Agent Private Workspace`** | 把「知道什么」和「有哪些文件」混起来 |
+| **`Observation ≠ Conclusion`** | 把「2 小时没活动」当成「Agent 已死」 |
+| **`Permission ≠ Force Unlock`** | 有 `WRITE` 就以为自己能强解锁 |
+| **`Guardian 判断 ≠ Domain Fact`** | 让 Guardian 的评估自动改写 Task Core |
 
 ---
 
@@ -334,7 +314,8 @@ Shared Context 可以**引用、解释、总结、补充**共同知识，
 | **经济结算** | Payment · Escrow · Settlement · Wallet transfer |
 | **通信可靠性** | Retry Queue · Retry Scheduler · ACK · Redis · Kafka · Celery |
 | **网络** | P2P · 多机 · 分布式 |
-| **生命周期** | Heartbeat · Scheduler · Life Loop |
+| **生命周期** | Heartbeat · Scheduler · Life Loop。**不得因为 Guardian / 未来自动恢复而提前实现** |
+| **Guardian** | Guardian Agent 实体代码 · crash detector · 基于 inactivity 的自动判死 · 自动 Lock Expiry · Lease Renewal |
 | **智能演化** | Adaptive Negotiation · RL · 策略自学习 |
 | **协调** | TaskManager · Coordinator |
 
@@ -354,7 +335,7 @@ Vector DB · Knowledge graph · 分布式共识 · Multi-agent 投票 · 复杂 
         ↓
 2. 先调查真实代码（不要凭空设计）
         ↓
-3. 跑基线：./dev.sh test   （必须是 2519 passed）
+3. 跑基线：./dev.sh test   （必须是 2620 passed）
         ↓
 4. 实施最小修改
         ↓
@@ -373,7 +354,7 @@ Vector DB · Knowledge graph · 分布式共识 · Multi-agent 投票 · 复杂 
 
 1. **先调查，再动手。** 不要在设计之前改代码。
 2. **每一步结束跑全量测试。** 不是只跑自己改的那个文件。
-   基线现在是 **2519 passed**。
+   基线现在是 **2620 passed**。
 3. **新增守卫必须配反向测试。** 把违规注入进去，确认守卫**真的变红**。
 
 ---
@@ -388,7 +369,7 @@ Vector DB · Knowledge graph · 分布式共识 · Multi-agent 投票 · 复杂 
 
 | | |
 |---|---|
-| **基线** | **2519 passed, 30 deselected** |
+| **基线** | **2620 passed, 30 deselected** |
 | **测试文件** | 51 个 |
 | **守卫文件** | 10 个，约 390 项 |
 | **真实 API 测试** | 30 项，单独跑（需要 Key） |
@@ -426,25 +407,16 @@ AGENTS.md → 判断任务领域 → 只读相关 Specification → 必要时读
 
 ### 阅读顺序（**固定，不要颠倒**）
 
-```text
-1. AGENTS.md                       ← 入口（你正在读的）
-        ↓
+```
+1. AGENTS.md（本文档）              ← 入口
 2. ARCHITECTURE_CONSTITUTION.md    ← 长期 Source of Truth
-        ↓
 3. Task-specific Specification     ← 按任务领域选（见下表）
-        ↓
 4. Necessary ADR                   ← 只读相关的那几篇
 ```
 
 > ⚠️ **不要跳过第 1 步直接读 Constitution。**
 > AGENTS.md 的价值之一是告诉你**哪些不用读**。
 > 也**不要把 Constitution 的内容复制回 AGENTS.md**。
-
-### 第一优先（理解架构）
-
-1. **本文档**（`AGENTS.md`）← **入口**
-2. [`docs/architecture/ARCHITECTURE_CONSTITUTION.md`](docs/architecture/ARCHITECTURE_CONSTITUTION.md) ← **长期 Source of Truth**
-3. Task-specific Specification（按下表选）
 
 ### Task-specific Specification（按任务领域选）
 
@@ -463,13 +435,19 @@ docs/architecture/TASK_WORKSPACE.md        ← 正式模型（22 章）
     ↓
 docs/architecture/adr/0020-*.md            ← 为什么是共享资源模型 + Permission≠Lock
     ↓
+docs/architecture/adr/0021-*.md            ← 为什么 Lock 不用自动过期 + Human Force Unlock
+    ↓
 docs/architecture/adr/0012 / 0014 / 0019   ← 并发 · 租约 · 对齐（前置）
 ```
 
 > **Task Workspace 是 `FUTURE`，不是 `CURRENT`。**
 > 当前只有 `TaskWorkspaceRef`（一个 `workspace_id` 字符串）。
-> 进入实现之前必须先读 [`TASK_WORKSPACE.md`](docs/architecture/TASK_WORKSPACE.md) §21
-> 的 Open Design Questions —— 其中 **Lock 崩溃恢复是硬阻塞项**。
+>
+> **Write Lock Recovery 的 v1 语义已定**（ADR-0021）：
+> 显式持有 + 锁主释放 + **Human Force Unlock** + 审计。
+> **不需要**等 Heartbeat / Lease Renewal / 自动崩溃检测就能进入 Workspace 实现。
+> 其余 Open Design Questions 见
+> [`TASK_WORKSPACE.md`](docs/architecture/TASK_WORKSPACE.md) §21。
 
 ### 第二优先（理解当前实现）
 
@@ -507,12 +485,24 @@ docs/architecture/adr/0012 / 0014 / 0019   ← 并发 · 租约 · 对齐（前�
 
 ### Phase 0 的遗留决策
 
-> **租约时长必须大于最慢的 handler。**
+> **租约时长必须大于最慢的 handler。** 默认 300 秒。有长任务时必须先决定：
+> 调长租约？实现续租？还是换一种占用模型？
 >
-> 默认 300 秒。一旦有长任务，必须**先做决定**：
-> 调长租约？实现续租？还是给长任务换一种占用模型？
->
-> **这是 Workspace 阶段的第一个设计决策**，不是遗留 bug。
+> ⚠️ 这是 **Message Claim Lease**（`CURRENT`，已实现）。
+> **Workspace Write Lock 明确不用时间租约**（见下）——不要混淆这两个。
+
+### Workspace Readiness（架构决策状态）
+
+| 项 | 状态 |
+|---|---|
+| **Write Lock Recovery v1** | ✅ `SETTLED` —— Explicit owner release + **Authorized Human Force Unlock**（ADR-0021） |
+| Force Unlock 审计 | ✅ `SETTLED`（**未实现**） |
+| Lock 状态集 | ✅ `SETTLED`：`ACTIVE` / `RELEASED` / `REVOKED`（**无 `EXPIRED`**） |
+| Automatic recovery · Guardian Agent | `FUTURE` |
+| Heartbeat / Lease Renewal | **Not implemented**（**不得**因 Guardian 提前实现） |
+| Task Workspace 实现 | **`FUTURE`** —— 生产代码一行 Lock 都没有 |
+
+> **v1 不需要等自动恢复机制就能进入 Workspace 实现。**
 
 ---
 

@@ -487,56 +487,411 @@ class TestCorePrinciplesDocumented:
 # ============================================================
 # 三、Lock Recovery 必须是 OPEN，不能照搬 Message Claim Lease
 # ============================================================
-class TestLockRecoveryIsOpen:
+class TestLockRecoveryV1Settled:
     """
-    规范 §20 的要求非常具体：
+    **本次任务的核心。**
 
-        · 调查 Message Claim Lease
-        · 不能确定就记为 OPEN DESIGN QUESTION
-        · **不得因为 Message Claim Lease 已存在就假设二者相同**
+    规范要求把 v1 的恢复语义**从 OPEN 改成 SETTLED**：
+
+        v1 = Explicit Lock + Owner Unlock + Human Force Unlock + Audit
+        Future = Guardian Agent + Policy + Automated Recovery
+
+    同时**不得**把未来的自动恢复机制误写成当前已确定实现。
     """
 
-    def test_lock_recovery_marked_open(self, workspace_doc):
-        block = section(workspace_doc, "16.")
-
-        assert "OPEN" in block, (
-            "§16 Lock Recovery 必须标为 OPEN —— 规范 §20 明确要求"
-        )
-
-    def test_not_same_as_message_claim_lease(self, workspace_doc):
+    def test_v1_is_settled(self, workspace_doc):
         block = flat(section(workspace_doc, "16."))
 
-        assert "不能" in block and ("照搬" in block or "假设" in block), (
-            "§16 必须明确「Message Claim Lease 不能直接照搬」"
+        assert "SETTLED" in block, (
+            "§16 必须标明 v1 治理方式是 SETTLED（不再是 OPEN）"
         )
 
-    def test_documents_why_they_differ(self, workspace_doc):
-        """必须说明**为什么**语义不同，而不是只说「不同」。"""
-        block = flat(section(workspace_doc, "16."))
-
-        assert "静默数据损坏" in block or "丢失写入" in block, (
-            "§16 必须指出 Workspace Lock 过短的失败模式是数据损坏"
-        )
-        assert "重复处理" in block, (
-            "§16 必须指出 Message Claim Lease 过短的失败模式是重复处理"
-        )
-
-    def test_mentions_heartbeat_is_forbidden(self, workspace_doc):
+    def test_explicit_hold_model(self, workspace_doc):
         """
-        候选「租约 + 续租」需要心跳，而心跳当前被禁止 ——
-        这是「不现在决定」的一个硬理由，必须写出来。
+        v1 采用**显式持有模型**。
+
+        【这条守卫第一版是弱的（反向测试时发现）】
+
+            第一版只查 `"显式持有模型" in §16` ——
+            但这个短语在 §16 里出现**两次**：
+
+                ### 16.2 v1 决策：显式持有模型，不采用自动时间失效
+                > **Write Lock 默认采用显式持有模型。**
+
+            把**正文那句**改成「自动租约模型」之后，
+            标题里还留着「显式持有模型」→ 守卫照样绿。
+
+        ------------------------------------------------------------
+        【现在的查法】
+            查**正文的规范句**，并且额外禁止出现
+            肯定式的「自动租约 / 自动过期」写法。
         """
         block = flat(section(workspace_doc, "16."))
 
-        assert "心跳" in block, (
-            "§16 必须指出「续租」候选依赖当前被禁止的心跳机制"
+        assert "Write Lock 默认采用显式持有模型" in block, (
+            "§16 正文必须写出「Write Lock 默认采用显式持有模型」"
+        )
+        assert "不因为 Agent 长时间没有操作而自动失效" in block, (
+            "§16 必须写出「不因为 Agent 长时间没有操作而自动失效」"
         )
 
-    def test_lists_candidates_without_choosing(self, workspace_doc):
+        # 肯定式地写「自动租约」是被禁止的
+        for phrase in ("采用自动租约模型", "自动租约模型"):
+            assert phrase not in block, (
+                f"§16 里出现了 {phrase!r} —— v1 不采用自动租约"
+            )
+
+    def test_no_automatic_time_expiry(self, workspace_doc):
+        """不采用自动时间失效，且不得用固定时间判断 Agent 已死。"""
         block = flat(section(workspace_doc, "16."))
 
-        for candidate in ("时间租约", "显式释放", "乐观并发"):
-            assert candidate in block, f"§16 必须列出候选：{candidate}"
+        assert "不采用自动时间失效" in block or "自动时间失效" in block, (
+            "§16 必须写明不采用自动时间失效"
+        )
+        assert "Agent 已经死亡" in block or "Agent 已死亡" in block, (
+            "§16 必须明确禁止把固定时间当作「Agent 已经死亡」的判断依据"
+        )
+
+    def test_message_claim_lease_not_equal_workspace_lock(self, workspace_doc):
+        """Message Claim Lease ≠ Workspace Write Lock。"""
+        block = flat(section(workspace_doc, "16."))
+
+        assert "Message Claim" in block and "Write Lock" in block
+        assert "不要把二者的数据结构、超时逻辑、恢复策略直接复制" in block, (
+            "§16 必须明确禁止直接复制 Message Claim 的租约设计"
+        )
+
+    def test_normal_release_only_by_owner(self, workspace_doc):
+        """只有 Lock Owner 能释放自己的锁，其他 Agent DENIED。"""
+        block = flat(section(workspace_doc, "16."))
+
+        assert "只有 Lock Owner" in block, "§16 必须写明只有锁主能释放"
+        assert "DENIED" in block, "§16 必须写明非锁主 UNLOCK 得到 DENIED"
+
+    def test_human_force_unlock_is_the_exception_path(self, workspace_doc):
+        """v1 异常恢复 = Human Force Unlock。"""
+        block = flat(section(workspace_doc, "16."))
+
+        assert "Human Force Unlock" in block
+        assert "人为治理操作" in block, (
+            "§16 必须明确 Force Unlock 是人为治理操作"
+        )
+        assert "不是系统根据" in block and "自动执行" in block, (
+            "§16 必须明确它不是系统根据超时自动执行的"
+        )
+
+    def test_force_unlock_is_high_privilege(self, workspace_doc):
+        """FORCE_UNLOCK 要求治理主体；WRITE 不自动带来 FORCE_UNLOCK。"""
+        block = flat(section(workspace_doc, "16."))
+
+        assert "authorized governance actor" in block or "治理主体" in block
+        assert "就自动拥有" in block and "FORCE_UNLOCK" in block, (
+            "§16 必须明确「有 WRITE 不自动拥有 FORCE_UNLOCK」"
+        )
+
+    def test_force_unlock_is_auditable(self, workspace_doc):
+        """Force Unlock 必须留下审计记录。"""
+        block = flat(section(workspace_doc, "16."))
+
+        for field in ("lock_id", "workspace_id", "resource_id",
+                      "previous_owner", "revoked_by", "revoked_at", "reason"):
+            assert field in block, (
+                f"§16 的 Lock Revocation Event 缺少字段 {field}"
+            )
+        assert "可追踪的治理记录" in block, (
+            "§16 必须写明 Force Unlock 要留下可追踪的治理记录"
+        )
+
+    def test_lock_states_are_three(self, workspace_doc):
+        """LOCK 状态只有 ACTIVE / RELEASED / REVOKED。"""
+        block = flat(section(workspace_doc, "16."))
+
+        for state in ("ACTIVE", "RELEASED", "REVOKED"):
+            assert state in block, f"§16 缺少锁状态 {state}"
+
+    def test_no_expired_state(self, workspace_doc):
+        """
+        **不得**增加 EXPIRED 状态 —— 那会暗示存在自动 Lease。
+
+        【怎么查才准】
+            文档里 EXPIRED 必然出现（因为要写「不要增加 EXPIRED」）。
+            所以查的是：**EXPIRED 只出现在禁止语境里**。
+        """
+        lines = [l for l in workspace_doc.splitlines() if "EXPIRED" in l]
+
+        assert lines, "文档里本该有关于 EXPIRED 的说明"
+        for line in lines:
+            assert "不要" in line or "禁止" in line or "不增加" in line, (
+                f"EXPIRED 出现在了非禁止语境里：{line.strip()!r}\n"
+                f"（加 EXPIRED 会暗示存在自动 Lease，而 v1 没有。）"
+            )
+
+    def test_observation_not_conclusion(self, workspace_doc):
+        """Observation ≠ Conclusion；不把 inactivity 当崩溃证据。"""
+        block = flat(section(workspace_doc, "16."))
+
+        assert "Observation" in block and "Conclusion" in block, (
+            "§16 必须写出 Observation ≠ Conclusion"
+        )
+        assert "不假装知道" in block or "不把" in block, (
+            "§16 必须写明系统不假装知道 Agent 是否已死"
+        )
+
+    def test_future_part_marked_future(self, workspace_doc):
+        """Guardian / Automated Recovery 必须标 FUTURE。"""
+        block = flat(section(workspace_doc, "16."))
+
+        assert "Future" in block or "FUTURE" in block
+        assert "Guardian Agent" in block
+
+
+class TestGuardianIsFuture:
+    """
+    Guardian / Observer Agent 是 `FUTURE`。
+
+    【规范 §23 要求守卫能抓】
+        · 把 Guardian 写成 CURRENT
+        · 把 Guardian 判断写成 Domain Fact
+        · 把 Heartbeat 写成当前实现
+    """
+
+    def test_guardian_section_exists(self, workspace_doc):
+        assert "Guardian / Observer Agent" in workspace_doc, (
+            "必须有 Guardian / Observer Agent 一节"
+        )
+
+    def test_guardian_marked_future(self, workspace_doc):
+        block = flat(section(workspace_doc, "16.13"))
+
+        assert block, "找不到 §16.13"
+        assert "FUTURE" in block, "§16.13 必须标明 Guardian 是 FUTURE"
+        assert "不实现" in block, "§16.13 必须明确本次不实现 Guardian"
+
+    def test_guardian_not_current(self, workspace_doc):
+        """
+        Guardian **不能**被标成 CURRENT。
+
+        【否定盲防范】只查**肯定式**断言。
+        """
+        negations = ("不", "未", "≠", "❌", "FUTURE", "禁止")
+        for line in workspace_doc.splitlines():
+            if "Guardian" not in line:
+                continue
+            if "`CURRENT`" not in line:
+                continue
+            assert any(n in line for n in negations), (
+                f"这一行把 Guardian 说成了 CURRENT：\n    {line.strip()}"
+            )
+
+    def test_guardian_is_not_highest_authority(self, workspace_doc):
+        """Guardian 不是系统最高权威。"""
+        block = flat(section(workspace_doc, "16.13"))
+
+        assert "不是「系统最高权威」" in block or "不是系统最高权威" in block, (
+            "§16.13 必须写明 Guardian 不是系统最高权威"
+        )
+
+    def test_guardian_chain_requires_authorization(self, workspace_doc):
+        """Observation → Assessment → Recommendation → Policy → Action。"""
+        block = flat(section(workspace_doc, "16.13"))
+
+        for step in ("Observation", "Assessment", "Recovery Request",
+                     "Policy / Authorization", "Actual Action"):
+            assert step in block, f"§16.13 的链路里缺少 {step}"
+
+    def test_guardian_is_not_source_of_truth(self, workspace_doc):
+        """Guardian 判断不是新的 Source of Truth。"""
+        block = flat(section(workspace_doc, "16.13"))
+
+        assert "不是新的 Source of Truth" in block, (
+            "§16.13 必须写明 Guardian 判断不是新的 Source of Truth"
+        )
+        assert "Guardian State" in block, (
+            "§16.13 必须明确不要产生凌驾于 Task Core 的 Guardian State"
+        )
+
+    def test_guardian_cannot_rewrite_task_core(self, workspace_doc):
+        """Guardian 判断不得自动改写 Task Core。"""
+        block = flat(section(workspace_doc, "16.13"))
+
+        assert "自动变成 FAILED" in block, (
+            "§16.13 必须用具体反例说明「Guardian=DEAD → Task 自动 FAILED」是被禁止的"
+        )
+        assert "不能自动发生" in block, (
+            "§16.13 必须写明这种自动改写第一版不能发生"
+        )
+
+    def test_guardian_assessment_is_not_domain_state(self, workspace_doc):
+        """Observer 的判断结果不是 Domain State。"""
+        block = flat(section(workspace_doc, "16.13"))
+
+        assert "不是 Domain State" in block, (
+            "§16.13 必须写明 Observer 的判断结果不是 Domain State"
+        )
+        for verdict in ("NORMAL", "LONG_RUNNING", "SUSPECTED_FAILURE",
+                        "UNRESPONSIVE", "UNKNOWN"):
+            assert verdict in block, f"§16.13 缺少判断结果 {verdict}"
+
+    def test_guardian_may_use_local_small_model(self, workspace_doc):
+        block = flat(section(workspace_doc, "16.13"))
+
+        assert "local small model" in block or "本地小模型" in block, (
+            "§16.13 必须写明 Guardian 可运行本地小模型"
+        )
+
+
+class TestNoHeartbeat:
+    """
+    **不得因为 Guardian 就重新引入 Heartbeat。**（规范 §17）
+    """
+
+    def test_heartbeat_forbidden_in_workspace_doc(self, workspace_doc):
+        block = flat(section(workspace_doc, "16.13"))
+
+        assert "不要因为 Guardian 就重新引入 Heartbeat" in block or (
+            "Heartbeat" in block and "不实现" in block
+        ), "§16.13.8 必须明确不得因为 Guardian 而重新引入 Heartbeat"
+
+    def test_no_reverse_implementation_warning(self, workspace_doc):
+        """必须明确警告「不要为了让 Guardian 能工作而提前实现 Heartbeat」。"""
+        block = flat(section(workspace_doc, "16.13"))
+
+        assert "反向把 Heartbeat 提前实现" in block or (
+            "为了让 Guardian" in block and "提前实现" in block
+        ), "§16.13.8 必须警告不要反向提前实现 Heartbeat"
+
+    def test_heartbeat_not_claimed_implemented(self, workspace_doc):
+        """
+        文档不许**声称 Heartbeat 已经实现**。
+
+        【为什么单独一条】
+            上面那些守卫查的是「禁止项有没有写」——
+            而规范 §23 要求抓的是「把 Heartbeat 写成当前实现」。
+
+            这两件事不同：把禁止表里某一行改成「已实现」，
+            禁止段落仍然存在 → 只查禁止的守卫不会变红。
+
+            所以这里查**肯定式声称**（否定盲防范：排除 ❌/不/未）。
+        """
+        negations = ("❌", "不", "未", "禁止", "禁止项", "FUTURE")
+        claims = ("已实现", "已经实现", "已支持", "CURRENT")
+
+        for line in workspace_doc.splitlines():
+            if "heartbeat" not in line.lower():
+                continue
+            for claim in claims:
+                if claim not in line:
+                    continue
+                assert any(n in line for n in negations), (
+                    f"这一行把 Heartbeat 说成了已实现：\n    {line.strip()}\n"
+                    f"（Heartbeat 当前明确禁止实现。）"
+                )
+
+    def test_heartbeat_not_implemented_in_agents(self, agents_doc):
+        """AGENTS.md 必须写明 Heartbeat = Not implemented。"""
+        text = flat(agents_doc)
+
+        assert "Heartbeat" in text
+        assert "Not implemented" in text or "未实现" in text, (
+            "AGENTS.md 必须标明 Heartbeat 未实现"
+        )
+
+    def test_no_heartbeat_in_production(self):
+        """
+        生产代码里没有任何 heartbeat / lease renewal **实现**。
+
+        ============================================================
+        【这条守卫第一版查的是原文 —— 被文档字符串绊倒了】
+        ============================================================
+
+            第一版对每个生产文件做 `"heartbeat" in source.lower()`，
+            结果在 `core/decision_policy.py` 上变红。命中的是：
+
+                未来一个 Heartbeat / Agent Runtime 可以直接调用它，
+                不需要经过 HTTP 或 CLI。
+
+            —— 这是 Step 4C 留下的一句**前瞻性文档说明**，
+            **不是实现**。
+
+            ADR-0018 把这类问题记为「文档字符串被当成代码」，
+            本项目已踩过 8 次以上。
+
+        ------------------------------------------------------------
+        【现在的查法：查真实实现，不查词】
+        ------------------------------------------------------------
+            ① 定义的类 / 函数名里有没有 heartbeat / renew / expiry
+            ② import 的模块里有没有
+            ③ 有没有 heartbeat*.py 这样的模块文件
+            ④ 有没有 `def renew...` / `def heartbeat...` 之类的方法
+        """
+        forbidden_substrings = ("heartbeat", "renewlease", "renew_lease",
+                                "renewlock", "crashdetect", "crash_detect",
+                                "lockexpiry", "lock_expiry", "lease_renew")
+        hits = []
+
+        for path in production_files():
+            # ① 类名 / 函数名
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+                if isinstance(node, (ast.ClassDef, ast.FunctionDef,
+                                     ast.AsyncFunctionDef)):
+                    name = node.name.lower().replace("_", "")
+                    for bad in forbidden_substrings:
+                        if bad.replace("_", "") in name:
+                            hits.append(f"{path.name}: {node.name}()")
+
+            # ② import 的模块
+            for module in module_imports(path):
+                lowered = module.lower().replace("_", "")
+                for bad in forbidden_substrings:
+                    if bad.replace("_", "") in lowered:
+                        hits.append(f"{path.name}: import {module}")
+
+            # ③ 方法名（`called_names` 抓不到定义，用 AST 属性）
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+                if isinstance(node, ast.Attribute):
+                    attr = node.attr.lower().replace("_", "")
+                    for bad in forbidden_substrings:
+                        if bad.replace("_", "") in attr:
+                            hits.append(f"{path.name}: .{node.attr}")
+
+        # ④ 模块文件
+        for layer in LAYERS:
+            for pattern in ("heartbeat*.py", "*lease_renewal*.py",
+                            "*lock_expiry*.py", "*crash_detect*.py"):
+                for found in (PROJECT_ROOT / layer).glob(pattern):
+                    hits.append(str(found.relative_to(PROJECT_ROOT)))
+
+        assert not hits, (
+            "生产代码里出现了 Heartbeat / Lease Renewal 相关的实现：\n  "
+            + "\n  ".join(sorted(set(hits)))
+            + "\n（当前阶段明确禁止实现这些。）"
+        )
+
+    def test_heartbeat_guard_ignores_docstrings(self):
+        """
+        反向：确认上面的实现检测**不会**被文档字符串绊倒。
+
+        【这条测试在钉一个真实发生的误报】
+            `core/decision_policy.py` 的文档里有
+            「未来一个 Heartbeat / Agent Runtime 可以直接调用它」——
+            那是说明，不是实现。
+        """
+        decision = PROJECT_ROOT / "core" / "decision_policy.py"
+        raw = decision.read_text(encoding="utf-8").lower()
+
+        # 陷阱存在：原文里确实有 heartbeat
+        assert "heartbeat" in raw, "测试前提不成立"
+
+        # 但没有把它当实现的理由：没有相关类/函数/import
+        defined = {
+            n.name.lower().replace("_", "")
+            for n in ast.walk(ast.parse(
+                decision.read_text(encoding="utf-8")))
+            if isinstance(n, (ast.ClassDef, ast.FunctionDef))
+        }
+        assert not any("heartbeat" in name for name in defined), (
+            "decision_policy.py 里真的定义了 heartbeat 相关的东西"
+        )
 
 
 # ============================================================
@@ -1062,3 +1417,175 @@ class TestReverseVerification:
         assert fake_numbers != expected, (
             "伪造的编号列表本来就该是不连续的 —— 测试前提不成立"
         )
+
+
+# ============================================================
+# 十一、本次新增的反向测试（规范 §23）
+# ============================================================
+class TestReverseVerificationForLockRecovery:
+    """
+    规范 §23 点名要求守卫至少能抓这六种违规：
+
+        ① 把 Explicit Lock 改成 Automatic Lease
+        ② 把 Human Force Unlock 删除
+        ③ 把 Guardian 写成 CURRENT
+        ④ 把 Heartbeat 写成当前实现
+        ⑤ 把 Guardian 判断写成 Domain Fact
+        ⑥ 把 Task Workspace 写成 CURRENT
+
+    这里验证**检测机制本身**有效 ——
+    不是在测试里真的改文档，而是验证「识别逻辑」对
+    伪造的违规文本/结构确实会判负。
+
+    （真正的注入式反向测试在提交前手工跑一遍，见 commit message。）
+    """
+
+    def test_detects_automatic_lease_replacement(self):
+        """
+        ① 伪造「用自动租约」的文本，确认检测能找到它。
+
+        【为什么要检查**两种**写法】
+            违规可能写成 "automatic lease"，也可能写 "自动过期"。
+            只查一种会漏。
+        """
+        fake = """
+        ### 16.2 v1 决策：采用自动租约
+        Write Lock 在 300 秒后自动过期，超时即视为 Agent 已崩溃。
+        """
+        text = flat(fake)
+
+        markers = ("自动过期", "300 秒", "视为 Agent 已崩溃")
+        assert any(m in text for m in markers), (
+            "检测逻辑找不到伪造的「自动租约」写法"
+        )
+
+        # 而正确文档里必须是「显式持有模型」
+        real = flat(read(WORKSPACE_FILE))
+        assert "显式持有模型" in real and "不采用自动时间失效" in real
+
+    def test_detects_missing_human_force_unlock(self):
+        """② 伪造一份**删掉** Human Force Unlock 的文本。"""
+        fake = """
+        ### 16.8 v1 异常恢复模型
+        目前没有恢复路径。
+        """
+        assert "Human Force Unlock" not in fake, (
+            "伪造文本里本不该有 Human Force Unlock —— 测试前提不成立"
+        )
+
+        real = flat(read(WORKSPACE_FILE))
+        assert "Human Force Unlock" in real, (
+            "真实文档必须有 Human Force Unlock"
+        )
+
+    def test_detects_guardian_as_current(self):
+        """
+        ③ 伪造「Guardian 是 CURRENT」，确认那行会被判为违规。
+
+        【复用 test_guardian_not_current 的同一套判定逻辑】
+        """
+        fake = "| Guardian / Observer Agent | `CURRENT` | 已实现 |"
+        negations = ("不", "未", "≠", "❌", "FUTURE", "禁止")
+
+        # 伪造行里没有否定词 → 判定为「肯定式声称」→ 应当违规
+        assert "`CURRENT`" in fake
+        assert not any(n in fake for n in negations), (
+            "伪造行本该没有否定词 —— 测试前提不成立"
+        )
+
+    def test_detects_heartbeat_as_current_implementation(self):
+        """④ 伪造「Heartbeat 已实现」，确认能被识别。"""
+        fake = "Heartbeat 已经实现，每 30 秒续租一次 Write Lock。"
+        text = flat(fake)
+
+        assert "Heartbeat" in text
+        assert "已经实现" in text or "续租" in text, (
+            "检测逻辑找不到伪造的「Heartbeat 已实现」"
+        )
+
+        # 真实文档必须说它未实现/禁止
+        real = flat(read(WORKSPACE_FILE))
+        assert "不实现" in real and "heartbeat" in real.lower()
+
+    def test_detects_guardian_judgment_as_domain_fact(self):
+        """
+        ⑤ 伪造「Guardian 判断就是系统事实」，确认能被识别。
+
+        正确写法是「Observation → … → Policy → Action」，
+        违规写法是「Guardian says DEAD → system kills」。
+        """
+        fake = """
+        Guardian 判断 Agent 已死，系统自动把 Task 标记为 FAILED。
+        """
+        text = flat(fake)
+
+        assert "自动" in text and "FAILED" in text, (
+            "检测逻辑找不到伪造的「Guardian 判断直接改写 Task Core」"
+        )
+
+        # 真实文档必须明确禁止这条链路
+        real = flat(read(WORKSPACE_FILE))
+        assert "自动变成 FAILED" in real
+        assert "不能自动发生" in real
+
+    def test_detects_task_workspace_as_current(self):
+        """⑥ 伪造「Task Workspace 是 CURRENT」。"""
+        fake = """
+        | **实现状态** | **`CURRENT`** —— 已完整实现 |
+        """
+        lines = [l for l in fake.splitlines() if "实现状态" in l]
+
+        assert lines, "伪造文本里本该有实现状态栏"
+        for line in lines:
+            assert "`CURRENT`" in line, "测试前提不成立"
+
+        # 真实文档必须是 FUTURE
+        real_lines = [
+            l for l in read(WORKSPACE_FILE)[:1200].splitlines()
+            if "实现状态" in l
+        ]
+        for line in real_lines:
+            assert "`FUTURE`" in line
+
+    def test_detects_no_expired_state_addition(self):
+        """⑦ 伪造「加 EXPIRED 状态」，确认 EXPIRED 检测能区分语境。"""
+        fake_ok = "> ⚠️ **不要增加 `EXPIRED`。**"
+        fake_bad = "| `EXPIRED` | 租约到期自动失效 |"
+
+        # 正确语境：含禁止词
+        assert any(w in fake_ok for w in ("不要", "禁止", "不增加"))
+        # 违规语境：不含禁止词
+        assert not any(w in fake_bad for w in ("不要", "禁止", "不增加")), (
+            "检测逻辑区分不出 EXPIRED 的语境"
+        )
+
+    def test_lock_state_check_would_catch_a_missing_state(self):
+        """⑧ 伪造一份缺 REVOKED 的锁状态表。"""
+        fake = """
+        | 状态 | 语义 |
+        |---|---|
+        | `ACTIVE` | 当前有效锁 |
+        | `RELEASED` | 正常释放 |
+        """
+        assert "REVOKED" not in fake, "测试前提不成立"
+        assert "REVOKED" in read(WORKSPACE_FILE), (
+            "真实文档必须有 REVOKED 状态"
+        )
+
+    def test_section_scoping_prevents_multi_location_false_pass(self):
+        """
+        反向：确认「同一句话出现在多处」不会让守卫假绿。
+
+        【这是本会话暴露过的真实缺陷】
+            `FUTURE` 在某节里出现 5 次，把目标那行改成 CURRENT 后
+            守卫照样绿。所以关键断言必须**按行/按节**限定。
+        """
+        doc = read(WORKSPACE_FILE)
+
+        # §16（Lock Recovery 专章）里必须有这些断言
+        lock_recovery = flat(section(doc, "16."))
+        for phrase in ("显式持有模型", "不采用自动时间失效",
+                       "Human Force Unlock", "可追踪的治理记录"):
+            assert phrase in lock_recovery, (
+                f"§16 里缺少 {phrase} —— 即使别处有也不算"
+            )
