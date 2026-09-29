@@ -44,6 +44,8 @@
 | [0017](0017-task-shared-context-alignment.md) | Task Shared Context 与 Alignment 分离 | Accepted | Step 4E | Architecture |
 | [0018](0018-guard-verification-standards.md) | Guard 检测手段标准 | Accepted | Step 4E | Engineering |
 | [0019](0019-task-shared-context-alignment.md) | Task Shared Context 与 Alignment 分离 | Accepted | Step 4F | Task / 共享认知 |
+| [0020](0020-task-workspace-shared-resource-model.md) | Task Workspace 采用共享资源模型；Permission ≠ Write Lock | Accepted（实现为 FUTURE） | Workspace 架构定义 | Task Workspace |
+| [0020](0020-task-workspace-shared-resource-model.md) | Task Workspace 采用共享资源模型；Permission ≠ Write Lock | Accepted（实现为 FUTURE） | Workspace 架构定义 | Task Workspace |
 
 ---
 

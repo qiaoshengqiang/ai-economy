@@ -154,7 +154,7 @@ llm/            →  core/ + storage/
 |---|---|---|
 | Agent Private Memory | `DESIGNED` | 有目录与极简文件读写（`Workspace.write_memory`），**没有**结构化记忆、检索、经验积累 |
 | Task Shared Context | **`CURRENT`** | **已实现**：持久化 + 修订历史 + Alignment + 乐观锁。见 [`TASK_SHARED_CONTEXT.md`](docs/architecture/TASK_SHARED_CONTEXT.md) |
-| Task Workspace | `FUTURE` | **只有 `TaskWorkspaceRef`** —— 一个 `workspace_id` 字符串 |
+| Task Workspace | `FUTURE` | **只有 `TaskWorkspaceRef`** —— 一个 `workspace_id` 字符串。架构定义见 [`TASK_WORKSPACE.md`](docs/architecture/TASK_WORKSPACE.md) |
 | External / World State | `FUTURE` | 无 |
 
 **`Memory ≠ Alignment`** —— Shared Context 是**结果**，
@@ -328,7 +328,7 @@ Shared Context 可以**引用、解释、总结、补充**共同知识，
 
 | 领域 | 禁止内容 |
 |---|---|
-| **Workspace** | Task Workspace 实现 · Manager · Gateway · Permission · ACL · 文件系统访问 · artifact storage |
+| **Workspace** | Task Workspace 实现 · Manager · Gateway · Permission Engine · Lock Manager · Backend · ACL · 文件系统访问 · artifact storage。**正式模型见 [`TASK_WORKSPACE.md`](docs/architecture/TASK_WORKSPACE.md)，但它仍是 `FUTURE`** |
 | **Git** | worktree · branch · commit 自动化 · merge |
 | **代码执行** | `subprocess` · shell · Docker · sandbox · 测试运行器 |
 | **经济结算** | Payment · Escrow · Settlement · Wallet transfer |
@@ -414,7 +414,7 @@ AGENTS.md → 判断任务领域 → 只读相关 Specification → 必要时读
 | **Negotiation / DecisionPolicy** | §6.1 · `core/decision_policy.py` · `task_negotiation_service.py` | Workspace 相关 |
 | **Execution（START/SUBMIT/…）** | `task_execution_service.py` · `core/task_execution.py` · `core/task.py` | Alignment 设计 |
 | **Communication / 协议** | [`PROTOCOL.md`](PROTOCOL.md) · `communication/` · ADR-0002 · ADR-0003 | Economy |
-| **Workspace（未来）** | §4.1 · §7 | — |
+| **Workspace（`FUTURE`）** | [`TASK_WORKSPACE.md`](docs/architecture/TASK_WORKSPACE.md) + ADR-0020 · §4.1 · §7 | TASK_SHARED_CONTEXT.md |
 | **Guard / 测试** | ADR-0018 · `tests/*guards*.py` | — |
 
 **Constitution 只在三种情况下通读**：第一次接触项目 · 要**新增**一条边界 ·
@@ -424,11 +424,52 @@ AGENTS.md → 判断任务领域 → 只读相关 Specification → 必要时读
 
 ## 10. 必读文件（按优先级）
 
+### 阅读顺序（**固定，不要颠倒**）
+
+```text
+1. AGENTS.md                       ← 入口（你正在读的）
+        ↓
+2. ARCHITECTURE_CONSTITUTION.md    ← 长期 Source of Truth
+        ↓
+3. Task-specific Specification     ← 按任务领域选（见下表）
+        ↓
+4. Necessary ADR                   ← 只读相关的那几篇
+```
+
+> ⚠️ **不要跳过第 1 步直接读 Constitution。**
+> AGENTS.md 的价值之一是告诉你**哪些不用读**。
+> 也**不要把 Constitution 的内容复制回 AGENTS.md**。
+
 ### 第一优先（理解架构）
 
-1. [`docs/architecture/ARCHITECTURE_CONSTITUTION.md`](docs/architecture/ARCHITECTURE_CONSTITUTION.md) ← **长期 Source of Truth**
-2. 本文档
-3. [`docs/architecture/TASK_SHARED_CONTEXT.md`](docs/architecture/TASK_SHARED_CONTEXT.md)
+1. **本文档**（`AGENTS.md`）← **入口**
+2. [`docs/architecture/ARCHITECTURE_CONSTITUTION.md`](docs/architecture/ARCHITECTURE_CONSTITUTION.md) ← **长期 Source of Truth**
+3. Task-specific Specification（按下表选）
+
+### Task-specific Specification（按任务领域选）
+
+| 我要做… | 规范 | 状态 |
+|---|---|---|
+| Task Shared Context / Alignment | [`TASK_SHARED_CONTEXT.md`](docs/architecture/TASK_SHARED_CONTEXT.md) | **`CURRENT`**（已实现） |
+| **Task Workspace / Permission / Write Lock / Backend** | [`TASK_WORKSPACE.md`](docs/architecture/TASK_WORKSPACE.md) | **`FUTURE`**（只有架构定义） |
+| 消息协议 | [`PROTOCOL.md`](PROTOCOL.md) | `CURRENT` |
+
+**Workspace 导航**（规范 §23.4）：
+
+```text
+Workspace
+    ↓
+docs/architecture/TASK_WORKSPACE.md        ← 正式模型（22 章）
+    ↓
+docs/architecture/adr/0020-*.md            ← 为什么是共享资源模型 + Permission≠Lock
+    ↓
+docs/architecture/adr/0012 / 0014 / 0019   ← 并发 · 租约 · 对齐（前置）
+```
+
+> **Task Workspace 是 `FUTURE`，不是 `CURRENT`。**
+> 当前只有 `TaskWorkspaceRef`（一个 `workspace_id` 字符串）。
+> 进入实现之前必须先读 [`TASK_WORKSPACE.md`](docs/architecture/TASK_WORKSPACE.md) §21
+> 的 Open Design Questions —— 其中 **Lock 崩溃恢复是硬阻塞项**。
 
 ### 第二优先（理解当前实现）
 
