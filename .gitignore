@@ -30,6 +30,10 @@ htmlcov/
 .mypy_cache/
 .ruff_cache/
 
+# --- Change Pipeline 的物理工作区（Git worktree）---
+# Worktree 是**派生的**（可从 base_commit 重建），不是源码。
+.worktrees/
+
 # --- 运行时数据 ---
 # 数据库是「运行产物」，不是源码。删掉可以用 seed 重新生成。
 data/*.db

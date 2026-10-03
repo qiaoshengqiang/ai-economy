@@ -36,9 +36,10 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+import subprocess
 import sys
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -3666,6 +3667,643 @@ def cmd_workspace_demo(runtime: Runtime, args: argparse.Namespace) -> int:
     return 0
 
 
+# ============================================================
+# 命令：hello-demo（第一次真正“使用”这个系统的端到端 Demo）
+# ============================================================
+#: Human Demand —— 固定，不让 LLM 决定要做什么。
+HELLO_DEMO_DEMAND = (
+    "请创建一个 Python Hello World 程序，让运行结果输出 Hello, World!。"
+)
+
+#: 🔒 **只允许 Agent 创建这一个文件**（任务书 §16）。
+#:    任何其他路径（`/etc/passwd`、`../../x`、`/Users/...`）都必须被拒绝。
+HELLO_DEMO_ALLOWED_FILE = "hello.py"
+
+#: Demo 的工作区与 worktree 用**稳定 id** ——
+#: 这样 `--keep` 之后重跑是「复用 + Revision 递增」，而不是每次造一堆。
+HELLO_DEMO_WORKSPACE = "WS-HELLO-DEMO"
+
+
+@dataclass
+class HelloDemoResult:
+    """
+    Demo 的**结构化结果**（而不是直接 print）。
+
+    【为什么不在流程里直接 print】
+
+        那样就没法测了 —— 测试只能抓 stdout 字符串。
+        把「做什么」和「怎么显示」分开：
+
+            _run_hello_demo()  →  HelloDemoResult（可断言）
+            cmd_hello_demo()   →  打印（给人看）
+
+    🔒 `physical_path` 只用于 **Human-facing 显示与内部 subprocess cwd**，
+       绝不进任何 Agent-facing 结构。
+    """
+
+    ok: bool
+    stage: str = ""
+    reason: str = ""
+    demand: str = HELLO_DEMO_DEMAND
+    agent_id: str = ""
+    other_agent_id: str = ""
+    task_id: str = ""
+    workspace_id: str = ""
+    worktree_id: str = ""
+    branch: str = ""
+    physical_path: str = ""          # 🔒 Human-only
+    provider: str = ""
+    model: str = ""
+    input_tokens: Optional[int] = None
+    output_tokens: Optional[int] = None
+    latency_ms: float = 0.0
+    summary: str = ""
+    resource_id: str = ""
+    revision_before: int = 0
+    revision_after: int = 0
+    content: str = ""
+    stdout: str = ""
+    stderr: str = ""
+    returncode: Optional[int] = None
+    materialized: bool = False
+    guard_result: str = ""           # §18 的失败测试结论
+    reused_worktree: bool = False
+    simulated: bool = False          # ⚠️ True = 这不是真实 LLM 调用
+
+
+def _extract_json_object(text: str) -> Optional[dict]:
+    """
+    从 LLM 输出里取出**第一个完整的 JSON 对象**。
+
+    ⚠️ 这是**十行的容错提取**，不是「第二套 LLM response parser」——
+       它不做 schema 校验、不做类型转换，只负责
+       「模型爱在 JSON 前后写解释文字」这一件事实。
+
+        §15 要求优先复用现有机制。本项目当前的 LLM 层
+        （`llm/base.py` 的 `LLMResponse`）只保证返回文本，
+        没有 structured output / tool calling 抽象 ——
+        所以这里做最小的提取，并**明确记录**这是一个临时手段。
+    """
+    if not text:
+        return None
+    start = text.find("{")
+    if start < 0:
+        return None
+
+    depth = 0
+    in_string = False
+    escaped = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                import json as _json
+                try:
+                    return _json.loads(text[start:i + 1])
+                except Exception:
+                    return None
+    return None
+
+
+def _pick_hello_demo_provider(runtime: Runtime,
+                              requested: Optional[str] = None) -> tuple:
+    """
+    挑一个**真实的** LLM provider。
+
+    【为什么要挑，而不是直接用 default_provider】
+
+        `config.yaml` 里 `default_provider = "mock"` —— 那是为了让
+        全量测试不烧钱、不依赖网络。
+
+        但本 Demo 的意义正是**第一次真正使用真实 LLM**（任务书 §7）。
+        所以这里按这个顺序挑：
+
+            ① 显式 `--provider`         （Human 指定）
+            ② 第一个 enabled 且 **api key 真的存在** 的非 mock provider
+            ③ 实在没有 → mock，但**明确标为 simulated**
+
+    🔒 **绝不打印 key** —— 只判断「在不在」。
+
+    返回 `(provider_name, is_simulated, note)`。
+    """
+    import os as _os
+
+    router = runtime.router
+    # ⚠️ `implemented()` 在 **ProviderRegistry** 上，不在 LLMRouter 上 ——
+    #    第一版写成了 `router.implemented()`，`hasattr` 静默为 False，
+    #    于是 known=[] 直接掉到 mock，**看起来"跑通了"但根本没调真实 API**。
+    #    这正是 §19「不要把 API 调通与代码生成分开」要防的那类假象。
+    def _as_list(candidate):
+        """
+        ⚠️ 这些属性**既可能是列表、也可能是方法** —— 而且**真的两种都出现过**：
+
+            `ProviderRegistry.implemented`  → **list**（实现里是属性）
+            `LLMRouter.available_providers` → **bound method**
+
+        第一版统一按「方法」处理 → 遇到 list 就 TypeError；
+        第二版把兜底写成 `list(available_providers)` →
+        遇到 bound method 还是 TypeError（**而且这条兜底从没被走到**，
+        所以直到测试里用假 runtime 才暴露）。
+
+        所以：**两种都接受**，并且这是唯一一处判断。
+        """
+        if candidate is None:
+            return []
+        try:
+            value = candidate() if callable(candidate) else candidate
+        except Exception:                     # pragma: no cover - 防御
+            return []
+        try:
+            return list(value)
+        except TypeError:                     # pragma: no cover - 防御
+            return []
+
+    known = _as_list(getattr(getattr(router, "registry", None),
+                             "implemented", None))
+    if not known:
+        known = _as_list(getattr(router, "available_providers", None))
+
+    if requested:
+        return requested, requested == "mock", ""
+
+    for name in known:
+        if name == "mock":
+            continue
+        cfg = router.provider_config(name) or {}
+        if not cfg.get("enabled", True):
+            continue
+        key_env = cfg.get("api_key_env")
+        if key_env and not _os.environ.get(key_env):
+            continue
+        return name, False, ""
+
+    return "mock", True, (
+        "没有找到配置了 API key 的真实 provider —— "
+        "本次是 **simulated**（mock），不是真实 LLM 调用"
+    )
+
+
+def _hello_demo_prompt(demand: str) -> str:
+    """
+    给 LLM 的提示。
+
+    🔒 它要求**结构化输出**（§15），并且**明确不要解释文字** ——
+       否则模型很容易返回一大段 Markdown，我们还得猜哪段是代码。
+    """
+    return (
+        "You are an AI agent in an agent operating system.\n"
+        "A human gave you this demand:\n\n"
+        f"{demand}\n\n"
+        "Write the complete code to fulfil it. Reply with ONLY a JSON object, "
+        "no markdown fences, no explanation:\n"
+        "{\n"
+        '  "files": [{"path": "hello.py", "content": "<file content>"}],\n'
+        '  "summary": "<one short sentence>"\n'
+        "}\n"
+        "Rules:\n"
+        f'- Create exactly one file named "{HELLO_DEMO_ALLOWED_FILE}".\n'
+        "- The program must print exactly: Hello, World!\n"
+        "- Do not add any other file.\n"
+    )
+
+
+def _run_hello_demo(
+    runtime: Runtime,
+    *,
+    operation_id: Optional[str] = None,
+    provider: Optional[str] = None,
+) -> HelloDemoResult:
+    """
+    Demo 的**核心流程**（§10 的十一步）。
+
+        1 Human Demand  2 Agent  3 Task  4 Workspace  5 Worktree
+        6 LLM           7 code   8 Gateway  9 read        10 run
+        11 (额外) 失败测试 —— B 改不了 A 的文件
+
+    🔒 **每一步失败都在那一步停下**，不做任何「假装成功」的补救（§20）。
+
+    🔒 **Agent 全程不碰 physical path**：它只通过
+       `runtime.workspace_gateway` 用**逻辑路径**写文件。
+       physical path 只出现在 `subprocess` 的 `cwd`（由 Demo 决定）。
+    """
+    import json as _json
+
+    # ---------- 1 / 2：Human Demand → Agent ----------
+    agents = list(runtime.economy.all_agents())
+    if len(agents) < 2:
+        return HelloDemoResult(
+            ok=False, stage="agent",
+            reason=f"至少需要 2 个 Agent，当前只有 {len(agents)} 个",
+        )
+    agent = agents[0]
+    other = agents[1]
+
+    if not agent.has_brain:
+        return HelloDemoResult(
+            ok=False, stage="agent",
+            reason=f"{agent.name} 没有大脑（未配置 LLM provider）",
+        )
+
+    from agents.brain import Brain  # noqa: F401  （文档用，实际走 agent.generate）
+
+    # ---------- 3：Task ----------
+    # 🔒 Human 不是 Task Creator（ADR-0024）——创建者始终是 Agent。
+    task = Task.create(
+        creator=agent.agent_id,
+        description=HELLO_DEMO_DEMAND,
+        workspace_id=HELLO_DEMO_WORKSPACE,
+        participants=[agent.agent_id, other.agent_id],
+        note="hello-demo",
+    )
+    runtime.tasks.save(task)
+
+    # ---------- 4：Task Workspace ----------
+    gw = runtime.workspace_gateway
+    ws = HELLO_DEMO_WORKSPACE
+    ensured = gw.ensure_workspace(ws, agent.agent_id)
+    if not ensured.success:
+        return HelloDemoResult(
+            ok=False, stage="workspace",
+            reason=f"建 Workspace 失败：{ensured.error_code}",
+            agent_id=agent.agent_id, other_agent_id=other.agent_id,
+            task_id=task.task_id, workspace_id=ws,
+        )
+
+    # ---------- 5：真实 Git Worktree ----------
+    wm = runtime.worktree_manager
+    wt = wm.create(ws, operation_id=operation_id, task_id=task.task_id)
+    if not wt.success:
+        # §20：Worktree 创建失败 → **立即停止**，不继续执行 Agent
+        return HelloDemoResult(
+            ok=False, stage="worktree",
+            reason=f"建 Git Worktree 失败：{wt.error_code}",
+            agent_id=agent.agent_id, other_agent_id=other.agent_id,
+            task_id=task.task_id, workspace_id=ws,
+        )
+
+    recorded = runtime.worktrees.get(wt.result["worktree_id"])
+    physical = recorded.physical_path if recorded else ""
+
+    base = HelloDemoResult(
+        ok=False, stage="",
+        agent_id=agent.agent_id, other_agent_id=other.agent_id,
+        task_id=task.task_id, workspace_id=ws,
+        worktree_id=wt.result["worktree_id"],
+        branch=(wt.result.get("git_ref") or "").replace("refs/heads/", ""),
+        physical_path=physical,
+        reused_worktree=bool(wt.references.get("reused")
+                             or wt.references.get("idempotent_replay")),
+    )
+
+    # ---------- 6：真实 LLM ----------
+    chosen, simulated, note = _pick_hello_demo_provider(runtime, provider)
+    base = replace(base, provider=chosen)
+    if note:
+        base = replace(base, summary=note)
+
+    try:
+        response = agent.generate(
+            messages=_hello_demo_prompt(HELLO_DEMO_DEMAND), provider=chosen)
+    except Exception as exc:
+        # §19/§20：LLM 失败**绝不能**产生假成功；
+        #          也没有任何 Workspace 写入发生过。
+        return replace(
+            base, stage="llm", reason=f"LLM request failed: {type(exc).__name__}",
+            provider=getattr(agent.brain, "provider", ""),
+            model=getattr(agent.brain, "model", ""),
+        )
+
+    base = replace(
+        base,
+        provider=response.provider, model=response.model,
+        simulated=bool(getattr(response, "simulated", False)) or simulated,
+        input_tokens=response.input_tokens,
+        output_tokens=response.output_tokens,
+        latency_ms=response.latency_ms,
+    )
+
+    # ---------- 7：解析（非法结构 → 不写 Workspace）----------
+    payload = _extract_json_object(response.content)
+    if not isinstance(payload, dict) or not isinstance(payload.get("files"), list):
+        return replace(
+            base, stage="llm_parse",
+            reason="LLM 返回的不是期望的 JSON 结构",
+        )
+
+    files = payload["files"]
+    if len(files) != 1 or not isinstance(files[0], dict):
+        return replace(base, stage="llm_parse",
+                       reason=f"期望恰好 1 个文件，收到 {len(files)} 个")
+
+    path = str(files[0].get("path") or "")
+    content = files[0].get("content")
+    summary = str(payload.get("summary") or "")
+    if not isinstance(content, str) or not content.strip():
+        return replace(base, stage="llm_parse", reason="LLM 没有给出文件内容")
+
+    # ---------- 8：🔒 只允许 hello.py（同时验证路径隔离）----------
+    if path != HELLO_DEMO_ALLOWED_FILE:
+        return replace(
+            base, stage="path_guard",
+            reason=(f"拒绝创建 {path!r} —— Demo 只允许 "
+                    f"{HELLO_DEMO_ALLOWED_FILE!r}"),
+        )
+
+    # ---------- 8：经 Workspace Gateway 写入 ----------
+    existing = gw.read(ws, f"/{path}", agent.agent_id)
+    if existing.success:
+        # 已经存在（重跑）→ 走 edit，顺带演示 Revision
+        rev = existing.result["revision"]
+        written = gw.edit(ws, f"/{path}", rev, content, agent.agent_id)
+    else:
+        written = gw.create(ws, "/", path, "file", agent.agent_id,
+                            content=content)
+
+    if not written.success:
+        # §20：Gateway 拒绝 → **绝不绕过它直接写文件**
+        return replace(
+            base, stage="gateway",
+            reason=f"Gateway 拒绝写入：{written.error_code}",
+        )
+
+    base = replace(base, summary=summary)
+
+    # ---------- 9：读回来验证（Revision 是核心，§17）----------
+    read1 = gw.read(ws, f"/{path}", agent.agent_id)
+    if not read1.success:
+        return replace(base, stage="read", reason="写完之后读不回来")
+    resource_id = read1.result["resource_id"]
+    rev1 = read1.result["revision"]
+    if read1.result["content"] != content:
+        return replace(base, stage="read", reason="读回的内容与写入不一致")
+
+    base = replace(base, resource_id=resource_id, content=content,
+                   revision_before=rev1, materialized=False)
+
+    # ---------- 11（§18）：B 想改 A 的文件 → 必须被拒 ----------
+    denied = gw.edit(ws, f"/{path}", rev1, content + "\n# by B",
+                     other.agent_id)
+    guard = denied.error_code if not denied.success else "UNEXPECTED_SUCCESS"
+
+    # ---------- A 正常修改成功 → Revision +1 ----------
+    # ⚠️ 这里**故意写同一内容** —— 因为 Revision 记录的是
+    #    「这个资源发生过几次状态变化」，不是「内容 diff」。
+    #    内容相同也会 +1，这正是一个值得让 Human 看到的事实。
+    rev2 = gw.read(ws, f"/{path}", agent.agent_id).result["revision"]
+    again = gw.edit(ws, f"/{path}", rev2, content, agent.agent_id)
+    if not again.success:
+        return replace(base, stage="revision_demo",
+                       reason=f"A 修改自己的文件失败：{again.error_code}",
+                       guard_result=guard)
+
+    base = replace(base, guard_result=guard,
+                   revision_after=again.result["revision"])
+
+    # ---------- 9.5：Materialize（⚠️ 见下面的重要说明）----------
+    #
+    # ============================================================
+    # ⚠️ **这一步暴露了一个真实的架构缺口 —— 不是 Demo 的取巧**
+    # ============================================================
+    #
+    #   Workspace Gateway 写的是**逻辑资源**（在 Workspace DB 里）。
+    #   它**不会**把内容落到 Git worktree 的物理目录上。
+    #
+    #   实测证据：第一次跑通全流程后，
+    #       ls .worktrees/WS-HELLO-DEMO/WT-*/hello.py
+    #       → No such file or directory
+    #
+    #   而 **Materialization（逻辑资源 → 物理文件）属于 Patch 阶段**
+    #   （设计文档 §10.2 的反方向）。任务书 §5 明确禁止本阶段实现 Patch。
+    #
+    #   所以这里由 **Demo 自己**做一个**最小、显式、带标注**的物化：
+    #
+    #       Agent → Gateway（逻辑写入，已发生且已验证）
+    #                    ↓  读取逻辑内容
+    #       Demo  → 写进 worktree 的物理目录（**物化替身**）
+    #
+    #   🔒 **Agent 全程没有碰物理路径** —— 它只做了 Gateway 那次写入。
+    #      物理写入是 Demo 的行为，而且内容**来自 Gateway 读回的值**，
+    #      不是另起一套。
+    #
+    #   → 这是一个 **Open Question**：真正的物化归 Patch 阶段。
+    materialized = False
+    gateway_content = gw.read(ws, f"/{path}", agent.agent_id)
+    if physical and gateway_content.success:
+        try:
+            os.makedirs(physical, exist_ok=True)
+            with open(os.path.join(physical, path), "w",
+                      encoding="utf-8") as fh:
+                fh.write(gateway_content.result["content"])
+            materialized = True
+            base = replace(base, materialized=True)
+        except OSError as exc:
+            return replace(base, stage="materialize",
+                           reason=f"物化失败：{type(exc).__name__}")
+
+    # ---------- 10：运行 hello.py（命令**由 Demo 固定**）----------
+    # 🔒 任务书 §11：command 是系统固定的，**不是** LLM 生成的。
+    #    禁止 `subprocess.run(model_output)`。
+    #    cwd 来自 WorktreeManager 内部得到的物理路径 —— Agent 不知道它。
+    if not physical:
+        return replace(base, stage="execute", reason="拿不到 worktree 物理路径")
+    if not materialized:
+        return replace(base, stage="materialize",
+                       reason="逻辑写入成功，但没能物化到 worktree")
+
+    try:
+        proc = subprocess.run(
+            [sys.executable, HELLO_DEMO_ALLOWED_FILE],
+            cwd=physical,
+            capture_output=True, text=True, timeout=30,
+        )
+    except Exception as exc:
+        return replace(base, stage="execute",
+                       reason=f"执行失败：{type(exc).__name__}")
+
+    stdout = (proc.stdout or "").strip()
+    stderr = (proc.stderr or "").strip()
+    base = replace(base, stdout=stdout, returncode=proc.returncode,
+                   stderr=stderr)
+
+    # §20：执行失败 → CODE EXECUTION FAILED，**不是** DEMO SUCCESS
+    if proc.returncode != 0:
+        return replace(base, stage="execute",
+                       reason=f"hello.py 退出码 {proc.returncode}")
+
+    if "Hello, World!" not in stdout:
+        return replace(base, stage="execute",
+                       reason="运行成功，但输出里没有 'Hello, World!'")
+
+    return replace(base, ok=True, stage="done")
+
+
+def cmd_hello_demo(runtime: Runtime, args: argparse.Namespace) -> int:
+    """
+    `./dev.sh hello-demo` —— 第一次真正“使用”这个系统。
+
+    【这个命令存在的意义】
+
+        不是又一个 demo，而是**第一次**把已经建好的东西串起来跑一遍：
+
+            Human Demand → Agent → 真实 LLM → Task → Workspace
+                → Git Worktree → Gateway → 代码 → 运行 → Human
+
+    🔒 **不打印任何 secret**（§3）：
+       provider / model / token / latency 可以打，
+       API key / base_url / 环境变量一概不打。
+    """
+    show_path = bool(getattr(args, "show_path", False))
+
+    # ---- --cleanup：只清理 Demo 自己的东西 ----
+    if getattr(args, "cleanup", False):
+        return _hello_demo_cleanup(runtime)
+
+    banner = "=" * 52
+    print()
+    print(banner)
+    print("  AI Economy OS — Hello World Demo")
+    print(banner)
+
+    def step(n, title, body=""):
+        print()
+        print(f"[{n}/9] {title}")
+        for line in (body or "").splitlines():
+            print(f"      {line}")
+
+    step(1, "Human Demand", HELLO_DEMO_DEMAND)
+
+    result = _run_hello_demo(runtime, provider=getattr(args, "provider", None))
+
+    if result.simulated:
+        print()
+        print("  ⚠️  警告：本次**没有**调用真实 LLM（provider=mock）。")
+        print("     这不是任务书 §7 要求的真实 API 调用，结果仅供参考。")
+
+    if result.agent_id:
+        step(2, "Agent", f"{result.agent_id}   (partner: {result.other_agent_id})")
+    if result.task_id:
+        step(3, "Task", result.task_id)
+    if result.workspace_id:
+        step(4, "Workspace", result.workspace_id)
+    if result.worktree_id:
+        step(5, "Git Worktree",
+             f"{result.worktree_id}\n"
+             f"branch: {result.branch}\n"
+             + (f"reused: yes" if result.reused_worktree else "created: new"))
+
+    # ---- 失败路径：明确报错，绝不假装成功 ----
+    if not result.ok:
+        print()
+        print(banner)
+        print("  DEMO FAILED")
+        print(banner)
+        print(f"  Stage:  {result.stage}")
+        print(f"  Reason: {result.reason}")
+        if result.stderr:
+            print(f"  stderr: {result.stderr.splitlines()[0][:120]}")
+        if result.stage == "llm":
+            print()
+            print("  No Workspace corruption should occur.")
+            print("  （Worktree / DB 状态仍然可恢复：重跑或用 --cleanup）")
+        return 1
+
+    step(6, "LLM",
+         f"provider: {result.provider}\n"
+         f"model:    {result.model}\n"
+         f"request:  successful\n"
+         f"response: received  "
+         f"({result.input_tokens if result.input_tokens is not None else '未知'}"
+         f"+{result.output_tokens if result.output_tokens is not None else '未知'}"
+         f" tokens, {result.latency_ms:.0f} ms)")
+    if result.summary:
+        print(f"      summary:  {result.summary}")
+
+    step(7, "Workspace Gateway",
+         f"{HELLO_DEMO_ALLOWED_FILE} written\n"
+         f"resource: {result.resource_id}\n"
+         f"revision: {result.revision_before} -> {result.revision_after}")
+
+    step(8, "Workspace Core guard",
+         f"{result.other_agent_id} tried to edit {HELLO_DEMO_ALLOWED_FILE}\n"
+         f"-> {result.guard_result}")
+
+    step(9, "Execute",
+         f"materialized: {HELLO_DEMO_ALLOWED_FILE} -> worktree (Demo 替身)\n"
+         f"$ python {HELLO_DEMO_ALLOWED_FILE}\n"
+         f"cwd: <worktree>")
+    print()
+    print("      " + "-" * 30)
+    for line in result.stdout.splitlines():
+        print(f"      {line}")
+    print("      " + "-" * 30)
+
+    print()
+    print(banner)
+    print("  DEMO SUCCESS")
+    print(banner)
+    print(f"  hello.py (真实 LLM 生成) revision = {result.revision_after}")
+    print()
+    print(f"  Worktree ID : {result.worktree_id}")
+    print(f"  Workspace ID: {result.workspace_id}")
+    print(f"  Git branch  : {result.branch}")
+    if show_path:
+        # 🔒 只有 Human 显式要求时才显示物理路径（§12）。
+        #    它绝不进入 Agent Message / Agent Context / Agent API。
+        print(f"  Worktree path: {result.physical_path}")
+        print()
+        print(f"  打开这个目录即可看到 Agent 生成的 {HELLO_DEMO_ALLOWED_FILE}：")
+        print(f"    open {result.physical_path}")
+    else:
+        print()
+        print("  （加 --show-path 可以显示 Worktree 的本地路径）")
+    print()
+    print("  没有产生任何 Git commit —— 代码只存在于 worktree 里。")
+    print()
+    return 0
+
+
+def _hello_demo_cleanup(runtime: Runtime) -> int:
+    """
+    `--cleanup` —— **只清理 Demo 自己的东西**。
+
+    🔒 不碰项目仓库里其它任何 worktree / branch。
+    """
+    import shutil as _shutil
+
+    print()
+    print("清理 hello-demo 的 Worktree...")
+    removed = 0
+    for rec in runtime.worktrees.list_for_workspace(HELLO_DEMO_WORKSPACE):
+        if rec.physical_path and os.path.isdir(rec.physical_path):
+            _shutil.rmtree(rec.physical_path, ignore_errors=True)
+            removed += 1
+            print(f"  removed: {rec.worktree_id}  ({rec.state.value})")
+
+    # 让 Git 忘掉已经不存在的 worktree 记录（只动 Git 的记账）
+    try:
+        runtime.worktree_manager.git.worktree_prune()
+    except Exception:
+        pass
+
+    print(f"  共清理 {removed} 个目录。")
+    print("  （DB 记录与事件**保留** —— 审计历史不因为清理物理目录而消失。）")
+    print()
+    return 0
+
+
 def cmd_context_demo(runtime: Runtime, args: argparse.Namespace) -> int:
     """
     Task Shared Context / Alignment 演示（Step 4F）。
@@ -4570,6 +5208,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="指定 workspace_id（默认每次随机，避免与历史运行冲突）",
     )
     ws_demo.set_defaults(func=cmd_workspace_demo)
+
+    hello = subparsers.add_parser(
+        "hello-demo",
+        parents=[shared],
+        help="端到端 Demo：Human Demand → 真实 LLM → Task → Workspace → "
+             "Git Worktree → 代码 → 运行",
+    )
+    hello.add_argument("--show-path", action="store_true",
+                       help="显示 Worktree 的本地路径（**仅 Human**，不进 Agent API）")
+    hello.add_argument("--cleanup", action="store_true",
+                       help="清理之前保留的 Demo Worktree")
+    hello.add_argument("--provider", default=None,
+                       help="指定 LLM provider（默认自动挑一个配了 key 的真实 provider）")
+    hello.set_defaults(func=cmd_hello_demo)
 
     return parser
 

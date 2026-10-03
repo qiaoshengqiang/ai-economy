@@ -192,6 +192,11 @@ case "$COMMAND" in
           echo "    ./dev.sh workspace-demo                    Workspace Core 演示"
           echo "    ./dev.sh workspace-demo --keep             保留 demo 的 Task 数据"
           echo "    ./dev.sh workspace-demo --workspace-id X   指定 workspace_id"
+          echo
+          echo "端到端 Demo（透传给 main.py）："
+          echo "    ./dev.sh hello-demo                        真实 LLM 端到端 Demo"
+          echo "    ./dev.sh hello-demo --show-path            附带 Worktree 本地路径"
+          echo "    ./dev.sh hello-demo --cleanup              清理保留的 Demo Worktree"
         echo
         echo "LLM（透传给 main.py）："
         echo "    ./dev.sh demo [--prompt 文字] [--agent a]  Step 2 链路演示"
