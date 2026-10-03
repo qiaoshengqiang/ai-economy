@@ -174,6 +174,12 @@ C → WRITE X  ❌
 
 ### 2.4 新建资源自动获得 Write Lock，且必须原子（`SETTLED`）
 
+> ⚠️ **机制已精确化**（[`LOCK_MODEL.md`](LOCK_MODEL.md) §6.3）：
+> **原子性要求不变**（绝不允许 `CREATE → 竞争窗口 → 以后再 LOCK`），
+> 但实现机制由「新建 Explicit Lock」改为**继承父 Directory Lock**。
+> 因为能在该目录 `CREATE` 的 Agent **必须已是该目录 Directory Lock 持有者**，
+> 所以继承到的 Effective Lock **就是创建者自己** —— **结论相同**。
+
 ```
 Agent A
   ↓
@@ -704,6 +710,10 @@ EXECUTE?      （与 §19 Controlled Execution 相关）
 ---
 
 ## 10. Write Lock Model
+
+> ⚠️ **Lock 的层级 · 继承 · Effective Lock · Edit Session · Handoff**
+> 见 [`LOCK_MODEL.md`](LOCK_MODEL.md)。那是本节的**增量补充**，
+> 不改变本节与 ADR-0021 的任何锁状态或流程。
 
 ### 10.1 Write Lock 回答什么（`SETTLED`）
 

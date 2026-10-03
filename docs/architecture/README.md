@@ -27,6 +27,7 @@
 | [TASK_WORKSPACE.md](TASK_WORKSPACE.md) | 长 | **Task Workspace 正式架构定义**（`FUTURE`） | 做 Workspace / Permission / Write Lock 时 |
 | [TASK_ORIGIN_LINEAGE.md](TASK_ORIGIN_LINEAGE.md) | 中 | **Task Origin / Creator / Lineage / Funding 逻辑模型**（`FUTURE`） | 做 Child Task / 任务谱系 / 外包时 |
 | [RESOURCE_LAYER.md](RESOURCE_LAYER.md) | 中 | **Resource · Controller · Authorization · Delegation · Cascade Revocation**（`FUTURE`） | 做 Workspace 内部资源控制时 |
+| [LOCK_MODEL.md](LOCK_MODEL.md) | 中 | **Directory/File Lock · Explicit/Implicit · Effective Lock · Edit Session · Handoff**（`FUTURE`） | 做 Lock / 并行修改 / 交接时 |
 | [adr/](adr/README.md) | 中 | **单个决策**的历史与理由 | 想知道「为什么当初这样定」时 |
 
 **三层分工，不要重复**：
