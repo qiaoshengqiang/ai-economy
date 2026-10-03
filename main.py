@@ -36,6 +36,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -62,7 +63,10 @@ from core.decision_policy import RuleBasedDecisionPolicy        # noqa: E402
 from core.money import Money                                    # noqa: E402
 from core.task import OfferType, Task, TaskStatus               # noqa: E402
 from core.task_store import TaskStore                           # noqa: E402
-from core.task_context_store import TaskContextStore             # noqa: E402
+from core.task_context_store import TaskContextStore
+from core.workspace_store import WorkspaceStore                 # noqa: E402
+from services.workspace_concurrency import ResourceLockRegistry  # noqa: E402
+from services.workspace_gateway import WorkspaceGateway         # noqa: E402
 from services import (
     TaskExecutionService,  # noqa: E402
     TaskAlignmentService,  # noqa: E402
@@ -138,6 +142,18 @@ class Runtime:
     decision_policies: Dict[str, Any]
     contexts: TaskContextStore
     alignment: TaskAlignmentService
+
+    # ---- Workspace Core v1（收尾阶段接入组合根）----
+    # 【依赖方向】
+    #     Agent → Runtime / Service Layer → WorkspaceGateway
+    #           → WorkspaceStore / WorkspaceConcurrency → Persistence
+    #
+    # 🔒 Agent **不能**自己创建 WorkspaceStore，也**不能**直接碰 DB。
+    #    它只能拿到 gateway。这条边界由「Runtime 里没有暴露 store
+    #    给 Agent」+ 架构守卫共同保证。
+    workspaces: WorkspaceStore
+    workspace_gateway: WorkspaceGateway
+    workspace_locks: ResourceLockRegistry
 
     def agent(self, agent_id: str):
         return self.economy.agent(agent_id)
@@ -313,6 +329,114 @@ def _wire_task_handlers(
     communication.register_type_handler(
         MessageType.COMPLETE, adapt(task_service.handle_complete)
     )
+
+
+def build_participant_checker(task_store: TaskStore):
+    """
+    造一个 `is_participant(workspace_id, agent_id) -> bool` 回调。
+
+    【为什么是回调，而不是让 Gateway 自己去查 Task】
+
+        Gateway **不应该**知道 Task 是什么。
+        它只回答「谁可以访问这个 Workspace」——
+        「谁是 Task 的参与者」是**任务层**的知识。
+
+        所以组合根把这个知识**注入**进去：
+
+            main.py（唯一同时认识两边的地方）
+                    ↓ 注入
+            WorkspaceGateway.is_participant
+
+        这样 Gateway 不知道 TaskStore，TaskStore 也不知道 Gateway。
+
+    【v1 的 Participant 判定就是「这个 Task 的参与者」】
+
+        workspace 属于某个 Task（`Task.workspace_id`），
+        而该 Task 的参与者 = participants ∪ {creator, contractor}。
+
+    ⚠️ **已知限制**：这是一次 `list_tasks(workspace_id=...)` 查询，
+       每次 Gateway 调用都会做。workspace 多起来以后应当加缓存或
+       直接建 `workspace → participants` 索引。记在报告里。
+    """
+
+    def is_participant(workspace_id: str, agent_id: str) -> bool:
+        try:
+            tasks = task_store.list_tasks(workspace_id=workspace_id, limit=1000)
+        except Exception:                     # pragma: no cover - 防御
+            return False
+        for task in tasks:
+            members = set(task.participants or [])
+            if task.creator:
+                members.add(task.creator)
+            if task.contractor:
+                members.add(task.contractor)
+            if agent_id in members:
+                return True
+        return False
+
+    return is_participant
+
+
+def build_agent_exists_checker(economy: Economy):
+    """
+    造一个 `agent_exists(agent_id) -> bool` 回调。
+
+    🔒 **身份存在性**是身份层的事，不是权限。
+       与 `is_participant` 分开，因为两者的正确应对不同：
+
+           UNKNOWN_AGENT        「你把名字打错了」
+           NOT_TASK_PARTICIPANT 「这个人存在，但不在这个 Task 里」
+    """
+
+    def agent_exists(agent_id: str) -> bool:
+        try:
+            return economy.agent(agent_id) is not None
+        except Exception:                     # pragma: no cover - 防御
+            return False
+
+    return agent_exists
+
+
+def build_workspace_services(
+    db,
+    *,
+    is_participant=None,
+    agent_exists=None,
+    lock_registry: Optional[ResourceLockRegistry] = None,
+) -> tuple:
+    """
+    组装 Workspace Core 的三件套。
+
+        WorkspaceStore        持久化（唯一边界）
+        ResourceLockRegistry  资源级互斥（**进程内**，必须被共享）
+        WorkspaceGateway      唯一受控入口
+
+    【🔒 为什么 lock_registry 要能被外部传进来】
+
+        资源级互斥是**进程内**概念。如果同一个进程里有多个 Gateway
+        各自 new 一个注册表，它们就**互相看不见对方的锁** ——
+        同一 File 就可能有两条并发写入。
+
+        所以组合根**只造一个**注册表，所有 Gateway 共享它。
+
+    【🔒 为什么不做成 singleton】
+
+        任务书 §22 明确禁止 `WorkspaceGateway` 自己偷偷创建全局 singleton。
+        这里返回普通对象，由调用方持有 ——
+        测试可以随手造一套**独立**的服务，互不干扰。
+
+    返回 `(store, registry, gateway)`。
+    """
+    store = WorkspaceStore(db=db)
+    registry = lock_registry or ResourceLockRegistry()
+    gateway = WorkspaceGateway(
+        db,
+        store=store,
+        lock_registry=registry,
+        is_participant=is_participant,
+        agent_exists=agent_exists,
+    )
+    return store, registry, gateway
 
 
 def build_runtime(db_path: Optional[str] = None) -> Runtime:
@@ -498,6 +622,24 @@ def build_runtime(db_path: Optional[str] = None) -> Runtime:
     # communication 去 import Task。
     _wire_task_handlers(communication, task_service)
 
+    # ---- Workspace Core v1：接入组合根 ----
+    #
+    # 【顺序有意为之】
+    #     先有 tasks / economy，才能造出 participant / identity 回调；
+    #     有了回调，Gateway 才是一个**真正可用**的门面，
+    #     而不是一个谁来都拒绝的孤立组件。
+    #
+    # 🔒 注意 WorkspaceGateway **不知道** TaskStore 与 Economy ——
+    #    它只拿到两个纯函数回调。这条边界让 Gateway 可以
+    #    脱离整个 Task 系统单独测试（测试里就是这么做的）。
+    workspace_locks = ResourceLockRegistry()
+    workspaces, workspace_locks, workspace_gateway = build_workspace_services(
+        economy.db,
+        is_participant=build_participant_checker(tasks),
+        agent_exists=build_agent_exists_checker(economy),
+        lock_registry=workspace_locks,
+    )
+
     return Runtime(
         economy=economy,
         router=router,
@@ -512,6 +654,9 @@ def build_runtime(db_path: Optional[str] = None) -> Runtime:
         decision_policies=decision_policies,
         contexts=contexts,
         alignment=alignment,
+        workspaces=workspaces,
+        workspace_gateway=workspace_gateway,
+        workspace_locks=workspace_locks,
     )
 
 
@@ -3161,6 +3306,254 @@ def _run_async(coro):
 # ============================================================
 # 命令：context-demo（Step 4F）
 # ============================================================
+# ============================================================
+# Workspace Core Demo（收尾阶段 Phase 5）
+# ============================================================
+def cmd_workspace_demo(runtime: Runtime, args: argparse.Namespace) -> int:
+    """
+    最小可运行的 Workspace Demo。
+
+    【这个 demo 的目的**不是**功能演示】
+
+        是证明一件事：
+
+            Workspace Core 已经从「独立库 / 测试组件」
+            变成了 AI Economy OS 里**真正可调用的基础设施**。
+
+        所以它**必须**走真实的系统链路：
+
+            main.py（组合根）
+                ↓ 组装
+            Runtime.workspace_gateway      ← 不是 demo 自己 new 的
+                ↓ 注入
+            is_participant  ← 真的去 TaskStore 查这个 Task 的参与者
+            agent_exists    ← 真的去 Economy 查身份
+
+        而不是绕开组合根直接建一个 Gateway —— 那样证明不了任何事。
+
+    【链路】（任务书 §23 的 10 步）
+        建 Workspace → 建资源 → 两个 Participant
+        → A/B 都读 → A 改自己的 → Revision 1→2
+        → Audit + Event → Handoff A→B
+        → A 再改被拒 → B 改成功 → Revision 2→3
+    """
+    gw = runtime.workspace_gateway
+
+    def step(n: int, title: str, subtitle: str = "") -> None:
+        """打印一个带编号的步骤标题（本 demo 自己的小工具）。"""
+        print()
+        print(f"  ── [{n:>2}] {title}")
+        if subtitle:
+            print(f"         {subtitle}")
+
+    # ---- 准备两个真实 Agent ----
+    agent_ids = [a.agent_id for a in runtime.economy.all_agents()]
+    if len(agent_ids) < 2:
+        print("  ❌ 至少需要 2 个 Agent，请先跑一次 ./dev.sh run 初始化")
+        return 1
+    a_id, b_id = agent_ids[0], agent_ids[1]
+
+    # 【为什么每次跑都用一个新的 workspace_id】
+    #
+    #   第一次写死 "WS-DEMO-001"，结果**第二次跑就崩**：
+    #   根目录已经存在 → `ensure_workspace` 返回 created=False
+    #   → 接着 create("docs") 撞上 NAME_CONFLICT。
+    #
+    #   Workspace Core v1 **没有**删除 Workspace 的 API
+    #   （这是有意的 —— 生命周期属于后续阶段）。
+    #   所以 demo 每次用一个新的 id 才是诚实的做法，
+    #   而不是偷偷加一个 delete_workspace()。
+    workspace_id = getattr(args, "workspace_id", None) or (
+        f"WS-DEMO-{uuid.uuid4().hex[:6]}"
+    )
+
+    print()
+    print("=" * 68)
+    print("  Workspace Core Demo —— 共享工作空间的责任与版本")
+    print("=" * 68)
+    print()
+    print(f"  本次 workspace_id = {workspace_id}")
+    print()
+    print("【这个 demo 走的是**真实系统链路**】")
+    print("    main.py（组合根） → Runtime.workspace_gateway")
+    print("        ↓ 注入 is_participant（真的去 TaskStore 查）")
+    print("        ↓ 注入 agent_exists（真的去 Economy 查身份）")
+    print()
+
+    # ---------------------------------------------------------
+    # ① 建一个真实 Task，让 workspace 有参与者来源
+    # ---------------------------------------------------------
+    step(1, "建立 Task 与 Workspace",
+         f"workspace_id={workspace_id}，参与者 {a_id} / {b_id}")
+
+    task = Task.create(
+        creator=a_id,
+        description="Workspace Core demo",
+        workspace_id=workspace_id,
+        participants=[a_id, b_id],
+    )
+    runtime.tasks.save(task)
+
+    r = gw.ensure_workspace(workspace_id, a_id)
+    if not r.success:
+        print(f"  ❌ 建 Workspace 失败：{r.error_code}")
+        return 1
+    root_id = r.result["resource_id"]
+    print(f"  ✅ Workspace 建好  root={_short(root_id, 18)}  "
+          f"revision={r.result['revision']}")
+    print(f"     → Controller 与 Directory Lock 的**来源**就是这一步 "
+          f"（{a_id} 是创建者）")
+
+    # ---------------------------------------------------------
+    # ② 建初始资源
+    # ---------------------------------------------------------
+    step(2, "初始化共享资源", "建一个目录 docs/ 和一个文件 docs/spec.md")
+    gw.create(workspace_id, "/", "docs", "directory", a_id)
+    created = gw.create(workspace_id, "/docs", "spec.md", "file", a_id,
+                        content="# Spec v1\n\n初稿。")
+    spec_id = created.result["resource_id"]
+    print(f"  ✅ docs/spec.md  resource_id={_short(spec_id, 18)}  "
+          f"revision={created.result['revision']}")
+    print("     🔒 新资源**没有**自己的 Explicit Lock —— "
+          "它继承 docs/ 的责任（这就是「创建不产生显式锁」）")
+
+    # ---------------------------------------------------------
+    # ③ 两个 Participant
+    # ---------------------------------------------------------
+    step(3, "确认参与者", "Participant 判定来自**真实的 Task 参与者**")
+    for who in (a_id, b_id):
+        ok = gw.read(workspace_id, "/docs/spec.md", who)
+        print(f"  {'✅' if ok.success else '❌'} {who} 是这个 Workspace 的 "
+              f"Participant（TaskStore 里查到的）")
+    outsider = gw.read(workspace_id, "/docs/spec.md", "NOT_A_PARTICIPANT")
+    print(f"  ✅ 非参与者被拒绝：{outsider.error_code}")
+
+    # ---------------------------------------------------------
+    # ④ A / B 都能读（Read 与 Write 分离）
+    # ---------------------------------------------------------
+    step(4, "A 和 B 都能**读**", "Read 靠 Task Participation，不需要 Lock")
+    for who in (a_id, b_id):
+        got = gw.read(workspace_id, "/docs/spec.md", who)
+        print(f"  ✅ {who}.read() → revision={got.result['revision']}  "
+              f"content={_short(got.result['content'], 24)!r}")
+    print("     🔒 能读 **不代表** 能写 —— 下面立刻验证")
+
+    # ---------------------------------------------------------
+    # ⑤ B 想直接改 A 的资源 → 被拒
+    # ---------------------------------------------------------
+    step(5, "B 尝试直接修改", "B 能读，但 docs/ 的责任在 A 手里")
+    denied = gw.edit(workspace_id, "/docs/spec.md", 1, "B 偷偷改的", b_id)
+    print(f"  {'✅' if not denied.success else '❌'} 被拒绝："
+          f"{denied.error_code}")
+    print(f"     → 需要走**正式 Handoff** 才能获得责任（下面第 8 步）")
+
+    # ---------------------------------------------------------
+    # ⑥ A 修改自己的资源 → Revision 变化
+    # ---------------------------------------------------------
+    step(6, "A 修改自己有效负责的资源", "Revision 1 → 2")
+    edited = gw.edit(workspace_id, "/docs/spec.md", 1,
+                     "# Spec v2\n\nA 修改过。", a_id)
+    print(f"  ✅ revision {1} → {edited.result['revision']}")
+    print("     🔒 EDIT END ≠ LOCK RELEASE —— 编辑完成后责任**没有**自动释放")
+
+    # ---- 顺手演示 STALE_REVISION ----
+    stale = gw.edit(workspace_id, "/docs/spec.md", 1, "用旧版本覆盖", a_id)
+    print(f"  ✅ 用旧 revision 再提交 → {stale.error_code}"
+          f"（current={stale.error.get('current_revision')}, "
+          f"provided={stale.error.get('provided_revision')}）")
+    print("     🔒 禁止静默覆盖")
+
+    # ---------------------------------------------------------
+    # ⑦ Audit / Event
+    # ---------------------------------------------------------
+    step(7, "看 Audit 与 Event", "Audit = 谁做了什么；Event = 状态变了什么")
+    with runtime.economy.db.transaction(write=False):
+        audits = runtime.workspaces.audits_for(workspace_id)
+        events = runtime.workspaces.events_for(workspace_id)
+
+    print(f"  Audit（{len(audits)} 条）—— 含**失败尝试**：")
+    for row in audits[-6:]:
+        mark = "✅" if row["result"] == "SUCCESS" else "⚠️ "
+        extra = f"  [{row['error_code']}]" if row["error_code"] else ""
+        print(f"    {mark} {row['action']:<14} actor={row['actor']:<10}"
+              f"{extra}")
+    print(f"  Event（{len(events)} 条）—— 只有**成功的状态变化**：")
+    for row in events[-6:]:
+        print(f"    • {row['event_type']:<24} revision={row['revision']} "
+              f"actor={row['actor']}")
+    print("     🔒 失败的 edit 只有 Audit、**没有** Event")
+    print("     🔒 Event **不含文件内容** —— 它只说明「发生了什么」")
+
+    # ---------------------------------------------------------
+    # ⑧ Handoff A → B
+    # ---------------------------------------------------------
+    step(8, f"正式责任交接 {a_id} → {b_id}", "Handoff 改变责任，**不改变 Revision**")
+    before = gw.read(workspace_id, "/docs/spec.md", a_id).result["revision"]
+    ho = gw.handoff(workspace_id, "/docs/spec.md", a_id, b_id, a_id,
+                    reason="A 把 spec.md 交给 B 维护",
+                    task_id=task.task_id)
+    after = gw.read(workspace_id, "/docs/spec.md", b_id).result["revision"]
+    print(f"  ✅ Handoff 成功  revision {before} → {after}"
+          f"  {'（未变 ✅）' if before == after else '（❌ 不该变）'}")
+    print(f"     Audit 记录了 from/to/reason/task_id —— 可追溯")
+    print(f"     Event = RESPONSIBILITY_HANDOFF")
+
+    # ---------------------------------------------------------
+    # ⑨ A 再改 → 被拒
+    # ---------------------------------------------------------
+    step(9, "A 再尝试修改", "责任已经交出去了")
+    denied2 = gw.edit(workspace_id, "/docs/spec.md", after, "A 又改", a_id)
+    print(f"  {'✅' if not denied2.success else '❌'} 被拒绝："
+          f"{denied2.error_code}")
+    print(f"     → 内容没有被改动："
+          f"{_short(gw.read(workspace_id, '/docs/spec.md', b_id).result['content'], 24)!r}")
+
+    # ---------------------------------------------------------
+    # ⑩ B 继续工作
+    # ---------------------------------------------------------
+    step(10, "B 继续工作", "新责任人接手")
+    ok = gw.edit(workspace_id, "/docs/spec.md", after,
+                 "# Spec v3\n\nB 接手后修改。", b_id)
+    print(f"  ✅ revision {after} → {ok.result['revision']}")
+    final = gw.read(workspace_id, "/docs/spec.md", b_id).result
+    print(f"     最终内容：{_short(final['content'], 30)!r}")
+
+    # ---------------------------------------------------------
+    # 收尾：list + 不变量
+    # ---------------------------------------------------------
+    print()
+    print("─" * 68)
+    print("  list() —— 推荐同时返回 effective_controller / "
+          "effective_lock_holder")
+    print("─" * 68)
+    listing = gw.list(workspace_id, "/", a_id)
+    print(f"  {'名称':<16}{'类型':<12}{'R':<4}{'Controller':<12}"
+          f"{'Lock Holder':<12}")
+    for entry in listing.result["entries"]:
+        print(f"  {entry['name']:<16}{entry['type']:<12}"
+              f"{entry['revision']:<4}"
+              f"{str(entry['effective_controller']):<12}"
+              f"{str(entry['effective_lock_holder']):<12}")
+
+    print()
+    print("=" * 68)
+    print("  🔒 Workspace Core 已经作为基础设施在运行")
+    print("=" * 68)
+    print("  · Agent 只看到 workspace_id / resource_id / 逻辑路径")
+    print("  · **没有**任何宿主机物理路径出现在接口里")
+    print("  · **没有** lock() API —— 责任只能来自 Create / Handoff / Release")
+    print("  · Read 靠 Task Participation，Write 靠 Lock，两者完全分离")
+    print("  · Revision 是内容事实；责任变化**不**产生新 Revision")
+    print()
+
+    if getattr(args, "keep", False):
+        print(f"  （--keep：数据保留在库里，workspace_id={workspace_id}）")
+    else:
+        _reset_demo_tasks(runtime, [task.task_id])
+        print("  （已清理本次 demo 的 Task；用 --keep 可保留）")
+    return 0
+
+
 def cmd_context_demo(runtime: Runtime, args: argparse.Namespace) -> int:
     """
     Task Shared Context / Alignment 演示（Step 4F）。
@@ -4048,6 +4441,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="Task Shared Context / Alignment 演示（Step 4F）",
     )
     context_demo.set_defaults(func=cmd_context_demo)
+
+    ws_demo = subparsers.add_parser(
+        "workspace-demo",
+        parents=[shared],
+        help="Workspace Core 演示（共享工作空间的责任与版本）",
+    )
+    ws_demo.add_argument(
+        "--keep",
+        action="store_true",
+        help="保留 demo 产生的 Task 数据（默认清理）",
+    )
+    ws_demo.add_argument(
+        "--workspace-id",
+        default=None,
+        help="指定 workspace_id（默认每次随机，避免与历史运行冲突）",
+    )
+    ws_demo.set_defaults(func=cmd_workspace_demo)
 
     return parser
 

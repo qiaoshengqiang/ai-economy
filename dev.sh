@@ -187,6 +187,11 @@ case "$COMMAND" in
         echo "    ./dev.sh reliability-demo                  可靠性/并发加固演示（Step 4D.1）"
         echo "    ./dev.sh reliability-multiprocess-demo     多进程/认领租约演示（Phase 0）"
           echo "    ./dev.sh context-demo                     共享上下文/对齐演示（Step 4F）"
+          echo
+          echo "Workspace（透传给 main.py）："
+          echo "    ./dev.sh workspace-demo                    Workspace Core 演示"
+          echo "    ./dev.sh workspace-demo --keep             保留 demo 的 Task 数据"
+          echo "    ./dev.sh workspace-demo --workspace-id X   指定 workspace_id"
         echo
         echo "LLM（透传给 main.py）："
         echo "    ./dev.sh demo [--prompt 文字] [--agent a]  Step 2 链路演示"
@@ -206,6 +211,7 @@ case "$COMMAND" in
         echo "    ./dev.sh communication-demo                Agent 间通信演示"
         echo "    ./dev.sh communication-log --traces        看通信链路"
         echo "    ./dev.sh task-demo                         Task Core 演示"
+        echo "    ./dev.sh workspace-demo                    Workspace Core 演示"
         echo "    ./dev.sh capability-demo                   能力发现演示"
         echo "    ./dev.sh negotiation-demo                  自主议价演示"
         echo "    ./dev.sh ask \"你好\"                        问 Agent A"
