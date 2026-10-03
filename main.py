@@ -400,8 +400,8 @@ def build_agent_exists_checker(economy: Economy):
 def build_workspace_services(
     db,
     *,
+    agent_exists,
     is_participant=None,
-    agent_exists=None,
     lock_registry: Optional[ResourceLockRegistry] = None,
 ) -> tuple:
     """
@@ -424,6 +424,12 @@ def build_workspace_services(
         任务书 §22 明确禁止 `WorkspaceGateway` 自己偷偷创建全局 singleton。
         这里返回普通对象，由调用方持有 ——
         测试可以随手造一套**独立**的服务，互不干扰。
+
+    【🔒 `agent_exists` 是必需参数（fail-closed）】
+
+        它是「这个 Agent 是否真实存在」的判定 ——
+        没有它，`handoff` 可以指向一个虚构的接收方。
+        所以这里**不设默认值**：漏传就直接 `TypeError`。
 
     返回 `(store, registry, gateway)`。
     """

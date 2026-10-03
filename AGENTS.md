@@ -30,7 +30,7 @@
 | | |
 |---|---|
 | **阶段** | `Post-Step-4F / Pre-Task-Workspace` |
-| **测试基线** | **3357 passed, 2 skipped, 30 deselected** |
+| **测试基线** | **3397 passed, 2 skipped, 30 deselected** |
 | **协议版本** | `protocol_version = "1"` |
 | **命令数** | 17（`./dev.sh` 查看全部） |
 | **数据库表** | **18** |
@@ -342,7 +342,7 @@ Knowledge graph · 分布式共识 · 多 agent 投票 · 复杂 ontology。**�
         ↓
 2. 先调查真实代码（不要凭空设计）
         ↓
-3. 跑基线：./dev.sh test   （必须是 3357 passed）
+3. 跑基线：./dev.sh test   （必须是 3397 passed）
         ↓
 4. 实施最小修改
         ↓
@@ -361,7 +361,7 @@ Knowledge graph · 分布式共识 · 多 agent 投票 · 复杂 ontology。**�
 
 1. **先调查，再动手。** 不要在设计之前改代码。
 2. **每一步结束跑全量测试。** 不是只跑自己改的那个文件。
-   基线现在是 **3357 passed**。
+   基线现在是 **3397 passed**。
 3. **新增守卫必须配反向测试。** 把违规注入进去，确认守卫**真的变红**。
 
 ---
@@ -374,7 +374,7 @@ Knowledge graph · 分布式共识 · 多 agent 投票 · 复杂 ontology。**�
 ./dev.sh test tests/test_xxx.py -k 名字  # 单个测试
 ```
 
-基线 **3357 passed / 2 skipped / 30 deselected** ·
+基线 **3397 passed / 2 skipped / 30 deselected** ·
 守卫文件 10 个约 390 项 · 真实 API 测试 30 项（单独跑，需要 Key）。
 
 **必须用 `./dev.sh test`，不要直接 `pytest`** —— 它会正确设置环境。
@@ -498,7 +498,7 @@ docs/architecture/adr/0024-*.md            ← 为什么 Human ≠ Task Creator
 | # | 技术债 | 严重度 | 说明 |
 |---|---|---|---|
 | 1 | **租约 vs 长任务** | 🔴 | 无 lease renewal。handler 超租约 → 别的 worker 接手 → **重复处理**（Workspace 阶段 = 重复文件副作用） |
-| 2 | **多线程共享 `Database` 不安全** | 🔴 | `_tx_depth` 是实例状态，跨线程会被交错修改 → 事务边界错乱。**唯一安全用法：每线程一个 `Database`** |
+| 2 | ~~多线程共享 `Database` 不安全~~ **✅ 已修复** | ✅ | 每线程一个 `_ThreadSession`（**连接 + 深度 + pid**）→ 事务真正独立且**无全局锁**。反向验证过（旧模型下测试真的变红）。证据：`tests/test_database_thread_safety.py`（20 项，含 **20 线程共享同一实例**）。剩余约束：内存库仍单连接（shared-cache 实测不成立）—— 那是**测试环境**约束 |
 | 3-4 | **Retry / 网络未实现** | 🟡 | 租约到期只让占用失效，**没有东西会自动重投递**；Phase 0 验证的是**多进程、同一文件系统** |
 | 5 | **`result_ref` 没有 resolver** | 🟡 | 只保证「不是路径、不是 URL」，**不检查成果是否真的存在** |
 | 6-7 | 压力测试规模小 · 写事务全串行 | 🟢 | 4 进程 × 15 轮（证明正确性，不证明性能）· `BEGIN IMMEDIATE` 的固有代价 |
@@ -524,9 +524,9 @@ docs/architecture/adr/0024-*.md            ← 为什么 Human ≠ Task Creator
 | Human 的四角色 | ✅ `SETTLED`：Demand Provider / Feedback Provider / Optional Collaborator / Governance Authority |
 | Guardian · 自动恢复 · Reopen 6 细节 · Demand 实体 · Child Task · Agent 自建 Root Task | `FUTURE` / `OPEN`（见各文档） |
 | Heartbeat / Lease Renewal · Human 作 Task Manager | ❌ **Not implemented / 禁止** |
-| **Workspace Core v1** | ✅ **已实现 + 已 Hardening**：资源树 · Controller · Explicit/Effective Lock ·
-Revision · Audit · Event · Gateway（9 操作）· 资源级并发 · 组合根接线 ·
-20 Agent 并行验证 · `./dev.sh workspace-demo`（ADR-0029 / **0030**） |
+| **Workspace Core v1** | ✅ **已实现 + 已 Hardening + Freeze-Ready**：资源树 · Controller ·
+Explicit/Effective Lock · Revision · Audit · Event · Gateway（9 操作）· 资源级并发 · 组合根接线 ·
+20 Agent 并行 · `workspace-demo` · `agent_exists` fail-closed · Database 每线程 session（ADR-0029/0030/**0031**） |
 | Task Workspace 其余部分 | `FUTURE`：Git Worktree · Patch · Acceptance · Conversation Manager · Recovery Automation · AI Governance |
 
 > **v1 不需要等自动恢复机制就能进入 Workspace 实现。**

@@ -75,9 +75,24 @@ from services.workspace_concurrency import ResourceLockRegistry
 ParticipantCheck = Callable[[str, str], bool]
 
 #: 判定「这个 Agent 到底存不存在」（身份层的事，不是权限）。
-#: 由组合根注入。默认 `None` = **不做存在性校验**，
-#: 这样纯 Workspace Core 的单元测试不必先建 Agent 目录。
-#: ⚠️ 组合根**应该**注入它 —— 否则 Handoff 可以指向一个虚构的接收方。
+#:
+#: 🔒 **这是 `WorkspaceGateway` 的必需依赖（fail-closed）。**
+#:
+#: 【为什么不允许 None】
+#
+#     第一版把它做成可选的，`None` 表示「跳过存在性校验」——
+#     那是 **fail-open**：
+#
+#         handoff(A → 一个完全不存在的 Agent) → 成功
+#
+#     于是资源责任挂在一个虚构的 holder 上，
+#     而 Effective Lock 解析会忠实地返回那个名字。
+#
+#     这与 Workspace Core 已经确定的 responsibility 语义不一致：
+#     **责任必须交给一个真实存在的主体。**
+#
+#     所以现在没提供它 → **Gateway 构造失败**，
+#     而不是等到 runtime 某次 handoff 才发现。
 AgentExistsCheck = Callable[[str], bool]
 
 
@@ -95,16 +110,53 @@ class WorkspaceGateway:
         store: Optional[WorkspaceStore] = None,
         lock_registry: Optional[ResourceLockRegistry] = None,
         is_participant: Optional[ParticipantCheck] = None,
-        agent_exists: Optional[AgentExistsCheck] = None,
+        agent_exists: AgentExistsCheck,
     ) -> None:
+        """
+        【🔒 两个依赖，两种 fail-closed 方式】
+
+            `is_participant`  —— 可省略。省略时 = **拒绝一切**
+                                 （安全的默认值：忘记注入不会放开访问）
+
+            `agent_exists`    —— **必需**。省略时 Python 直接
+                                 `TypeError`，Gateway **根本构造不出来**。
+
+        【为什么两者不对称】
+
+            `is_participant` 有一个语义正确的"最严格默认值"（谁也不许）。
+            `agent_exists` 没有一个合理的默认值：
+
+                · 默认 True  → 等于没校验（fail-open）❌
+                · 默认 False → 任何 handoff 都会 UNKNOWN_AGENT，
+                               错误信息会误导人（"Agent 不存在"
+                               而不是"你没配身份校验"）❌
+
+            所以让**构造期**就失败，把配置问题暴露在最容易发现的地方。
+            这正是任务书要求的 fail-closed。
+        """
+        # 🔒 显式传 None 也不行 —— 关键字必需只挡住"没传"，
+        #    挡不住 `agent_exists=None`。这里补一道运行时检查。
+        if agent_exists is None:
+            raise ValueError(
+                "agent_exists 是 WorkspaceGateway 的必需依赖（fail-closed）。"
+                "它是'这个 Agent 是否真实存在'的判定回调 —— "
+                "没有它，handoff 可以指向一个虚构的接收方，"
+                "资源责任就会挂在一个不存在的 holder 上。"
+                "如果确实不需要身份校验，请显式传 `lambda _: True` "
+                "（但那等于放弃 fail-closed，应当有明确理由）。"
+            )
+        if not callable(agent_exists):
+            raise TypeError(
+                f"agent_exists 必须是可调用对象，收到 {type(agent_exists).__name__}"
+            )
+
         self.db = db
         self.store = store or WorkspaceStore(db)
         self.locks = lock_registry or ResourceLockRegistry()
         # 默认拒绝 —— 忘记注入时**不会**意外放开访问
         self._is_participant: ParticipantCheck = is_participant or _deny_all
-        # 🔒 **默认 None 表示不检查存在性** —— 这是一个有意的取舍。
-        #    组合根应当注入真实实现；只做 Workspace 语义测试时可以不注入。
-        self._agent_exists: Optional[AgentExistsCheck] = agent_exists
+        # 🔒 必需依赖，构造期已校验
+        self._agent_exists: AgentExistsCheck = agent_exists
 
     # ==========================================================
     # 内部工具
@@ -1305,7 +1357,7 @@ class WorkspaceGateway:
         #   校验顺序：先「存在」再「是 Participant」——
         #   因为两者的正确应对不同。
         # ============================================================
-        if self._agent_exists is not None and not self._agent_exists(to_agent):
+        if not self._agent_exists(to_agent):
             return self._fail(
                 op_id, ErrorCode.UNKNOWN_AGENT,
                 f"接收方 Agent 不存在：{to_agent}",

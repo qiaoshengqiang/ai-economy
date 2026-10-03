@@ -233,7 +233,6 @@ class TestB_HandoffReleaseEdges:
            于是可以把资源责任交给一个不存在的 Agent，
            而 Effective Lock 解析会忠实地返回那个虚构名字。
         """
-        h.agents = {"A", "B"}
         gw = ws(h)
         gw.create("W1", "/", "a.py", "file", "A", content="x")
 
@@ -243,7 +242,10 @@ class TestB_HandoffReleaseEdges:
         assert r1.error_code == "UNKNOWN_AGENT"
 
         # 存在但不是 Participant
-        h.agents.add("OUTSIDER")
+        # 🔒 harness 的规则：知道 = participants ∪ extra_agents。
+        #    把 OUTSIDER 加进 extra_agents ⇒ 它**存在**，
+        #    但不在任何 Workspace 的 participants 里 ⇒ 非 Participant。
+        h.extra_agents.add("OUTSIDER")
         r2 = gw.handoff("W1", "/a.py", "A", "OUTSIDER", "A", reason="t")
         assert not r2.success
         assert r2.error_code == "NOT_TASK_PARTICIPANT"
@@ -1062,7 +1064,10 @@ class TestH_ParticipantIsolation:
         """🔒 没注入 is_participant 时**默认拒绝一切**（安全的默认值）。"""
         from storage.database import create_memory_database
         db = create_memory_database()
-        gw = WorkspaceGateway(db)          # 不传 is_participant
+        # 注意：`agent_exists` 是**必需**的（fail-closed），
+        #       省略它会构造失败 —— 那是另一条测试的事。
+        #       这里故意只省略 `is_participant`。
+        gw = WorkspaceGateway(db, agent_exists=lambda a: True)
 
         assert gw.ensure_workspace("W1", "A").success   # 引导不需要 Participant
         r = gw.read("W1", "/", "A")

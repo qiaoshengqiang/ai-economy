@@ -10,22 +10,26 @@ Workspace 测试脚手架（Hardening + 20 Agent 并发共用）
         reopen / 持久化     → **必须**文件库（内存库关掉就没了）
         真实并发           → 文件库 + **每线程独立连接**
 
-【🔒 为什么并发必须「每线程一个 Database」】
+【⚠️ 并发测试为什么仍然用文件库】
 
-    这是本项目**已记录的技术债 #2**：
+    技术债 #2 **已经在基础设施层修好了** ——
+    `Database` 现在每线程一个 `_ThreadSession`
+    （连接 + 事务深度 + pid），见 `storage/database.py`
+    与 `tests/test_database_thread_safety.py`（20 项）。
 
-        `Database._tx_depth` 是**实例状态** ——
-        跨线程共享会被交错修改 → 事务边界错乱。
+    那这里为什么还要坚持文件库？因为**内存库结构上只能单连接**：
 
-    第一次写并发测试时我共用一个内存 `Database`，
-    在全量测试（有负载）下**偶发失败**：某线程抛异常、
-    结果留在 `None`。那就是这条技术债的现场。
+        SQLite 的 `:memory:` 是「一个连接一个库」。
+        想让多连接共享它只能用 shared-cache URI ——
+        而那在并发写下**实测不成立**
+        （`SQLITE_LOCKED` 表级锁，不受 busy_timeout 影响）。
 
-    正确做法（本脚手架做的事）：
+    所以这是**测试环境**的约束，不是对 `Database` 的不信任：
 
-        · 用**文件**数据库（`:memory:` 每条连接是独立的库）
-        · 每个线程 `new_db()` 拿**自己**的连接
-        · 但**共享** `ResourceLockRegistry` ——
+        · 用**文件**数据库
+        · 但**共享同一个 `Database` 实例** ——
+          这才是真实的并发场景（修复之后它已经安全了）
+        · 并且**共享** `ResourceLockRegistry` ——
           资源级互斥是**进程内**概念，必须共享才起作用
 """
 
@@ -61,8 +65,16 @@ class WorkspaceHarness:
         # 🔒 共享 —— 资源级互斥必须对所有线程可见
         self.locks = ResourceLockRegistry()
         # Agent **存在性**（身份层）与 Participant（任务层）是两件事。
-        # 默认：所有出现过的名字都算存在。
-        self.agents: set[str] = set(agents) if agents is not None else None  # type: ignore[assignment]
+        #
+        # 🔒 `agent_exists` 现在是 Gateway 的**必需依赖** ——
+        #    harness 必须显式提供它，不能再传 None。
+        #
+        # 【harness 的默认规则】
+        #     "我知道的 Agent" = 所有已声明的 Participant ∪ agents 参数
+        #     这是测试替身的合理规则：一个测试里出现的 Agent
+        #     默认就当作存在，除非测试**显式**用 agents= 划定名单。
+        #     （生产由 build_agent_exists_checker 注入真实身份查询。）
+        self.extra_agents: set[str] = set(agents) if agents is not None else set()
 
     # ----------------------------------------------------------
     # 构造
@@ -92,15 +104,22 @@ class WorkspaceHarness:
         db.initialize()
         return db
 
+    def known_agents(self) -> set[str]:
+        """「我知道的 Agent」= 已声明的 Participant ∪ 显式给的名单。"""
+        return set(self.extra_agents) | {
+            a for members in self.participants.values() for a in members
+        }
+
+    def agent_exists(self, agent_id: str) -> bool:
+        return agent_id in self.known_agents()
+
     def gateway(self, db: Optional[Database] = None) -> WorkspaceGateway:
         db = db or self.new_db()
         return WorkspaceGateway(
             db,
             lock_registry=self.locks,
             is_participant=lambda w, a: a in self.participants.get(w, set()),
-            agent_exists=(
-                (lambda a: a in self.agents) if self.agents is not None else None
-            ),
+            agent_exists=self.agent_exists,
         )
 
     @contextmanager
@@ -116,9 +135,7 @@ class WorkspaceHarness:
                 db,
                 lock_registry=self.locks,
                 is_participant=lambda w, a: a in self.participants.get(w, set()),
-                agent_exists=(
-                    (lambda a: a in self.agents) if self.agents is not None else None
-                ),
+                agent_exists=self.agent_exists,
             )
         finally:
             if self.db_path is not None:

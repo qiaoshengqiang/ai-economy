@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator, Optional, Union
@@ -46,6 +47,57 @@ from storage.models import (
 DEFAULT_BUSY_TIMEOUT_MS = 5000
 
 
+class _ThreadSession:
+    """
+    一个线程**独占**的数据库连接，以及它**自己的**事务深度。
+
+    ============================================================
+    【为什么连接必须和深度绑在一起 —— 而不是只把深度做成 thread-local】
+    ============================================================
+
+        技术债 #2 的原始描述是「`_tx_depth` 不是 thread-local」。
+        但只把深度改成 thread-local **并不够**：
+
+            如果两个线程共用**同一个连接**，那么
+
+                Thread A: BEGIN IMMEDIATE   → 连接上开了一个事务
+                Thread B: （深度 0，于是）BEGIN IMMEDIATE
+                          → ❌ "cannot start a transaction within a transaction"
+
+            而且更糟的是：
+
+                Thread A: BEGIN → 写入一些行
+                Thread B: BEGIN 失败 / 或写入
+                Thread A: ROLLBACK  → **把 Thread B 的未提交写入一起回滚**
+
+            也就是说，「独立的 transaction scope」在共享连接上
+            **根本无法成立** —— 无论深度记在哪里。
+
+        所以正确的划分单位是 **(连接, 深度)** 而不是单独的深度：
+
+            一个线程 → 一个 session → 一个连接 + 一个 depth
+
+        这样：
+            · 深度天然隔离（每个 session 有自己的 depth）
+            · 事务天然隔离（每个连接有自己的 BEGIN / COMMIT / ROLLBACK）
+            · **不需要任何全局锁** —— 线程之间根本不在同一个事务上下文里
+            · 嵌套事务语义不变（同一个 session 内 depth 递增）
+
+    【进程呢】
+
+        session 里也记 `pid`。fork 之后子进程继承来的 session
+        带着父进程的 pid，会被丢弃并重建 ——
+        与原来「每个进程一个连接」的行为一致（SQLite 连接不能跨 fork 复用）。
+    """
+
+    __slots__ = ("conn", "depth", "pid")
+
+    def __init__(self, conn: sqlite3.Connection, pid: int) -> None:
+        self.conn = conn
+        self.depth = 0
+        self.pid = pid
+
+
 class Database:
     """
     一个 SQLite 数据库连接的包装。
@@ -63,16 +115,41 @@ class Database:
         busy_timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS,
     ):
         self.path = str(path)
-        self._conn: Optional[sqlite3.Connection] = None
-        # 事务嵌套深度（见 transaction() 的说明）
-        self._tx_depth = 0
 
-        # 这个连接是**哪个进程**创建的。
+        # ============================================================
+        # 线程 / 进程模型（技术债 #2 的基础设施层修复）
+        # ============================================================
         #
-        # 【为什么需要一个 PID】
-        #     看 connect() 里的说明 —— fork 之后子进程会继承
-        #     父进程的连接，而那是不能用的。
-        self._owner_pid: Optional[int] = None
+        # 【旧模型】
+        #
+        #     self._conn      = 一个连接，所有线程共用
+        #     self._tx_depth  = 一个整数，所有线程共用
+        #
+        #   两个都是**实例状态** —— 多线程下会被交错修改：
+        #   深度算错 → 该 BEGIN 的时候不 BEGIN、该 COMMIT 的时候不 COMMIT。
+        #   本阶段因此产生过两个 flaky 测试。
+        #
+        # 【新模型】
+        #
+        #     threading.local() → 每个线程自己的 _ThreadSession
+        #     session = (连接 + 事务深度 + pid)
+        #
+        #   文件库：每个线程开**自己的连接**到同一个文件 ——
+        #          事务真正互相独立，而且**不需要全局锁**。
+        #
+        #   内存库：见下面的 `_shared_session` —— SQLite 的 `:memory:`
+        #          在结构上就是「一个连接一个库」。
+        self._local = threading.local()
+
+        # 已打开的 session（close() 要能关掉所有线程的）
+        self._sessions: list = []
+        # 🔒 只保护上面这个**注册表**，不保护事务 ——
+        #    它不是在给并发"上锁"，只是记账。
+        self._sessions_lock = threading.Lock()
+
+        # 内存库专用的那**一个** session。
+        # 见 `_session()` 的说明：`:memory:` 无法在多个连接间共享。
+        self._shared_session: Optional[_ThreadSession] = None
 
         if busy_timeout_ms < 0:
             raise ValueError(
@@ -87,114 +164,105 @@ class Database:
     def is_memory(self) -> bool:
         return self.path == ":memory:"
 
-    @property
-    def owner_pid(self) -> Optional[int]:
+    # ------------------------------------------------------------
+    # Session 管理（技术债 #2 的修复核心）
+    # ------------------------------------------------------------
+    def _peek_session(self) -> Optional[_ThreadSession]:
         """
-        持有当前连接的进程 PID（None 表示还没连接）。
+        看当前线程**已有**的 session，**不会建立新连接**。
 
-        给测试用 —— 让「每个进程一个连接」这件事可以被**断言**，
-        而不是只能靠读代码相信。
+        给 `transaction_depth` / `in_transaction` / `owner_pid` /
+        `pragmas` 用 —— 这几个方法只是**观察**，不该有副作用
+        （否则 `db.in_transaction()` 会顺手把库连上）。
         """
-        return self._owner_pid
+        if self.is_memory:
+            return self._shared_session
+        return getattr(self._local, "session", None)
 
-    def pragmas(self) -> dict:
+    def _session(self) -> _ThreadSession:
         """
-        当前连接的关键 PRAGMA（给测试 / 演示 / 排查用）。
-
-        没有连接时返回 {}。
-        """
-        if self._conn is None:
-            return {}
-
-        def value(name):
-            row = self._conn.execute(f"PRAGMA {name}").fetchone()
-            return row[0] if row else None
-
-        return {
-            "journal_mode": value("journal_mode"),
-            "busy_timeout": value("busy_timeout"),
-            "foreign_keys": value("foreign_keys"),
-            "synchronous": value("synchronous"),
-        }
-
-    def connect(self) -> sqlite3.Connection:
-        """
-        建立连接（**按进程**复用）。
+        拿当前线程（或当前进程）的 session，没有就建一个。
 
         ============================================================
-        【Step 4D.1 之后这里加了两件事 —— Workspace Phase 0 修的】
+        【⚠️ 内存库为什么只能有一个连接 —— 这是**测出来的**，不是猜的】
         ============================================================
 
-        【一、连接缓存必须是 PID 感知的】
+            最直觉的做法是「所有库都每线程一个连接」。
+            对文件库成立；对 `:memory:` **不成立**：
 
-            原来是这样：
+                SQLite 的 `:memory:` 是**每个连接一个独立的库**。
+                线程 B 新开一个连接 → 那是一个**空空的新库**，
+                看不到线程 A 建的表。
 
-                if self._conn is not None:
-                    return self._conn
+            于是去查解决办法，标准答案是 shared-cache URI：
 
-            单进程没问题。但 `fork()` 之后：
+                file:memdb_xxx?mode=memory&cache=shared
 
-                父进程建了连接 → fork → 子进程**继承** self._conn
+            我实测了它，**在并发写下不成立**：
 
-            子进程拿到的那个连接是**父进程创建的** ——
-            SQLite 明确说明跨 fork 复用连接是不安全的
-            （共享的页缓存、WAL 索引、锁状态会不一致）。
+                20 线程 × 5 次 BEGIN IMMEDIATE + INSERT
+                → 17 个线程抛 `database table is locked`
+                → 最终只写进 25/101 行
 
-            现在缓存里记了 owner_pid：
+                原因：shared-cache 模式用的是**表级锁**，
+                冲突报的是 `SQLITE_LOCKED` ——
+                而 `SQLITE_LOCKED` **不受 busy_timeout 影响**，
+                等多久都不会好。
 
-                PID 相同 → 复用（正常路径，快）
-                PID 不同 → 丢弃继承来的连接，**重新建一个**
+            所以内存库**结构上**只能有一个连接 + 一个共享深度。
+                · 这是 SQLite 的性质，不是我们偷懒
+                · 生产用的是**文件库**（`data/economy.db`）→ 拿到完整修复
+                · 测试里的约束由 meta-guard 保证
+                  （并发测试必须用文件库 —— 那是**测试环境**约束，
+                   不再承担「防止 Database 本身出错」的职责）
 
-            这样「每个进程一个连接」是结构性保证，
-            而不是靠调用方记得别把 Database 对象传给子进程。
-
-        【二、busy_timeout 显式设置】
-
-            过去它**碰巧**是 5000 —— 因为 sqlite3.connect(timeout=5.0)
-            的默认值。但那是 Python 的默认，不是我们的决定。
-
-            多进程写同一个库时，这个值决定「另一个进程拿着写锁时我等多久」。
-            现在它被显式声明、可配置、有文档。
-
-            同时把 connect 的 timeout 也设成一致的值 ——
-            否则「Python 层等 5 秒」和「SQLite 层 busy_timeout」
-            可能不一致，出问题时很难判断是哪一层在等。
-
-        【check_same_thread=False 是什么】
-
-            v0.1 是单线程的，但以后 Agent 可能用线程/异步并行干活。
-            设成 False 让连接可以在别的线程里用。
-
-            ⚠️ 注意：这只是**允许**跨线程使用，不等于线程安全。
-            多个线程共享同一个 Database 时，连接本身和事务深度
-            都不是线程安全的 —— 见报告里的技术债。
+            换句话说：**文件库的并发正确性由本文件保证；
+            内存库的单线程约束由测试守卫保证。** 两件事分开。
         """
         pid = os.getpid()
 
-        if self._conn is not None:
-            if self._owner_pid == pid:
-                return self._conn
+        # ---- 内存库：全进程唯一那个 session ----
+        if self.is_memory:
+            session = self._shared_session
+            if session is not None and session.pid == pid:
+                return session
+            if session is not None and session.pid != pid:
+                self._warn_inherited(session.pid, pid)
+            session = self._open_session(pid)
+            self._shared_session = session
+            return session
 
-            # ---- fork 之后：继承来的连接不能用 ----
-            #
-            # 【为什么只丢弃、不 close()】
-            #     子进程里 close 一个「父进程开启、可能有未提交事务」的连接，
-            #     会触发一次 rollback —— 而那是父进程的事务。
-            #     虽然 fd 已经各自独立，但为了绝对不干扰父进程，
-            #     这里只丢引用，让它在子进程退出时自然回收。
-            #
-            #     （子进程通常是短命的；真正的长命进程应该自己建
-            #       Database 对象，而不是继承父进程的。）
-            logger.warning(
-                "进程 %s 继承了一个由进程 %s 建立的数据库连接，"
-                "已丢弃并重新建立（SQLite 连接不能跨 fork 复用）",
-                pid, self._owner_pid,
-            )
-            self._conn = None
-            self._tx_depth = 0
+        # ---- 文件库：每个线程自己的 session ----
+        session = getattr(self._local, "session", None)
+        if session is not None and session.pid == pid:
+            return session
 
+        if session is not None and session.pid != pid:
+            self._warn_inherited(session.pid, pid)
+
+        session = self._open_session(pid)
+        self._local.session = session
+        return session
+
+    @staticmethod
+    def _warn_inherited(old_pid: int, new_pid: int) -> None:
+        logger.warning(
+            "进程 %s 继承了一个由进程 %s 建立的数据库连接，"
+            "已丢弃并重新建立（SQLite 连接不能跨 fork 复用）",
+            new_pid, old_pid,
+        )
+
+    def _open_session(self, pid: int) -> _ThreadSession:
+        """
+        真正建连接的地方（原来 `connect()` 里那段）。
+
+        每个 session 都要重新设 PRAGMA ——
+        因为 `foreign_keys` 和 `busy_timeout` 是**连接级**的
+        （`journal_mode` 是库级的，所以那边才要"先看再设"）。
+        """
         if not self.is_memory:
-            # 确保父目录存在，否则 sqlite3.connect 会报 "unable to open database file"
+            # 确保父目录存在，否则 sqlite3.connect 会报
+            # "unable to open database file"
             db_path = Path(self.path)
             if not db_path.is_absolute():
                 db_path = PROJECT_ROOT / db_path
@@ -225,25 +293,16 @@ class Database:
         #
         # 【Workspace Phase 0：这里改成了「先看再设」】
         #
-        #     原来是无条件执行：
-        #
-        #         PRAGMA journal_mode = WAL
-        #
-        #     但这条 PRAGMA **需要独占访问**。多进程同时 connect() 时，
-        #     它们会互相撞成：
-        #
-        #         sqlite3.OperationalError: database is locked
-        #
-        #     （这是真的测出来的 —— 两个进程同时连同一个库，
-        #       其中一半直接在 connect() 就炸了。busy_timeout 也救不了，
-        #       因为切换 journal mode 要的是排他锁。）
+        #     原来是无条件执行 `PRAGMA journal_mode = WAL`。
+        #     但这条 PRAGMA **需要独占访问**，多进程同时 connect() 时
+        #     会互相撞成 "database is locked"
+        #     （busy_timeout 也救不了 —— 切换 journal mode 要的是排他锁）。
         #
         #     现在先读一次当前模式：已经是 WAL 就什么都不做。
-        #     只有真的需要切换时才执行 —— 而那通常只发生在
-        #     第一个进程建库的时候。
+        #     只有真的需要切换时才执行 —— 那通常只发生在第一个进程建库时。
         #
-        #     即使切换时撞上锁也不该让连接失败：那说明**别的进程
-        #     正在切**，切完之后就是 WAL 了。
+        #     ⚠️ 对**文件库的第二个线程**来说，库已经是 WAL 了，
+        #        所以这里只读一次、不写 —— 不会和别的线程抢排他锁。
         if not self.is_memory:
             try:
                 current_mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
@@ -255,16 +314,139 @@ class Database:
                     exc,
                 )
 
-        self._conn = conn
-        self._owner_pid = pid
-        return conn
+        session = _ThreadSession(conn, pid)
+        with self._sessions_lock:
+            self._sessions.append(session)
+        return session
+
+    @property
+    def owner_pid(self) -> Optional[int]:
+        """
+        当前线程那个连接是**哪个进程**建的（None 表示还没连接）。
+
+        给测试用 —— 让「每个进程一个连接」这件事可以被**断言**，
+        而不是只能靠读代码相信。
+        """
+        session = self._peek_session()
+        return session.pid if session is not None else None
+
+    @property
+    def open_connection_count(self) -> int:
+        """
+        当前**本进程**还开着几个连接。
+
+        给「每线程一个连接」这件事一个可断言的口子 ——
+        也让测试能验证 `close()` 真的把所有线程的连接都关了。
+        """
+        pid = os.getpid()
+        with self._sessions_lock:
+            return sum(1 for s in self._sessions if s.pid == pid)
+
+    def pragmas(self) -> dict:
+        """
+        当前连接的关键 PRAGMA（给测试 / 演示 / 排查用）。
+
+        没有连接时返回 {}。
+        """
+        session = self._peek_session()
+        if session is None:
+            return {}
+
+        def value(name):
+            row = session.conn.execute(f"PRAGMA {name}").fetchone()
+            return row[0] if row else None
+
+        return {
+            "journal_mode": value("journal_mode"),
+            "busy_timeout": value("busy_timeout"),
+            "foreign_keys": value("foreign_keys"),
+            "synchronous": value("synchronous"),
+        }
+
+    def connect(self) -> sqlite3.Connection:
+        """
+        拿到**当前线程**的连接（没有就建一个）。
+
+        ============================================================
+        【技术债 #2 的修复：从「一个连接」到「每线程一个连接」】
+        ============================================================
+
+            【旧模型】
+
+                self._conn     = 一个连接，全进程共用
+                self._tx_depth = 一个整数，全进程共用
+
+                两者都是**实例状态**。多线程下：
+                    · 深度算错 → 该 BEGIN 不 BEGIN、该 COMMIT 不 COMMIT
+                    · 更根本的是：**共用一个连接 = 共用一个事务**
+                      → Thread A 的 ROLLBACK 会把 Thread B 的
+                        未提交写入一起回滚（半成功状态）
+
+            【新模型】
+
+                每个线程一个 `_ThreadSession`（连接 + 深度 + pid）
+                → 事务真正互相独立
+                → **不需要任何全局锁**（线程不在同一个事务上下文里）
+
+            【为什么不能只把深度改成 thread-local】
+
+                那样只会把「静默交错」换成
+                `cannot start a transaction within a transaction` ——
+                因为连接还是共用的。**连接的粒度必须和深度一致。**
+
+        ============================================================
+        【PID 感知（Workspace Phase 0 加的，保留）】
+        ============================================================
+
+            fork() 之后子进程会**继承**父进程的连接，而 SQLite 明确说明
+            跨 fork 复用连接不安全（共享的页缓存、WAL 索引、锁状态会不一致）。
+
+            session 里记了 owner pid：PID 相同 → 复用；PID 不同 → 重建。
+
+            【为什么只丢弃、不 close()】
+                子进程里 close 一个「父进程开启、可能有未提交事务」的连接，
+                会触发一次 rollback —— 而那是**父进程的**事务。
+                所以只丢引用，让它在子进程退出时自然回收。
+
+        ============================================================
+        【busy_timeout 显式设置（保留）】
+
+            过去它**碰巧**是 5000（`sqlite3.connect(timeout=5.0)` 的默认值）。
+            那是 Python 的默认，不是我们的决定。现在它被显式声明、
+            可配置、有文档，并且 connect 的 timeout 与之一致。
+
+        ============================================================
+        【check_same_thread=False（保留）】
+            每个线程会建**自己的**连接，所以连接通常是
+            「在哪个线程建、在哪个线程用」。
+            保留 False 是为了兼容「连接在别的线程里被 close」
+            这类边缘情况（例如父线程 close 整个 Database）。
+        """
+        return self._session().conn
 
     def close(self) -> None:
-        if self._conn is not None:
-            self._conn.close()
-            self._conn = None
-        self._owner_pid = None
-        self._tx_depth = 0
+        """
+        关掉**所有线程**的连接。
+
+        ⚠️ fork 继承来的 session **只丢引用、不 close** ——
+           那可能是父进程正在用的事务，关掉会触发它的 rollback。
+           （与 `connect()` 里「只丢弃不 close」是同一条理由。）
+        """
+        pid = os.getpid()
+        with self._sessions_lock:
+            sessions, self._sessions = self._sessions, []
+
+        for session in sessions:
+            if session.pid != pid:
+                continue
+            try:
+                session.conn.close()
+            except Exception:            # pragma: no cover - 防御
+                logger.debug("关闭数据库连接时出错（忽略）", exc_info=True)
+
+        self._shared_session = None
+        # 丢掉本线程的 session 缓存（其余线程的天然失效，因为注册表清空了）
+        self._local = threading.local()
 
     def __enter__(self) -> "Database":
         self.connect()
@@ -457,8 +639,10 @@ class Database:
             所以简单嵌套（内层失败 → 整个事务失败）正是想要的语义，
             而且更简单。需要独立回滚语义时再加 SAVEPOINT 不迟。
         """
-        conn = self.connect()
-        depth = self._tx_depth
+        # 🔒 session 而不是 self —— 连接与深度是**同一粒度**的
+        session = self._session()
+        conn = session.conn
+        depth = session.depth
 
         if depth == 0:
             # ============================================================
@@ -503,11 +687,11 @@ class Database:
             #     它们不升级，不会有死锁，而且可以真正并发读。
             conn.execute("BEGIN IMMEDIATE" if write else "BEGIN")
 
-        self._tx_depth = depth + 1
+        session.depth = depth + 1
         try:
             yield conn
         except Exception:
-            self._tx_depth = depth
+            session.depth = depth
             if depth == 0:
                 # 最外层：整个事务回滚
                 conn.rollback()
@@ -516,7 +700,7 @@ class Database:
             # 外层以为还活着、继续写」的错乱状态。
             raise
         else:
-            self._tx_depth = depth
+            session.depth = depth
             if depth == 0:
                 conn.commit()
 
@@ -528,11 +712,18 @@ class Database:
         主要用于测试和守卫 —— 让「这两件事在同一个事务里」
         可以被**断言**，而不是只能靠读代码相信。
         """
-        return self._tx_depth
+        session = self._peek_session()
+        return session.depth if session is not None else 0
 
     def in_transaction(self) -> bool:
-        """当前是否处于事务中。"""
-        return self._tx_depth > 0
+        """
+        当前**本线程**是否处于事务中。
+
+        用 `_peek_session()` 而不是 `_session()` ——
+        只是观察，不该顺手把数据库连上。
+        """
+        session = self._peek_session()
+        return session is not None and session.depth > 0
 
     # ------------------------------------------------------------
     # 便捷查询
@@ -583,7 +774,7 @@ class Database:
         """
         conn = self.connect()
 
-        if self._tx_depth > 0:
+        if self.in_transaction():
             # 已经在显式事务里 —— 提交权归外层
             return conn.execute(sql, params)
 
@@ -604,7 +795,12 @@ class Database:
         return [row["name"] for row in rows]
 
     def __repr__(self) -> str:
-        return f"Database(path={self.path!r}, connected={self._conn is not None})"
+        session = self._peek_session()
+        return (
+            f"Database(path={self.path!r}, "
+            f"connected={session is not None}, "
+            f"connections={self.open_connection_count})"
+        )
 
 
 # ============================================================

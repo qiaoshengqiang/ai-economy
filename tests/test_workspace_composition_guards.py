@@ -168,9 +168,11 @@ class TestNoGlobalSingleton:
         db1, db2 = create_memory_database(), create_memory_database()
         try:
             s1, r1, g1 = main_module.build_workspace_services(
-                db1, is_participant=lambda w, a: True)
+                db1, is_participant=lambda w, a: True,
+                agent_exists=lambda a: True)
             s2, r2, g2 = main_module.build_workspace_services(
-                db2, is_participant=lambda w, a: True)
+                db2, is_participant=lambda w, a: True,
+                agent_exists=lambda a: True)
 
             assert g1 is not g2
             assert r1 is not r2
@@ -368,28 +370,49 @@ class TestDemoUsesCompositionRoot:
 # ============================================================
 class TestConcurrencyTestsUseFileDatabase:
     """
-    防止「共享内存 `Database` 做并发测试」这个错误**再次出现**。
+    ⚠️ **这是「测试环境约束」，不再是「防止 Database 出错」的守卫。**
 
-    【为什么值得一条守卫】
+    ============================================================
+    【定位变化 —— 很重要，别把它当成数据库的保险】
+    ============================================================
 
-        这是本项目**已记录的技术债 #2**：
+        这条守卫原来承担的责任是：
 
-            `Database._tx_depth` 是**实例状态**，
-            跨线程共享会被交错修改 → 事务边界错乱。
+            「`Database._tx_depth` 不是 thread-local，
+              所以并发测试别用内存库，会 flaky」
 
-        我在这一阶段**犯了两次**同样的错：
+        那是在**测试层掩盖**基础设施层的缺陷。
 
-            第一次：`tests/test_workspace_gateway.py` 的并发测试
-            第二次：`test_reverse_move_race_no_deadlock` 用了内存 fixture
+        `Database` 已经修好了（每线程一个 `_ThreadSession` =
+        连接 + 深度 + pid），**文件库的多线程语义由基础设施保证**：
 
-        两次都表现为「单独跑通过、全量跑偶发失败」——
-        那是最难查的一类症状。所以把它变成一条守卫。
+            a1cd14e / 本次修复：Database thread-local session
 
-    【判定规则】
+        那这条守卫还留着干什么？
+
+            **内存库（`:memory:`）结构上只能单连接** ——
+            SQLite 的 `:memory:` 是「一个连接一个库」，
+            而 shared-cache 内存在并发写下实测不成立
+            （`SQLITE_LOCKED` 不受 busy_timeout 影响）。
+
+            所以「并发测试用文件库」是**测试环境**的约束，
+            不是对 `Database` 的不信任。
+
+    ============================================================
+    【判定规则（未变）】
+    ============================================================
 
         一个测试函数如果**创建线程 / 用线程池**，
         它的 fixture 就不能是内存库（`h` / `rig`），
         必须是文件库（`fh` / `file_rig` / `h20` / `multi`）。
+
+    ============================================================
+    【「Database 本身是否线程安全」由谁保证】
+    ============================================================
+
+        `tests/test_database_thread_safety.py` —— 20 项，
+        其中包含**同一个 Database 实例被 20 个线程共享**的测试。
+        那才是基础设施层的证据。这条守卫只负责测试环境。
     """
 
     #: 内存库 fixture —— 并发测试里**禁止**使用
@@ -430,7 +453,70 @@ class TestConcurrencyTestsUseFileDatabase:
         assert "on_file" in src and "Database(self.db_path)" in src, (
             "文件库 fixture 必须给每个线程开**自己的连接**"
         )
-        # 反向验证：内存模式必须被标注为不安全
-        assert "不安全" in src or "unsafe" in src.lower(), (
-            "内存模式必须明确标注「不能用于多线程」"
+
+    def test_database_thread_safety_is_guarded_elsewhere(self):
+        """
+        🔒 这条守卫**只**管测试环境。
+
+        「Database 本身线程安全吗」必须由**基础设施测试**回答 ——
+        而且那个测试必须真的让多个线程共享**同一个 Database 实例**。
+        """
+        path = PROJECT_ROOT / "tests" / "test_database_thread_safety.py"
+        assert path.exists(), (
+            "缺少 Database 线程安全的基础设施测试 —— "
+            "不能只靠「并发测试别用内存库」来掩盖"
         )
+        src = path.read_text(encoding="utf-8")
+        # 这些标记共同证明「多线程 + 同一个 Database 实例 + 深度断言 +
+        # 同步原语」四件事都在那个文件里
+        for needle in ("shared_db",              # 被多线程共享的那一个实例
+                       "Barrier",                # 同步用原语，不用计时
+                       "transaction_depth",      # 显式断言事务深度
+                       "open_connection_count",  # 每线程一条连接
+                       "def test_20_threads"):   # 20 线程场景
+            assert needle in src, f"基础设施测试里缺少 {needle!r}"
+
+    def test_database_uses_thread_local_session(self):
+        """
+        🔒 结构性断言：`Database` 的事务状态是**每线程一份**的。
+
+        直接查代码结构，不查字符串出现次数。
+        （这条是「基础设施层已修复」的最低可断言门槛；
+          真正的行为证据在 test_database_thread_safety.py。）
+        """
+        import ast
+
+        src = (PROJECT_ROOT / "storage" / "database.py").read_text(
+            encoding="utf-8")
+        tree = ast.parse(src)
+
+        # ① 存在一个把 (conn, depth, pid) 绑在一起的结构
+        session_cls = next(
+            (n for n in tree.body
+             if isinstance(n, ast.ClassDef) and n.name == "_ThreadSession"),
+            None,
+        )
+        assert session_cls is not None, "缺少 _ThreadSession"
+        slots = [
+            n for n in session_cls.body
+            if isinstance(n, ast.Assign)
+            and any(getattr(t_, "id", None) == "__slots__" for t_ in n.targets)
+        ]
+        assert slots, "_ThreadSession 应该有 __slots__"
+
+        # ② Database 里有 threading.local()
+        db_cls = next(
+            (n for n in tree.body
+             if isinstance(n, ast.ClassDef) and n.name == "Database"),
+            None,
+        )
+        assert db_cls is not None
+        db_src = ast.unparse(db_cls)
+        assert "threading.local()" in db_src, (
+            "Database 必须用 threading.local() 存每线程的 session"
+        )
+        assert "threading.Lock()" in db_src, "注册表需要一把簿记锁"
+
+        # ③ 反向：**没有**把整张表串起来的事务大锁
+        for banned in ("_global_lock", "_tx_lock", "_db_lock"):
+            assert banned not in db_src, f"引入全局事务锁 {banned} —— 不允许"

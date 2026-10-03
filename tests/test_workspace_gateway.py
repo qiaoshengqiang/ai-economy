@@ -31,6 +31,10 @@ class Rig:
         self.gateway = WorkspaceGateway(
             self.db,
             is_participant=lambda w, a: a in self.participants.get(w, set()),
+            # 🔒 必需依赖：这里的 "所有参与者都算存在"
+            agent_exists=lambda a: any(
+                a in members for members in self.participants.values()
+            ),
         )
 
     def join(self, workspace_id: str, *agents: str) -> None:
@@ -60,16 +64,17 @@ class FileRig:
 
     【⚠️ 为什么不能用 `Rig`（内存库）做并发测试】
 
-        本项目有一条**已记录的技术债**（AGENTS.md 技术债 #2）：
+        技术债 #2 **已在基础设施层修复** ——
+        `Database` 现在每线程一个 `_ThreadSession`
+        （连接 + 深度 + pid），证据见
+        `tests/test_database_thread_safety.py`（20 项）。
 
-            **多线程共享 `Database` 不安全。**
-            `_tx_depth` 是**实例状态** —— 跨线程共享会被交错修改，
-            导致事务边界错乱。**当前唯一安全用法是每线程一个
-            `Database` 实例。**
+        但**内存库结构上只能单连接**：
+        SQLite 的 `:memory:` 是「一个连接一个库」，
+        而 shared-cache 内存在并发写下实测不成立
+        （表级锁 `SQLITE_LOCKED` 不受 busy_timeout 影响）。
 
-        第一版并发测试共用一个内存 `Database`，
-        在全量测试（有负载）时**偶发失败** —— 某个线程抛异常、
-        结果留在 `None`。这正是那条技术债的现场复现。
+        所以这是**测试环境**约束，不是对 `Database` 的不信任。
 
     【正确做法】
 
@@ -106,6 +111,9 @@ class FileRig:
             db,
             lock_registry=self.locks,
             is_participant=lambda w, a: a in self.participants.get(w, set()),
+            agent_exists=lambda a: any(
+                a in members for members in self.participants.values()
+            ),
         )
 
     @contextmanager

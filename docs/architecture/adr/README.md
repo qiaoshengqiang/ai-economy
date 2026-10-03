@@ -54,6 +54,7 @@
 | [0027](0027-workspace-responsibility-model-simplification.md) | **第一版简化为 `Controller + Lock + Handoff + Audit`** | Accepted | 设计简化 | Workspace |
 | [0029](0029-workspace-core-v1-concurrency-and-revision.md) | **Workspace Core v1 并发模型 · 责任变化不产生 Revision** | Accepted（**已实现**） | Workspace Core 第一阶段 | Workspace |
 | [0030](0030-workspace-core-hardening.md) | **Hardening：一致性不变量与边界完整性** | Accepted（**已实现**） | Workspace Core 收尾 | Workspace |
+| [0031](0031-database-thread-local-session.md) | **Database 线程模型：每线程一个 Session** | Accepted（**已实现**） | Freeze 前收尾 | Storage |
 | [0028](0028-read-visibility-and-native-communication.md) | **Read 靠 Task Participation；Communication 是 Agent 基础能力** | Accepted（实现为 FUTURE） | Read / Visibility / Communication | Workspace / Communication |
 
 ---

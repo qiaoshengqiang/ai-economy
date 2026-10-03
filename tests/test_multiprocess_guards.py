@@ -677,23 +677,33 @@ class TestGuard11ConnectionCacheIsPidAware:
         但 Linux 默认 fork —— 那时就会踩到。
     """
 
-    def test_database_records_owner_pid(self):
-        source = (STORAGE_DIR / "database.py").read_text(encoding="utf-8")
+    def test_database_records_owner_pid(self, db):
+        """
+        【为什么从「查源码字符串」改成「查行为」】
 
-        assert "_owner_pid" in source, (
-            "Database 必须记录连接是哪个进程建的"
-        )
-        assert "os.getpid()" in source, (
-            "PID 必须来自 os.getpid()"
+            原来断言的是 `"_owner_pid" in source` ——
+            那是**查实现细节**，而不是查行为（ADR-0018 明确反对）。
+
+            结果：把连接缓存从「一个 `_owner_pid`」重构成
+            「每线程一个 session（session.pid）」之后，
+            保护的行为**完全没变**，守卫却**假红**了。
+
+            现在断言真实行为：`owner_pid` 真的能报出当前进程。
+        """
+        import os
+
+        assert db.owner_pid == os.getpid(), (
+            "Database 必须能报出连接是哪个进程建的"
         )
 
-    def test_connect_checks_pid(self):
-        source = (STORAGE_DIR / "database.py").read_text(encoding="utf-8")
+    def test_session_records_pid(self, db):
+        """PID 必须记在 session 上，且来自 os.getpid()。"""
+        import os
 
-        assert "self._owner_pid == pid" in source or \
-               "self._owner_pid != pid" in source, (
-            "connect() 必须比较 owner_pid —— 否则会复用继承来的连接"
-        )
+        db.connect()
+        session = db._peek_session()
+        assert session is not None, "连接之后必须有 session"
+        assert session.pid == os.getpid()
 
     def test_owner_pid_is_exposed(self, db):
         """给测试用的只读属性。"""
@@ -702,21 +712,37 @@ class TestGuard11ConnectionCacheIsPidAware:
         assert db.owner_pid == os.getpid()
 
     def test_connect_does_not_reuse_across_pid(self):
-        """行为证明：owner_pid 变了就必须重建连接。"""
+        """
+        行为证明：pid 变了就必须重建连接。
+
+        ⚠️ 用**真实的机制**伪造「我是另一个进程」——
+           改当前 session 的 pid，而不是改一个已经不存在的外部字段。
+           （这也是为什么行为断言比源码字符串断言更耐用：
+             它跟着重构走，而字符串断言只会假红。）
+        """
+        import os
+
         from storage.database import Database
 
         database = Database(":memory:")
         database.initialize()
         original = database.connect()
+        original_session = database._peek_session()
+        assert original_session is not None
 
-        # 伪造「我是另一个进程」
-        database._owner_pid = -1
+        # 伪造「我是另一个进程」—— session 上的 pid 才是指挥这个行为的字段
+        original_session.pid = -1
 
         rebuilt = database.connect()
 
         assert rebuilt is not original, (
             "PID 变了之后必须重建连接，而不是复用继承来的那个"
         )
+        assert rebuilt is not original_session.conn
+        new_session = database._peek_session()
+        assert new_session is not None and new_session is not original_session
+        assert new_session.pid == os.getpid(), "新 session 必须记新的 pid"
+
         database.close()
 
 
