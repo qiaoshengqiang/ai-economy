@@ -1268,18 +1268,54 @@ class TestNoWorkspaceImplementation:
                     f"{layer}/{name} 出现了 —— 属于 Task Workspace 实现"
                 )
 
-    def test_no_workspace_tables(self, db):
-        """数据库里没有 Workspace 相关的表。"""
-        names = " ".join(db.table_names())
+    def test_workspace_tables_match_the_authorized_design(self, db):
+        """
+        Workspace Core 第一阶段**已授权实现**（任务书）。
+
+        【这条守卫原来是 `test_no_workspace_tables`】
+            它断言「数据库里没有 Workspace 相关的表」，因为当时
+            **禁止实现 Workspace**。那是对的 —— 在设计阶段。
+
+            现在实现已授权，所以守卫改成**问对的问题**：
+
+                ✅ 允许的：Workspace Core 第一阶段的 5 张表
+                ❌ 禁止的：被 ADR-0027 移除/降级的概念的表
+
+        🔒 特别注意 `workspace_locks` 仍然**禁止** ——
+           锁表叫 `workspace_explicit_locks`，
+           因为**只有 Explicit Lock 是持久化事实**；
+           `Effective Lock` 永远派生，不该有表
+           （任务书 §48 / ADR-0027）。
+        """
+        names = set(db.table_names())
+
+        allowed = {
+            "workspace_resources",
+            "workspace_explicit_locks",
+            "workspace_revisions",
+            "workspace_audits",
+            "workspace_events",
+        }
 
         for forbidden in (
+            # 未授权的 Workspace 结构
             "workspace_permissions", "workspace_members",
-            "workspace_resources", "workspace_locks",
             "workspace_backends", "workspaces", "artifacts",
+            # 🔒 一个笼统的 workspace_locks 会暗示「锁可以有多种/被缓存」
+            #    我们只允许 workspace_explicit_locks
+            "workspace_locks",
+            "workspace_effective_locks",
         ):
-            assert forbidden not in names.split(), (
+            assert forbidden not in names, (
                 f"数据库里出现了 {forbidden} 表 —— 未授权"
             )
+
+        unexpected = {
+            n for n in names if n.startswith("workspace_")
+        } - allowed
+        assert not unexpected, (
+            f"出现了未授权的 workspace_* 表：{sorted(unexpected)}"
+        )
 
     def test_no_git_imports(self):
         """没有引入 Git 相关依赖（§2.1 否决分支模型）。"""

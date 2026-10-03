@@ -567,7 +567,49 @@ class TestNoImplementation:
                 f"数据库里出现了 {forbidden} 表 —— 本轮禁止改 schema"
             )
 
-    def test_table_count_unchanged(self, db):
-        assert len(db.table_names()) == 13, (
-            f"表数从 13 变成了 {len(db.table_names())} —— 本轮禁止改 schema"
+    def test_workspace_core_tables_are_the_only_new_ones(self, db):
+        """
+        Workspace Core 第一阶段**已授权实现** —— 表数从 13 增加到 18。
+
+        【这条守卫原来叫什么、为什么改】
+            它原来叫 `test_table_count_unchanged`，断言
+            `len(db.table_names()) == 13` —— 那是**设计阶段**的守卫，
+            用来保证「本轮禁止实现 Workspace」。
+
+            Workspace Core 第一阶段任务书**已经授权实现**，
+            所以「表数不变」这条断言已经过时。
+            但**它要防的东西仍然有效**，只是换了个问法：
+
+                ✅ 新增的表必须是 Workspace Core 的 5 张
+                ❌ 不许出现被明确移除的概念的表
+                   （Authorization / Delegation / Cascade Revocation
+                     / Recovery Automation）
+        """
+        names = set(db.table_names())
+
+        expected_workspace_tables = {
+            "workspace_resources",
+            "workspace_explicit_locks",
+            "workspace_revisions",
+            "workspace_audits",
+            "workspace_events",
+        }
+        assert expected_workspace_tables <= names, (
+            f"Workspace Core 的 5 张表不全，缺少 "
+            f"{sorted(expected_workspace_tables - names)}"
+        )
+
+        # 🔒 ADR-0027 移除 / 降级的概念 —— 不许有表
+        for forbidden in ("authorization_requests", "authorizations",
+                          "delegations", "controllers", "lock_requests",
+                          "edit_sessions", "recovery_events", "permissions",
+                          "roles", "acl"):
+            assert forbidden not in names, (
+                f"数据库里出现了 {forbidden} 表 —— "
+                f"该概念已被 ADR-0027 移除/降级，不得实现"
+            )
+
+        assert len(names) == 18, (
+            f"表数应为 13 + Workspace Core 5 = 18，实际 {len(names)}："
+            f"{sorted(names)}"
         )

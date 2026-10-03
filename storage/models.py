@@ -46,6 +46,17 @@ TABLE_SHARED_CONTEXTS: Final = "task_shared_contexts"
 TABLE_CONTEXT_REVISIONS: Final = "task_context_revisions"
 TABLE_CONTEXT_CHANGES: Final = "task_context_changes"
 
+# ---- Workspace Core v1（第一阶段）----
+# 【设计原则（任务书 §48）】
+#     🔒 **只有 Explicit Lock 是持久化事实。**
+#        `Effective Lock` / `Effective Controller` **永远派生** ——
+#        没有表、没有列、没有缓存，避免两份会漂移的事实。
+TABLE_WS_RESOURCES: Final = "workspace_resources"
+TABLE_WS_EXPLICIT_LOCKS: Final = "workspace_explicit_locks"
+TABLE_WS_REVISIONS: Final = "workspace_revisions"
+TABLE_WS_AUDITS: Final = "workspace_audits"
+TABLE_WS_EVENTS: Final = "workspace_events"
+
 
 # ============================================================
 # 建表 SQL
@@ -769,6 +780,111 @@ SCHEMA_STATEMENTS: Final[tuple[str, ...]] = (
         FOREIGN KEY (task_id) REFERENCES tasks (task_id)
     )
     """,
+
+    # --------------------------------------------------------
+    # Workspace Core v1 —— 资源树
+    # --------------------------------------------------------
+    # 🔒 `resource_id` 是**稳定的身份**；`path` 只是派生的位置缓存。
+    #    rename / move 之后 resource_id 不变、path 改变 ——
+    #    所以 Revision / Audit / Lock / Handoff 全部引用 resource_id，
+    #    **不把 path 当身份**（任务书 §29）。
+    #
+    # 🔒 `state` 支持 active / deleted ——
+    #    删除不让资源在数据库里瞬间消失（任务书 §21）。
+    """
+    CREATE TABLE IF NOT EXISTS workspace_resources (
+        resource_id     TEXT PRIMARY KEY,
+        workspace_id    TEXT NOT NULL,
+        parent_id       TEXT,
+        name            TEXT NOT NULL,
+        path            TEXT NOT NULL,
+        resource_type   TEXT NOT NULL,
+        state           TEXT NOT NULL DEFAULT 'active',
+        revision        INTEGER NOT NULL DEFAULT 1,
+        content         TEXT,
+        created_by      TEXT NOT NULL,
+        created_at      TEXT NOT NULL,
+        updated_at      TEXT NOT NULL
+    )
+    """,
+
+    # --------------------------------------------------------
+    # Workspace Core v1 —— 显式责任锁（**唯一的锁事实**）
+    # --------------------------------------------------------
+    # 🔒 `resource_id` 做主键 ⇒ 一个资源最多一条显式锁
+    #    ⇒ **同一 File 不可能有两个 Explicit Holder** ——
+    #      「同一 File 单 Holder」由 schema 保证，不靠应用层自觉。
+    #
+    # 🔒 创建资源时**不写**这张表（任务书 §11）——
+    #    新资源隐式继承父目录责任，重复记录同一责任是冗余。
+    #
+    # ⚠️ **没有 effective_* 列** —— Effective Lock 永远派生。
+    """
+    CREATE TABLE IF NOT EXISTS workspace_explicit_locks (
+        resource_id   TEXT PRIMARY KEY,
+        holder        TEXT NOT NULL,
+        kind          TEXT NOT NULL,
+        acquired_at   TEXT NOT NULL,
+        acquired_by   TEXT NOT NULL
+    )
+    """,
+
+    # --------------------------------------------------------
+    # Workspace Core v1 —— Revision（append-only）
+    # --------------------------------------------------------
+    """
+    CREATE TABLE IF NOT EXISTS workspace_revisions (
+        revision_id     TEXT PRIMARY KEY,
+        resource_id     TEXT NOT NULL,
+        workspace_id    TEXT NOT NULL,
+        revision_number INTEGER NOT NULL,
+        created_by      TEXT NOT NULL,
+        created_at      TEXT NOT NULL,
+        change_type     TEXT NOT NULL,
+        change_ref      TEXT
+    )
+    """,
+
+    # --------------------------------------------------------
+    # Workspace Core v1 —— Audit（含失败尝试，长期保存）
+    # --------------------------------------------------------
+    # 🔒 **包含失败的尝试**（EDIT_ATTEMPT / result = FAILED）——
+    #    与 Event 严格区分（任务书 §30）。
+    """
+    CREATE TABLE IF NOT EXISTS workspace_audits (
+        audit_id      TEXT PRIMARY KEY,
+        operation_id  TEXT NOT NULL,
+        workspace_id  TEXT NOT NULL,
+        action        TEXT NOT NULL,
+        actor         TEXT NOT NULL,
+        resource_id   TEXT,
+        result        TEXT NOT NULL,
+        error_code    TEXT,
+        detail        TEXT,
+        task_id       TEXT,
+        created_at    TEXT NOT NULL
+    )
+    """,
+
+    # --------------------------------------------------------
+    # Workspace Core v1 —— Workspace Event（只记录成功变化）
+    # --------------------------------------------------------
+    # 🔒 **没有 `*_FAILED` 事件** —— 失败属于 Audit。
+    # 🔒 **Event ≠ 向所有 Agent 发 Message** ——
+    #    它只是让未来的 Runtime / Communication 层**可以订阅**
+    #    （任务书 §31 / §46）。
+    """
+    CREATE TABLE IF NOT EXISTS workspace_events (
+        event_id      TEXT PRIMARY KEY,
+        workspace_id  TEXT NOT NULL,
+        event_type    TEXT NOT NULL,
+        resource_id   TEXT,
+        revision      INTEGER,
+        actor         TEXT NOT NULL,
+        detail        TEXT,
+        created_at    TEXT NOT NULL
+    )
+    """,
 )
 
 
@@ -805,6 +921,35 @@ POST_MIGRATION_INDEXES: Final[tuple[str, ...]] = (
     #     按状态找待裁决的提议
     "CREATE INDEX IF NOT EXISTS idx_context_changes_status "
     "ON task_context_changes (task_id, status)",
+
+    # ---- Workspace Core v1 ----
+    #     路径解析 / list()：同一 workspace 内路径唯一
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_ws_resources_path "
+    "ON workspace_resources (workspace_id, path)",
+    #     树遍历：找子资源（descendants / delete / move 用）
+    "CREATE INDEX IF NOT EXISTS idx_ws_resources_parent "
+    "ON workspace_resources (workspace_id, parent_id)",
+    #     按状态过滤（默认只看 active）
+    "CREATE INDEX IF NOT EXISTS idx_ws_resources_state "
+    "ON workspace_resources (workspace_id, state)",
+    #     按 holder 反查「某人负责哪些资源」
+    "CREATE INDEX IF NOT EXISTS idx_ws_locks_holder "
+    "ON workspace_explicit_locks (holder)",
+    #     版本历史
+    "CREATE INDEX IF NOT EXISTS idx_ws_revisions_resource "
+    "ON workspace_revisions (resource_id, revision_number)",
+    #     Audit：按 workspace / 按资源 / 按 operation 串联
+    "CREATE INDEX IF NOT EXISTS idx_ws_audits_ws "
+    "ON workspace_audits (workspace_id, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_ws_audits_resource "
+    "ON workspace_audits (resource_id, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_ws_audits_op "
+    "ON workspace_audits (operation_id)",
+    #     Event 订阅：按 workspace 拉事件流
+    "CREATE INDEX IF NOT EXISTS idx_ws_events_ws "
+    "ON workspace_events (workspace_id, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_ws_events_resource "
+    "ON workspace_events (resource_id, created_at)",
 )
 
 
