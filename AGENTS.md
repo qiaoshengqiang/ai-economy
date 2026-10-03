@@ -30,10 +30,10 @@
 | | |
 |---|---|
 | **阶段** | `Post-Step-4F / Pre-Task-Workspace` |
-| **测试基线** | **3130 passed, 30 deselected** |
+| **测试基线** | **3249 passed, 2 skipped, 30 deselected** |
 | **协议版本** | `protocol_version = "1"` |
 | **命令数** | 16（`./dev.sh` 查看全部） |
-| **数据库表** | 13 |
+| **数据库表** | **18** |
 | **工作区状态** | 应当干净 |
 
 ### 已完成
@@ -46,7 +46,9 @@ Step 4A–4C    Task Core + Lifecycle + TaskWorkspaceRef + Money ·
 Refactor      Task 应用层拆分（门面 / Handler / Mapper / Negotiation）
 Step 4D/4D.1  START / SUBMIT / VERIFY / COMPLETE + 幂等 + 乐观锁 + 事务原子性
 Phase 0·4E   真实多进程验证 + Message Claim Lease · Constitution + Shared Context 设计
-Step 4F       Task Shared Context / Alignment 最小可运行原型  ← 当前
+Step 4F       Task Shared Context / Alignment 最小可运行原型
+Workspace v1  资源树 · Controller · Explicit/Effective Lock · Revision ·
+              Audit · Event · Gateway · 资源级并发  ← 当前
 ```
 
 ### 下一步
@@ -124,8 +126,7 @@ llm/            →  core/ + storage/
 **不**依赖 `services/`；`services/` **不直接**依赖 `storage/`（只经
 `core/task_store`）；只有 `main.py` 调用 `register_type_handler`。
 
-**三个最容易被写错的**：`services → storage` ❌（真实是经 `core/task_store`）；
-`core/` **确实**依赖 `storage/`；`storage/ → core/` 允许（只依赖三个**基础设施叶子**）。
+**三个最容易被写错的**：`services → storage` ❌（真实是经 `core/task_store`）；`core/` **确实**依赖 `storage/`；`storage/ → core/` 允许。
 
 **两个已知例外**（历史遗留，**不要顺手改**）：① `core/economy.py` →
 `agents/base_agent.py`（可达环）；② `storage/database.py` **函数内** import `core.config`。
@@ -145,7 +146,7 @@ llm/            →  core/ + storage/
 | **3** Task Workspace | Task | `FUTURE` | 实际共享的文件与代码。**只有 `TaskWorkspaceRef`** —— 一个 `workspace_id` 字符串。见 [`TASK_WORKSPACE.md`](docs/architecture/TASK_WORKSPACE.md) |
 | **4** External / World State | 系统外 | `FUTURE` | 外部 API / 网络 / Git remote。**无** |
 
-**`Memory ≠ Alignment`** —— Shared Context 是**结果**，Alignment 是**产生它的机制**。
+**`Memory ≠ Alignment`** —— Shared Context 是**结果**，Alignment 是**机制**。
 
 ---
 
@@ -311,7 +312,8 @@ Shared Context 可以**引用、解释、总结、补充**共同知识，
 
 | 领域 | 禁止内容 |
 |---|---|
-| **Workspace** | Task Workspace 实现 · Manager · Gateway · Permission Engine · Lock Manager · Backend · ACL · 文件系统访问 · artifact storage。**正式模型见 [`TASK_WORKSPACE.md`](docs/architecture/TASK_WORKSPACE.md)，但它仍是 `FUTURE`** |
+| **Workspace（已实现部分）** | ✅ **Workspace Core v1 已实现**（资源树 · Controller · Explicit/Effective Lock · Revision · Audit · Event · Gateway · 资源级并发，ADR-0029）。**已解除禁止** |
+| **Workspace（仍禁止）** | ❌ Permission Engine · ACL · IAM · Role · Backend · 物理文件系统访问 · Git worktree · Patch · Acceptance Pipeline · Conversation Manager · Recovery Automation |
 | **Git** | worktree · branch · commit 自动化 · merge |
 | **代码执行** | `subprocess` · shell · Docker · sandbox · 测试运行器 |
 | **经济结算** | Payment · Escrow · Settlement · Wallet transfer |
@@ -328,10 +330,8 @@ Shared Context 可以**引用、解释、总结、补充**共同知识，
 
 ### 也不要过度设计
 
-看到 "Shared Context" 就上 ❌ Blockchain · CRDT · Event sourcing ·
-Vector DB · Knowledge graph · 分布式共识 · Multi-agent 投票 · 复杂 ontology。
-
-**当前目标：建立最小但正确的概念边界。**
+看到 "Shared Context" 就上 ❌ Blockchain · CRDT · Event sourcing · Vector DB ·
+Knowledge graph · 分布式共识 · 多 agent 投票 · 复杂 ontology。**目标是建立最小但正确的边界。**
 
 ---
 
@@ -342,7 +342,7 @@ Vector DB · Knowledge graph · 分布式共识 · Multi-agent 投票 · 复杂 
         ↓
 2. 先调查真实代码（不要凭空设计）
         ↓
-3. 跑基线：./dev.sh test   （必须是 3130 passed）
+3. 跑基线：./dev.sh test   （必须是 3249 passed）
         ↓
 4. 实施最小修改
         ↓
@@ -361,7 +361,7 @@ Vector DB · Knowledge graph · 分布式共识 · Multi-agent 投票 · 复杂 
 
 1. **先调查，再动手。** 不要在设计之前改代码。
 2. **每一步结束跑全量测试。** 不是只跑自己改的那个文件。
-   基线现在是 **3130 passed**。
+   基线现在是 **3249 passed**。
 3. **新增守卫必须配反向测试。** 把违规注入进去，确认守卫**真的变红**。
 
 ---
@@ -374,7 +374,7 @@ Vector DB · Knowledge graph · 分布式共识 · Multi-agent 投票 · 复杂 
 ./dev.sh test tests/test_xxx.py -k 名字  # 单个测试
 ```
 
-基线 **3130 passed / 30 deselected** · 测试文件 51 个 ·
+基线 **3249 passed / 2 skipped / 30 deselected** ·
 守卫文件 10 个约 390 项 · 真实 API 测试 30 项（单独跑，需要 Key）。
 
 **必须用 `./dev.sh test`，不要直接 `pytest`** —— 它会正确设置环境。
@@ -461,7 +461,8 @@ docs/architecture/adr/0023-*.md            ← 为什么它们是独立概念
 docs/architecture/adr/0024-*.md            ← 为什么 Human ≠ Task Creator
 ```
 
-> ⚠️ **Task Workspace 仍是 `FUTURE`**（只有 `TaskWorkspaceRef`）。
+> ⚠️ **Workspace Core v1 已实现**（见 [`WORKSPACE_CORE_V1_DESIGN.md`](docs/architecture/implementation/WORKSPACE_CORE_V1_DESIGN.md) + ADR-0029）；
+> 其余 Workspace 能力仍是 `FUTURE`。
 >
 > | 已定（`SETTLED`） | 仍 `FUTURE` / `OPEN` |
 > |---|---|
@@ -523,7 +524,9 @@ docs/architecture/adr/0024-*.md            ← 为什么 Human ≠ Task Creator
 | Human 的四角色 | ✅ `SETTLED`：Demand Provider / Feedback Provider / Optional Collaborator / Governance Authority |
 | Guardian · 自动恢复 · Reopen 6 细节 · Demand 实体 · Child Task · Agent 自建 Root Task | `FUTURE` / `OPEN`（见各文档） |
 | Heartbeat / Lease Renewal · Human 作 Task Manager | ❌ **Not implemented / 禁止** |
-| **Task Workspace 实现** | **`FUTURE`** —— 生产代码一行 Lock 都没有 |
+| **Workspace Core v1** | ✅ **已实现**：资源树 · Controller · Explicit/Effective Lock ·
+Revision · Audit · Event · Gateway（9 操作）· **资源级并发**（ADR-0029） |
+| Task Workspace 其余部分 | `FUTURE`：Git Worktree · Patch · Acceptance · Conversation Manager · Recovery Automation · AI Governance |
 
 > **v1 不需要等自动恢复机制就能进入 Workspace 实现。**
 
