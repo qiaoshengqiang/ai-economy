@@ -30,7 +30,7 @@
 | | |
 |---|---|
 | **阶段** | `Post-Step-4F / Pre-Task-Workspace` |
-| **测试基线** | **3397 passed, 2 skipped, 30 deselected** |
+| **测试基线** | **3476 passed, 2 skipped, 30 deselected** |
 | **协议版本** | `protocol_version = "1"` |
 | **命令数** | 17（`./dev.sh` 查看全部） |
 | **数据库表** | **18** |
@@ -54,10 +54,8 @@ Workspace 收尾 Hardening · 组合根接线 · CLI demo · 20 Agent 并行  �
 
 ### 下一步
 
-> **Task Workspace**（含 Permission / Artifact）。
->
-> **Task Shared Context 已经实现** —— 下一步不再是设计它，
-> 而是它下面的 Workspace 层。
+> **第二阶段：Change Pipeline**（Git Worktree → Patch → Test → Acceptance → Merge）。
+> **当前是设计阶段** —— 见 [`CHANGE_PIPELINE_V1_DESIGN.md`](docs/architecture/implementation/CHANGE_PIPELINE_V1_DESIGN.md)。
 
 ---
 
@@ -342,7 +340,7 @@ Knowledge graph · 分布式共识 · 多 agent 投票 · 复杂 ontology。**�
         ↓
 2. 先调查真实代码（不要凭空设计）
         ↓
-3. 跑基线：./dev.sh test   （必须是 3397 passed）
+3. 跑基线：./dev.sh test   （必须是 3476 passed）
         ↓
 4. 实施最小修改
         ↓
@@ -361,7 +359,7 @@ Knowledge graph · 分布式共识 · 多 agent 投票 · 复杂 ontology。**�
 
 1. **先调查，再动手。** 不要在设计之前改代码。
 2. **每一步结束跑全量测试。** 不是只跑自己改的那个文件。
-   基线现在是 **3397 passed**。
+   基线现在是 **3476 passed**。
 3. **新增守卫必须配反向测试。** 把违规注入进去，确认守卫**真的变红**。
 
 ---
@@ -374,7 +372,7 @@ Knowledge graph · 分布式共识 · 多 agent 投票 · 复杂 ontology。**�
 ./dev.sh test tests/test_xxx.py -k 名字  # 单个测试
 ```
 
-基线 **3397 passed / 2 skipped / 30 deselected** ·
+基线 **3476 passed / 2 skipped / 30 deselected** ·
 守卫文件 10 个约 390 项 · 真实 API 测试 30 项（单独跑，需要 Key）。
 
 **必须用 `./dev.sh test`，不要直接 `pytest`** —— 它会正确设置环境。
@@ -400,6 +398,7 @@ AGENTS.md → 判断任务领域 → 只读相关 Specification → 必要时读
 | **Workspace / Lifecycle / Human** | [`TASK_WORKSPACE.md`](docs/architecture/TASK_WORKSPACE.md) + ADR-0020/0021/0022（§4.1 · §7 · §14.5 · §15） | TASK_SHARED_CONTEXT.md |
 | **Task Origin / Task Lineage** | [`TASK_ORIGIN_LINEAGE.md`](docs/architecture/TASK_ORIGIN_LINEAGE.md) + **ADR-0023** —— 概念已定（`SETTLED`），**实现为 `FUTURE`** | — |
 | **Guard / 测试** | ADR-0018 · `tests/*guards*.py` | — |
+| **Git Worktree / Patch / Test / Acceptance / Merge** | [`CHANGE_PIPELINE_V1_DESIGN.md`](docs/architecture/implementation/CHANGE_PIPELINE_V1_DESIGN.md) + **ADR-0032…0036** —— **设计已定（`DESIGNED`），尚未实现** | Workspace Core 内部细节 |
 
 **Constitution 只在三种情况下通读**：第一次接触项目 · 要**新增**一条边界 ·
 要**推翻**某条边界。日常改一个模块读对应章节 + 相关 ADR 就够。

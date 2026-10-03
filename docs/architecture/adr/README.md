@@ -55,6 +55,11 @@
 | [0029](0029-workspace-core-v1-concurrency-and-revision.md) | **Workspace Core v1 并发模型 · 责任变化不产生 Revision** | Accepted（**已实现**） | Workspace Core 第一阶段 | Workspace |
 | [0030](0030-workspace-core-hardening.md) | **Hardening：一致性不变量与边界完整性** | Accepted（**已实现**） | Workspace Core 收尾 | Workspace |
 | [0031](0031-database-thread-local-session.md) | **Database 线程模型：每线程一个 Session** | Accepted（**已实现**） | Freeze 前收尾 | Storage |
+| [0032](0032-git-worktree-workspace-boundary.md) | **Git Worktree 与 Task Workspace 的边界** | Accepted（设计） | 第二阶段设计 | Change Pipeline |
+| [0033](0033-patch-and-workspace-revision-provenance.md) | **Patch 与 Workspace Revision 的 Provenance 与 Applicability** | Accepted（设计） | 第二阶段设计 | Change Pipeline |
+| [0034](0034-test-run-acceptance-separation.md) | **Test Run / Acceptance / Merge 三者分离** | Accepted（设计） | 第二阶段设计 | Change Pipeline |
+| [0035](0035-execution-lease-vs-workspace-responsibility.md) | **Execution Lease 与 Workspace Responsibility 的分离** | Accepted（设计） | 第二阶段设计 | Change Pipeline |
+| [0036](0036-change-pipeline-concurrency-and-crash-consistency.md) | **Change Pipeline 的并发模型与 Crash Consistency** | Accepted（设计） | 第二阶段设计 | Change Pipeline |
 | [0028](0028-read-visibility-and-native-communication.md) | **Read 靠 Task Participation；Communication 是 Agent 基础能力** | Accepted（实现为 FUTURE） | Read / Visibility / Communication | Workspace / Communication |
 
 ---
