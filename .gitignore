@@ -42,6 +42,9 @@ data/*.db-wal
 data/*.db-shm
 logs/*.log
 
+# snake-demo 的 server pidfile 是**运行时产物**（含 pid），不是源码
+data/snake-demo-server.json
+
 # --- Agent 的私有记忆与工作产物 ---
 # 注意：这里只忽略「生成出来的文件」，不忽略目录本身的 .gitkeep，
 #       这样目录结构（也就是 Agent 的边界）依然保留在仓库里。
