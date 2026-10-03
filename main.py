@@ -4386,15 +4386,22 @@ def _snake_prompt(demand: str) -> str:
         "  3. game speed\n"
         "  4. initial snake length\n"
         "  5. whether the snake may wrap through walls\n\n"
-        "Reply with ONLY a JSON object (no markdown fences, no prose):\n"
-        "{\n"
-        '  "files": [{"path": "index.html", "content": "..."},\n'
-        '            {"path": "style.css",  "content": "..."},\n'
-        '            {"path": "config.js",  "content": "..."},\n'
-        '            {"path": "game.js",    "content": "..."}],\n'
-        '  "summary": "one short sentence",\n'
-        '  "configFile": "config.js"\n'
-        "}\n\n"
+        # 🔒 行分隔格式，不要 JSON ——
+        #    实测 doubao 把代码转义进 JSON 字符串时约一半会吐坏 JSON。
+        #    这个格式里每行都是**原样文本**，不需要任何转义。
+        "Reply using EXACTLY this plain-text format.\n"
+        "Do NOT use JSON, do NOT wrap anything in markdown fences, and do\n"
+        "NOT escape any characters - write each file's contents exactly\n"
+        "as they should appear on disk:\n\n"
+        "===SUMMARY===\n"
+        "<one short sentence>\n"
+        "===CONFIG===\n"
+        "<path of the config file>\n"
+        "===FILE: <path>===\n"
+        "<the complete raw content of that file>\n"
+        "===FILE: <path>===\n"
+        "<the complete raw content of that file>\n"
+        "===END===\n\n"
         "Rules:\n"
         "- Plain HTML/CSS/JavaScript only. No build step, no npm, no CDN.\n"
         "- Must run by simply opening index.html in a browser.\n"
@@ -4402,6 +4409,91 @@ def _snake_prompt(demand: str) -> str:
         "- Controls: arrow keys. Must include a restart control.\n"
         "- Keep every file short. This is a demo, not a product.\n"
     )
+
+
+#: 🔒 分隔符格式 —— **不让模型把代码塞进 JSON 字符串**。
+#:
+#: 【为什么换成这个格式 / 实测依据】
+#:
+#:   原来让模型输出：
+#:       {"files":[{"path":"x.js","content":"<整段代码>"}]}
+#:
+#:   deepseek 稳定；**doubao-seed-evolving 实测 2/4 次吐坏 JSON**：
+#:       · 把结构性引号也转义："content\":\"..."
+#:       · Unterminated string
+#:       · Expecting ',' delimiter
+#:
+#:   根因**不是配置**，是任务本身：要求模型把「含引号、反斜杠、换行
+#:   的代码」逐字符转义进 JSON 字符串 —— 很多模型都做不稳。
+#:
+#:   换成行分隔格式后**完全不需要转义**，对模型友好得多。
+#:   JSON 那条路**保留为回退**，所以不是「换了一套 parser」而是加了一条。
+_SNAKE_MARK_FILE = "===FILE:"
+_SNAKE_MARK_SUMMARY = "===SUMMARY==="
+_SNAKE_MARK_CONFIG = "===CONFIG==="
+_SNAKE_MARK_END = "===END==="
+
+
+def _snake_parse_delimited(text: str) -> tuple:
+    """解析 `===FILE: path===` 分隔格式 → `(files, summary, config_file)`。"""
+    if _SNAKE_MARK_FILE not in text:
+        return [], "", ""
+
+    files: list = []
+    summary = ""
+    config_file = ""
+    mode = "head"
+    buf: list = []
+    current = None
+
+    def flush():
+        if not current:
+            return
+        content = "\n".join(buf)
+        if not content.endswith("\n"):
+            content += "\n"
+        files.append({"path": current, "content": content})
+
+    for line in text.splitlines():
+        stripped = line.strip()
+
+        if stripped.startswith(_SNAKE_MARK_FILE):
+            flush()
+            path = stripped[len(_SNAKE_MARK_FILE):].split("===")[0]
+            current, buf, mode = path.strip().strip("`\"'"), [], "file"
+            continue
+        if stripped == _SNAKE_MARK_SUMMARY:
+            flush(); current, buf, mode = None, [], "summary"; continue
+        if stripped == _SNAKE_MARK_CONFIG:
+            flush(); current, buf, mode = None, [], "config"; continue
+        if stripped.startswith(_SNAKE_MARK_END):
+            flush(); current, buf, mode = None, [], "done"; continue
+
+        if mode == "file":
+            buf.append(line)
+        elif mode == "summary" and stripped and not summary:
+            summary = stripped
+        elif mode == "config" and stripped and not config_file:
+            config_file = stripped.strip("`\"'")
+
+    flush()
+    return [f for f in files if f["path"]], summary, config_file
+
+
+def _snake_parse_reply(text: str) -> tuple:
+    """`(files, summary, config_file, how)` —— 分隔符优先，JSON 回退。"""
+    files, summary, config_file = _snake_parse_delimited(text)
+    if files:
+        return files, summary, config_file, "delimited"
+
+    payload = _extract_json_object(text)
+    if isinstance(payload, dict) and isinstance(payload.get("files"), list):
+        good = [f for f in payload["files"] if isinstance(f, dict)]
+        if good:
+            return (good, str(payload.get("summary") or ""),
+                    str(payload.get("configFile") or ""), "json")
+
+    return [], "", "", "failed"
 
 
 def _snake_classify(files: list) -> tuple:
@@ -4499,13 +4591,21 @@ def _snake_inspect_config(files: list, declared: str) -> tuple:
     config_content = dict(js)[config_file]
 
     # ---- ② 配置对象名 ----
+    # ⚠️ 原来只认 `const X = {` —— 实测 doubao 会写
+    #       `window.GAME_CONFIG = {` / `var X = {` / `X = {`
+    #    于是明明有配置对象却被判「没找到」。改成两段式：
+    #       ① 有声明关键字的
+    #       ② 任何「名字 = {」的赋值（含 window.X）
     m = _re.search(
         r"(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*\{", config_content)
     if not m:
+        m = _re.search(r"([A-Za-z_$][\w$.]*)\s*=\s*\{", config_content)
+    if not m:
         return config_file, [], [
-            f"{config_file} 里没有找到配置对象（期望 `const X = {{...}}`）"
+            f"{config_file} 里没有找到配置对象（期望 `X = {{...}}`）"
         ], list(_SNAKE_CONFIG_CONCEPTS)
-    config_name = m.group(1)
+    # `window.GAME_CONFIG` → 引用检查用最后一段
+    config_name = m.group(1).split(".")[-1]
 
     # ---- ③ 五个概念必须都在配置里 ----
     block = config_content[m.start():]
@@ -4617,13 +4717,13 @@ def _run_snake_demo(
                    latency_ms=response.latency_ms,
                    summary=note)
 
-    payload = _extract_json_object(response.content)
-    if not isinstance(payload, dict) or not isinstance(payload.get("files"), list):
-        return replace(base, stage="llm_parse", reason="LLM 未返回期望的 JSON")
-
-    files = [f for f in payload["files"] if isinstance(f, dict)]
+    files, reply_summary, reply_config, how = _snake_parse_reply(
+        response.content)
+    base = replace(base, summary=reply_summary or base.summary)
     if not files:
-        return replace(base, stage="llm_parse", reason="files 为空")
+        return replace(base, stage="llm_parse",
+                       reason="LLM 回复无法解析（分隔符格式与 JSON 都失败）")
+    payload = {"configFile": reply_config}
 
     # ---------- 多文件验收（§7）----------
     counts, problems = _snake_classify(files)
@@ -4656,16 +4756,13 @@ def _run_snake_demo(
                 second = agent.generate(
                     messages=[_snake_prompt(SNAKE_DEMO_DEMAND), followup],
                     provider=chosen)
-                payload2 = _extract_json_object(second.content)
-                if isinstance(payload2, dict) and isinstance(
-                        payload2.get("files"), list):
-                    files2 = [f for f in payload2["files"]
-                              if isinstance(f, dict)]
+                files2, _s2, cfg2, _h2 = _snake_parse_reply(second.content)
+                if files2:
                     c2, p2 = _snake_classify(files2)
-                    if files2 and not p2:
+                    if not p2:
                         files = files2
                         counts = c2
-                        payload = payload2
+                        payload = {"configFile": cfg2}
                         base = replace(
                             base, input_tokens=(
                                 (base.input_tokens or 0)

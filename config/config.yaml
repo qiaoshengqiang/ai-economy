@@ -128,7 +128,7 @@ llm:
       #   ① 模型名称（推荐）：doubao-seed-1-6-250615
       #   ② 推理接入点 ID：ep-2024xxxxxxxxx-xxxxx
       # 一般填在 .env 的 DOUBAO_MODEL 里，不用改这里。
-      model: ""
+      model: "Doubao-Seed-Evolving"
 
       # 【实测：这里原来也是 60，会超时】
       #
@@ -165,7 +165,7 @@ llm:
       #       "max_tokens and max_completion_tokens cannot be set at the same time"
       #
       #   所以这里改成 "max_completion_tokens" 即可，无需改代码。
-      max_tokens_field: "max_tokens"
+      max_tokens_field: "max_completion_tokens"
 
       # extra_body：额外塞进请求体的字段。
       #
@@ -181,9 +181,9 @@ llm:
       #
       #   想省钱就打开下面这行：
       #
-      # extra_body:
-      #   thinking:
-      #     type: disabled
+      extra_body:
+        thinking:
+          type: disabled
 
     grok:
       enabled: true
