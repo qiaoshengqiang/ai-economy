@@ -30,7 +30,7 @@
 | | |
 |---|---|
 | **阶段** | `Post-Step-4F / Pre-Task-Workspace` |
-| **测试基线** | **2802 passed, 30 deselected** |
+| **测试基线** | **2850 passed, 30 deselected** |
 | **协议版本** | `protocol_version = "1"` |
 | **命令数** | 16（`./dev.sh` 查看全部） |
 | **数据库表** | 13 |
@@ -39,17 +39,13 @@
 ### 已完成
 
 ```
-Step 1        Agent + Economy 基础骨架
-Step 2/2.5    Brain / LLM 抽象 + 真实 DeepSeek Provider
+Step 1·2/2.5  Agent + Economy 骨架 · Brain / LLM 抽象 + 真实 DeepSeek Provider
 Step 3/3.6/3.7 Communication + Identity / Address / Transport / Protocol 冻结
-Step 4A       Task Core + Lifecycle + TaskWorkspaceRef + Money
-Step 4B       Capability + AgentDirectory + 自主发现协作者
-Step 4C       DecisionPolicy + 多轮谈判 + ACCEPT / REJECT + TaskAgreement
+Step 4A–4C    Task Core + Lifecycle + TaskWorkspaceRef + Money ·
+              Capability + AgentDirectory · DecisionPolicy + 谈判 + TaskAgreement
 Refactor      Task 应用层拆分（门面 / Handler / Mapper / Negotiation）
-Step 4D       START / SUBMIT / VERIFY / COMPLETE + TaskExecutionService
-Step 4D.1     持久化消息幂等 + Task 乐观锁 + 事务原子性
-Phase 0       真实多进程验证 + Message Claim Lease
-Step 4E       Architecture Constitution + Shared Context 设计
+Step 4D/4D.1  START / SUBMIT / VERIFY / COMPLETE + 幂等 + 乐观锁 + 事务原子性
+Phase 0·4E   真实多进程验证 + Message Claim Lease · Constitution + Shared Context 设计
 Step 4F       Task Shared Context / Alignment 最小可运行原型  ← 当前
 ```
 
@@ -59,6 +55,27 @@ Step 4F       Task Shared Context / Alignment 最小可运行原型  ← 当前
 >
 > **Task Shared Context 已经实现** —— 下一步不再是设计它，
 > 而是它下面的 Workspace 层。
+
+---
+
+## 2.5 ⚠️ Current V1 vs Future Human-facing Architecture
+
+> **V1 先把 Agent Economy 核心闭环跑通，不是先解决 Human Experience。**
+
+| | **`CURRENT` / V1** | **`FUTURE`** |
+|---|---|---|
+| 入口 | **Professional User**（能明确提任务） | 普通用户 + **Front Agent** |
+| 链路 | `User → Agent A → Root Task → 自执行 / 协作 → Result → 验收` | `Human → Front Agent → Agent Economy` |
+| Human 角色 | Requester · 约束 · 预算 · 验收 · 反馈 | 模糊意图 · 方案选择 · 经济承诺 |
+
+**V1 必须避免的 4 个错误假设**：① ❌ `Human → Agent A` **不是**永久架构，
+只是 V1 部署方式；② ❌ Human **不是** Task Creator（ADR-0024）；
+③ ❌ 不硬编码 `Task.creator = human` —— **Front Agent 也是 Agent**，
+不该有 `HumanTask` / `Front-created Task`；④ ❌ Front Agent **不是**中央
+Coordinator —— 只做 `Human → OS` 入口，Agent 间仍可直接协作。
+
+> **兼容性 ≠ 提前实现**：`V1 简单 + 边界清楚 + 接口稳定 = 可扩展`（详见
+> [`TASK_ORIGIN_LINEAGE.md`](docs/architecture/TASK_ORIGIN_LINEAGE.md) §2.9）。
 
 ---
 
@@ -109,14 +126,12 @@ llm/            →  core/ + storage/
 `core/task_store`）；只有 `main.py` 调用 `register_type_handler`。
 
 **三个最容易被写错的**：`services → storage` ❌（真实是经 `core/task_store`）；
-`core/` **确实**依赖 `storage/`（领域规则不依赖上层，但持久化访问就在 core 里）；
-`storage/ → core/` 是允许的（只依赖三个**基础设施叶子**，不是聚合根）。
+`core/` **确实**依赖 `storage/`；`storage/ → core/` 允许（只依赖三个**基础设施叶子**）。
 
-**两个已知例外**（历史遗留，**不要顺手改**）：
-① `core/economy.py` → `agents/base_agent.py`（形成 `core → agents → core` 可达环）；
-② `storage/database.py` 在**函数内** import `core.config`（打破顶层循环）。
+**两个已知例外**（历史遗留，**不要顺手改**）：① `core/economy.py` →
+`agents/base_agent.py`（可达环）；② `storage/database.py` **函数内** import `core.config`。
 
-> 重新扫描用 **AST**，不要用 `grep "import storage"`。方法见 [Constitution §4](docs/architecture/ARCHITECTURE_CONSTITUTION.md)。
+> 重新扫描用 **AST**，见 [Constitution §4](docs/architecture/ARCHITECTURE_CONSTITUTION.md)。
 
 ---
 
@@ -124,21 +139,12 @@ llm/            →  core/ + storage/
 
 > ⚠️ **Agent Private Workspace 不在这四层里**（独立的资源/文件空间概念，见 §4.1）。
 
-| Layer | 属于谁 | 状态 | 是什么 |
+| Layer | 属于谁 | 状态 | 是什么 / 当前实现 |
 |---|---|---|---|
-| **1** Agent Private Memory | 单个 Agent | `DESIGNED` | 私人经验 / 判断 / 策略。**其他 Agent 默认无权读** |
-| **2** Task Shared Context | **Task** | **`CURRENT`** | 共同的任务世界模型（决策 / 假设 / 问题 / 分工） |
-| **3** Task Workspace | Task | `FUTURE` | 实际共享的文件与代码 |
-| **4** External / World State | 系统外 | `FUTURE` | 外部 API / 网络 / Git remote |
-
-**这四层的实现状态**：
-
-| | 状态 | 说明 |
-|---|---|---|
-| Agent Private Memory | `DESIGNED` | 有目录与极简文件读写（`Workspace.write_memory`），**没有**结构化记忆、检索、经验积累 |
-| Task Shared Context | **`CURRENT`** | **已实现**：持久化 + 修订历史 + Alignment + 乐观锁。见 [`TASK_SHARED_CONTEXT.md`](docs/architecture/TASK_SHARED_CONTEXT.md) |
-| Task Workspace | `FUTURE` | **只有 `TaskWorkspaceRef`** —— 一个 `workspace_id` 字符串。架构定义见 [`TASK_WORKSPACE.md`](docs/architecture/TASK_WORKSPACE.md) |
-| External / World State | `FUTURE` | 无 |
+| **1** Agent Private Memory | 单个 Agent | `DESIGNED` | 私人经验 / 判断 / 策略。**默认无权读**。有目录与极简文件读写（`Workspace.write_memory`），**无**结构化记忆、检索、经验积累 |
+| **2** Task Shared Context | **Task** | **`CURRENT`** | 共同的任务世界模型。**已实现**：持久化 + 修订历史 + Alignment + 乐观锁。见 [`TASK_SHARED_CONTEXT.md`](docs/architecture/TASK_SHARED_CONTEXT.md) |
+| **3** Task Workspace | Task | `FUTURE` | 实际共享的文件与代码。**只有 `TaskWorkspaceRef`** —— 一个 `workspace_id` 字符串。见 [`TASK_WORKSPACE.md`](docs/architecture/TASK_WORKSPACE.md) |
+| **4** External / World State | 系统外 | `FUTURE` | 外部 API / 网络 / Git remote。**无** |
 
 **`Memory ≠ Alignment`** —— Shared Context 是**结果**，
 Alignment 是**产生和更新它的机制**。两者必须分开。
@@ -314,11 +320,9 @@ Shared Context 可以**引用、解释、总结、补充**共同知识，
 | **经济结算** | Payment · Escrow · Settlement · Wallet transfer |
 | **通信可靠性** | Retry Queue · Retry Scheduler · ACK · Redis · Kafka · Celery |
 | **网络** | P2P · 多机 · 分布式 |
-| **生命周期** | Heartbeat · Scheduler · Life Loop。**不得因为 Guardian / 未来自动恢复而提前实现** |
+| **生命周期 / 演化** | Heartbeat · Scheduler · Life Loop · Adaptive Negotiation · RL · 策略自学习。**不得因 Guardian / 未来自动恢复而提前实现** |
 | **Guardian** | Guardian Agent 实体代码 · crash detector · 基于 inactivity 的自动判死 · 自动 Lock Expiry · Lease Renewal |
-| **智能演化** | Adaptive Negotiation · RL · 策略自学习 |
-| **协调** | TaskManager · Coordinator |
-| **生命周期清理** | GC · TTL · 自动物理删除 · Workspace Delete Lifecycle |
+| **协调 / 清理** | TaskManager · Coordinator · GC · TTL · 自动物理删除 · Workspace Delete Lifecycle |
 | **篡改监控** | Filesystem Watcher · Hash Tamper Detection · Kernel-level Enforcement · 阻止管理员直接改文件 |
 | **Task Lineage** | `parent_task_id` · `root_task_id` · child task · task tree · task graph · delegation lifecycle · ChildTaskManager · TaskCreationService（概念见 [TASK_ORIGIN_LINEAGE.md](docs/architecture/TASK_ORIGIN_LINEAGE.md)，**实现为 `FUTURE`**） |
 | **Human 中心化** | Human Task Manager · Human Task Coordinator · Human Central Scheduler · Human-driven Task Tree Management（**系统目标就是 Agent 能独立组织复杂工作**） |
@@ -341,7 +345,7 @@ Vector DB · Knowledge graph · 分布式共识 · Multi-agent 投票 · 复杂 
         ↓
 2. 先调查真实代码（不要凭空设计）
         ↓
-3. 跑基线：./dev.sh test   （必须是 2802 passed）
+3. 跑基线：./dev.sh test   （必须是 2850 passed）
         ↓
 4. 实施最小修改
         ↓
@@ -360,7 +364,7 @@ Vector DB · Knowledge graph · 分布式共识 · Multi-agent 投票 · 复杂 
 
 1. **先调查，再动手。** 不要在设计之前改代码。
 2. **每一步结束跑全量测试。** 不是只跑自己改的那个文件。
-   基线现在是 **2802 passed**。
+   基线现在是 **2850 passed**。
 3. **新增守卫必须配反向测试。** 把违规注入进去，确认守卫**真的变红**。
 
 ---
@@ -373,7 +377,7 @@ Vector DB · Knowledge graph · 分布式共识 · Multi-agent 投票 · 复杂 
 ./dev.sh test tests/test_xxx.py -k 名字  # 单个测试
 ```
 
-基线 **2802 passed / 30 deselected** · 测试文件 51 个 ·
+基线 **2850 passed / 30 deselected** · 测试文件 51 个 ·
 守卫文件 10 个约 390 项 · 真实 API 测试 30 项（单独跑，需要 Key）。
 
 **必须用 `./dev.sh test`，不要直接 `pytest`** —— 它会正确设置环境。
@@ -396,9 +400,7 @@ AGENTS.md → 判断任务领域 → 只读相关 Specification → 必要时读
 | **Negotiation / DecisionPolicy** | §6.1 · `core/decision_policy.py` · `task_negotiation_service.py` | Workspace 相关 |
 | **Execution（START/SUBMIT/…）** | `task_execution_service.py` · `core/task_execution.py` · `core/task.py` | Alignment 设计 |
 | **Communication / 协议** | [`PROTOCOL.md`](PROTOCOL.md) · `communication/` · ADR-0002 · ADR-0003 | Economy |
-| **Workspace（`FUTURE`）** | [`TASK_WORKSPACE.md`](docs/architecture/TASK_WORKSPACE.md) + ADR-0020 · §4.1 · §7 | TASK_SHARED_CONTEXT.md |
-| **Lifecycle / Reopen / Iteration** | `TASK_WORKSPACE.md` §15 + **ADR-0022** | — |
-| **Human Participation** | `TASK_WORKSPACE.md` §14.5 + ADR-0022 | — |
+| **Workspace / Lifecycle / Human** | [`TASK_WORKSPACE.md`](docs/architecture/TASK_WORKSPACE.md) + ADR-0020/0021/0022（§4.1 · §7 · §14.5 · §15） | TASK_SHARED_CONTEXT.md |
 | **Task Origin / Task Lineage** | [`TASK_ORIGIN_LINEAGE.md`](docs/architecture/TASK_ORIGIN_LINEAGE.md) + **ADR-0023** —— 概念已定（`SETTLED`），**实现为 `FUTURE`** | — |
 | **Guard / 测试** | ADR-0018 · `tests/*guards*.py` | — |
 
@@ -494,13 +496,11 @@ docs/architecture/adr/0024-*.md            ← 为什么 Human ≠ Task Creator
 
 | # | 技术债 | 严重度 | 说明 |
 |---|---|---|---|
-| 1 | **租约 vs 长任务** | 🔴 | 没有 lease renewal。handler 处理时间**超过租约** → 别的 worker 接手 → **重复处理**。Workspace 阶段的重复处理 = **重复的文件副作用** |
-| 2 | **多线程共享 `Database` 不安全** | 🔴 | `_tx_depth` 是实例状态。跨线程共享会被交错修改 → 事务边界错乱。**当前唯一安全用法是每线程一个 `Database` 实例** |
-| 3 | **Retry 未实现** | 🟡 | 租约到期只让**占用**失效。**没有任何东西会自动重新投递** |
-| 4 | **网络 / 多机未做** | 🟡 | Phase 0 验证的是**多进程、同一文件系统** |
-| 5 | **`result_ref` 没有 resolver** | 🟡 | 只保证「不是路径、不是 URL」。**不检查它指向的成果是否真的存在** |
-| 6 | 压力测试规模小 | 🟢 | 4 进程 × 15 轮。证明正确性，不证明性能 |
-| 7 | 写事务全串行 | 🟢 | `BEGIN IMMEDIATE` 的固有代价（SQLite 单写者） |
+| 1 | **租约 vs 长任务** | 🔴 | 无 lease renewal。handler 超租约 → 别的 worker 接手 → **重复处理**（Workspace 阶段 = 重复文件副作用） |
+| 2 | **多线程共享 `Database` 不安全** | 🔴 | `_tx_depth` 是实例状态，跨线程会被交错修改 → 事务边界错乱。**唯一安全用法：每线程一个 `Database`** |
+| 3-4 | **Retry / 网络未实现** | 🟡 | 租约到期只让占用失效，**没有东西会自动重投递**；Phase 0 验证的是**多进程、同一文件系统** |
+| 5 | **`result_ref` 没有 resolver** | 🟡 | 只保证「不是路径、不是 URL」，**不检查成果是否真的存在** |
+| 6-7 | 压力测试规模小 · 写事务全串行 | 🟢 | 4 进程 × 15 轮（证明正确性，不证明性能）· `BEGIN IMMEDIATE` 的固有代价 |
 | 8 | **ADR 索引有 16 篇断链** | 🟡 | `adr/README.md` 链接了 25 篇，**实际只有 9 篇文件**。缺 0001–0011 · 0013 · 0015 · 0016 · 0017 —— 链接点开是 404。设计确实存在（见 Constitution），但 ADR 文件从未落盘。**有守卫阻止新增断链**，豁免名单见 `test_task_origin_lineage_guards.py` |
 
 ### Phase 0 的遗留决策
@@ -544,17 +544,13 @@ docs/architecture/adr/0024-*.md            ← 为什么 Human ≠ Task Creator
 
 ## 12.5 关于 Agent Economy 的长期理念（**不是当前功能**）
 
-> **经济表现不是 Intelligence 本身**，但**长期收入、成本控制、任务成功率、
-> 返工率、谈判表现和生存能力**是观察 Agent 实际行为能力的**重要外部信号**。
-
-**只是长期理念。** 不要因此实现：❌ Reputation 评分 · ❌ Ranking ·
-❌ 自动最优选择 · ❌ 策略学习。`Capability ≠ Economy` 仍然成立。
+> **经济表现不是 Intelligence 本身**，但长期收入/成本/成功率/返工率/谈判表现/
+> 生存能力是观察 Agent 实际行为能力的**重要外部信号**。
+> **只是理念**，不要因此实现：❌ Reputation · ❌ Ranking · ❌ 自动最优选择 · ❌ 策略学习。
 
 ---
 
 ## 13. 一句话总结
 
-> **项目的核心不是「功能越来越多」，
-> 而是「边界越来越清楚」。**
->
+> **项目的核心不是「功能越来越多」，而是「边界越来越清楚」。**
 > 宁愿少做功能，也不要破坏边界。

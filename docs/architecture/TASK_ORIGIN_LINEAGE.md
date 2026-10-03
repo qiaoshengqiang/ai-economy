@@ -308,6 +308,186 @@ Task
 
 ---
 
+### 2.9 ⚠️ Current V1 vs Future Front Agent（`SETTLED` 边界 / Future 不实现）
+
+> **V1 先把 Agent Economy 核心闭环跑通，不是先解决 Human Experience。**
+>
+> 本节回答：**当前架构会不会把未来的 Front Agent 写死？**
+
+#### 2.9.1 当前 V1 的真实目标
+
+V1 **不是**面向普通用户的完整自然语言 AI 产品。它面向：
+
+> **专业的 Agent 使用者** —— 能比较明确地提出任务，
+> 并理解 Agent · Task · 协作 · 预算 · 验收这些概念。
+
+```
+Professional User
+        │ 明确任务 / 约束 / 验收要求
+        ▼
+     Agent A
+        ├── 自己执行
+        └── 发现需要协作 → 寻找 Agent B
+                 │
+            Negotiation → Task Agreement
+                 │
+             Child Task → Agent B 执行 → 返回结果
+                 ▼
+             Agent A 整合 → Root Task Result
+                 ▼
+             Human 验收 / 反馈
+```
+
+**V1 真正要验证的是**：
+
+> 一个人类用户能否把一个明确任务交给 Agent A，
+> Agent A 能否**作为独立经济主体自主决定如何完成**，
+> 并通过 **Agent-to-Agent 协作**完成复杂工作。
+
+#### 2.9.2 V1 **不是**的东西
+
+```
+❌ Human → 中央 Task Manager → 调度 Agent A / B
+❌ Human → 系统自动拆任务 → 自动指定 Agent
+```
+
+> **Agent A 必须真正承担 Task 的组织和执行责任。**
+
+#### 2.9.3 V1 的 Human 角色（很简单）
+
+| ✅ V1 需要 | ❌ V1 不要求做得好（以后可以增加） |
+|---|---|
+| 提出任务 · 提供约束 · 提供上下文 | 模糊意图 · 开放式探索 |
+| 提供预算 / 经济承诺（需要时） | 自然语言需求澄清 |
+| 最终验收 · 提供反馈 | 自动方案比较 · 普通用户教育 · 长期陪伴式交互 |
+
+#### 2.9.4 ⚠️ V1 必须避免的 4 个错误假设
+
+> 虽然 Front Agent 现在**不实现**，但当前代码与架构
+> **绝对不能隐含**以下假设。
+
+| # | 错误假设 | 正确理解 |
+|---|---|---|
+| **1** | `Human → Agent A` 是**系统永远成立**的架构规则 | 那只是 **V1 的部署方式**。不要硬编码成架构常量 |
+| **2** | Human 可以直接成为 Task Creator | 保持已定边界：**Human = Requester**，**Agent = Task Creator**（§2.4） |
+| **3** | Human 永远直接操作 Task | 不要在 Task Core 里硬编码 `Task.creator = human`；也**不要**让未来的 Front Agent 变成一个「必须新增的特殊 Task Creator」 |
+| **4** | Front Agent 是一个**中央 Coordinator** | 见 §2.9.6 |
+
+#### 2.9.5 未来 Front Agent 的构想（`FUTURE` —— 本轮不实现）
+
+```
+                    Human
+                      │
+                      ▼
+              ┌────────────────┐
+              │  Front Agent   │   ← Human-facing Agent
+              │  (仍是 Agent)  │
+              └───────┬────────┘
+                      │ 理解 / 澄清 / 探索
+                      │ 方案 / 成本 / 报价
+                      │ Human 选择
+                      │ Economic Commitment
+                      ▼
+                 Root Task
+                      │
+             ┌────────┴────────┐
+             ▼                 ▼
+          Agent A           Agent B
+             └──── 协作 / 外包 ────┘
+```
+
+**未来它可能负责**：理解模糊目标 · 提供可选方案 · 澄清目标与约束 ·
+比较方案 · 解释成本/风险/预计消耗 · 判断是否进入正式工作流程。
+
+```
+普通对话 → 咨询 → 查询 → 方案探索 → 明确委托 → Economic Commitment → Root Task
+```
+
+> ⚠️ **这只是未来产品设计方向。本轮不实现。**
+
+#### 2.9.6 **Front Agent 本质上仍然是 Agent**
+
+> ❌ **不要把 Front Agent 设计成特殊的「上帝组件」。**
+
+它仍然遵循 AI Economy OS 的基本哲学：
+
+> **Agent 是独立经济主体，不是被调用的函数。**
+
+因此未来 Front Agent **可以**：拥有自己的 Identity · Capability ·
+经济账户 · Memory · 使用 Tools · 与其他 Agent 通信 ·
+为 Human 提供服务 · 自己承担成本。
+
+只是它的**专业角色偏向**：Human Interface · Human Intent Understanding ·
+Proposal · Planning。
+
+#### 2.9.7 Front Agent **不是** Agent Economy 的中央控制器
+
+未来即使有 Front Agent，也**必须允许**：
+
+```
+✅ Agent A → Agent Initiative → Root Task      （不经过 Front Agent）
+✅ Agent A ↔ Agent B ↔ Agent C                 （直接协作）
+```
+
+> **Front Agent 只负责 `Human → AI Economy OS`，
+> 不是 `所有 Agent → Front Agent → 再分发`。**
+
+#### 2.9.8 当前代码的**兼容性要求**（不允许写死未来）
+
+| # | 要求 |
+|---|---|
+| **1** | ❌ 不把 Agent A 写死成「Human Agent」—— 不要 `class HumanAgent`，不要 `if agent_id == "agent_a": human_request = True` |
+| **2** | ❌ 不把 Human 入口写死在 Task Core —— Task Core 继续表达 `Task · Creator · Origin · Parent · Root · Funding · Responsible · Participants`，**不要**增加 `HumanTask` 这种特殊 Task |
+| **3** | ✅ Communication 保持**角色中立** —— 现在 `Human → Agent A`，未来 `Human → Front Agent → Agent A`，甚至 `External System → Agent`，**不应该要求 Protocol 重新设计** |
+| **4** | ❌ Task Creation **不依赖 Human 类型** —— **Front Agent 也是 Agent**，所以不要建立 `Human-created Task` / `Front-created Task` / `Agent-created Task` 这种特殊 Task 机制。**需要区分来源时用现有的 `Origin` / `Demand Source` / `Creator` 概念**，而不是创建不同 Task 类 |
+
+#### 2.9.9 Demand 是否成为独立 Domain Entity —— 仍 `OPEN DESIGN`
+
+Human → OS 的入口可能经历：
+
+```
+模糊意图 → 交流 → 查询 → 方案探索 → 明确委托 → 经济承诺 → Task
+```
+
+因此 **Demand 是否应该成为独立 Domain Entity，目前没有结论。**
+
+> **本轮不创建**：Demand · Demand 表 · Demand Service ·
+> Demand Lifecycle · Demand API。保持 **`OPEN DESIGN` / `FUTURE`**。
+
+#### 2.9.10 开发优先级**不因 Front Agent 而改变**
+
+```
+Agent → Communication → Task → Capability / Discovery → Negotiation
+  → Agreement → Execution → Verification → Shared Context
+  → Task Workspace → 可靠协作
+```
+
+> **Front Agent 不插入当前主链路。**
+
+#### 2.9.11 V1 核心验收场景
+
+> 一个专业用户直接向 Agent A 提出明确任务：
+> **「请完成 X，约束是 Y，验收条件是 Z。」**
+
+Agent A：① 理解任务 → ② 判断自己能否完成 → ③ 如需协作，**自主**寻找 Agent B
+→ ④ 与 B 协商 → ⑤ 为 B 创建**合法的 Child Task** → ⑥ B 执行 →
+⑦ B 返回结果 → ⑧ A 整合结果 → ⑨ A 完成 Root Task → ⑩ Human 验收。
+
+> **整个过程中 Human 不需要管理 Agent B。**
+> 这就是目前最核心的 AI Economy OS 能力。
+
+#### 2.9.12 「未来兼容」的正确理解
+
+```
+❌ 把「未来兼容」理解成「现在就把 Front Agent 写进去」
+
+✅ 正确理解：
+    当前架构不要**阻止**未来增加 Front Agent
+
+    V1 简单实现 + 边界清楚 + 接口抽象稳定 = 未来可扩展
+    ≠ V1 + 大量 Future abstraction + 提前实现 = 过度设计
+```
+
 ## 3. Origin ≠ Creator（`SETTLED` —— 本主题最重要的概念）
 
 ### 3.1 定义
