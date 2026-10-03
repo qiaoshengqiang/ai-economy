@@ -533,7 +533,22 @@ class TestLeaseConfiguration:
 
         for path in sorted(Path("services").glob("*.py")):
             code = ast.unparse(ast.parse(path.read_text(encoding="utf-8")))
-            assert "lease" not in code, (
+        # 【⚠️ 必须用**词边界**匹配，不能查子串】
+        #
+        #   真实踩到的坑：Workspace Core 引入 `release()` 之后，
+        #   `services/workspace_gateway.py` 与
+        #   `services/workspace_concurrency.py` 里含有 "release" ——
+        #   它**包含** "lease" 这个子串，于是这两条守卫**假红**。
+        #
+        #   这属于本项目反复记录的那一类错误：
+        #       **子串匹配误报**（`agent_directory` 含 `agent_d`、
+        #       `seen_tracker` 含 `ack`，现在 `release` 含 `lease`）。
+        #
+        #   `\blease\b` 只匹配**独立的** lease/LEASE 标识符，
+        #   不会命中 release / leased_to_other 之类。**
+
+            import re as _re
+            assert not _re.search(r"\blease\b", code), (
                 f"services/{path.name} 里出现了 lease —— "
                 f"租约判定属于持久化层"
             )

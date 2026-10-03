@@ -572,10 +572,26 @@ class TestGuard9NoWorkspace:
          "listdir", "shutil"],
     )
     def test_no_workspace_concepts(self, forbidden):
+        """
+        【设计阶段守卫 → 实现阶段的过渡】
+
+            原来表达「4D.1 不碰 Workspace」。Workspace Core 第一阶段
+            已授权实现 → 放行正式接口，继续禁止被移除的概念。
+        """
+        allowed = {
+            "WorkspaceGateway", "WorkspaceStore", "ResourceTree",
+            "Resource", "ExplicitLock", "ResourceLockRegistry",
+        }
+        if forbidden in allowed:
+            pytest.skip(
+                f"{forbidden!r} 是 Workspace Core v1 的正式接口（已授权实现）"
+            )
+
         for name in SERVICE_MODULES:
             code = code_only(SERVICES_DIR / name)
             assert forbidden not in code, (
-                f"services/{name} 里出现了 {forbidden!r} —— 4D.1 不碰 Workspace"
+                f"services/{name} 里出现了 {forbidden!r} —— "
+                f"该概念已被 ADR-0027 移除/降级"
             )
 
     @pytest.mark.parametrize(

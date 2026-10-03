@@ -42,7 +42,11 @@ from core.workspace_core.lock import (
     resolve_effective_controller,
     resolve_effective_lock,
 )
-from core.workspace_core.operation import ErrorCode, OperationResult
+from core.workspace_core.operation import (
+    ErrorCode,
+    OperationResult,
+    new_operation_id,
+)
 from core.workspace_core.events import (
     AuditAction,
     AuditResult,
@@ -62,6 +66,7 @@ __all__ = [
     "resolve_effective_controller",
     "ErrorCode",
     "OperationResult",
+    "new_operation_id",
     "AuditAction",
     "AuditResult",
     "WorkspaceEventType",

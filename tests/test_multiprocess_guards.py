@@ -393,7 +393,13 @@ class TestGuard4And5NoClaimLogicInServices:
         """
         code = code_only(SERVICES_DIR / name)
 
-        assert forbidden not in code, (
+        # 【⚠️ 必须用**词边界**匹配】
+        #   `release()` 包含子串 "lease" —— 直接查子串会**假红**
+        #   （`services/workspace_gateway.py` 实测踩到）。
+        #   这类「子串匹配误报」在本项目已出现过多次：
+        #       `agent_directory` 含 `agent_d`、`seen_tracker` 含 `ack`。
+        import re as _re
+        assert not _re.search(rf"\b{_re.escape(forbidden)}\b", code), (
             f"services/{name} 里出现了 {forbidden!r} —— "
             f"消息认领生命周期属于 communication 持久化层"
         )
@@ -428,11 +434,32 @@ class TestGuard6WorkspaceStillAbsent:
          "mkdir", "listdir", "shutil"],
     )
     def test_no_workspace_concepts(self, forbidden):
+        """
+        【设计阶段守卫 → 实现阶段的过渡】
+
+            这条原来表达「Phase 0 不实现 Workspace」。
+            Workspace Core 第一阶段已**授权实现**，
+            所以「不存在」这个断言过时了。
+
+            但仍要防**被移除的概念** ——
+            允许 Workspace Core 的正式接口，
+            禁止 Authorization / Delegation / Cascade Revocation 之类。
+        """
+        allowed = {
+            "WorkspaceGateway", "WorkspaceStore", "ResourceTree",
+            "Resource", "ExplicitLock", "ResourceLockRegistry",
+            "workspace_resources", "workspace_explicit_locks",
+        }
+        if forbidden in allowed:
+            pytest.skip(
+                f"{forbidden!r} 是 Workspace Core v1 的正式接口（已授权实现）"
+            )
+
         for base in (SERVICES_DIR, COMM_DIR):
             for source in sorted(base.glob("*.py")):
                 assert forbidden not in code_only(source), (
                     f"{source.name} 里出现了 {forbidden!r} —— "
-                    f"Workspace Phase 0 不实现 Workspace"
+                    f"该概念已被 ADR-0027 移除/降级"
                 )
 
     @pytest.mark.parametrize(

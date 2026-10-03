@@ -774,17 +774,24 @@ class TestADR:
 # 十六、Scope：不许提前实现
 # ============================================================
 class TestNoImplementation:
+    # 【设计阶段守卫 → 实现阶段的过渡】
+    #   原来还禁止 `workspace_gateway.py` —— 当时 Workspace 是 FUTURE。
+    #   Workspace Core 第一阶段已授权实现 → 放行。
+    #   继续禁止：**可被任意抢的 lock 管理器**（任务书 §43）、
+    #   以及被 ADR-0027 移除/降级的概念。
     FORBIDDEN_MODULES = (
-        "lock_manager.py", "lock_store.py", "workspace_gateway.py",
+        "lock_manager.py", "lock_store.py",
         "resource_manager.py", "delegation_service.py",
         "controller_registry.py", "authorization_engine.py",
         "resource_store.py",
     )
     FORBIDDEN_CLASSES = (
-        "LockManager", "LockStore", "WorkspaceGateway", "ResourceManager",
-        "DelegationService", "ControllerRegistry", "AuthorizationEngine",
-        "ResourceStore", "DelegationTree", "PermissionEngine",
-        "EditSession", "LockHandoff",
+        # 🔒 没有可被任意抢的 lock() 管理器（任务书 §43）
+        "LockManager", "LockStore",
+        # 🔒 ADR-0027 移除/降级的概念
+        "ResourceManager", "DelegationService", "ControllerRegistry",
+        "AuthorizationEngine", "ResourceStore", "DelegationTree",
+        "PermissionEngine", "EditSession", "LockHandoff",
     )
 
     def test_no_lock_modules(self):

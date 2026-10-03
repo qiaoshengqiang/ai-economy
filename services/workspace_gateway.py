@@ -1,0 +1,1465 @@
+"""
+Workspace Gateway —— Agent 访问 Task Workspace 的**唯一受控入口**（Step 5/6/7）
+============================================================
+
+【🔒 Gateway 是什么、不是什么（任务书 §15）】
+
+    是：  Agent 访问 Workspace 的**唯一受控入口**
+    不是：IAM · Task Manager · Git Manager
+
+【🔒 三条不可违反的约束】
+
+    ① **Agent 永远看不到宿主机物理路径。**
+       所有接口只接受 / 返回 `workspace_id` + 逻辑 `path` / `resource_id`。
+
+    ② **不提供传统的 `lock(resource)` API**（任务书 §43）。
+       Lock 是**工作责任**，不是 mutex ——
+       不允许「我先把这个资源锁起来再说」这种无责任占用。
+       Lock 只能通过 Create / Handoff / Release / Force Unlock 形成。
+
+    ③ **不提供任何 Git 操作**（任务书 §42）。
+
+【🔒 统一操作生命周期（任务书 §27）】
+
+    Mutation:
+        Resolve Resource → Validate Participant
+        → Validate Responsibility / Lock → Validate Revision
+        → Execute → Update State → Create Revision
+        → Create Audit → Emit Event → Return OperationResult
+
+    Read:  Validate Participant → Read → Return（**不产生 Event / 不记读 Audit**）
+
+    Responsibility:  Validate → Change → Audit → Event → Return
+
+【🔒 并发安全（任务书 §36–§41）】
+
+    每一层都在起作用，缺一不可：
+
+        资源级锁（进程内）  → 同资源竞争者先排队，不同资源并行
+        SQLite 写事务       → 「检查 + 修改」原子
+        revision 乐观锁     → Revision Race 确定地失败
+
+    ⚠️ **底层瓶颈如实记录**：SQLite 单写者 ⇒ 不同 Workspace 的**写**
+       在底层仍会排队。但这是**基础设施瓶颈**，
+       **不会**让 W2 得到 `LOCKED_BY_OTHER_AGENT` ——
+       Workspace 的锁语义仍然是资源级的。
+"""
+
+from __future__ import annotations
+
+import json
+from typing import Any, Callable, Optional
+
+from core.workspace_core import (
+    AuditAction,
+    AuditResult,
+    ErrorCode,
+    ExplicitLock,
+    LockKind,
+    OperationResult,
+    Resource,
+    ResourceState,
+    ResourceTree,
+    ResourceType,
+    WorkspaceEventType,
+    WorkspacePathError,
+    normalize_path,
+    new_operation_id,
+)
+from core.workspace_core.resource import basename_of, join_path
+from core.workspace_store import WorkspaceStore
+from services.workspace_concurrency import ResourceLockRegistry
+
+#: 判定「这个 Agent 是不是这个 Task Workspace 的 Participant」。
+#: 由组合根注入（默认拒绝一切 —— 安全的默认值）。
+ParticipantCheck = Callable[[str, str], bool]
+
+
+def _deny_all(workspace_id: str, agent_id: str) -> bool:  # pragma: no cover
+    return False
+
+
+class WorkspaceGateway:
+    """Workspace Core 的门面（唯一受控入口）。"""
+
+    def __init__(
+        self,
+        db,
+        *,
+        store: Optional[WorkspaceStore] = None,
+        lock_registry: Optional[ResourceLockRegistry] = None,
+        is_participant: Optional[ParticipantCheck] = None,
+    ) -> None:
+        self.db = db
+        self.store = store or WorkspaceStore(db)
+        self.locks = lock_registry or ResourceLockRegistry()
+        # 默认拒绝 —— 忘记注入时**不会**意外放开访问
+        self._is_participant: ParticipantCheck = is_participant or _deny_all
+
+    # ==========================================================
+    # 内部工具
+    # ==========================================================
+    def _participant(self, workspace_id: str, agent_id: str) -> bool:
+        return bool(self._is_participant(workspace_id, agent_id))
+
+    def _fail(
+        self,
+        op_id: str,
+        code: ErrorCode,
+        message: str,
+        *,
+        audit: Optional[tuple[AuditAction, str, Optional[str]]] = None,
+        workspace_id: Optional[str] = None,
+        detail: Optional[dict[str, Any]] = None,
+        **extra: Any,
+    ) -> OperationResult:
+        """
+        统一的失败路径：**写 Audit、不写 Event**。
+
+        🔒 **失败的 mutation 不产生成功的 Event**（任务书 §20 / §30）——
+           它只留一条 Audit（`*_ATTEMPT` / FAILED）。
+        """
+        if audit and workspace_id:
+            action, actor, resource_id = audit
+            with self.db.transaction(write=True) as conn:
+                self.store.add_audit(
+                    conn,
+                    operation_id=op_id,
+                    workspace_id=workspace_id,
+                    action=action.value,
+                    actor=actor,
+                    result=AuditResult.FAILED.value,
+                    resource_id=resource_id,
+                    error_code=code.value,
+                    detail=detail,
+                )
+        return OperationResult.fail(
+            operation_id=op_id, code=code, message=message, **extra
+        )
+
+    @staticmethod
+    def _attempt(action: AuditAction) -> AuditAction:
+        from core.workspace_core.events import attempt_action
+        return attempt_action(action)
+
+    # ==========================================================
+    # 引导：创建 Workspace 根
+    # ==========================================================
+    def ensure_workspace(self, workspace_id: str, owner: str) -> OperationResult:
+        """
+        确保一个 Workspace 存在，并让 `owner` 成为它的**第一任 Controller**。
+
+        【为什么这是唯一「凭空出现」责任的地方】
+
+            🔒 任务书要求 **Control 必须有明确来源，不能凭空出现**。
+               一个 Workspace 总要有第一个负责人 ——
+               那个来源就是「创建这个 Task Workspace 的人」。
+               此后所有责任都必须经由 Create 的继承
+               或 Handoff / Release 的正式变化产生。
+
+        【为什么自带一把显式锁是**不**冗余的】
+
+            §11「创建新资源不产生 Explicit Lock」的前提是
+            **创建者已经持有父目录的 Directory Lock**。
+            Workspace 根**没有父目录**，所以它必须自带显式锁 ——
+            否则整棵树将永远没有责任的源头。
+        """
+        op_id = new_operation_id()
+        with self.locks.hold_namespace(workspace_id, "ROOT"):
+            with self.db.transaction(write=True) as conn:
+                existing = self.store.find_by_path(workspace_id, "/")
+                if existing is not None:
+                    return OperationResult.ok(
+                        operation_id=op_id,
+                        result={
+                            "resource_id": existing.resource_id,
+                            "revision": existing.revision,
+                            "created": False,
+                        },
+                    )
+
+                root = self.store.create_resource(
+                    conn,
+                    workspace_id=workspace_id,
+                    parent=None,
+                    name="",
+                    resource_type=ResourceType.DIRECTORY,
+                    path="/",
+                    created_by=owner,
+                )
+                self.store.set_explicit_lock(
+                    conn,
+                    resource_id=root.resource_id,
+                    holder=owner,
+                    kind=LockKind.DIRECTORY,
+                    acquired_by=owner,
+                )
+                self.store.add_revision(
+                    conn,
+                    resource_id=root.resource_id,
+                    workspace_id=workspace_id,
+                    revision_number=1,
+                    created_by=owner,
+                    change_type="CREATE",
+                    change_ref=op_id,
+                )
+                self.store.add_audit(
+                    conn,
+                    operation_id=op_id,
+                    workspace_id=workspace_id,
+                    action=AuditAction.CREATE.value,
+                    actor=owner,
+                    result=AuditResult.SUCCESS.value,
+                    resource_id=root.resource_id,
+                    detail={"path": "/", "type": "directory", "bootstrap": True},
+                )
+                self.store.add_event(
+                    conn,
+                    workspace_id=workspace_id,
+                    event_type=WorkspaceEventType.RESOURCE_CREATED.value,
+                    actor=owner,
+                    resource_id=root.resource_id,
+                    revision=1,
+                    detail={"path": "/", "type": "directory"},
+                )
+
+                return OperationResult.ok(
+                    operation_id=op_id,
+                    result={
+                        "resource_id": root.resource_id,
+                        "revision": 1,
+                        "created": True,
+                    },
+                )
+
+    # ==========================================================
+    # READ —— 不产生 Event，不记录读 Audit（任务书 §17 / §18）
+    # ==========================================================
+    def list(
+        self, workspace_id: str, path: str, agent_id: str
+    ) -> OperationResult:
+        op_id = new_operation_id()
+
+        if not self._participant(workspace_id, agent_id):
+            return OperationResult.fail(
+                operation_id=op_id,
+                code=ErrorCode.NOT_TASK_PARTICIPANT,
+                message="不是这个 Task Workspace 的 Participant",
+            )
+
+        target = self._resolve_path(workspace_id, path, op_id)
+        if isinstance(target, OperationResult):
+            return target
+
+        if target.is_file:
+            return OperationResult.fail(
+                operation_id=op_id,
+                code=ErrorCode.INVALID_RESOURCE_TYPE,
+                message="list() 只能作用于目录",
+            )
+
+        tree = self.store.load_tree(workspace_id)
+        entries = []
+        for child in tree.children_of(target.resource_id):
+            if child.is_deleted:
+                continue
+            entries.append(self._describe(child, tree))
+
+        return OperationResult.ok(
+            operation_id=op_id,
+            result={
+                "resource_id": target.resource_id,
+                "path": target.path,
+                "revision": target.revision,
+                "entries": entries,
+            },
+        )
+
+    def read(
+        self, workspace_id: str, path: str, agent_id: str
+    ) -> OperationResult:
+        """
+        🔒 `revision` **必须**返回 ——
+           Agent 后续 `edit(base_revision=...)` 要用它（任务书 §18）。
+        """
+        op_id = new_operation_id()
+
+        if not self._participant(workspace_id, agent_id):
+            return OperationResult.fail(
+                operation_id=op_id,
+                code=ErrorCode.NOT_TASK_PARTICIPANT,
+                message="不是这个 Task Workspace 的 Participant",
+            )
+
+        target = self._resolve_path(workspace_id, path, op_id)
+        if isinstance(target, OperationResult):
+            return target
+
+        return OperationResult.ok(
+            operation_id=op_id,
+            result={
+                "resource_id": target.resource_id,
+                "path": target.path,
+                "content": target.content,
+                "revision": target.revision,
+                "type": target.resource_type.value,
+            },
+        )
+
+    def _describe(self, resource: Resource, tree: ResourceTree) -> dict[str, Any]:
+        """
+        `list()` 里每个条目的描述。
+
+        🔒 额外给出 `effective_controller` / `effective_lock_holder`
+           —— 让 Agent 能快速知道「谁长期负责、现在谁在干」
+           （任务书 §17 的推荐项）。
+        """
+        return {
+            "resource_id": resource.resource_id,
+            "name": resource.name,
+            "type": resource.resource_type.value,
+            "revision": resource.revision,
+            "effective_controller": tree.effective_controller(resource),
+            "effective_lock_holder": tree.effective_lock(resource),
+        }
+
+    def _resolve_path(
+        self, workspace_id: str, path: str, op_id: str
+    ) -> Resource | OperationResult:
+        try:
+            normalized = normalize_path(path)
+        except WorkspacePathError as exc:
+            return OperationResult.fail(
+                operation_id=op_id,
+                code=ErrorCode.OUTSIDE_WORKSPACE,
+                message=str(exc),
+            )
+
+        resource = self.store.find_by_path(workspace_id, normalized)
+        if resource is None:
+            return OperationResult.fail(
+                operation_id=op_id,
+                code=ErrorCode.RESOURCE_NOT_FOUND,
+                message=f"路径不存在：{normalized}",
+            )
+        return resource
+
+    # ==========================================================
+    # CREATE
+    # ==========================================================
+    def create(
+        self,
+        workspace_id: str,
+        parent_path: str,
+        name: str,
+        resource_type: str,
+        agent_id: str,
+        *,
+        content: Optional[str] = None,
+    ) -> OperationResult:
+        """
+        前置：**Effective Directory Lock(parent) == Agent**。
+
+        因为创建本质上是在改**父目录的 Namespace**（任务书 §19）。
+
+        🔒 新资源 **Explicit Lock = None**，Effective Lock 靠继承父目录 ——
+           创建者已经持有父目录责任，再记一条显式锁是冗余（§11）。
+        """
+        op_id = new_operation_id()
+        try:
+            rtype = ResourceType(resource_type)
+        except ValueError:
+            return OperationResult.fail(
+                operation_id=op_id,
+                code=ErrorCode.INVALID_ARGUMENT,
+                message=f"resource_type 必须是 directory / file，收到 {resource_type!r}",
+            )
+
+        if not self._participant(workspace_id, agent_id):
+            return OperationResult.fail(
+                operation_id=op_id,
+                code=ErrorCode.NOT_TASK_PARTICIPANT,
+                message="不是这个 Task Workspace 的 Participant",
+            )
+
+        parent = self._resolve_path(workspace_id, parent_path, op_id)
+        if isinstance(parent, OperationResult):
+            return parent
+        if parent.is_file:
+            return OperationResult.fail(
+                operation_id=op_id,
+                code=ErrorCode.INVALID_PARENT,
+                message="父资源必须是目录",
+            )
+
+        try:
+            child_path = join_path(parent.path, name)
+        except WorkspacePathError as exc:
+            return OperationResult.fail(
+                operation_id=op_id,
+                code=ErrorCode.INVALID_ARGUMENT,
+                message=str(exc),
+            )
+
+        # 🔒 目录结构操作共用**父目录的命名空间锁**
+        with self.locks.hold_namespace(workspace_id, parent.resource_id):
+            with self.db.transaction(write=True) as conn:
+                tree = self.store.load_tree(workspace_id)
+
+                holder = tree.effective_lock(parent)
+                if holder != agent_id:
+                    return self._fail(
+                        op_id, ErrorCode.NOT_EFFECTIVE_LOCK_HOLDER,
+                        "创建资源需要父目录的 Directory Lock",
+                        audit=(self._attempt(AuditAction.CREATE), agent_id,
+                               parent.resource_id),
+                        workspace_id=workspace_id,
+                        detail={"parent": parent.path,
+                                "parent_effective_lock": holder,
+                                "actor": agent_id},
+                        lock_holder=holder,
+                    )
+
+                if self.store.find_by_path(workspace_id, child_path) is not None:
+                    return self._fail(
+                        op_id, ErrorCode.NAME_CONFLICT,
+                        f"同名资源已存在：{child_path}",
+                        audit=(self._attempt(AuditAction.CREATE), agent_id,
+                               parent.resource_id),
+                        workspace_id=workspace_id,
+                        detail={"path": child_path},
+                    )
+
+                created = self.store.create_resource(
+                    conn,
+                    workspace_id=workspace_id,
+                    parent=parent,
+                    name=name,
+                    resource_type=rtype,
+                    path=child_path,
+                    created_by=agent_id,
+                    content=content if rtype is ResourceType.FILE else None,
+                )
+
+                # 父目录结构变了 → 父目录 revision 递增
+                new_parent_rev = parent.revision + 1
+                self.store.update_resource(
+                    conn, parent, revision=new_parent_rev
+                )
+                self.store.add_revision(
+                    conn,
+                    resource_id=parent.resource_id,
+                    workspace_id=workspace_id,
+                    revision_number=new_parent_rev,
+                    created_by=agent_id,
+                    change_type="CREATE",
+                    change_ref=op_id,
+                )
+                self.store.add_revision(
+                    conn,
+                    resource_id=created.resource_id,
+                    workspace_id=workspace_id,
+                    revision_number=1,
+                    created_by=agent_id,
+                    change_type="CREATE",
+                    change_ref=op_id,
+                )
+                self.store.add_audit(
+                    conn,
+                    operation_id=op_id,
+                    workspace_id=workspace_id,
+                    action=AuditAction.CREATE.value,
+                    actor=agent_id,
+                    result=AuditResult.SUCCESS.value,
+                    resource_id=created.resource_id,
+                    detail={"path": created.path,
+                            "parent": parent.path,
+                            "type": rtype.value},
+                )
+                self.store.add_event(
+                    conn,
+                    workspace_id=workspace_id,
+                    event_type=WorkspaceEventType.RESOURCE_CREATED.value,
+                    actor=agent_id,
+                    resource_id=created.resource_id,
+                    revision=1,
+                    detail={"path": created.path, "type": rtype.value},
+                )
+
+                return OperationResult.ok(
+                    operation_id=op_id,
+                    result={
+                        "resource_id": created.resource_id,
+                        "path": created.path,
+                        "revision": 1,
+                        "type": rtype.value,
+                    },
+                )
+
+    # ==========================================================
+    # EDIT
+    # ==========================================================
+    def edit(
+        self,
+        workspace_id: str,
+        path: str,
+        base_revision: int,
+        content: str,
+        agent_id: str,
+    ) -> OperationResult:
+        """
+        前置（任务书 §20）：
+            ① Participant
+            ② Resource 是 File
+            ③ **Effective File Lock == Agent**
+            ④ **base_revision == current revision**
+            ⑤ 未删除
+
+        🔒 成功时 **File Lock 不变化** —— `EDIT END ≠ LOCK RELEASE`。
+        """
+        op_id = new_operation_id()
+
+        if not self._participant(workspace_id, agent_id):
+            return OperationResult.fail(
+                operation_id=op_id,
+                code=ErrorCode.NOT_TASK_PARTICIPANT,
+                message="不是这个 Task Workspace 的 Participant",
+            )
+
+        target = self._resolve_path(workspace_id, path, op_id)
+        if isinstance(target, OperationResult):
+            return target
+
+        if target.is_directory:
+            return OperationResult.fail(
+                operation_id=op_id,
+                code=ErrorCode.INVALID_RESOURCE_TYPE,
+                message="edit() 只能作用于文件",
+            )
+
+        # 🔒 资源级锁：同一 File 的竞争者在这里排队
+        with self.locks.hold(workspace_id, target.resource_id):
+            with self.db.transaction(write=True) as conn:
+                tree = self.store.load_tree(workspace_id)
+                fresh = tree.get(target.resource_id)
+                if fresh is None or fresh.is_deleted:
+                    return self._fail(
+                        op_id, ErrorCode.RESOURCE_DELETED,
+                        "资源已被删除",
+                        audit=(self._attempt(AuditAction.EDIT), agent_id,
+                               target.resource_id),
+                        workspace_id=workspace_id,
+                    )
+
+                holder = tree.effective_lock(fresh)
+                if holder != agent_id:
+                    return self._fail(
+                        op_id, ErrorCode.LOCKED_BY_OTHER_AGENT,
+                        "这个文件当前由其他 Agent 负责",
+                        audit=(self._attempt(AuditAction.EDIT), agent_id,
+                               fresh.resource_id),
+                        workspace_id=workspace_id,
+                        detail={"current_revision": fresh.revision,
+                                "provided_revision": base_revision},
+                        lock_holder=holder,
+                        current_revision=fresh.revision,
+                        provided_revision=base_revision,
+                    )
+
+                # 🔒 Revision 检查必须在**同一个事务**里（防 Revision Race）
+                if base_revision != fresh.revision:
+                    return self._fail(
+                        op_id, ErrorCode.STALE_REVISION,
+                        "基础版本已过期 —— 请重新 read() 后再改",
+                        audit=(self._attempt(AuditAction.EDIT), agent_id,
+                               fresh.resource_id),
+                        workspace_id=workspace_id,
+                        detail={"current_revision": fresh.revision,
+                                "provided_revision": base_revision},
+                        current_revision=fresh.revision,
+                        provided_revision=base_revision,
+                    )
+
+                new_rev = fresh.revision + 1
+                updated = self.store.update_resource(
+                    conn, fresh, content=content, revision=new_rev
+                )
+                self.store.add_revision(
+                    conn,
+                    resource_id=fresh.resource_id,
+                    workspace_id=workspace_id,
+                    revision_number=new_rev,
+                    created_by=agent_id,
+                    change_type="EDIT",
+                    change_ref=op_id,
+                )
+                self.store.add_audit(
+                    conn,
+                    operation_id=op_id,
+                    workspace_id=workspace_id,
+                    action=AuditAction.EDIT.value,
+                    actor=agent_id,
+                    result=AuditResult.SUCCESS.value,
+                    resource_id=fresh.resource_id,
+                    detail={"from_revision": fresh.revision,
+                            "to_revision": new_rev},
+                )
+                # 🔒 Event **不含文件内容** —— 它只是「发生了变化」
+                self.store.add_event(
+                    conn,
+                    workspace_id=workspace_id,
+                    event_type=WorkspaceEventType.RESOURCE_UPDATED.value,
+                    actor=agent_id,
+                    resource_id=fresh.resource_id,
+                    revision=new_rev,
+                    detail={"path": updated.path},
+                )
+
+                return OperationResult.ok(
+                    operation_id=op_id,
+                    result={
+                        "resource_id": updated.resource_id,
+                        "path": updated.path,
+                        "revision": new_rev,
+                    },
+                )
+
+    # ==========================================================
+    # DELETE
+    # ==========================================================
+    def delete(
+        self, workspace_id: str, path: str, agent_id: str
+    ) -> OperationResult:
+        """
+        文件：`Effective File Lock == Agent` **且** 父目录结构责任也在 Agent。
+        目录：`Effective Directory Lock == Agent` **且**
+              **不能绕过更具体的 Resource Boundary**。
+
+        🔒 删除**不让资源瞬间消失** —— 进入 `DELETED` 状态，
+           历史 Revision / Audit / Handoff 仍可查询（任务书 §21）。
+        """
+        op_id = new_operation_id()
+
+        if not self._participant(workspace_id, agent_id):
+            return OperationResult.fail(
+                operation_id=op_id,
+                code=ErrorCode.NOT_TASK_PARTICIPANT,
+                message="不是这个 Task Workspace 的 Participant",
+            )
+
+        target = self._resolve_path(workspace_id, path, op_id)
+        if isinstance(target, OperationResult):
+            return target
+
+        if target.is_root:
+            return OperationResult.fail(
+                operation_id=op_id,
+                code=ErrorCode.RESOURCE_BOUNDARY_VIOLATION,
+                message="不能删除 Workspace 根目录",
+            )
+
+        with self.locks.hold_namespace(workspace_id, target.parent_id or "ROOT"):
+            with self.db.transaction(write=True) as conn:
+                tree = self.store.load_tree(workspace_id)
+                fresh = tree.get(target.resource_id)
+                if fresh is None or fresh.is_deleted:
+                    return self._fail(
+                        op_id, ErrorCode.RESOURCE_DELETED, "资源已被删除",
+                        audit=(self._attempt(AuditAction.DELETE), agent_id,
+                               target.resource_id),
+                        workspace_id=workspace_id,
+                    )
+
+                # ---- ① 自身责任 ----
+                holder = tree.effective_lock(fresh)
+                if holder != agent_id:
+                    return self._fail(
+                        op_id, ErrorCode.NOT_EFFECTIVE_LOCK_HOLDER,
+                        "不负责这个资源",
+                        audit=(self._attempt(AuditAction.DELETE), agent_id,
+                               fresh.resource_id),
+                        workspace_id=workspace_id,
+                        lock_holder=holder,
+                    )
+
+                # ---- ② 父目录结构责任 ----
+                if fresh.parent_id is not None:
+                    parent = tree.get(fresh.parent_id)
+                    if parent is not None:
+                        parent_holder = tree.effective_lock(parent)
+                        if parent_holder != agent_id:
+                            return self._fail(
+                                op_id, ErrorCode.NOT_EFFECTIVE_LOCK_HOLDER,
+                                "父目录结构不由你负责",
+                                audit=(self._attempt(AuditAction.DELETE),
+                                       agent_id, fresh.resource_id),
+                                workspace_id=workspace_id,
+                                lock_holder=parent_holder,
+                            )
+
+                # ---- ③ 🔒 不能绕过别人的 Resource Boundary ----
+                foreign = tree.foreign_boundaries(fresh, agent_id)
+                # 自身的边界不算「别人的」；子树里别人的边界才是障碍
+                foreign.pop(fresh.resource_id, None)
+                if foreign:
+                    return self._fail(
+                        op_id, ErrorCode.RESOURCE_BOUNDARY_VIOLATION,
+                        "这个资源里包含其他 Agent 独立负责的部分",
+                        audit=(self._attempt(AuditAction.DELETE), agent_id,
+                               fresh.resource_id),
+                        workspace_id=workspace_id,
+                        detail={"foreign_boundaries": foreign},
+                        foreign_boundaries=foreign,
+                    )
+
+                new_rev = fresh.revision + 1
+                # 🔒 软删除：资源**不消失**
+                self.store.update_resource(
+                    conn, fresh, state=ResourceState.DELETED, revision=new_rev
+                )
+                # 子树一并标记删除（但记录仍在）
+                for node in tree.descendants(fresh):
+                    if node.is_active:
+                        self.store.update_resource(
+                            conn, node,
+                            state=ResourceState.DELETED,
+                            revision=node.revision + 1,
+                        )
+
+                self.store.add_revision(
+                    conn,
+                    resource_id=fresh.resource_id,
+                    workspace_id=workspace_id,
+                    revision_number=new_rev,
+                    created_by=agent_id,
+                    change_type="DELETE",
+                    change_ref=op_id,
+                )
+                self.store.add_audit(
+                    conn,
+                    operation_id=op_id,
+                    workspace_id=workspace_id,
+                    action=AuditAction.DELETE.value,
+                    actor=agent_id,
+                    result=AuditResult.SUCCESS.value,
+                    resource_id=fresh.resource_id,
+                    detail={"path": fresh.path,
+                            "type": fresh.resource_type.value},
+                )
+                self.store.add_event(
+                    conn,
+                    workspace_id=workspace_id,
+                    event_type=WorkspaceEventType.RESOURCE_DELETED.value,
+                    actor=agent_id,
+                    resource_id=fresh.resource_id,
+                    revision=new_rev,
+                    detail={"path": fresh.path},
+                )
+
+                return OperationResult.ok(
+                    operation_id=op_id,
+                    result={
+                        "resource_id": fresh.resource_id,
+                        "path": fresh.path,
+                        "revision": new_rev,
+                    },
+                )
+
+    # ==========================================================
+    # RENAME（同一父目录内改名）
+    # ==========================================================
+    def rename(
+        self, workspace_id: str, path: str, new_name: str, agent_id: str
+    ) -> OperationResult:
+        op_id = new_operation_id()
+
+        if not self._participant(workspace_id, agent_id):
+            return OperationResult.fail(
+                operation_id=op_id,
+                code=ErrorCode.NOT_TASK_PARTICIPANT,
+                message="不是这个 Task Workspace 的 Participant",
+            )
+
+        target = self._resolve_path(workspace_id, path, op_id)
+        if isinstance(target, OperationResult):
+            return target
+        if target.is_root:
+            return OperationResult.fail(
+                operation_id=op_id,
+                code=ErrorCode.RESOURCE_BOUNDARY_VIOLATION,
+                message="不能重命名 Workspace 根目录",
+            )
+
+        with self.locks.hold_namespace(workspace_id, target.parent_id or "ROOT"):
+            with self.db.transaction(write=True) as conn:
+                tree = self.store.load_tree(workspace_id)
+                fresh = tree.get(target.resource_id)
+                if fresh is None or fresh.is_deleted:
+                    return self._fail(
+                        op_id, ErrorCode.RESOURCE_DELETED, "资源已被删除",
+                        audit=(self._attempt(AuditAction.RENAME), agent_id,
+                               target.resource_id),
+                        workspace_id=workspace_id,
+                    )
+
+                parent = tree.get(fresh.parent_id) if fresh.parent_id else None
+
+                # ---- ① 父目录结构责任 ----
+                if parent is not None:
+                    holder = tree.effective_lock(parent)
+                    if holder != agent_id:
+                        return self._fail(
+                            op_id, ErrorCode.NOT_EFFECTIVE_LOCK_HOLDER,
+                            "rename 需要父目录的 Directory Lock",
+                            audit=(self._attempt(AuditAction.RENAME), agent_id,
+                                   fresh.resource_id),
+                            workspace_id=workspace_id,
+                            lock_holder=holder,
+                        )
+
+                # ---- ② 不能动别人独立负责的资源 ----
+                foreign = tree.foreign_boundaries(fresh, agent_id)
+                foreign.pop(fresh.resource_id, None)
+                if foreign:
+                    return self._fail(
+                        op_id, ErrorCode.RESOURCE_BOUNDARY_VIOLATION,
+                        "这个资源里包含其他 Agent 独立负责的部分",
+                        audit=(self._attempt(AuditAction.RENAME), agent_id,
+                               fresh.resource_id),
+                        workspace_id=workspace_id,
+                        foreign_boundaries=foreign,
+                    )
+
+                parent_path = parent.path if parent else "/"
+                try:
+                    new_path = join_path(parent_path, new_name)
+                except WorkspacePathError as exc:
+                    return OperationResult.fail(
+                        operation_id=op_id,
+                        code=ErrorCode.INVALID_ARGUMENT,
+                        message=str(exc),
+                    )
+
+                if self.store.find_by_path(workspace_id, new_path) is not None:
+                    return self._fail(
+                        op_id, ErrorCode.NAME_CONFLICT,
+                        f"同名资源已存在：{new_path}",
+                        audit=(self._attempt(AuditAction.RENAME), agent_id,
+                               fresh.resource_id),
+                        workspace_id=workspace_id,
+                    )
+
+                old_path = fresh.path
+                new_rev = fresh.revision + 1
+                # 🔒 resource_id **不变**；path / name 变
+                updated = self.store.update_resource(
+                    conn, fresh, name=new_name, path=new_path,
+                    revision=new_rev,
+                )
+                # 子树路径要跟着改（重新拼前缀）
+                self._rebase_descendant_paths(
+                    conn, tree, fresh, old_path, new_path
+                )
+
+                if parent is not None:
+                    self.store.update_resource(
+                        conn, parent, revision=parent.revision + 1
+                    )
+
+                self.store.add_revision(
+                    conn,
+                    resource_id=fresh.resource_id,
+                    workspace_id=workspace_id,
+                    revision_number=new_rev,
+                    created_by=agent_id,
+                    change_type="RENAME",
+                    change_ref=op_id,
+                )
+                self.store.add_audit(
+                    conn,
+                    operation_id=op_id,
+                    workspace_id=workspace_id,
+                    action=AuditAction.RENAME.value,
+                    actor=agent_id,
+                    result=AuditResult.SUCCESS.value,
+                    resource_id=fresh.resource_id,
+                    detail={"old_path": old_path, "new_path": new_path},
+                )
+                self.store.add_event(
+                    conn,
+                    workspace_id=workspace_id,
+                    event_type=WorkspaceEventType.RESOURCE_RENAMED.value,
+                    actor=agent_id,
+                    resource_id=fresh.resource_id,
+                    revision=new_rev,
+                    detail={"old_path": old_path, "new_path": new_path},
+                )
+
+                return OperationResult.ok(
+                    operation_id=op_id,
+                    result={
+                        "resource_id": updated.resource_id,
+                        "old_path": old_path,
+                        "new_path": new_path,
+                        "revision": new_rev,
+                    },
+                )
+
+    # ==========================================================
+    # MOVE
+    # ==========================================================
+    def move(
+        self,
+        workspace_id: str,
+        path: str,
+        new_parent_path: str,
+        agent_id: str,
+    ) -> OperationResult:
+        """
+        前置：**source parent 与 dest parent 的 Directory Lock 都是 Agent**。
+
+        🔒 移动整棵 Directory Tree 时
+           **Controller / File Lock / 子目录 Explicit Lock 全部保持** ——
+           不因为 Move 就自动换责任人（任务书 §23）。
+        """
+        op_id = new_operation_id()
+
+        if not self._participant(workspace_id, agent_id):
+            return OperationResult.fail(
+                operation_id=op_id,
+                code=ErrorCode.NOT_TASK_PARTICIPANT,
+                message="不是这个 Task Workspace 的 Participant",
+            )
+
+        target = self._resolve_path(workspace_id, path, op_id)
+        if isinstance(target, OperationResult):
+            return target
+        dest = self._resolve_path(workspace_id, new_parent_path, op_id)
+        if isinstance(dest, OperationResult):
+            return dest
+
+        if target.is_root:
+            return OperationResult.fail(
+                operation_id=op_id,
+                code=ErrorCode.RESOURCE_BOUNDARY_VIOLATION,
+                message="不能移动 Workspace 根目录",
+            )
+        if dest.is_file:
+            return OperationResult.fail(
+                operation_id=op_id,
+                code=ErrorCode.INVALID_PARENT,
+                message="目标父资源必须是目录",
+            )
+        if dest.resource_id == target.resource_id:
+            return OperationResult.fail(
+                operation_id=op_id,
+                code=ErrorCode.INVALID_PARENT,
+                message="不能把资源移动到它自己里面",
+            )
+
+        # 🔒 同时锁 source 与 dest 的命名空间 ——
+        #    `hold` 内部会**排序后再获取**，避免相反方向的两个 move 死锁
+        with self.locks.hold_namespace(workspace_id, target.parent_id or "ROOT"):
+            with self.locks.hold_namespace(workspace_id, dest.resource_id):
+                with self.db.transaction(write=True) as conn:
+                    tree = self.store.load_tree(workspace_id)
+                    fresh = tree.get(target.resource_id)
+                    dest_fresh = tree.get(dest.resource_id)
+
+                    if fresh is None or fresh.is_deleted:
+                        return self._fail(
+                            op_id, ErrorCode.RESOURCE_DELETED, "资源已被删除",
+                            audit=(self._attempt(AuditAction.MOVE), agent_id,
+                                   target.resource_id),
+                            workspace_id=workspace_id,
+                        )
+
+                    # ---- ① source parent 责任 ----
+                    src_parent = tree.get(fresh.parent_id) if fresh.parent_id else None
+                    if src_parent is not None:
+                        holder = tree.effective_lock(src_parent)
+                        if holder != agent_id:
+                            return self._fail(
+                                op_id, ErrorCode.NOT_EFFECTIVE_LOCK_HOLDER,
+                                "move 需要 source 父目录的 Directory Lock",
+                                audit=(self._attempt(AuditAction.MOVE),
+                                       agent_id, fresh.resource_id),
+                                workspace_id=workspace_id,
+                                lock_holder=holder,
+                            )
+
+                    # ---- ② dest parent 责任 ----
+                    dest_holder = tree.effective_lock(dest_fresh)
+                    if dest_holder != agent_id:
+                        return self._fail(
+                            op_id, ErrorCode.NOT_EFFECTIVE_LOCK_HOLDER,
+                            "move 需要 destination 父目录的 Directory Lock",
+                            audit=(self._attempt(AuditAction.MOVE), agent_id,
+                                   fresh.resource_id),
+                            workspace_id=workspace_id,
+                            lock_holder=dest_holder,
+                        )
+
+                    # ---- ③ 不能动别人的边界 ----
+                    foreign = tree.foreign_boundaries(fresh, agent_id)
+                    foreign.pop(fresh.resource_id, None)
+                    if foreign:
+                        return self._fail(
+                            op_id, ErrorCode.RESOURCE_BOUNDARY_VIOLATION,
+                            "这个资源里包含其他 Agent 独立负责的部分",
+                            audit=(self._attempt(AuditAction.MOVE), agent_id,
+                                   fresh.resource_id),
+                            workspace_id=workspace_id,
+                            foreign_boundaries=foreign,
+                        )
+
+                    # ---- ④ 不能把目录移进自己的子树 ----
+                    if fresh.is_directory:
+                        descendant_ids = {
+                            d.resource_id for d in tree.descendants(fresh)
+                        }
+                        if dest_fresh.resource_id in descendant_ids:
+                            return OperationResult.fail(
+                                operation_id=op_id,
+                                code=ErrorCode.INVALID_PARENT,
+                                message="不能把目录移动到它自己的子树里",
+                            )
+
+                    parent_path = dest_fresh.path
+                    try:
+                        new_path = join_path(parent_path, fresh.name)
+                    except WorkspacePathError as exc:
+                        return OperationResult.fail(
+                            operation_id=op_id,
+                            code=ErrorCode.INVALID_ARGUMENT,
+                            message=str(exc),
+                        )
+
+                    if self.store.find_by_path(workspace_id, new_path) is not None:
+                        return self._fail(
+                            op_id, ErrorCode.NAME_CONFLICT,
+                            f"目标位置已有同名资源：{new_path}",
+                            audit=(self._attempt(AuditAction.MOVE), agent_id,
+                                   fresh.resource_id),
+                            workspace_id=workspace_id,
+                        )
+
+                    old_path = fresh.path
+                    new_rev = fresh.revision + 1
+                    # 🔒 **只改 parent_id / path / revision ——
+                    #    不动任何 Explicit Lock** ⇒
+                    #    Controller / File Lock / 子目录显式锁全部保持
+                    updated = self.store.update_resource(
+                        conn, fresh,
+                        parent_id=dest_fresh.resource_id,
+                        path=new_path,
+                        revision=new_rev,
+                    )
+                    self._rebase_descendant_paths(
+                        conn, tree, fresh, old_path, new_path
+                    )
+
+                    for touched in (src_parent, dest_fresh):
+                        if touched is not None:
+                            self.store.update_resource(
+                                conn, touched,
+                                revision=touched.revision + 1,
+                            )
+
+                    self.store.add_revision(
+                        conn,
+                        resource_id=fresh.resource_id,
+                        workspace_id=workspace_id,
+                        revision_number=new_rev,
+                        created_by=agent_id,
+                        change_type="MOVE",
+                        change_ref=op_id,
+                    )
+                    self.store.add_audit(
+                        conn,
+                        operation_id=op_id,
+                        workspace_id=workspace_id,
+                        action=AuditAction.MOVE.value,
+                        actor=agent_id,
+                        result=AuditResult.SUCCESS.value,
+                        resource_id=fresh.resource_id,
+                        detail={"old_path": old_path, "new_path": new_path},
+                    )
+                    self.store.add_event(
+                        conn,
+                        workspace_id=workspace_id,
+                        event_type=WorkspaceEventType.RESOURCE_MOVED.value,
+                        actor=agent_id,
+                        resource_id=fresh.resource_id,
+                        revision=new_rev,
+                        detail={"old_path": old_path, "new_path": new_path},
+                    )
+
+                    return OperationResult.ok(
+                        operation_id=op_id,
+                        result={
+                            "resource_id": updated.resource_id,
+                            "old_path": old_path,
+                            "new_path": new_path,
+                            "revision": new_rev,
+                        },
+                    )
+
+    def _rebase_descendant_paths(
+        self,
+        conn,
+        tree: ResourceTree,
+        root: Resource,
+        old_prefix: str,
+        new_prefix: str,
+    ) -> None:
+        """
+        改一个目录/文件的名字或位置后，把子树的 `path` 缓存一起重算。
+
+        ⚠️ 只改 `path` 缓存 —— `resource_id` 与所有 Explicit Lock **不动**。
+        """
+        for node in tree.descendants(root):
+            if node.is_deleted:
+                continue
+            if not node.path.startswith(old_prefix):
+                continue
+            rebased = new_prefix + node.path[len(old_prefix):]
+            self.store.update_resource(conn, node, path=rebased)
+
+    # ==========================================================
+    # HANDOFF
+    # ==========================================================
+    def handoff(
+        self,
+        workspace_id: str,
+        path: str,
+        from_agent: str,
+        to_agent: str,
+        actor: str,
+        *,
+        reason: str = "",
+        task_id: Optional[str] = None,
+    ) -> OperationResult:
+        """
+        正式的责任交接（任务书 §24）。
+
+        · Directory → **Controller = to 且 Directory Lock = to**
+        · File      → **File Lock from → to**
+
+        🔒 **接收方不能直接抢锁** —— 必须由当前责任人 / Controller /
+           Human Governance 走这个正式入口。
+
+        🔒 无更具体显式责任的后代**跟随**；**已有的 Explicit Child
+           Lock / Controller 不被吞回** —— 这一点由「只改这一条
+           显式锁记录」自动保证：子孙的锁记录根本没被碰。
+        """
+        op_id = new_operation_id()
+
+        target = self._resolve_path(workspace_id, path, op_id)
+        if isinstance(target, OperationResult):
+            return target
+
+        with self.locks.hold(workspace_id, target.resource_id):
+            with self.db.transaction(write=True) as conn:
+                tree = self.store.load_tree(workspace_id)
+                fresh = tree.get(target.resource_id)
+                if fresh is None or fresh.is_deleted:
+                    return self._fail(
+                        op_id, ErrorCode.RESOURCE_DELETED, "资源已被删除",
+                        audit=(self._attempt(AuditAction.HANDOFF), actor,
+                               target.resource_id),
+                        workspace_id=workspace_id,
+                    )
+
+                old_holder = tree.effective_lock(fresh)
+                if old_holder != from_agent:
+                    return self._fail(
+                        op_id, ErrorCode.NOT_EFFECTIVE_LOCK_HOLDER,
+                        "from_agent 不是当前责任人",
+                        audit=(self._attempt(AuditAction.HANDOFF), actor,
+                               fresh.resource_id),
+                        workspace_id=workspace_id,
+                        lock_holder=old_holder,
+                    )
+
+                kind = (LockKind.DIRECTORY if fresh.is_directory
+                        else LockKind.FILE)
+                self.store.set_explicit_lock(
+                    conn,
+                    resource_id=fresh.resource_id,
+                    holder=to_agent,
+                    kind=kind,
+                    acquired_by=from_agent,
+                )
+                # 🔒 **责任变化不产生新的 Revision。**
+                #
+                #   任务书 §27 把统一生命周期分成三种，其中：
+                #
+                #       Mutation:
+                #           ... → Update State → **Create Revision**
+                #                            → Create Audit → Emit Event
+                #       Responsibility:
+                #           Validate → Change Responsibility
+                #                    → Audit → Event       ← **没有 Revision**
+                #       Read: 简化
+                #
+                #   Revision 是**内容/结构**的版本事实。
+                #   「谁负责」变了，内容没变 —— 让 revision 递增会让
+                #   B 接手后必须先 read() 才知道能改哪个版本，
+                #   而那次 read 其实什么新内容都没有。
+                #
+                #   ⚠️ 这是从 §27 的**流程差异**推出的结论，不是拍脑袋。
+                new_rev = fresh.revision          # ← 保持不变
+                detail = {
+                    "from": from_agent,
+                    "to": to_agent,
+                    "resource_id": fresh.resource_id,
+                    "old_lock": old_holder,
+                    "new_lock": to_agent,
+                    "reason": reason,
+                    "task_id": task_id,
+                    "path": fresh.path,
+                }
+                if fresh.is_directory:
+                    detail["old_controller"] = old_holder
+                    detail["new_controller"] = to_agent
+
+                self.store.add_audit(
+                    conn,
+                    operation_id=op_id,
+                    workspace_id=workspace_id,
+                    action=AuditAction.HANDOFF.value,
+                    actor=actor,
+                    result=AuditResult.SUCCESS.value,
+                    resource_id=fresh.resource_id,
+                    detail=detail,
+                    task_id=task_id,
+                )
+                self.store.add_event(
+                    conn,
+                    workspace_id=workspace_id,
+                    event_type=WorkspaceEventType.RESPONSIBILITY_HANDOFF.value,
+                    actor=actor,
+                    resource_id=fresh.resource_id,
+                    revision=new_rev,
+                    detail=detail,
+                )
+
+                return OperationResult.ok(
+                    operation_id=op_id,
+                    result={
+                        "resource_id": fresh.resource_id,
+                        "path": fresh.path,
+                        "revision": new_rev,
+                        "old_holder": old_holder,
+                        "new_holder": to_agent,
+                    },
+                )
+
+    # ==========================================================
+    # RELEASE
+    # ==========================================================
+    def release(
+        self, workspace_id: str, path: str, agent_id: str
+    ) -> OperationResult:
+        """
+        **Release ≠ Handoff**（任务书 §14）。
+
+        Handoff 是「明确交给 B」；Release 是「我不再保留这个**独立**责任」，
+        然后**重新按父级规则解析 Effective Lock**。
+
+        🔒 根的 release 被拒绝 —— 那会让整棵树失去责任源头。
+           任务书 §25 明确要求「不能随意自动分配给某个 Agent」，
+           而这属于 **Open Question**（Root release 的语义未定）。
+        """
+        op_id = new_operation_id()
+
+        target = self._resolve_path(workspace_id, path, op_id)
+        if isinstance(target, OperationResult):
+            return target
+
+        if target.is_root:
+            return OperationResult.fail(
+                operation_id=op_id,
+                code=ErrorCode.RESOURCE_BOUNDARY_VIOLATION,
+                message=(
+                    "Workspace 根目录不能 release —— "
+                    "那会让整棵树失去责任源头（Open Question：Root release 语义未定）"
+                ),
+            )
+
+        with self.locks.hold(workspace_id, target.resource_id):
+            with self.db.transaction(write=True) as conn:
+                tree = self.store.load_tree(workspace_id)
+                fresh = tree.get(target.resource_id)
+                if fresh is None or fresh.is_deleted:
+                    return self._fail(
+                        op_id, ErrorCode.RESOURCE_DELETED, "资源已被删除",
+                        audit=(self._attempt(AuditAction.RELEASE), agent_id,
+                               target.resource_id),
+                        workspace_id=workspace_id,
+                    )
+
+                own = tree.explicit_lock_of(fresh.resource_id)
+                if own is None or own.holder != agent_id:
+                    return self._fail(
+                        op_id, ErrorCode.NOT_EFFECTIVE_LOCK_HOLDER,
+                        "只有持有该资源**显式**责任的人才能 release",
+                        audit=(self._attempt(AuditAction.RELEASE), agent_id,
+                               fresh.resource_id),
+                        workspace_id=workspace_id,
+                        lock_holder=own.holder if own else None,
+                    )
+
+                was_holder = own.holder
+                self.store.clear_explicit_lock(conn, fresh.resource_id)
+
+                # 🔒 同 handoff：责任变化**不产生新 Revision**（任务书 §27）
+                new_rev = fresh.revision
+
+                # 🔒 重新派生 —— 这正是 Release 的意义
+                after = self.store.load_tree(workspace_id)
+                new_holder = after.effective_lock(
+                    after.get(fresh.resource_id)
+                )
+
+                detail = {
+                    "released_by": was_holder,
+                    "resource_id": fresh.resource_id,
+                    "path": fresh.path,
+                    "effective_lock_after": new_holder,
+                }
+                self.store.add_audit(
+                    conn,
+                    operation_id=op_id,
+                    workspace_id=workspace_id,
+                    action=AuditAction.RELEASE.value,
+                    actor=agent_id,
+                    result=AuditResult.SUCCESS.value,
+                    resource_id=fresh.resource_id,
+                    detail=detail,
+                )
+                self.store.add_event(
+                    conn,
+                    workspace_id=workspace_id,
+                    event_type=WorkspaceEventType.RESPONSIBILITY_RELEASED.value,
+                    actor=agent_id,
+                    resource_id=fresh.resource_id,
+                    revision=new_rev,
+                    detail=detail,
+                )
+
+                return OperationResult.ok(
+                    operation_id=op_id,
+                    result={
+                        "resource_id": fresh.resource_id,
+                        "path": fresh.path,
+                        "revision": new_rev,
+                        "released_by": was_holder,
+                        "effective_lock_after": new_holder,
+                    },
+                )
+
+    # ==========================================================
+    # FORCE UNLOCK（Governance）
+    # ==========================================================
+    def force_unlock(
+        self,
+        workspace_id: str,
+        path: str,
+        actor: str,
+        *,
+        reason: str,
+        authorized: bool = False,
+    ) -> OperationResult:
+        """
+        🔒 **Governance 操作，不是普通工作操作**（任务书 §26 / ADR-0021）。
+
+        ADR-0021 的语义**完整保留**：
+            · 高权限（这里用显式的 `authorized=True` 表达）
+            · **必须**有明确原因
+            · **必须**审计
+
+        当前版本由 **Human** 触发；未来可以让 Governance Agent 承担，
+        但第一版**不自动实现**。
+
+        ⚠️ 这里**不实现任何自动触发路径** —— 尤其是
+           `Heartbeat Timeout → Auto Unlock`（任务书 §47 明确禁止）。
+        """
+        op_id = new_operation_id()
+
+        if not authorized:
+            return OperationResult.fail(
+                operation_id=op_id,
+                code=ErrorCode.GOVERNANCE_REQUIRED,
+                message="force_unlock 是治理操作，需要高权限授权",
+            )
+        if not reason.strip():
+            return OperationResult.fail(
+                operation_id=op_id,
+                code=ErrorCode.INVALID_ARGUMENT,
+                message="force_unlock 必须给出明确原因（ADR-0021）",
+            )
+
+        target = self._resolve_path(workspace_id, path, op_id)
+        if isinstance(target, OperationResult):
+            return target
+
+        with self.locks.hold(workspace_id, target.resource_id):
+            with self.db.transaction(write=True) as conn:
+                tree = self.store.load_tree(workspace_id)
+                fresh = tree.get(target.resource_id)
+                own = tree.explicit_lock_of(fresh.resource_id)
+
+                if own is None:
+                    return OperationResult.fail(
+                        operation_id=op_id,
+                        code=ErrorCode.RESOURCE_NOT_FOUND,
+                        message="该资源没有显式责任可解锁",
+                    )
+
+                previous_owner = own.holder
+                self.store.clear_explicit_lock(conn, fresh.resource_id)
+
+                # 🔒 治理操作同样**不产生新 Revision**（任务书 §27）
+                new_rev = fresh.revision
+                after = self.store.load_tree(workspace_id)
+                new_holder = after.effective_lock(after.get(fresh.resource_id))
+
+                detail = {
+                    "revoked_by": actor,
+                    "previous_owner": previous_owner,
+                    "resource_id": fresh.resource_id,
+                    "path": fresh.path,
+                    "reason": reason,
+                    "effective_lock_after": new_holder,
+                }
+                self.store.add_audit(
+                    conn,
+                    operation_id=op_id,
+                    workspace_id=workspace_id,
+                    action=AuditAction.FORCE_UNLOCK.value,
+                    actor=actor,
+                    result=AuditResult.SUCCESS.value,
+                    resource_id=fresh.resource_id,
+                    detail=detail,
+                )
+                self.store.add_event(
+                    conn,
+                    workspace_id=workspace_id,
+                    event_type=WorkspaceEventType.GOVERNANCE_FORCE_UNLOCK.value,
+                    actor=actor,
+                    resource_id=fresh.resource_id,
+                    revision=new_rev,
+                    detail=detail,
+                )
+
+                return OperationResult.ok(
+                    operation_id=op_id,
+                    result={
+                        "resource_id": fresh.resource_id,
+                        "revision": new_rev,
+                        "previous_owner": previous_owner,
+                        "effective_lock_after": new_holder,
+                    },
+                )

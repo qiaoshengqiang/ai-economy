@@ -529,7 +529,7 @@ class TestNoImplementation:
     FORBIDDEN_CLASSES = (
         "RecoveryManager", "GovernanceAgent", "AuthorizationEngine",
         "DelegationService", "ControllerRegistry", "ResourceManager",
-        "LockManager", "WorkspaceGateway",
+        "LockManager",
     )
 
     def test_no_modules(self):
@@ -539,8 +539,20 @@ class TestNoImplementation:
                     f"{layer}/{name} 出现了 —— 本轮禁止实现"
                 )
 
-    def test_no_classes(self):
+    def test_no_forbidden_classes(self):
+        """
+        禁止的是**被移除的概念**，不是「所有 Workspace 类」。
+
+        （Workspace Core 第一阶段已授权实现 ——
+          `WorkspaceGateway` / `ResourceTree` 等是**允许**的。）
+        """
         import ast
+
+        allowed = {
+            "WorkspaceGateway", "WorkspaceStore", "ResourceTree",
+            "Resource", "ExplicitLock", "OperationResult",
+            "ResourceLockRegistry",
+        }
 
         for layer in ("core", "services", "communication", "storage",
                       "agents", "llm"):
@@ -550,9 +562,10 @@ class TestNoImplementation:
                     n.name for n in ast.walk(tree)
                     if isinstance(n, ast.ClassDef)
                 }
-                hit = names & set(self.FORBIDDEN_CLASSES)
+                hit = (names & set(self.FORBIDDEN_CLASSES)) - allowed
                 assert not hit, (
-                    f"{path.name} 定义了 {sorted(hit)} —— 本轮禁止实现"
+                    f"{path.name} 定义了 {sorted(hit)} —— "
+                    f"该概念已被 ADR-0027 移除/降级"
                 )
 
     def test_no_new_tables(self, db):

@@ -1237,14 +1237,38 @@ class TestNoWorkspaceImplementation:
     光靠文档说「没实现」是不够的。
     """
 
-    def test_no_permission_or_lock_classes(self):
-        """没有任何生产文件定义 Permission / Lock / Backend 类。"""
+    def test_no_permission_or_acl_classes(self):
+        """
+        没有任何生产文件定义 **Permission / ACL / IAM** 类。
+
+        【设计阶段守卫 → 实现阶段的过渡】
+
+            原来是 `test_no_permission_or_lock_classes`，禁止
+            `WorkspaceGateway` / `WorkspaceLock` 等 ——
+            因为当时 Task Workspace 还是 `FUTURE`。
+
+            Workspace Core 第一阶段已**授权实现**，所以那份清单过时了：
+
+                ✅ 允许：`WorkspaceGateway`（Layer 语义里叫 Lock，
+                        但它是**责任**不是权限）
+                ❌ 禁止：Permission / ACL / IAM / Backend / Role
+                        —— ADR-0027 已把 Authorization 降级，
+                           复杂 IAM / Visibility ACL 明确不做
+
+            ⚠️ `WriteLock` / `LockManager` 仍然禁止 ——
+               Workspace Core 用 `ExplicitLock` + 派生 Effective Lock，
+               **没有**可被任意抢的 `lock()` 管理器（任务书 §43）。
+        """
         forbidden_classes = {
             "Permission", "PermissionEngine", "ACL", "AccessControl",
             "WriteLock", "LockManager", "WorkspaceLock",
             "WorkspaceBackend", "LocalWorkspaceBackend",
             "RemoteWorkspaceBackend", "WorkspaceService",
-            "WorkspaceManager", "WorkspaceGateway", "ArtifactStore",
+            "WorkspaceManager", "ArtifactStore",
+            # 🔒 ADR-0027 移除/降级的概念
+            "AuthorizationEngine", "AuthorizationRequest",
+            "DelegationService", "ControllerRegistry", "CascadeRevocation",
+            "RecoveryManager", "GovernanceAgent", "VisibilityEngine",
         }
 
         for path in production_files():
