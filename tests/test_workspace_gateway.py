@@ -12,8 +12,11 @@ from __future__ import annotations
 
 import pytest
 
+from contextlib import contextmanager
+
+from services.workspace_concurrency import ResourceLockRegistry
 from services.workspace_gateway import WorkspaceGateway
-from storage.database import create_memory_database
+from storage.database import Database, create_memory_database
 
 
 # ============================================================
@@ -49,6 +52,77 @@ class Rig:
         return [r["event_type"] for r in self.db.fetchall(
             "SELECT event_type FROM workspace_events WHERE workspace_id = ? "
             "ORDER BY created_at, event_id", (workspace_id,))]
+
+
+class FileRig:
+    """
+    **文件数据库**版本的测试环境 —— 专门给**真实并发**测试用。
+
+    【⚠️ 为什么不能用 `Rig`（内存库）做并发测试】
+
+        本项目有一条**已记录的技术债**（AGENTS.md 技术债 #2）：
+
+            **多线程共享 `Database` 不安全。**
+            `_tx_depth` 是**实例状态** —— 跨线程共享会被交错修改，
+            导致事务边界错乱。**当前唯一安全用法是每线程一个
+            `Database` 实例。**
+
+        第一版并发测试共用一个内存 `Database`，
+        在全量测试（有负载）时**偶发失败** —— 某个线程抛异常、
+        结果留在 `None`。这正是那条技术债的现场复现。
+
+    【正确做法】
+
+        · 用**文件**数据库（`:memory:` 每条连接都是一个独立库，
+          做不到「同一个库、多个连接」）
+        · **每个线程开自己的 `Database` 实例**（各自一条连接）
+        · 但**共享** `ResourceLockRegistry` ——
+          资源级互斥是进程内概念，必须共享才能起作用
+
+    这样测的才是**真实的并发语义**：
+    多个连接打同一个库，靠资源级锁 + SQLite 事务协调。
+    """
+
+    def __init__(self, path, participants=None):
+        self.path = str(path)
+        self.locks = ResourceLockRegistry()          # 🔒 共享
+        self.participants = participants or {"W1": {"A"}}
+
+        bootstrap = self.new_db()
+        try:
+            self.gateway(bootstrap).ensure_workspace("W1", "A")
+        finally:
+            bootstrap.close()
+
+    def new_db(self):
+        """**当前线程**专属的连接。"""
+        db = Database(self.path)
+        db.connect()
+        db.initialize()
+        return db
+
+    def gateway(self, db):
+        return WorkspaceGateway(
+            db,
+            lock_registry=self.locks,
+            is_participant=lambda w, a: a in self.participants.get(w, set()),
+        )
+
+    @contextmanager
+    def session(self):
+        """在**当前线程**开一个 gateway，用完关掉自己的连接。"""
+        db = self.new_db()
+        try:
+            yield self.gateway(db)
+        finally:
+            db.close()
+
+
+@pytest.fixture
+def file_rig(tmp_path):
+    """文件库 + 每线程独立连接的测试环境（并发测试专用）。"""
+    r = FileRig(tmp_path / "workspace.db")
+    yield r
 
 
 @pytest.fixture
@@ -671,7 +745,7 @@ class TestConcurrency:
         assert rig.gateway.edit("W1", "/a.py", 1, "a2", "A").success
         assert rig.gateway.edit("W1", "/b.py", 1, "b2", "B").success
 
-    def test_two_threads_race_same_file(self):
+    def test_two_threads_race_same_file(self, file_rig):
         """
         🔒 **§45-44 / 场景 D：真实测试两个并发操作竞争同一 File。**
 
@@ -690,126 +764,131 @@ class TestConcurrency:
         """
         import threading
 
-        r = Rig(participants={"W1": {"A"}})
-        try:
-            r.gateway.ensure_workspace("W1", "A")
-            r.gateway.create("W1", "/", "a.py", "file", "A", content="v0")
+        with file_rig.session() as gw:
+            gw.create("W1", "/", "a.py", "file", "A", content="v0")
 
-            barrier = threading.Barrier(2)
-            results: list = [None, None]
-            errors: list = [None, None]
+        barrier = threading.Barrier(2)
+        results: list = [None, None]
+        errors: list = [None, None]
 
-            def attempt(slot: int, payload: str) -> None:
-                try:
+        def attempt(slot: int, payload: str) -> None:
+            try:
+                # 🔒 **每个线程自己的连接**（技术债 #2：不能共享 Database）
+                with file_rig.session() as gw:
                     barrier.wait(timeout=5)          # 🔒 同步起跑
-                    results[slot] = r.gateway.edit(
+                    results[slot] = gw.edit(
                         "W1", "/a.py", 1, payload, "A"
                     )
-                except Exception as exc:             # pragma: no cover
-                    errors[slot] = exc
+            except Exception as exc:                 # pragma: no cover
+                errors[slot] = exc
 
-            threads = [
-                threading.Thread(target=attempt, args=(0, "winner-A")),
-                threading.Thread(target=attempt, args=(1, "winner-B")),
-            ]
-            for t in threads:
-                t.start()
-            for t in threads:
-                t.join(timeout=10)
+        threads = [
+            threading.Thread(target=attempt, args=(0, "winner-A")),
+            threading.Thread(target=attempt, args=(1, "winner-B")),
+        ]
+        for th in threads:
+            th.start()
+        for th in threads:
+            th.join(timeout=15)
 
-            assert not any(errors), f"线程里抛异常：{errors}"
-            assert all(res is not None for res in results), "两个线程都要有结果"
+        assert not any(errors), f"线程里抛异常：{errors}"
+        assert all(res is not None for res in results), "两个线程都要有结果"
 
-            successes = [res for res in results if res.success]
-            failures = [res for res in results if not res.success]
+        successes = [res for res in results if res.success]
+        failures = [res for res in results if not res.success]
 
-            assert len(successes) == 1, (
-                f"🔒 同一 File 必须**恰好一个**成功，实际 {len(successes)}"
-            )
-            assert len(failures) == 1
-            assert failures[0].error_code in (
-                "STALE_REVISION", "LOCKED_BY_OTHER_AGENT"
-            ), f"失败必须明确，得到 {failures[0].error_code}"
+        assert len(successes) == 1, (
+            f"🔒 同一 File 必须**恰好一个**成功，实际 {len(successes)}"
+        )
+        assert len(failures) == 1
+        assert failures[0].error_code in (
+            "STALE_REVISION", "LOCKED_BY_OTHER_AGENT"
+        ), f"失败必须明确，得到 {failures[0].error_code}"
 
-            # 最终状态必须确定：恰好 R2，内容是成功那一方的
-            final = r.gateway.read("W1", "/a.py", "A")
+        with file_rig.session() as gw:
+            final = gw.read("W1", "/a.py", "A")
             assert final.result["revision"] == 2
-            assert final.result["content"] == successes[0].result["path"] and False or (
-                final.result["content"] in ("winner-A", "winner-B")
-            )
-        finally:
-            r.close()
+            assert final.result["content"] in ("winner-A", "winner-B")
 
-    def test_race_produces_exactly_two_revisions(self):
+    def test_race_produces_exactly_two_revisions(self, file_rig):
         """
         并发竞争之后，**恰好**留下 2 条 EDIT 之后的 revision ——
         败者**不能**留下任何写入痕迹。
         """
         import threading
 
-        r = Rig(participants={"W1": {"A"}})
-        try:
-            r.gateway.ensure_workspace("W1", "A")
-            r.gateway.create("W1", "/", "a.py", "file", "A", content="v0")
-            rid = r.gateway.read("W1", "/a.py", "A").result["resource_id"]
+        with file_rig.session() as gw:
+            gw.create("W1", "/", "a.py", "file", "A", content="v0")
+            rid = gw.read("W1", "/a.py", "A").result["resource_id"]
 
-            barrier = threading.Barrier(2)
+        barrier = threading.Barrier(2)
+        errors: list = []
 
-            def attempt(payload: str) -> None:
-                barrier.wait(timeout=5)
-                r.gateway.edit("W1", "/a.py", 1, payload, "A")
+        def attempt(payload: str) -> None:
+            try:
+                with file_rig.session() as gw:
+                    barrier.wait(timeout=5)
+                    gw.edit("W1", "/a.py", 1, payload, "A")
+            except Exception as exc:                 # pragma: no cover
+                errors.append(exc)
 
-            threads = [threading.Thread(target=attempt, args=(f"p{i}",))
-                       for i in range(2)]
-            for t in threads:
-                t.start()
-            for t in threads:
-                t.join(timeout=10)
+        threads = [threading.Thread(target=attempt, args=(f"p{i}",))
+                   for i in range(2)]
+        for th in threads:
+            th.start()
+        for th in threads:
+            th.join(timeout=15)
 
-            rows = r.gateway.store.revisions_for(rid)
+        assert not errors, f"线程里抛异常：{errors}"
 
-            assert [x["revision_number"] for x in rows] == [1, 2], (
-                f"应该是 CREATE(R1) + 恰好一次 EDIT(R2)，实际 {[x['revision_number'] for x in rows]}"
-            )
-        finally:
-            r.close()
+        with file_rig.session() as gw:
+            rows = gw.store.revisions_for(rid)
 
-    def test_concurrent_creates_in_same_directory_are_consistent(self):
+        assert [x["revision_number"] for x in rows] == [1, 2], (
+            f"应该是 CREATE(R1) + 恰好一次 EDIT(R2)，"
+            f"实际 {[x['revision_number'] for x in rows]}"
+        )
+
+    def test_concurrent_creates_in_same_directory_are_consistent(self, file_rig):
         """
         §45-45：同一 Directory 的**冲突结构操作安全** ——
         两个并发 create 之后，Namespace 必须一致（两个都在，或明确失败一个）。
         """
         import threading
 
-        r = Rig(participants={"W1": {"A"}})
-        try:
-            r.gateway.ensure_workspace("W1", "A")
-            barrier = threading.Barrier(4)
-            results: list = [None] * 4
+        barrier = threading.Barrier(4)
+        results: list = [None] * 4
+        errors: list = []
 
-            def create(slot: int) -> None:
-                barrier.wait(timeout=5)
-                results[slot] = r.gateway.create(
-                    "W1", "/", f"f{slot}.py", "file", "A", content="x"
-                )
+        def create(slot: int) -> None:
+            try:
+                with file_rig.session() as gw:
+                    barrier.wait(timeout=5)
+                    results[slot] = gw.create(
+                        "W1", "/", f"f{slot}.py", "file", "A", content="x"
+                    )
+            except Exception as exc:                 # pragma: no cover
+                errors.append((slot, exc))
 
-            threads = [threading.Thread(target=create, args=(i,)) for i in range(4)]
-            for t in threads:
-                t.start()
-            for t in threads:
-                t.join(timeout=10)
+        threads = [threading.Thread(target=create, args=(i,)) for i in range(4)]
+        for th in threads:
+            th.start()
+        for th in threads:
+            th.join(timeout=15)
 
-            assert all(res.success for res in results), (
-                f"不同名字的并发 create 应该全部成功：{[x.error_code for x in results]}"
-            )
+        assert not errors, f"线程里抛异常：{errors}"
+        assert all(res is not None and res.success for res in results), (
+            f"不同名字的并发 create 应该全部成功："
+            f"{[x.error_code if x else None for x in results]}"
+        )
 
-            listing = r.gateway.list("W1", "/", "A")
-            names = sorted(e["name"] for e in listing.result["entries"])
-            assert names == ["f0.py", "f1.py", "f2.py", "f3.py"], (
-                f"Namespace 必须一致，实际 {names}"
-            )
-        finally:
-            r.close()
+        with file_rig.session() as gw:
+            listing = gw.list("W1", "/", "A")
+
+        names = sorted(e["name"] for e in listing.result["entries"])
+        assert names == ["f0.py", "f1.py", "f2.py", "f3.py"], (
+            f"Namespace 必须一致，实际 {names}"
+        )
 
 
 # ============================================================

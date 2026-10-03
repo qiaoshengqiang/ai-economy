@@ -30,7 +30,7 @@
 | | |
 |---|---|
 | **阶段** | `Post-Step-4F / Pre-Task-Workspace` |
-| **测试基线** | **3249 passed, 2 skipped, 30 deselected** |
+| **测试基线** | **3251 passed, 2 skipped, 30 deselected** |
 | **协议版本** | `protocol_version = "1"` |
 | **命令数** | 16（`./dev.sh` 查看全部） |
 | **数据库表** | **18** |
@@ -342,7 +342,7 @@ Knowledge graph · 分布式共识 · 多 agent 投票 · 复杂 ontology。**�
         ↓
 2. 先调查真实代码（不要凭空设计）
         ↓
-3. 跑基线：./dev.sh test   （必须是 3249 passed）
+3. 跑基线：./dev.sh test   （必须是 3251 passed）
         ↓
 4. 实施最小修改
         ↓
@@ -361,7 +361,7 @@ Knowledge graph · 分布式共识 · 多 agent 投票 · 复杂 ontology。**�
 
 1. **先调查，再动手。** 不要在设计之前改代码。
 2. **每一步结束跑全量测试。** 不是只跑自己改的那个文件。
-   基线现在是 **3249 passed**。
+   基线现在是 **3251 passed**。
 3. **新增守卫必须配反向测试。** 把违规注入进去，确认守卫**真的变红**。
 
 ---
@@ -374,7 +374,7 @@ Knowledge graph · 分布式共识 · 多 agent 投票 · 复杂 ontology。**�
 ./dev.sh test tests/test_xxx.py -k 名字  # 单个测试
 ```
 
-基线 **3249 passed / 2 skipped / 30 deselected** ·
+基线 **3251 passed / 2 skipped / 30 deselected** ·
 守卫文件 10 个约 390 项 · 真实 API 测试 30 项（单独跑，需要 Key）。
 
 **必须用 `./dev.sh test`，不要直接 `pytest`** —— 它会正确设置环境。
