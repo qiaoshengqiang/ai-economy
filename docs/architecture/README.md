@@ -29,6 +29,7 @@
 | [RESOURCE_LAYER.md](RESOURCE_LAYER.md) | 中 | **Resource · Controller · Authorization · Delegation · Cascade Revocation**（`FUTURE`） | 做 Workspace 内部资源控制时 |
 | [LOCK_MODEL.md](LOCK_MODEL.md) | 中 | **Directory/File Lock · Explicit/Implicit · Effective Lock · Edit Session · Handoff**（`FUTURE`） | 做 Lock / 并行修改 / 交接时 |
 | [RECOVERY_MODEL.md](RECOVERY_MODEL.md) | 中 | **异常检测 ≠ 治理决策 · Human Confirmation · 未来 AI Governance**（`FUTURE`） | 做 Agent 异常 / Recovery / 治理时 |
+| [COMMUNICATION_MODEL.md](COMMUNICATION_MODEL.md) | 中 | **Communication 是 Agent 基础能力（不绑 Task）· Workspace Event ≠ Agent Message · Runtime Inbox** | 做通信 / Conversation / Inbox 时 |
 | [adr/](adr/README.md) | 中 | **单个决策**的历史与理由 | 想知道「为什么当初这样定」时 |
 
 **三层分工，不要重复**：

@@ -52,6 +52,7 @@
 | [0025](0025-resource-control-authorization-delegation.md) | Controller / Authorization / Delegation / Write Lock 四者分离 | ⚠️ **第一版核心地位被 ADR-0027 取代**（Authorization / Delegation 降级，Cascade Revocation 移除） | Resource 层核心设计 | Workspace |
 | [0026](0026-lock-hierarchy-and-edit-session.md) | Lock 有层级与继承；Edit Session ≠ Lock | Accepted（实现为 FUTURE） | Lock 语义确认 | Workspace |
 | [0027](0027-workspace-responsibility-model-simplification.md) | **第一版简化为 `Controller + Lock + Handoff + Audit`** | Accepted | 设计简化 | Workspace |
+| [0028](0028-read-visibility-and-native-communication.md) | **Read 靠 Task Participation；Communication 是 Agent 基础能力** | Accepted（实现为 FUTURE） | Read / Visibility / Communication | Workspace / Communication |
 
 ---
 

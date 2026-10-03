@@ -30,7 +30,7 @@
 | | |
 |---|---|
 | **阶段** | `Post-Step-4F / Pre-Task-Workspace` |
-| **测试基线** | **3071 passed, 30 deselected** |
+| **测试基线** | **3130 passed, 30 deselected** |
 | **协议版本** | `protocol_version = "1"` |
 | **命令数** | 16（`./dev.sh` 查看全部） |
 | **数据库表** | 13 |
@@ -342,7 +342,7 @@ Vector DB · Knowledge graph · 分布式共识 · Multi-agent 投票 · 复杂 
         ↓
 2. 先调查真实代码（不要凭空设计）
         ↓
-3. 跑基线：./dev.sh test   （必须是 3071 passed）
+3. 跑基线：./dev.sh test   （必须是 3130 passed）
         ↓
 4. 实施最小修改
         ↓
@@ -361,7 +361,7 @@ Vector DB · Knowledge graph · 分布式共识 · Multi-agent 投票 · 复杂 
 
 1. **先调查，再动手。** 不要在设计之前改代码。
 2. **每一步结束跑全量测试。** 不是只跑自己改的那个文件。
-   基线现在是 **3071 passed**。
+   基线现在是 **3130 passed**。
 3. **新增守卫必须配反向测试。** 把违规注入进去，确认守卫**真的变红**。
 
 ---
@@ -374,7 +374,7 @@ Vector DB · Knowledge graph · 分布式共识 · Multi-agent 投票 · 复杂 
 ./dev.sh test tests/test_xxx.py -k 名字  # 单个测试
 ```
 
-基线 **3071 passed / 30 deselected** · 测试文件 51 个 ·
+基线 **3130 passed / 30 deselected** · 测试文件 51 个 ·
 守卫文件 10 个约 390 项 · 真实 API 测试 30 项（单独跑，需要 Key）。
 
 **必须用 `./dev.sh test`，不要直接 `pytest`** —— 它会正确设置环境。
@@ -426,11 +426,12 @@ AGENTS.md → 判断任务领域 → 只读相关 Specification → 必要时读
 | 我要做… | 规范 | 状态 |
 |---|---|---|
 | Task Shared Context / Alignment | [`TASK_SHARED_CONTEXT.md`](docs/architecture/TASK_SHARED_CONTEXT.md) | **`CURRENT`**（已实现） |
-| **Task Workspace / Permission / Write Lock** | [`TASK_WORKSPACE.md`](docs/architecture/TASK_WORKSPACE.md) + [`LOCK_MODEL.md`](docs/architecture/LOCK_MODEL.md) | **`FUTURE`** |
+| **Task Workspace / Read / Lock** | [`TASK_WORKSPACE.md`](docs/architecture/TASK_WORKSPACE.md) + [`LOCK_MODEL.md`](docs/architecture/LOCK_MODEL.md) | **`FUTURE`** |
 | 消息协议 | [`PROTOCOL.md`](PROTOCOL.md) | `CURRENT` |
 | **Task Origin / Lineage / Funding** | [`TASK_ORIGIN_LINEAGE.md`](docs/architecture/TASK_ORIGIN_LINEAGE.md) | **`FUTURE`**（逻辑模型已定） |
 | **Resource / Lock / Handoff** | [`RESOURCE_LAYER.md`](docs/architecture/RESOURCE_LAYER.md) + [`LOCK_MODEL.md`](docs/architecture/LOCK_MODEL.md) —— 第一版核心 = **`Controller + Lock + Handoff + Audit`**（Authorization / Delegation 降级，Cascade Revocation **移除**，ADR-0027） | **`FUTURE`** |
 | **Recovery / Governance** | [`RECOVERY_MODEL.md`](docs/architecture/RECOVERY_MODEL.md) —— **异常检测 ≠ 治理决策**；当前 Human Confirmation，未来 AI Governance | **`FUTURE`** |
+| **Read / Communication** | [`COMMUNICATION_MODEL.md`](docs/architecture/COMMUNICATION_MODEL.md) —— Read 靠 **Task Participation**（无 READ ACL）· Communication 是 **Agent 基础能力**（不绑 Task）· **Workspace Event ≠ Agent Message** · Runtime Inbox（ADR-0028） | 基础 Message `CURRENT` · 其余 `FUTURE` |
 
 **Workspace 导航**（规范 §23.4）：
 

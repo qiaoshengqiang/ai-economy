@@ -621,6 +621,123 @@ Task-001
 
 ---
 
+## 7.5 Task Workspace Read / Visibility（`SETTLED` —— 填补 Authorization 移除后的空档）
+
+> ⚠️ **设计简化移除了 Authorization，曾留下「Workspace 没有 Read 模型」的空档。
+> 本节正式填补它 —— 但**不**重新引入 Authorization。**
+
+### 7.5.1 第一版**不建立资源级 Read ACL**
+
+> 🔒 **第一版不建立资源级 Read ACL。**
+>
+> 🔒 **Task Workspace 中，所有正式 Task Participants
+> 默认拥有该 Task Workspace 普通共享资源的读取权。**
+
+❌ **不要**重新引入 `READ` / `READ_FILE` / `READ_DIRECTORY` /
+`READ_RESOURCE` 之类的独立 Authorization 权限系统。
+❌ **也不要**为普通 Task Workspace 文件建立复杂 ACL。
+
+### 7.5.2 `Task Participation → Workspace Read`
+
+```
+Task T1 · Workspace W1
+W1/ ├── requirements/  ├── src/  ├── tests/  └── artifacts/
+
+A 创建 Task  →  A ∈ Participants(T1)  →  A 可读 W1/*
+
+A 给 B 创建 Child Task T1.1（Assignee = B）
+当 B **正式成为 Task Participant** 后：
+B ∈ Participants(T1)  →  B 自动获得 READ(W1/*)
+```
+
+> **Agent 参加一个 Task，就可以读取该 Task 对应 Workspace 的
+> 全部普通共享资源。不需要 A 再逐个文件授权。**
+
+### 7.5.3 🔒 Read 与 Write 必须彻底分开
+
+```
+Task Participation → Read Task Workspace
+Lock               → Write / Modify
+Controller         → Long-term Directory Responsibility
+Handoff            → Responsibility Transfer
+```
+
+```
+A, B, C 都是 Task Participants
+    → 三者默认都可以读 requirements / source / tests / artifacts
+
+但**不能因为参与 Task 就自动修改所有内容**：
+    src/main.py          File Lock = A
+    frontend/page.tsx    File Lock = B
+    tests/               Directory Lock = C
+    → 修改责任仍由 Lock 决定
+```
+
+> 🔒 **`Read` = 「你可以了解这个项目。」
+> `Lock` = 「你现在负责修改这项工作。」**
+
+### 7.5.4 Read 的边界
+
+**默认 Read 范围**：Task Workspace 的**普通共享资源**
+
+**不在默认范围**：
+
+| ❌ | |
+|---|---|
+| Agent Private Workspace | |
+| Agent Private Memory | |
+| Agent Private Artifacts | |
+| System Workspace | |
+| 其他不属于该 Task 的 Workspace | |
+
+```
+Agent A
+├── Private Workspace（memory / identity / private artifacts）
+└── Task Workspace T1（requirements / src / tests）
+
+B 参加 T1 后：
+    B → ✅ 可以读取 T1 Workspace
+    B → ❌ 不能读取 A Private Workspace
+```
+
+> 🔒 **不要为了实现这个简单模型再引入复杂的 Visibility ACL。**
+
+### 7.5.5 什么时候获得 Read？
+
+> **在 Agent 正式成为 `Task Participant` 时获得。**
+
+```
+T1 Participants: A
+B 尚未参与  →  B 不能读取 T1 Workspace
+
+A 创建 Child Task T1.1（Assignee = B）
+当 B **正式加入 / 接受**该 Task 后：
+    B ∈ Participants(T1)  →  B → Read T1 Workspace
+```
+
+> ⚠️ **「加入 / 接受」的生命周期，如果现有 Task 模型已有定义，
+> 优先复用，不要重复建立机制。**
+
+### 7.5.6 Human 也是 Task Participant 时
+
+```
+T1 Participants: A · B · Human
+    → Human 可以读取 T1 Workspace
+```
+
+> Human 是否拥有**直接修改**能力，仍由
+> **Workspace / Governance / Force Unlock** 等机制决定。
+> 🔒 **不要因为 Read 模型而改变既有 Human Governance 设计。**
+
+### 7.5.7 正式原则
+
+> ## **Task Workspace 第一版不实现资源级 Read ACL。
+> ## Task Participants 默认可以读取该 Task Workspace 中的普通共享资源。**
+>
+> ## **Read Visibility 与 Write Responsibility 是两个独立概念。**
+
+---
+
 ## 8. Resource Model
 
 > ⚠️ **本节的资源级控制细节（Controller / Authorization /
