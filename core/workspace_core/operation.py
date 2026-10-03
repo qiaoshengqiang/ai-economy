@@ -49,6 +49,13 @@ class ErrorCode(str, Enum):
     INVALID_ARGUMENT = "INVALID_ARGUMENT"
     GOVERNANCE_REQUIRED = "GOVERNANCE_REQUIRED"
 
+    # ---- Hardening 阶段补上（任务书 §9 Case 5 要求）----
+    #   Handoff 的接收方必须是一个**真实存在**的 Agent。
+    #   与 NOT_TASK_PARTICIPANT 分开，因为两者的正确应对不同：
+    #       UNKNOWN_AGENT         → 「你把名字打错了」
+    #       NOT_TASK_PARTICIPANT  → 「这个人存在，但不在这个 Task 里」
+    UNKNOWN_AGENT = "UNKNOWN_AGENT"
+
 
 def new_operation_id() -> str:
     """每次 Gateway 调用一个 operation_id —— Audit 与 Event 用它串联。"""

@@ -288,31 +288,36 @@ class TestResourceOps:
     def test_move_keeps_resource_id_and_locks(self, rig):
         """
         🔒 move 后 resource_id 不变；
-           移动整棵树时 **Explicit Lock 保持**（不自动换责任人）。
+           **Explicit Lock 保持**（不自动换责任人）。
+
+        ⚠️ 前置条件：被移动的资源**不能**是别人独立负责的 ——
+        否则 move 会被边界规则拦下（那是正确的，见 hardening 套件）。
+        这里让 A 把 login.tsx 的责任**显式化给自己**，
+        这样它是一条真正的 Explicit Lock，而移动它的人就是它的持有者。
         """
         rig.gateway.create("W1", "/", "frontend", "directory", "A")
         rig.gateway.create("W1", "/frontend", "login.tsx", "file", "A",
                            content="x")
-        # A 把 login.tsx 显式交给 C
-        rig.gateway.handoff("W1", "/frontend/login.tsx", "A", "C", "A",
-                            reason="C 负责这个文件")
+        # A → A：把继承来的责任**显式化**成一条持久化锁
+        rig.gateway.handoff("W1", "/frontend/login.tsx", "A", "A", "A",
+                            reason="显式化责任")
         rig.gateway.create("W1", "/", "auth", "directory", "A")
 
         before = rig.gateway.read("W1", "/frontend/login.tsx", "A")
         rid = before.result["resource_id"]
+        assert rig.gateway.store.explicit_lock_of(rid) is not None, "要先有显式锁"
 
         r = rig.gateway.move("W1", "/frontend/login.tsx", "/auth", "A")
 
-        assert r.success
+        assert r.success, r.error_code
         assert r.result["resource_id"] == rid
         assert r.result["new_path"] == "/auth/login.tsx"
 
-        # 🔒 锁没被 move 改变 —— 还是 C
+        # 🔒 显式锁**仍然挂在同一个 resource_id 上**，没被 move 改写
         tree = rig.gateway.store.load_tree("W1")
         moved = tree.by_path("W1", "/auth/login.tsx")
-        assert tree.effective_lock(moved) == "C", (
-            "move 不该自动更换责任人"
-        )
+        assert tree.explicit_lock_of(rid) is not None, "move 把显式锁弄丢了"
+        assert tree.effective_lock(moved) == "A", "move 不该更换责任人"
 
     def test_move_rejects_into_own_subtree(self, rig):
         rig.gateway.create("W1", "/", "a", "directory", "A")

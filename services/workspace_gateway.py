@@ -74,6 +74,12 @@ from services.workspace_concurrency import ResourceLockRegistry
 #: 由组合根注入（默认拒绝一切 —— 安全的默认值）。
 ParticipantCheck = Callable[[str, str], bool]
 
+#: 判定「这个 Agent 到底存不存在」（身份层的事，不是权限）。
+#: 由组合根注入。默认 `None` = **不做存在性校验**，
+#: 这样纯 Workspace Core 的单元测试不必先建 Agent 目录。
+#: ⚠️ 组合根**应该**注入它 —— 否则 Handoff 可以指向一个虚构的接收方。
+AgentExistsCheck = Callable[[str], bool]
+
 
 def _deny_all(workspace_id: str, agent_id: str) -> bool:  # pragma: no cover
     return False
@@ -89,12 +95,16 @@ class WorkspaceGateway:
         store: Optional[WorkspaceStore] = None,
         lock_registry: Optional[ResourceLockRegistry] = None,
         is_participant: Optional[ParticipantCheck] = None,
+        agent_exists: Optional[AgentExistsCheck] = None,
     ) -> None:
         self.db = db
         self.store = store or WorkspaceStore(db)
         self.locks = lock_registry or ResourceLockRegistry()
         # 默认拒绝 —— 忘记注入时**不会**意外放开访问
         self._is_participant: ParticipantCheck = is_participant or _deny_all
+        # 🔒 **默认 None 表示不检查存在性** —— 这是一个有意的取舍。
+        #    组合根应当注入真实实现；只做 Workspace 语义测试时可以不注入。
+        self._agent_exists: Optional[AgentExistsCheck] = agent_exists
 
     # ==========================================================
     # 内部工具
@@ -141,6 +151,60 @@ class WorkspaceGateway:
     def _attempt(action: AuditAction) -> AuditAction:
         from core.workspace_core.events import attempt_action
         return attempt_action(action)
+
+    def _bump_revision(
+        self,
+        conn,
+        resource,
+        *,
+        change_type: str,
+        actor: str,
+        change_ref: str,
+        state: Optional[ResourceState] = None,
+    ):
+        """
+        **递增 revision 的唯一正确方式。**
+
+        ============================================================
+        【🔒 为什么必须包成这样 —— Hardening 抓到的真实不一致】
+        ============================================================
+
+            资源的 `revision` **列**与 `workspace_revisions` **表**
+            是两个必须同步的东西。第一版有几处只改了列、没写表：
+
+                · `rename` 递增父目录 revision     → 没有 revision 行
+                · `move`   递增 source/dest 父目录 → 没有 revision 行
+                · `delete` 目录时把整棵子树标成 DELETED
+                          并 revision+1            → 没有 revision 行
+
+            结果是 `revisions_for(resource)` 的历史出现**空洞**：
+
+                列 revision = 5
+                表里最大    = 2      ← 中间三次变化查不到
+
+            这直接违反任务书 §20 的不变量
+            「**revision 单调递增**」的精神 ——
+            单调是对的，但**可追溯性断了**。
+
+            修法：把「改列 + 写表」绑成一个动作，让调用方
+            **没有机会**只做一半。
+        """
+        new_rev = resource.revision + 1
+        # ⚠️ `state` 必须一起传 —— 否则「级联删除子树」会只改 revision、
+        #    不改 state，子资源看起来还活着。
+        #    （这是我把 delete 的子树循环改写成 _bump_revision 时
+        #      **引入过的真实回归**，被不变量检查器抓出来。）
+        self.store.update_resource(conn, resource, revision=new_rev, state=state)
+        self.store.add_revision(
+            conn,
+            resource_id=resource.resource_id,
+            workspace_id=resource.workspace_id,
+            revision_number=new_rev,
+            created_by=actor,
+            change_type=change_type,
+            change_ref=change_ref,
+        )
+        return new_rev
 
     # ==========================================================
     # 引导：创建 Workspace 根
@@ -402,9 +466,40 @@ class WorkspaceGateway:
             )
 
         # 🔒 目录结构操作共用**父目录的命名空间锁**
+        #
+        # ⚠️ 锁的 key 用**加锁前**解析出的 resource_id —— 那是安全的，
+        #    因为 resource_id 是**稳定身份**，不随 rename / move 变化。
         with self.locks.hold_namespace(workspace_id, parent.resource_id):
             with self.db.transaction(write=True) as conn:
                 tree = self.store.load_tree(workspace_id)
+
+                # ============================================================
+                # 🔒 **必须在事务内重新读取 parent —— Hardening 抓到的真实 bug**
+                #
+                #   第一版直接用**加锁之前**解析出的 `parent` 对象。
+                #   于是 12 个并发 create 全部拿着同一份陈旧快照：
+                #
+                #       每个线程都看到 parent.revision == 1
+                #       → 每个都算出 new_rev = 2
+                #       → 根目录出现 **12 条 revision_number 都是 2** 的行
+                #
+                #   命名空间锁确实把它们**串行**了 ——
+                #   但串行的顺序对了，**读到的数据是旧的**。
+                #   这正说明：序列化 ≠ 一致性。
+                #
+                #   资源级锁只能保证「不会同时进入」，
+                #   「进入之后看到最新状态」必须靠**在事务内重读**。
+                # ============================================================
+                fresh_parent = tree.get(parent.resource_id)
+                if fresh_parent is None or fresh_parent.is_deleted:
+                    return self._fail(
+                        op_id, ErrorCode.RESOURCE_NOT_FOUND,
+                        "父目录不存在或已被删除",
+                        audit=(self._attempt(AuditAction.CREATE), agent_id,
+                               parent.resource_id),
+                        workspace_id=workspace_id,
+                    )
+                parent = fresh_parent
 
                 holder = tree.effective_lock(parent)
                 if holder != agent_id:
@@ -442,18 +537,10 @@ class WorkspaceGateway:
                 )
 
                 # 父目录结构变了 → 父目录 revision 递增
-                new_parent_rev = parent.revision + 1
-                self.store.update_resource(
-                    conn, parent, revision=new_parent_rev
-                )
-                self.store.add_revision(
-                    conn,
-                    resource_id=parent.resource_id,
-                    workspace_id=workspace_id,
-                    revision_number=new_parent_rev,
-                    created_by=agent_id,
-                    change_type="CREATE",
-                    change_ref=op_id,
+                # （🔒 走 _bump_revision：改列与写表绑在一起）
+                self._bump_revision(
+                    conn, parent,
+                    change_type="CREATE", actor=agent_id, change_ref=op_id,
                 )
                 self.store.add_revision(
                     conn,
@@ -698,9 +785,14 @@ class WorkspaceGateway:
                             )
 
                 # ---- ③ 🔒 不能绕过别人的 Resource Boundary ----
+                #
+                # 规则统一为：**这个资源及其子树里，不能有任何
+                # 不属于 actor 的 Explicit Lock。**
+                #
+                # （对 delete 而言，`fresh` 自身的 foreign 锁
+                #   已经被上面的 `effective_lock == agent` 拦掉了，
+                #   所以包含它只是让规则更直白，不改变结果。）
                 foreign = tree.foreign_boundaries(fresh, agent_id)
-                # 自身的边界不算「别人的」；子树里别人的边界才是障碍
-                foreign.pop(fresh.resource_id, None)
                 if foreign:
                     return self._fail(
                         op_id, ErrorCode.RESOURCE_BOUNDARY_VIOLATION,
@@ -718,12 +810,15 @@ class WorkspaceGateway:
                     conn, fresh, state=ResourceState.DELETED, revision=new_rev
                 )
                 # 子树一并标记删除（但记录仍在）
+                # 🔒 每个被级联删除的子资源都要有自己的 revision 行 ——
+                #    否则它的历史会出现空洞（Hardening 抓到过）。
                 for node in tree.descendants(fresh):
                     if node.is_active:
-                        self.store.update_resource(
+                        self._bump_revision(
                             conn, node,
+                            change_type="DELETE", actor=agent_id,
+                            change_ref=op_id,
                             state=ResourceState.DELETED,
-                            revision=node.revision + 1,
                         )
 
                 self.store.add_revision(
@@ -818,8 +913,32 @@ class WorkspaceGateway:
                         )
 
                 # ---- ② 不能动别人独立负责的资源 ----
+                #
+                # ============================================================
+                # 🔒 **这一条不能 pop 掉 `fresh` 自身 —— Hardening 抓到的真实 bug**
+                # ============================================================
+                #
+                #   第一版写的是：
+                #
+                #       foreign = tree.foreign_boundaries(fresh, agent_id)
+                #       foreign.pop(fresh.resource_id, None)   ← ❌
+                #
+                #   那个 `pop` 本意是「自身的边界不算障碍」，
+                #   但它把**落在资源自身上的别人的边界**也一起抹掉了。
+                #
+                #   后果：
+                #       A 拥有父目录 `/src`
+                #       B 显式拥有 `/src/x.py`（独立责任边界）
+                #       → **A 可以把 `/src/x.py` 改名/搬走**
+                #
+                #   这与任务书明确禁止的
+                #   「不让 A 控制目录/B 控制文件时 A 直接删 B 的文件」
+                #   是**同一个错误**，只是换了 rename / move 两个入口。
+                #
+                #   正确规则：**资源和它的整棵子树里，不能有任何
+                #   不属于 actor 的 Explicit Lock。**
+                # ============================================================
                 foreign = tree.foreign_boundaries(fresh, agent_id)
-                foreign.pop(fresh.resource_id, None)
                 if foreign:
                     return self._fail(
                         op_id, ErrorCode.RESOURCE_BOUNDARY_VIOLATION,
@@ -862,8 +981,11 @@ class WorkspaceGateway:
                 )
 
                 if parent is not None:
-                    self.store.update_resource(
-                        conn, parent, revision=parent.revision + 1
+                    # 🔒 父目录 Namespace 变了 → 也要有 revision 行
+                    self._bump_revision(
+                        conn, parent,
+                        change_type="RENAME", actor=agent_id,
+                        change_ref=op_id,
                     )
 
                 self.store.add_revision(
@@ -1001,8 +1123,8 @@ class WorkspaceGateway:
                         )
 
                     # ---- ③ 不能动别人的边界 ----
+                    # 🔒 同样**不能** pop 掉 `fresh` 自身（见 rename 的说明）
                     foreign = tree.foreign_boundaries(fresh, agent_id)
-                    foreign.pop(fresh.resource_id, None)
                     if foreign:
                         return self._fail(
                             op_id, ErrorCode.RESOURCE_BOUNDARY_VIOLATION,
@@ -1059,12 +1181,27 @@ class WorkspaceGateway:
                         conn, tree, fresh, old_path, new_path
                     )
 
+                    # 🔒 source / destination 父目录的 Namespace 都变了 →
+                    #    两个都要有 revision 行
+                    #
+                    # ⚠️ **必须按 resource_id 去重**：
+                    #    在同一父目录内 move（`/a/x.py` → `/a`）时
+                    #    `src_parent` 与 `dest_fresh` **是同一个资源** ——
+                    #    不去重会递增两次、并写出**两条相同 revision_number**
+                    #    的行（而 revision 是「这个资源第几次变化」，
+                    #    一次操作只该 +1）。
+                    seen_parents: set = set()
                     for touched in (src_parent, dest_fresh):
-                        if touched is not None:
-                            self.store.update_resource(
-                                conn, touched,
-                                revision=touched.revision + 1,
-                            )
+                        if touched is None:
+                            continue
+                        if touched.resource_id in seen_parents:
+                            continue
+                        seen_parents.add(touched.resource_id)
+                        self._bump_revision(
+                            conn, touched,
+                            change_type="MOVE", actor=agent_id,
+                            change_ref=op_id,
+                        )
 
                     self.store.add_revision(
                         conn,
@@ -1154,6 +1291,37 @@ class WorkspaceGateway:
            显式锁记录」自动保证：子孙的锁记录根本没被碰。
         """
         op_id = new_operation_id()
+
+        # ============================================================
+        # 🔒 Hardening：**接收方必须是真实存在且属于这个 Workspace 的 Agent**
+        #
+        #   第一版没做这个校验 —— 于是
+        #       handoff("W1", "/a.py", "A", "NOT_A_REAL_AGENT", "A")
+        #   会**成功**，把一个资源的责任交给一个不存在的 Agent。
+        #   更糟的是：责任从此挂在一个虚构的 holder 上，
+        #   而 Effective Lock 解析会忠实地返回那个名字。
+        #   （任务书 §9 Case 5 明确要求这种请求「必须明确失败」。）
+        #
+        #   校验顺序：先「存在」再「是 Participant」——
+        #   因为两者的正确应对不同。
+        # ============================================================
+        if self._agent_exists is not None and not self._agent_exists(to_agent):
+            return self._fail(
+                op_id, ErrorCode.UNKNOWN_AGENT,
+                f"接收方 Agent 不存在：{to_agent}",
+                audit=(self._attempt(AuditAction.HANDOFF), actor, None),
+                workspace_id=workspace_id,
+                detail={"to_agent": to_agent},
+            )
+
+        if not self._participant(workspace_id, to_agent):
+            return self._fail(
+                op_id, ErrorCode.NOT_TASK_PARTICIPANT,
+                f"接收方 {to_agent} 不是这个 Task Workspace 的 Participant",
+                audit=(self._attempt(AuditAction.HANDOFF), actor, None),
+                workspace_id=workspace_id,
+                detail={"to_agent": to_agent},
+            )
 
         target = self._resolve_path(workspace_id, path, op_id)
         if isinstance(target, OperationResult):
