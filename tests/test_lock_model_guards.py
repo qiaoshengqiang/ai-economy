@@ -853,6 +853,10 @@ class TestNoImplementation:
             "workspace_revisions",
             "workspace_audits",
             "workspace_events",
+            # Change Pipeline Phase 1 —— **不是** Task Workspace 的表
+            "git_worktrees",
+            "worktree_intents",
+            "worktree_events",
         }
         assert expected_workspace_tables <= names, (
             f"Workspace Core 的 5 张表不全，缺少 "
@@ -869,7 +873,9 @@ class TestNoImplementation:
                 f"该概念已被 ADR-0027 移除/降级，不得实现"
             )
 
-        assert len(names) == 18, (
+        # 13（原始）+ 5（Workspace Core v1）+ 3（Change Pipeline Phase 1:
+        #   git_worktrees / worktree_intents / worktree_events）= 21
+        assert len(names) == 21, (
             f"表数应为 13 + Workspace Core 5 = 18，实际 {len(names)}："
             f"{sorted(names)}"
         )

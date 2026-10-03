@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import sys
 import uuid
 from dataclasses import dataclass
@@ -65,6 +66,9 @@ from core.task import OfferType, Task, TaskStatus               # noqa: E402
 from core.task_store import TaskStore                           # noqa: E402
 from core.task_context_store import TaskContextStore
 from core.workspace_store import WorkspaceStore                 # noqa: E402
+from change import GitManager, WorktreeManager                   # noqa: E402
+from change.worktree import WorkspaceSnapshot                    # noqa: E402
+from change.worktree_store import WorktreeStore                  # noqa: E402
 from services.workspace_concurrency import ResourceLockRegistry  # noqa: E402
 from services.workspace_gateway import WorkspaceGateway         # noqa: E402
 from services import (
@@ -154,6 +158,14 @@ class Runtime:
     workspaces: WorkspaceStore
     workspace_gateway: WorkspaceGateway
     workspace_locks: ResourceLockRegistry
+
+    # ---- Change Pipeline（第二阶段 · Phase 1）----
+    # 🔒 **边界**：`WorktreeManager` 不 import `WorkspaceStore` ——
+    #    它通过 `build_workspace_lookup(workspaces)` 这个**纯回调**
+    #    问「workspace 存在吗、revision 是多少」。
+    #    与 WorkspaceGateway 用注入的 is_participant 是同一种手法。
+    worktrees: WorktreeStore
+    worktree_manager: WorktreeManager
 
     def agent(self, agent_id: str):
         return self.economy.agent(agent_id)
@@ -445,6 +457,83 @@ def build_workspace_services(
     return store, registry, gateway
 
 
+def build_workspace_lookup(workspace_store: WorkspaceStore):
+    """
+    造一个 `workspace_lookup(workspace_id) -> WorkspaceSnapshot | None`。
+
+    【为什么是回调，而不是让 WorktreeManager 自己查 Workspace】
+
+        Change Pipeline **不应该**知道 Workspace 表的形状。
+        它只回答「这个 workspace 存在吗、revision 是多少」——
+        那是 Workspace Core 的知识。
+
+        组合根把这个知识**注入**进去：
+
+            main.py（唯一同时认识两边的地方）
+                    ↓ 注入
+            WorktreeManager.workspace_lookup
+
+        🔒 这样 `change/` **一行都不 import** `core/workspace_store`，
+           也因此可以脱离整个 Workspace 系统单独测试
+           （`tests/test_worktree_manager.py` 就是这么做的）。
+    """
+
+    def lookup(workspace_id: str):
+        try:
+            root = workspace_store.find_by_path(workspace_id, "/")
+        except Exception:                     # pragma: no cover - 防御
+            return None
+        if root is None:
+            return None
+        return WorkspaceSnapshot(
+            workspace_id=workspace_id, revision=root.revision, exists=True
+        )
+
+    return lookup
+
+
+def build_change_services(
+    db,
+    *,
+    workspace_lookup,
+    repository_ref: str = "default",
+    repo_path: Optional[str] = None,
+    worktrees_root: Optional[str] = None,
+    registry: Optional[ResourceLockRegistry] = None,
+) -> tuple:
+    """
+    组装 Change Pipeline 的三件套。
+
+        GitManager        Git CLI 的薄封装（**成熟原语，不重新实现 Git**）
+        WorktreeStore     持久化
+        WorktreeManager   worktree 生命周期
+
+    【🔒 为什么 `workspace_lookup` 是必需参数】
+
+        与 `agent_exists` 同样的 fail-closed 理由：
+        没有它，WorktreeManager 无法验证 Workspace 边界，
+        也无法记录 `workspace_revision` 这个 provenance 字段。
+        漏传直接 `TypeError`。
+
+    【🔒 为什么不做成 singleton】
+
+        任务书 §23 明确要求依赖通过组合根注入。
+        每次调用返回全新对象 —— 测试可以随手造一套独立的。
+    """
+    git = GitManager(repo_path=repo_path)
+    store = WorktreeStore(db=db)
+    manager = WorktreeManager(
+        db,
+        git_manager=git,
+        workspace_lookup=workspace_lookup,
+        repository_ref=repository_ref,
+        worktrees_root=worktrees_root,
+        store=store,
+        registry=registry,
+    )
+    return store, manager, git
+
+
 def build_runtime(db_path: Optional[str] = None) -> Runtime:
     """
     组装一次运行的完整环境：经济系统 + LLM 路由 + 调用记录 + 给 Agent 装大脑。
@@ -646,6 +735,21 @@ def build_runtime(db_path: Optional[str] = None) -> Runtime:
         lock_registry=workspace_locks,
     )
 
+    # ---- Change Pipeline（第二阶段 · Phase 1）----
+    #
+    # 【为什么复用同一个 workspace_locks 注册表族但换一个 key 空间】
+    #     Worktree 的进程内互斥是**按 (repository, workspace) 分键**的
+    #     （见 WorktreeManager._workspace_guard）——
+    #     与 Workspace 资源锁**不会互相干扰**，
+    #     也**不是**一把全局锁。
+    worktrees, worktree_manager, _git = build_change_services(
+        economy.db,
+        workspace_lookup=build_workspace_lookup(workspaces),
+        repository_ref=os.path.basename(PROJECT_ROOT) or "ai-economy",
+        repo_path=str(PROJECT_ROOT),
+        registry=ResourceLockRegistry(),
+    )
+
     return Runtime(
         economy=economy,
         router=router,
@@ -663,6 +767,8 @@ def build_runtime(db_path: Optional[str] = None) -> Runtime:
         workspaces=workspaces,
         workspace_gateway=workspace_gateway,
         workspace_locks=workspace_locks,
+        worktrees=worktrees,
+        worktree_manager=worktree_manager,
     )
 
 

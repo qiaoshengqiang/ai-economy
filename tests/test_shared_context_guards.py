@@ -780,12 +780,31 @@ class TestNaming:
             assert not hasattr(TaskWorkspaceRef, forbidden)
 
     def test_no_workspace_tables_added(self, db):
-        """4F 没有建任何 Workspace 相关的表。"""
-        names = " ".join(db.table_names())
+        """
+        4F 没有建任何 **Task Workspace** 相关的表。
 
-        for forbidden in ("workspace_permission", "workspace_member",
-                          "artifact", "worktree"):
-            assert forbidden not in names
+        【⚠️ 这条守卫踩过「子串匹配误报」】
+
+            原来写的是 `"worktree" not in names` ——
+            那是**子串**匹配。第二阶段引入 `git_worktrees`
+            （Change Pipeline 的 Git worktree，**不是** Task Workspace）
+            之后，它就**假红**了。
+
+            这是本项目反复记录的那一类错误
+            （`agent_directory` 含 `agent_d`、`seen_release` 含 `lease`、
+              现在 `git_worktrees` 含 `worktree`）。
+
+            改成**精确表名**匹配 —— 顺带把守卫变得更强：
+            它现在真的能区分「Task Workspace 的表」和「Git worktree 的表」。
+        """
+        names = set(db.table_names())
+
+        for forbidden in ("workspace_permissions", "workspace_members",
+                          "workspace_files", "workspace_acl", "artifacts",
+                          "workspaces", "workspace_backends"):
+            assert forbidden not in names, (
+                f"出现了 {forbidden} 表 —— 那属于 Task Workspace，4F 禁止"
+            )
 
 
 # ============================================================

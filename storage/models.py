@@ -57,6 +57,24 @@ TABLE_WS_REVISIONS: Final = "workspace_revisions"
 TABLE_WS_AUDITS: Final = "workspace_audits"
 TABLE_WS_EVENTS: Final = "workspace_events"
 
+# ---- Change Pipeline V1 / Phase 1：Worktree Manager ----
+# 【为什么**不能**塞进 workspace_resources】（任务书 §6）
+#     Workspace 是**逻辑**协作空间；worktree 是 **Git materialization**。
+#     两者的身份、生命周期、权威来源都不同 ——
+#     塞进同一张表会让「logical resource」和「物理工作目录」互相污染
+#     （这正是任务书 §4 要守的边界）。
+TABLE_GIT_WORKTREES: Final = "git_worktrees"
+TABLE_WORKTREE_INTENTS: Final = "worktree_intents"
+# Worktree 自己的事件流。
+# 【为什么是**独立**表，而不是复用 workspace_events】（任务书 §25）
+#     任务书明确：「不要把这些硬塞进 Workspace Resource Event」，
+#     同时「不要创建第二套完全平行的 audit system」。
+#     所以这里的做法是：**复用它的事件表形态**（append-only +
+#     operation_id + actor + detail），但在**不同的域**里单独一张表 ——
+#     因为订阅方不同（Workspace Event 的订阅者是 Task 参与者；
+#     Worktree Event 的订阅者是 Change Pipeline / CI）。
+TABLE_WORKTREE_EVENTS: Final = "worktree_events"
+
 
 # ============================================================
 # 建表 SQL
@@ -885,6 +903,86 @@ SCHEMA_STATEMENTS: Final[tuple[str, ...]] = (
         created_at    TEXT NOT NULL
     )
     """,
+
+    # --------------------------------------------------------
+    # Change Pipeline V1 / Phase 1 —— Git Worktree
+    # --------------------------------------------------------
+    # 🔒 `workspace_revision` 与 `base_commit` 是**两个不同的字段**。
+    #
+    #     workspace_revision = Workspace 的**逻辑**状态版本
+    #     base_commit        = Git 的 commit sha
+    #
+    #     它们几乎总是不一致，而且**必须允许**不一致。
+    #     合并成一个字段会让 Patch 阶段的 applicability 无法正确判定
+    #     （ADR-0033 §三）。
+    #
+    # ⚠️ `physical_path` **只允许在本表与内部日志里出现**。
+    #    Agent-facing 的返回必须剥掉它（任务书 §5）。
+    #
+    # 【state 的取值】见 change/worktree.py 的 WorktreeState
+    #     unprovisioned / provisioning / ready / active
+    #     / frozen / archived
+    #     / provision_failed / inconsistent / orphaned
+    """
+    CREATE TABLE IF NOT EXISTS git_worktrees (
+        worktree_id         TEXT PRIMARY KEY,
+        workspace_id        TEXT NOT NULL,
+        task_id             TEXT,
+        repository_ref      TEXT NOT NULL,
+        base_commit         TEXT NOT NULL,
+        workspace_revision  INTEGER NOT NULL,
+        git_ref             TEXT,
+        state               TEXT NOT NULL,
+        physical_path       TEXT,
+        detail              TEXT,
+        created_at          TEXT NOT NULL,
+        updated_at          TEXT NOT NULL,
+        last_verified_at    TEXT
+    )
+    """,
+
+    # --------------------------------------------------------
+    # Change Pipeline V1 / Phase 1 —— Intent Log（任务书 §9）
+    # --------------------------------------------------------
+    # 🔒 **intent 记录的是「系统准备做什么」**，
+    #    写在副作用**之前**。这是 ADR-0036 的 intent log 落地点：
+    #
+    #        DB: 写 INTENT（pending）
+    #        FS: git worktree add
+    #        DB: 写 CONFIRM（completed）
+    #
+    #    崩在中间 → intent 停在 pending → 启动或操作边界时 reconciliation。
+    #
+    # 🔒 `idempotency_key` 上有**唯一索引** ——
+    #    同一个逻辑操作重试时，第二次插入会被数据库拒绝，
+    #    而不是再建一个 Git worktree。
+    """
+    CREATE TABLE IF NOT EXISTS worktree_events (
+        event_id      TEXT PRIMARY KEY,
+        workspace_id  TEXT NOT NULL,
+        event_type    TEXT NOT NULL,
+        worktree_id   TEXT,
+        actor         TEXT NOT NULL,
+        detail        TEXT,
+        created_at    TEXT NOT NULL
+    )
+    """,
+
+    """
+    CREATE TABLE IF NOT EXISTS worktree_intents (
+        intent_id       TEXT PRIMARY KEY,
+        workspace_id    TEXT NOT NULL,
+        kind            TEXT NOT NULL,
+        state           TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL,
+        operation_id    TEXT NOT NULL,
+        worktree_id     TEXT,
+        payload         TEXT,
+        last_error      TEXT,
+        created_at      TEXT NOT NULL,
+        updated_at      TEXT NOT NULL
+    )
+    """,
 )
 
 
@@ -950,6 +1048,49 @@ POST_MIGRATION_INDEXES: Final[tuple[str, ...]] = (
     "ON workspace_events (workspace_id, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_ws_events_resource "
     "ON workspace_events (resource_id, created_at)",
+
+    # ---- Change Pipeline V1 / Phase 1 ----
+    #
+    # 🔒🔒 **这条部分唯一索引是「同一 Workspace 最多一个 live worktree」
+    #       的**唯一**保证（任务书 §17）。**
+    #
+    #     任务书明确禁止：
+    #         if not exists: create        ← 非原子，两个线程会都通过
+    #
+    #     这里是**数据库层**的原子保证：
+    #        · 两个并发 create → 第二个 INSERT 直接违反唯一约束
+    #        · 不需要任何应用层锁、不需要全局锁
+    #
+    #     🔑 关键是 `WHERE state IN (...)` —— 只约束**活着**的那三个状态，
+    #        所以「历史 / 归档 worktree 可以存在」与「只能有一个活的」
+    #        同时成立（任务书 §3）。
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_worktrees_one_live_per_workspace "
+    "ON git_worktrees (workspace_id) "
+    "WHERE state IN ('provisioning', 'ready', 'active')",
+
+    # 按 workspace 查全部 worktree（含历史）
+    "CREATE INDEX IF NOT EXISTS idx_worktrees_workspace "
+    "ON git_worktrees (workspace_id, created_at)",
+
+    # 按状态找需要 reconciliation 的记录
+    "CREATE INDEX IF NOT EXISTS idx_worktrees_state "
+    "ON git_worktrees (state)",
+
+    # 🔒 intent 的幂等锚点 —— **唯一**索引
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_worktree_intents_idempotency "
+    "ON worktree_intents (idempotency_key)",
+
+    # 找未解决的 intent（startup reconciliation 用）
+    "CREATE INDEX IF NOT EXISTS idx_worktree_intents_unresolved "
+    "ON worktree_intents (state, created_at)",
+
+    "CREATE INDEX IF NOT EXISTS idx_worktree_intents_workspace "
+    "ON worktree_intents (workspace_id, created_at)",
+
+    "CREATE INDEX IF NOT EXISTS idx_worktree_events_ws "
+    "ON worktree_events (workspace_id, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_worktree_events_wt "
+    "ON worktree_events (worktree_id, created_at)",
 )
 
 

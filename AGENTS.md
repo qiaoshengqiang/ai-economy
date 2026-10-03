@@ -29,11 +29,11 @@
 
 | | |
 |---|---|
-| **阶段** | `Post-Step-4F / Pre-Task-Workspace` |
-| **测试基线** | **3476 passed, 2 skipped, 30 deselected** |
+| **阶段** | `Workspace Core V1 已冻结 / Change Pipeline Phase 1 已实现` |
+| **测试基线** | **3516 passed, 2 skipped, 30 deselected** |
 | **协议版本** | `protocol_version = "1"` |
 | **命令数** | 17（`./dev.sh` 查看全部） |
-| **数据库表** | **18** |
+| **数据库表** | **21** |
 | **工作区状态** | 应当干净 |
 
 ### 已完成
@@ -46,16 +46,16 @@ Step 4A–4C    Task Core + Lifecycle + TaskWorkspaceRef + Money ·
 Refactor      Task 应用层拆分（门面 / Handler / Mapper / Negotiation）
 Step 4D/4D.1  START / SUBMIT / VERIFY / COMPLETE + 幂等 + 乐观锁 + 事务原子性
 Phase 0·4E   真实多进程验证 + Message Claim Lease · Constitution + Shared Context 设计
-Step 4F       Task Shared Context / Alignment 最小可运行原型
-Workspace v1  资源树 · Controller · Explicit/Effective Lock · Revision ·
-              Audit · Event · Gateway · 资源级并发
-Workspace 收尾 Hardening · 组合根接线 · CLI demo · 20 Agent 并行  ← 当前
+Step 4F      Task Shared Context / Alignment 最小可运行原型
+Workspace v1  资源树 · Controller · Explicit/Effective Lock · Revision · Audit ·
+              Event · Gateway · 资源级并发 · Hardening · 组合根接线 · 20 Agent 并行
+Change Pipeline  Phase 1 WorktreeManager（真实 Git worktree · intent · 幂等）  ← 当前
 ```
 
 ### 下一步
 
-> **第二阶段：Change Pipeline**（Git Worktree → Patch → Test → Acceptance → Merge）。
-> **当前是设计阶段** —— 见 [`CHANGE_PIPELINE_V1_DESIGN.md`](docs/architecture/implementation/CHANGE_PIPELINE_V1_DESIGN.md)。
+> **下一阶段：Change Pipeline 的 Patch**（Test / Acceptance / Merge 在其后）。
+> Worktree Manager 已实现 —— 见 [`CHANGE_PIPELINE_V1_DESIGN.md`](docs/architecture/implementation/CHANGE_PIPELINE_V1_DESIGN.md)。
 
 ---
 
@@ -311,8 +311,8 @@ Shared Context 可以**引用、解释、总结、补充**共同知识，
 
 | 领域 | 禁止内容 |
 |---|---|
-| **Workspace** | ✅ Core v1 **已实现 + 已 Hardening**（ADR-0029/0030）· ❌ 仍禁止：Permission Engine · ACL · IAM · Role · Backend · 物理文件系统 · Git worktree · Patch · Acceptance · Conversation Manager · Recovery Automation |
-| **Git** | worktree · branch · commit 自动化 · merge |
+| **Workspace** | ✅ Core v1 **已冻结**（ADR-0029/0030/0031）· ❌ 仍禁止：Permission Engine · ACL · IAM · Role · Backend · 物理文件系统写权限 · Conversation Manager · Recovery Automation |
+| **Git** | ✅ Worktree Manager **已实现**（ADR-0037）· ❌ 仍禁止：branch 自动化 · commit 自动化 · merge · Patch · Test Runner · Acceptance |
 | **代码执行** | `subprocess` · shell · Docker · sandbox · 测试运行器 |
 | **经济结算** | Payment · Escrow · Settlement · Wallet transfer |
 | **通信可靠性** | Retry Queue · Retry Scheduler · ACK · Redis · Kafka · Celery |
@@ -340,7 +340,7 @@ Knowledge graph · 分布式共识 · 多 agent 投票 · 复杂 ontology。**�
         ↓
 2. 先调查真实代码（不要凭空设计）
         ↓
-3. 跑基线：./dev.sh test   （必须是 3476 passed）
+3. 跑基线：./dev.sh test   （必须是 3516 passed）
         ↓
 4. 实施最小修改
         ↓
@@ -359,7 +359,7 @@ Knowledge graph · 分布式共识 · 多 agent 投票 · 复杂 ontology。**�
 
 1. **先调查，再动手。** 不要在设计之前改代码。
 2. **每一步结束跑全量测试。** 不是只跑自己改的那个文件。
-   基线现在是 **3476 passed**。
+   基线现在是 **3516 passed**。
 3. **新增守卫必须配反向测试。** 把违规注入进去，确认守卫**真的变红**。
 
 ---
@@ -372,7 +372,7 @@ Knowledge graph · 分布式共识 · 多 agent 投票 · 复杂 ontology。**�
 ./dev.sh test tests/test_xxx.py -k 名字  # 单个测试
 ```
 
-基线 **3476 passed / 2 skipped / 30 deselected** ·
+基线 **3516 passed / 2 skipped / 30 deselected** ·
 守卫文件 10 个约 390 项 · 真实 API 测试 30 项（单独跑，需要 Key）。
 
 **必须用 `./dev.sh test`，不要直接 `pytest`** —— 它会正确设置环境。
@@ -398,7 +398,7 @@ AGENTS.md → 判断任务领域 → 只读相关 Specification → 必要时读
 | **Workspace / Lifecycle / Human** | [`TASK_WORKSPACE.md`](docs/architecture/TASK_WORKSPACE.md) + ADR-0020/0021/0022（§4.1 · §7 · §14.5 · §15） | TASK_SHARED_CONTEXT.md |
 | **Task Origin / Task Lineage** | [`TASK_ORIGIN_LINEAGE.md`](docs/architecture/TASK_ORIGIN_LINEAGE.md) + **ADR-0023** —— 概念已定（`SETTLED`），**实现为 `FUTURE`** | — |
 | **Guard / 测试** | ADR-0018 · `tests/*guards*.py` | — |
-| **Git Worktree / Patch / Test / Acceptance / Merge** | [`CHANGE_PIPELINE_V1_DESIGN.md`](docs/architecture/implementation/CHANGE_PIPELINE_V1_DESIGN.md) + **ADR-0032…0036** —— **设计已定（`DESIGNED`），尚未实现** | Workspace Core 内部细节 |
+| **Git Worktree / Patch / Test / Acceptance / Merge** | [`CHANGE_PIPELINE_V1_DESIGN.md`](docs/architecture/implementation/CHANGE_PIPELINE_V1_DESIGN.md) + **ADR-0032…0037** —— 设计已定；**Worktree Manager 已实现（ADR-0037）**，其余仍 `DESIGNED` | Workspace Core 内部细节 |
 
 **Constitution 只在三种情况下通读**：第一次接触项目 · 要**新增**一条边界 ·
 要**推翻**某条边界。日常改一个模块读对应章节 + 相关 ADR 就够。
@@ -523,10 +523,11 @@ docs/architecture/adr/0024-*.md            ← 为什么 Human ≠ Task Creator
 | Human 的四角色 | ✅ `SETTLED`：Demand Provider / Feedback Provider / Optional Collaborator / Governance Authority |
 | Guardian · 自动恢复 · Reopen 6 细节 · Demand 实体 · Child Task · Agent 自建 Root Task | `FUTURE` / `OPEN`（见各文档） |
 | Heartbeat / Lease Renewal · Human 作 Task Manager | ❌ **Not implemented / 禁止** |
-| **Workspace Core v1** | ✅ **已实现 + 已 Hardening + Freeze-Ready**：资源树 · Controller ·
-Explicit/Effective Lock · Revision · Audit · Event · Gateway（9 操作）· 资源级并发 · 组合根接线 ·
-20 Agent 并行 · `workspace-demo` · `agent_exists` fail-closed · Database 每线程 session（ADR-0029/0030/**0031**） |
-| Task Workspace 其余部分 | `FUTURE`：Git Worktree · Patch · Acceptance · Conversation Manager · Recovery Automation · AI Governance |
+| **Workspace Core v1** | ✅ **已冻结**：资源树 · Controller · Explicit/Effective Lock · Revision ·
+Audit · Event · Gateway（9 操作）· 资源级并发 · 组合根接线 · 20 Agent 并行 ·
+`workspace-demo` · `agent_exists` fail-closed · Database 每线程 session（ADR-0029/0030/**0031**） |
+| **Change Pipeline Phase 1** | ✅ **WorktreeManager 已实现**：真实 Git worktree · intent log · 幂等 · reconciliation · 崩溃一致性 · resource 级并发（ADR-0032…**0037**）· ❌ Patch/Test/Acceptance/Merge 仍 `DESIGNED` |
+| Task Workspace 其余部分 | `FUTURE`：Patch · Acceptance · Conversation Manager · Recovery Automation · AI Governance |
 
 > **v1 不需要等自动恢复机制就能进入 Workspace 实现。**
 

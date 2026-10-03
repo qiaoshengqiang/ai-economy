@@ -222,8 +222,26 @@ class TestDocumentExists:
                 f"实现状态必须是 FUTURE：{line.strip()!r}"
             )
 
-    def test_stage_unchanged(self, agents_doc):
-        assert "Post-Step-4F / Pre-Task-Workspace" in agents_doc
+    def test_stage_is_a_known_stage(self, agents_doc):
+        """
+        【守卫随阶段演进了】
+
+            原来断言 `"Post-Step-4F / Pre-Task-Workspace" in agents_doc` ——
+            那时「本步只做架构定义」，阶段标记不该变。
+
+            现在 Workspace Core V1 已冻结、Change Pipeline Phase 1 已实现，
+            阶段**确实**推进了。所以守卫换成问对的问题：
+
+                ✅ 阶段标记必须是**我们承认的**某一个
+                ❌ 不许是空白 / 占位符 / 凭空写的
+        """
+        known = (
+            "Post-Step-4F / Pre-Task-Workspace",
+            "Workspace Core V1 已冻结",
+        )
+        assert any(k in agents_doc for k in known), (
+            f"阶段标记既不是历史阶段也不是当前阶段：{known}"
+        )
 
 
 # ============================================================

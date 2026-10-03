@@ -236,10 +236,22 @@ class TestWorkspaceIsStillFuture:
                 f"Task Workspace 被标成了 CURRENT：\n    {row.strip()}"
             )
 
-    def test_agents_stage_unchanged(self, agents_doc):
-        """阶段必须保持 Post-Step-4F / Pre-Task-Workspace。"""
-        assert "Post-Step-4F / Pre-Task-Workspace" in agents_doc, (
-            "阶段不该在「只做架构定义」的这一步发生变化"
+    def test_agents_stage_is_a_known_stage(self, agents_doc):
+        """
+        【守卫随阶段演进了】
+
+            原来是「阶段必须保持 Post-Step-4F / Pre-Task-Workspace」。
+            Workspace Core V1 冻结 + Change Pipeline Phase 1 实现之后，
+            阶段**确实**推进了 —— 写死旧值会让守卫因为**正确的事**而假红。
+
+            现在要求：阶段标记必须是**我们承认的**某一个。
+        """
+        known = (
+            "Post-Step-4F / Pre-Task-Workspace",
+            "Workspace Core V1 已冻结",
+        )
+        assert any(k in agents_doc for k in known), (
+            f"阶段标记不在已知集合里：{known}"
         )
 
     def test_workspace_doc_does_not_claim_current(self, workspace_doc):

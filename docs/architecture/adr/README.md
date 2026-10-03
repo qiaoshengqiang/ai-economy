@@ -60,6 +60,7 @@
 | [0034](0034-test-run-acceptance-separation.md) | **Test Run / Acceptance / Merge 三者分离** | Accepted（设计） | 第二阶段设计 | Change Pipeline |
 | [0035](0035-execution-lease-vs-workspace-responsibility.md) | **Execution Lease 与 Workspace Responsibility 的分离** | Accepted（设计） | 第二阶段设计 | Change Pipeline |
 | [0036](0036-change-pipeline-concurrency-and-crash-consistency.md) | **Change Pipeline 的并发模型与 Crash Consistency** | Accepted（设计） | 第二阶段设计 | Change Pipeline |
+| [0037](0037-worktree-branch-per-worktree.md) | **Worktree 的 branch 是每个 worktree 一个** | Accepted（**已实现**） | 第二阶段 Phase 1 | Change Pipeline |
 | [0028](0028-read-visibility-and-native-communication.md) | **Read 靠 Task Participation；Communication 是 Agent 基础能力** | Accepted（实现为 FUTURE） | Read / Visibility / Communication | Workspace / Communication |
 
 ---

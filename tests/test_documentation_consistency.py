@@ -552,13 +552,23 @@ class TestImplementationStatusClaims:
             )
 
     def test_workspace_still_not_implemented(self, db):
-        """**反向**：Workspace 相关的表必须仍然不存在。"""
-        names = " ".join(db.table_names())
+        """
+        **反向**：**未授权**的 Workspace 表必须仍然不存在。
+
+        ⚠️ 原来用 `"worktrees" not in names`（子串）——
+           会被 `git_worktrees` 误伤。改用**精确表名**。
+
+        🔒 注意 `workspace_resources` / `workspace_explicit_locks` 等
+           **已经授权**（Workspace Core v1），不在这里禁止。
+           这里禁的是**尚未授权**的那些。
+        """
+        names = set(db.table_names())
         for forbidden in ("workspace_permissions", "workspace_members",
-                          "artifacts", "worktrees"):
+                          "workspace_files", "workspace_acl",
+                          "workspace_backends", "artifacts",
+                          "workspaces"):
             assert forbidden not in names, (
-                f"数据库里出现了 {forbidden} 表 —— "
-                f"那属于 Task Workspace 阶段，4F 明确禁止"
+                f"数据库里出现了 {forbidden} 表 —— 尚未授权"
             )
 
     def test_private_memory_is_designed_not_current(self, agents):
