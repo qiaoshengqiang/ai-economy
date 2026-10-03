@@ -30,9 +30,9 @@
 | | |
 |---|---|
 | **阶段** | `Post-Step-4F / Pre-Task-Workspace` |
-| **测试基线** | **3251 passed, 2 skipped, 30 deselected** |
+| **测试基线** | **3357 passed, 2 skipped, 30 deselected** |
 | **协议版本** | `protocol_version = "1"` |
-| **命令数** | 16（`./dev.sh` 查看全部） |
+| **命令数** | 17（`./dev.sh` 查看全部） |
 | **数据库表** | **18** |
 | **工作区状态** | 应当干净 |
 
@@ -48,7 +48,8 @@ Step 4D/4D.1  START / SUBMIT / VERIFY / COMPLETE + 幂等 + 乐观锁 + 事务�
 Phase 0·4E   真实多进程验证 + Message Claim Lease · Constitution + Shared Context 设计
 Step 4F       Task Shared Context / Alignment 最小可运行原型
 Workspace v1  资源树 · Controller · Explicit/Effective Lock · Revision ·
-              Audit · Event · Gateway · 资源级并发  ← 当前
+              Audit · Event · Gateway · 资源级并发
+Workspace 收尾 Hardening · 组合根接线 · CLI demo · 20 Agent 并行  ← 当前
 ```
 
 ### 下一步
@@ -312,8 +313,7 @@ Shared Context 可以**引用、解释、总结、补充**共同知识，
 
 | 领域 | 禁止内容 |
 |---|---|
-| **Workspace（已实现部分）** | ✅ **Workspace Core v1 已实现**（资源树 · Controller · Explicit/Effective Lock · Revision · Audit · Event · Gateway · 资源级并发，ADR-0029）。**已解除禁止** |
-| **Workspace（仍禁止）** | ❌ Permission Engine · ACL · IAM · Role · Backend · 物理文件系统访问 · Git worktree · Patch · Acceptance Pipeline · Conversation Manager · Recovery Automation |
+| **Workspace** | ✅ Core v1 **已实现 + 已 Hardening**（ADR-0029/0030）· ❌ 仍禁止：Permission Engine · ACL · IAM · Role · Backend · 物理文件系统 · Git worktree · Patch · Acceptance · Conversation Manager · Recovery Automation |
 | **Git** | worktree · branch · commit 自动化 · merge |
 | **代码执行** | `subprocess` · shell · Docker · sandbox · 测试运行器 |
 | **经济结算** | Payment · Escrow · Settlement · Wallet transfer |
@@ -342,7 +342,7 @@ Knowledge graph · 分布式共识 · 多 agent 投票 · 复杂 ontology。**�
         ↓
 2. 先调查真实代码（不要凭空设计）
         ↓
-3. 跑基线：./dev.sh test   （必须是 3251 passed）
+3. 跑基线：./dev.sh test   （必须是 3357 passed）
         ↓
 4. 实施最小修改
         ↓
@@ -361,7 +361,7 @@ Knowledge graph · 分布式共识 · 多 agent 投票 · 复杂 ontology。**�
 
 1. **先调查，再动手。** 不要在设计之前改代码。
 2. **每一步结束跑全量测试。** 不是只跑自己改的那个文件。
-   基线现在是 **3251 passed**。
+   基线现在是 **3357 passed**。
 3. **新增守卫必须配反向测试。** 把违规注入进去，确认守卫**真的变红**。
 
 ---
@@ -374,7 +374,7 @@ Knowledge graph · 分布式共识 · 多 agent 投票 · 复杂 ontology。**�
 ./dev.sh test tests/test_xxx.py -k 名字  # 单个测试
 ```
 
-基线 **3251 passed / 2 skipped / 30 deselected** ·
+基线 **3357 passed / 2 skipped / 30 deselected** ·
 守卫文件 10 个约 390 项 · 真实 API 测试 30 项（单独跑，需要 Key）。
 
 **必须用 `./dev.sh test`，不要直接 `pytest`** —— 它会正确设置环境。
@@ -524,8 +524,9 @@ docs/architecture/adr/0024-*.md            ← 为什么 Human ≠ Task Creator
 | Human 的四角色 | ✅ `SETTLED`：Demand Provider / Feedback Provider / Optional Collaborator / Governance Authority |
 | Guardian · 自动恢复 · Reopen 6 细节 · Demand 实体 · Child Task · Agent 自建 Root Task | `FUTURE` / `OPEN`（见各文档） |
 | Heartbeat / Lease Renewal · Human 作 Task Manager | ❌ **Not implemented / 禁止** |
-| **Workspace Core v1** | ✅ **已实现**：资源树 · Controller · Explicit/Effective Lock ·
-Revision · Audit · Event · Gateway（9 操作）· **资源级并发**（ADR-0029） |
+| **Workspace Core v1** | ✅ **已实现 + 已 Hardening**：资源树 · Controller · Explicit/Effective Lock ·
+Revision · Audit · Event · Gateway（9 操作）· 资源级并发 · 组合根接线 ·
+20 Agent 并行验证 · `./dev.sh workspace-demo`（ADR-0029 / **0030**） |
 | Task Workspace 其余部分 | `FUTURE`：Git Worktree · Patch · Acceptance · Conversation Manager · Recovery Automation · AI Governance |
 
 > **v1 不需要等自动恢复机制就能进入 Workspace 实现。**

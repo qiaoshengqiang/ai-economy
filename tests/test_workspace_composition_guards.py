@@ -361,3 +361,76 @@ class TestDemoUsesCompositionRoot:
     def test_demo_is_registered(self):
         src = MAIN.read_text(encoding="utf-8")
         assert '"workspace-demo"' in src, "workspace-demo 子命令没注册"
+
+
+# ============================================================
+# 六、🔒 元守卫：并发测试**必须**用「每线程一个 Database」
+# ============================================================
+class TestConcurrencyTestsUseFileDatabase:
+    """
+    防止「共享内存 `Database` 做并发测试」这个错误**再次出现**。
+
+    【为什么值得一条守卫】
+
+        这是本项目**已记录的技术债 #2**：
+
+            `Database._tx_depth` 是**实例状态**，
+            跨线程共享会被交错修改 → 事务边界错乱。
+
+        我在这一阶段**犯了两次**同样的错：
+
+            第一次：`tests/test_workspace_gateway.py` 的并发测试
+            第二次：`test_reverse_move_race_no_deadlock` 用了内存 fixture
+
+        两次都表现为「单独跑通过、全量跑偶发失败」——
+        那是最难查的一类症状。所以把它变成一条守卫。
+
+    【判定规则】
+
+        一个测试函数如果**创建线程 / 用线程池**，
+        它的 fixture 就不能是内存库（`h` / `rig`），
+        必须是文件库（`fh` / `file_rig` / `h20` / `multi`）。
+    """
+
+    #: 内存库 fixture —— 并发测试里**禁止**使用
+    IN_MEMORY_FIXTURES = {"h", "rig"}
+    #: 文件库 fixture —— 每线程一条连接
+    FILE_FIXTURES = {"fh", "file_rig", "h20", "multi"}
+
+    def _concurrency_tests(self):
+        import ast
+
+        for path in sorted((PROJECT_ROOT / "tests").glob("test_workspace*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for cls in [n for n in tree.body if isinstance(n, ast.ClassDef)]:
+                for fn in [n for n in cls.body
+                           if isinstance(n, ast.FunctionDef)]:
+                    src = ast.unparse(fn)
+                    if ("threading.Thread" in src
+                            or "ThreadPoolExecutor" in src):
+                        params = {a.arg for a in fn.args.args}
+                        yield path.name, cls.name, fn.name, params
+
+    def test_no_in_memory_fixture_in_concurrency_tests(self):
+        offenders = [
+            f"{f}::{c}.{n} (fixtures={sorted(p)})"
+            for f, c, n, p in self._concurrency_tests()
+            if p & self.IN_MEMORY_FIXTURES
+        ]
+        assert not offenders, (
+            "并发测试用了**内存库** fixture —— 多线程共享一个 `Database` "
+            "会破坏事务边界（技术债 #2），表现为「单独跑过、全量偶发失败」：\n  "
+            + "\n  ".join(offenders)
+        )
+
+    def test_file_fixtures_are_actually_file_based(self):
+        """文件库 fixture 必须真的用文件路径（不是 `:memory:`）。"""
+        src = (PROJECT_ROOT / "tests" / "workspace_harness.py").read_text(
+            encoding="utf-8")
+        assert "on_file" in src and "Database(self.db_path)" in src, (
+            "文件库 fixture 必须给每个线程开**自己的连接**"
+        )
+        # 反向验证：内存模式必须被标注为不安全
+        assert "不安全" in src or "unsafe" in src.lower(), (
+            "内存模式必须明确标注「不能用于多线程」"
+        )

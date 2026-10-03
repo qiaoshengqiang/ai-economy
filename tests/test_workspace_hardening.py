@@ -581,7 +581,10 @@ class TestD_RenameMoveDelete:
         assert not r.success
         assert r.error_code == "INVALID_PARENT"
 
-    def test_reverse_move_race_no_deadlock(self, h):
+    def test_reverse_move_race_no_deadlock(self, fh):
+        # ⚠️ 用 **fh（文件库）**，不能用 h（内存库）——
+        #    多线程共享一个 Database 会破坏事务边界（技术债 #2），
+        #    第一次写成 `h` 时它在全量测试里偶发失败。
         """
         任务书 §11：`A: move X → Y` 与 `B: move Y → X` 反向竞争
         **不得死锁**。
@@ -590,7 +593,8 @@ class TestD_RenameMoveDelete:
         namespace locks（`ResourceLockRegistry.hold` 内部先排序）。
         这里验证它真的起作用。
         """
-        gw = ws(h)
+        fh.bootstrap("W1", "A")
+        gw = fh.gateway()
         gw.create("W1", "/", "d1", "directory", "A")
         gw.create("W1", "/", "d2", "directory", "A")
         gw.create("W1", "/d1", "x.py", "file", "A", content="v")
@@ -602,7 +606,7 @@ class TestD_RenameMoveDelete:
 
         def do(slot, path, dest):
             try:
-                with h.session() as g:
+                with fh.session() as g:
                     barrier.wait(timeout=5)
                     results[slot] = g.move("W1", path, dest, "A")
             except Exception as exc:      # pragma: no cover
