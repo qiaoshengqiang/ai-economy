@@ -1,6 +1,9 @@
 # ADR-0025：Controller / Authorization / Delegation / Write Lock 必须四者分离
 
-- **状态**：Accepted（架构设计冻结；**实现为 `FUTURE`**）
+- **状态**：⚠️ **第一版核心地位已被 [ADR-0027](0027-workspace-responsibility-model-simplification.md) 取代**
+  —— 本 ADR 的 **Authorization / Delegation** 降级为 `FUTURE`，
+     **Cascade Revocation** 第一版**移除**。
+     本文档**保留为历史记录与未来扩展依据**。
 - **时间**：Resource 层核心设计
 - **相关**：ADR-0020（Workspace 共享资源模型）· ADR-0021（显式 Write Lock + Human Force Unlock）· ADR-0024（Human ≠ Task Creator）
 - **规范**：[`RESOURCE_LAYER.md`](../RESOURCE_LAYER.md)

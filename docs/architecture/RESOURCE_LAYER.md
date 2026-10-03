@@ -9,6 +9,23 @@
 > → [`TASK_WORKSPACE.md`](TASK_WORKSPACE.md) §8–§11 → **本文档**
 > → [`adr/0025-resource-control-authorization-delegation.md`](adr/0025-resource-control-authorization-delegation.md)
 
+> # ⚠️ 本文档已按「设计简化」调整（见 [ADR-0027](adr/0027-workspace-responsibility-model-simplification.md)）
+>
+> **第一版核心模型是 `Controller + Lock + Handoff + Audit`，不再是
+> `Controller + Authorization + Delegation + Lock`。**
+>
+> | 本文档的概念 | 第一版状态 |
+> |---|---|
+> | **Resource** | ✅ **核心** |
+> | **Controller** | ✅ **核心**（但定义已收窄，见 §1.5） |
+> | **Authorization** | ⚠️ **降级为 `FUTURE`** —— 第一版不要求独立 Authorization 对象。见 §4.0 |
+> | **Delegation** | ⚠️ **降级为 Handoff / Responsibility Transfer**。见 §6.0 |
+> | **Cascade Revocation** | ❌ **第一版移除**。见 §7.5 |
+> | **AuthorizationRequest** | ❌ **第一版移除**。见 §8.4 |
+>
+> **以下正文保留为历史记录与未来扩展依据，但
+> 「第一版核心」以本文档上表与 [RECOVERY_MODEL.md](RECOVERY_MODEL.md) 为准。**
+
 | | |
 |---|---|
 | **文档状态** | 长期维护 |
@@ -66,6 +83,31 @@ Resource             ← 本文档：资源级的控制与授权单位
     ↓
 Controller / Authorization / Delegation / Write Lock
 ```
+
+---
+
+### 1.5 ⚠️ Controller 定义已收窄（设计简化）
+
+> 🔒 **Controller 是「目录层级的责任归属标记」。
+> 它不是传统 Owner，也不是复杂权限系统里的 Role。**
+
+| | |
+|---|---|
+| **最小粒度** | **Directory** —— **不要给 File 单独设计 Controller** |
+| **回答** | **「这块目录层级长期归谁负责？」** |
+| **不回答** | ❌ 「谁可以执行某个操作？」（那是 Lock 的事） |
+
+**Controller 的主要作用**：
+
+1. 表示这块目录**长期由谁负责**
+2. 其他 Agent 需要找到「这块工作谁负责」时，沿 Resource Tree 向上找 Controller
+3. 是**正常工作交接**时的责任治理节点
+4. 可以把自己负责的**子目录**交给其他 Agent
+5. 下级 Agent 可以继续对自己负责的子目录做**下一层工作交接**
+6. 是**异常发生时的重要责任锚点** —— 用于找到应该由谁参与 Recovery
+
+> ⚠️ 第 6 条是设计简化中**新增**的重点：Controller 服务于 **Recovery**，
+> 而不只是权限判定。见 [`RECOVERY_MODEL.md`](RECOVERY_MODEL.md) §3。
 
 ---
 
@@ -159,7 +201,31 @@ B 不只是「能写」，而是：
 
 ---
 
-## 4. Authorization（`SETTLED` 语义 / `OPEN` 枚举）
+## 4.0 ⚠️ Authorization 第一版降级为 `FUTURE`（设计简化）
+
+> **第一版不需要独立的 Authorization 核心对象。**
+
+**原因**：许多原来由 Authorization 表达的问题，现在可以从
+**Controller · Lock · Resource Boundary · Handoff · Membership** 直接推导：
+
+| 问题 | 第一版怎么判断 |
+|---|---|
+| B 能不能修改文件？ | `Effective Lock == B` |
+| B 能不能修改目录结构？ | `Effective Directory Lock == B` |
+| B 能不能创建文件？ | 父 `Directory Lock` 是否由 B 持有 |
+| B 能不能接手别人的 File？ | 不能直接抢 —— 需要正式 **Handoff** |
+| B 能不能把子目录交给 C？ | B 是该层 Controller / 当前责任人，且规则允许继续交接 |
+
+因此第一版**不需要**设计 `READ` / `WRITE` / `CREATE` / `DELETE` /
+`EXECUTE` / `DELEGATE` 这样的复杂通用权限集合。
+
+> 🔒 **不要把 AI Economy OS 第一版变成企业 IAM 系统。**
+>
+> §4.1–§4.4 保留为**历史记录与未来扩展依据**。
+
+---
+
+## 4. Authorization（**已降级 —— 见 §4.0**）
 
 ### 4.1 定义
 
@@ -279,7 +345,30 @@ Write Lock 的持有 / 释放 / 撤销 / 状态集 / Human Force Unlock
 
 ---
 
-## 6. Delegation（`SETTLED` —— 本轮最重要的新增）
+## 6.0 ⚠️ Delegation 第一版降级为 Handoff / Responsibility Transfer
+
+> **简化后不一定还需要把 Delegation 建模成复杂的权限对象。**
+
+第一版可以把它理解成**责任交接**：
+
+```
+对 Directory：  Controller A → Controller B
+对 File：       File Lock  A → File Lock  B
+```
+
+即：
+
+```
+A → handoff → B
+```
+
+> **§6.1–§6.4 的 Delegation Tree / Delegation Object
+> 降级为 `FUTURE`。第一版使用 [LOCK_MODEL.md](LOCK_MODEL.md) §10 的
+> Lock Handoff 与 §3 的 Controller Reassignment。**
+
+---
+
+## 6. Delegation（**已降级 —— 见 §6.0**）
 
 ### 6.1 为什么需要
 
@@ -389,7 +478,52 @@ REVOKE D001
 D001 失效  →  D002（parent = D001）失效  →  C 失去权限
 ```
 
-### 7.4 为什么必须级联
+### 7.5 ❌ Cascade Revocation 第一版**正式移除**（设计简化）
+
+> **第一版不再把 Agent 之间的关系建模成
+> 「权限从 A 传给 B、B 再传给 C」。**
+
+现在强调的是：
+
+```
+Controller  → 长期责任
+Lock        → 当前具体工作责任
+Handoff     → 责任交接
+```
+
+因此：
+
+> 🔒 **`Controller Reassignment` 不应自动摧毁所有下级具体工作责任。**
+
+**关键例子**：
+
+```
+data/                Controller = A
+data/processed/      Controller = B
+data/processed/result.csv   File Lock = C
+
+A 把 processed/ 的 Controller 收回：
+data/processed/      Controller = A
+
+result.csv           File Lock = **仍然 = C**
+```
+
+> **A 重新成为 `processed/` 的长期责任人，
+> 但 C 当前仍然在做 `result.csv` 这项具体工作。**
+>
+> **A 不应该因为成为 Controller 就自动夺走 C 的 File Lock。**
+>
+> 如果 A 确实需要停止 C 的工作，应通过正式的
+> **Recall / Reassignment / Handoff / Force Unlock**，
+> **并产生 Audit**。
+
+> ⚠️ 如果未来仍需要类似机制，记录为
+> **`FUTURE` Governance / Future Authorization Model**，
+> **不是当前核心机制**。
+
+---
+
+### 7.4 为什么必须级联（**已废弃 —— 见 §7.5**）
 
 如果不级联，就会出现：
 
@@ -460,6 +594,20 @@ REQUEST → APPROVE / REJECT → 若批准则产生正式 GRANT / DELEGATION
 | 是否立即生效 | ✅ 是 | ❌ 需批准 |
 | 是否可被拒绝 | 不适用 | ✅ 可以 |
 | 风险 | 授权者主动判断 | **申请人可能高估自己的需要** |
+
+---
+
+### 8.4 ❌ AuthorizationRequest 第一版**移除**（设计简化）
+
+> **第一版不创建 `AuthorizationRequest`。**
+
+理由同 §4.0 —— 没有独立 Authorization 对象，就不需要授权申请流程。
+
+**替代**：
+- 需要**接手别人的工作** → **Lock Request / Handoff**（[`LOCK_MODEL.md`](LOCK_MODEL.md) §10）
+- 需要**一个子目录** → Controller 的**下一层交接**（§1.5 第 4–5 条）
+
+§8.1–§8.3 保留为**历史记录与未来扩展依据**。
 
 ---
 

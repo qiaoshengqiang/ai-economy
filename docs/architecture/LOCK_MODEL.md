@@ -10,6 +10,18 @@
 > → [`TASK_WORKSPACE.md`](TASK_WORKSPACE.md) §10–§11
 > → [`RESOURCE_LAYER.md`](RESOURCE_LAYER.md) → **本文档**
 
+> # ⚠️ 已按「设计简化」调整（见 [ADR-0027](adr/0027-workspace-responsibility-model-simplification.md)）
+>
+> **第一版核心模型 = `Controller + Lock + Handoff + Audit`。**
+>
+> §11「Authorization 与 Lock Request 分离」中的 **Authorization 部分已降级**：
+> 第一版**不要求独立 Authorization 对象**。见
+> [`RESOURCE_LAYER.md`](RESOURCE_LAYER.md) §4.0。
+>
+> **§1–§10、§12–§19 的 Lock 语义完全不变。**
+>
+> 异常处理见 [`RECOVERY_MODEL.md`](RECOVERY_MODEL.md)。
+
 | | |
 |---|---|
 | **文档状态** | 长期维护 |
@@ -452,6 +464,12 @@ B 想继续修改    →  ❌ B 不能直接获取 File Lock
 
 ## 11. Authorization 与 Lock Request **不要混为一谈**（`SETTLED`）
 
+> ⚠️ **设计简化**：本节对比中的 **Authorization 侧已降级为 `FUTURE`**。
+> 第一版不要求独立 Authorization 对象（[`RESOURCE_LAYER.md`](RESOURCE_LAYER.md) §4.0）。
+>
+> **但「不能直接抢别人的 Lock，必须走 Handoff」这条结论完全不变** ——
+> 它现在由 §10 的 Lock Handoff 独立支撑，不依赖 Authorization。
+
 ### 11.1 四种组合
 
 | 情况 | 结果 |
@@ -561,6 +579,23 @@ B 创建 frontend/new_page.tsx
 ```
 
 > ❌ **不要因为创建而自动生成 `Explicit File Lock = B`。**
+
+---
+
+## 13.5 🔒 异常不等于放弃责任（设计简化 —— 引用 Recovery 文档）
+
+> **Agent 超时 / 崩溃 / 长时间无活动，都**不会**自动释放 Lock。**
+
+```
+Heartbeat Timeout       ≠  Lock Release
+Long Inactivity         ≠  Responsibility Loss
+Agent Failure Detection ≠  Automatic Reassignment
+Agent Recovery          ≠  Lock Recovery
+```
+
+> **宁可当前 Task 暂时 BLOCKED，也不要偷偷把工作交给另一个 Agent。**
+>
+> 完整治理模型见 [`RECOVERY_MODEL.md`](RECOVERY_MODEL.md)。
 
 ---
 

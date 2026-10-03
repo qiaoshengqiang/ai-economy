@@ -711,6 +711,13 @@ EXECUTE?      （与 §19 Controlled Execution 相关）
 
 ## 10. Write Lock Model
 
+> ⚠️ **设计简化后，Workspace 第一版的核心模型是
+> `Controller + Lock + Handoff + Audit`。**
+> `Authorization` / `Delegation` 降级为 `FUTURE`，
+> `Cascade Revocation` 第一版**移除**。
+> 见 [`RESOURCE_LAYER.md`](RESOURCE_LAYER.md) 顶部横幅与
+> [`RECOVERY_MODEL.md`](RECOVERY_MODEL.md)。
+
 > ⚠️ **Lock 的层级 · 继承 · Effective Lock · Edit Session · Handoff**
 > 见 [`LOCK_MODEL.md`](LOCK_MODEL.md)。那是本节的**增量补充**，
 > 不改变本节与 ADR-0021 的任何锁状态或流程。

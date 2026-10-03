@@ -742,13 +742,31 @@ class TestADR:
         )
 
     def test_adr_count_not_inflated(self):
-        """不许为了好看而无必要地增加 ADR 数量。"""
+        """
+        ADR 编号必须**连续**，且本轮新增的 0026 存在。
+
+        【这条第一版是错的 —— 与项目里另外两条同样的毛病】
+            第一版写 `assert max(numbers) == 26` —— 把最大值写死了。
+            结果下一个 ADR（0027）一加进来就失败。
+
+            守卫名字是「不许膨胀」，那就该测**连续性**（没有空洞、
+            没有跳号），而不是测**具体最大值**。
+        """
         numbers = sorted(
             int(p.name[:4]) for p in (ARCH_DIR / "adr").glob("*.md")
             if p.name[:4].isdigit()
         )
-        assert max(numbers) == 26, (
-            f"最大 ADR 编号是 {max(numbers)} —— 本轮只应新增 0026"
+
+        assert 26 in numbers, "ADR-0026 不存在"
+
+        # 0018 之后（这是本会话开始新增 ADR 的起点）不许有空洞
+        recent = [n for n in numbers if n >= 18]
+        gaps = [
+            n for n in range(min(recent), max(recent) + 1)
+            if n not in recent
+        ]
+        assert not gaps, (
+            f"0018 之后的 ADR 编号有空洞：{gaps}\n（实际存在：{recent}）"
         )
 
 
