@@ -195,8 +195,15 @@ case "$COMMAND" in
           echo
           echo "端到端 Demo（透传给 main.py）："
           echo "    ./dev.sh hello-demo                        真实 LLM 端到端 Demo"
+        echo "    ./dev.sh snake-demo                        网页贪吃蛇（Task Demo V2）"
           echo "    ./dev.sh hello-demo --show-path            附带 Worktree 本地路径"
           echo "    ./dev.sh hello-demo --cleanup              清理保留的 Demo Worktree"
+          echo
+          echo "（snake-demo 是 Task Demo V2：单 Agent 生成网页贪吃蛇）"
+          echo "    ./dev.sh snake-demo                       生成并在本地起 HTTP server"
+          echo "    ./dev.sh snake-demo --show-path            附带 Worktree 本地路径"
+          echo "    ./dev.sh snake-demo --stop                 停止 server"
+          echo "    ./dev.sh snake-demo --cleanup              停止并清理"
         echo
         echo "LLM（透传给 main.py）："
         echo "    ./dev.sh demo [--prompt 文字] [--agent a]  Step 2 链路演示"

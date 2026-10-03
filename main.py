@@ -39,7 +39,7 @@ import os
 import subprocess
 import sys
 import uuid
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -66,10 +66,12 @@ from core.money import Money                                    # noqa: E402
 from core.task import OfferType, Task, TaskStatus               # noqa: E402
 from core.task_store import TaskStore                           # noqa: E402
 from core.task_context_store import TaskContextStore
+from core.workspace_core import normalize_path                 # noqa: E402
 from core.workspace_store import WorkspaceStore                 # noqa: E402
 from change import GitManager, WorktreeManager                   # noqa: E402
 from change.worktree import WorkspaceSnapshot                    # noqa: E402
 from change.worktree_store import WorktreeStore                  # noqa: E402
+from change.materializer import WorktreeMaterializer             # noqa: E402
 from services.workspace_concurrency import ResourceLockRegistry  # noqa: E402
 from services.workspace_gateway import WorkspaceGateway         # noqa: E402
 from services import (
@@ -4304,6 +4306,640 @@ def _hello_demo_cleanup(runtime: Runtime) -> int:
     return 0
 
 
+# ============================================================
+# 命令：snake-demo（Task Demo V2 —— 单 Agent 完成一个真实小项目）
+# ============================================================
+SNAKE_DEMO_DEMAND = (
+    "请创建一个可以直接在浏览器中运行的网页版贪吃蛇游戏。"
+    "使用 HTML、CSS 和 JavaScript 实现。"
+    "游戏参数必须放在独立的配置文件中，游戏主逻辑必须读取配置文件，"
+    "而不是把这些参数直接写死在游戏逻辑中。"
+)
+
+SNAKE_DEMO_WORKSPACE = "WS-SNAKE-DEMO"
+SNAKE_DEMO_PORT = 8765
+SNAKE_DEMO_PIDFILE = "data/snake-demo-server.json"
+
+#: 🔒 **多文件最低验收**（任务书 §7）——不规定具体文件名，只看**类型与数量**。
+SNAKE_MIN_FILES = {"html": 1, "css": 1, "js": 2}
+
+
+@dataclass
+class SnakeDemoResult:
+    """Snake Demo 的结构化结果（流程与显示分开，便于定向测试）。"""
+
+    ok: bool
+    stage: str = ""
+    reason: str = ""
+    agent_id: str = ""
+    task_id: str = ""
+    workspace_id: str = SNAKE_DEMO_WORKSPACE
+    worktree_id: str = ""
+    branch: str = ""
+    physical_path: str = ""          # 🔒 Human-only
+    provider: str = ""
+    model: str = ""
+    simulated: bool = False
+    input_tokens: Optional[int] = None
+    output_tokens: Optional[int] = None
+    latency_ms: float = 0.0
+    summary: str = ""
+    files: list = field(default_factory=list)        # 逻辑路径
+    counts: dict = field(default_factory=dict)
+    config_file: str = ""
+    config_fields: list = field(default_factory=list)
+    materialized: list = field(default_factory=list)
+    url: str = ""
+    server_pid: Optional[int] = None
+
+
+def _snake_prompt(demand: str) -> str:
+    """
+    🔒 要求**结构化 JSON** + **多文件自然分离**。
+
+    ⚠️ 刻意**不写「必须生成 5 个文件」**（任务书 §6）——
+       那会让验收变成机械填空。这里只要求
+       「页面 / 样式 / 逻辑 / 配置合理分离」。
+    """
+    return (
+        "You are a software agent. A human gave you this demand:\n\n"
+        f"{demand}\n\n"
+        "Produce a SMALL but complete, runnable web project.\n"
+        "Separate concerns naturally: markup, styling, game logic, and "
+        "configuration must live in different files (a config file is "
+        "required; the game logic must READ it, not hardcode the values).\n\n"
+        # ⚠️ 【为什么这里要把配置项列出来】
+        #
+        #   第一版只说了「参数要放在配置文件里」，没列出**哪几个** ——
+        #   实测 DeepSeek 连续两次都**漏掉了「是否允许穿墙」**。
+        #
+        #   而 Human Demand（任务书 §5）本身就**明确列了**这五项要求。
+        #   所以把它们写进 prompt 是**忠实转述需求**，不是提示答案。
+        #
+        #   🔒 注意仍然**不说文件数量/文件名**（§6 明确禁止）——
+        #      分离方式由 Agent 自己决定。
+        "The config file MUST expose these five parameters "
+        "(pick clear names, e.g. boardWidth/boardHeight/speed/"
+        "initialLength/wrapWalls):\n"
+        "  1. board width\n"
+        "  2. board height\n"
+        "  3. game speed\n"
+        "  4. initial snake length\n"
+        "  5. whether the snake may wrap through walls\n\n"
+        "Reply with ONLY a JSON object (no markdown fences, no prose):\n"
+        "{\n"
+        '  "files": [{"path": "index.html", "content": "..."},\n'
+        '            {"path": "style.css",  "content": "..."},\n'
+        '            {"path": "config.js",  "content": "..."},\n'
+        '            {"path": "game.js",    "content": "..."}],\n'
+        '  "summary": "one short sentence",\n'
+        '  "configFile": "config.js"\n'
+        "}\n\n"
+        "Rules:\n"
+        "- Plain HTML/CSS/JavaScript only. No build step, no npm, no CDN.\n"
+        "- Must run by simply opening index.html in a browser.\n"
+        "- The game logic MUST read its parameters from the config file.\n"
+        "- Controls: arrow keys. Must include a restart control.\n"
+        "- Keep every file short. This is a demo, not a product.\n"
+    )
+
+
+def _snake_classify(files: list) -> tuple:
+    """
+    按**扩展名**分类，并做最低验收（任务书 §7）。
+
+    返回 `(counts, problems)`。
+    """
+    counts = {"html": 0, "css": 0, "js": 0, "other": 0}
+    for f in files:
+        path = str(f.get("path") or "").lower()
+        if path.endswith(".html") or path.endswith(".htm"):
+            counts["html"] += 1
+        elif path.endswith(".css"):
+            counts["css"] += 1
+        elif path.endswith(".js"):
+            counts["js"] += 1
+        else:
+            counts["other"] += 1
+
+    problems = []
+    for kind, minimum in SNAKE_MIN_FILES.items():
+        if counts[kind] < minimum:
+            problems.append(
+                f"需要至少 {minimum} 个 .{kind} 文件，实际 {counts[kind]} 个"
+            )
+    if problems:
+        problems.append("Expected a multi-file application.")
+    return counts, problems
+
+
+#: 五个配置概念 —— Agent 可以自己起字段名，所以用**概念正则**匹配。
+_SNAKE_CONFIG_CONCEPTS = {
+    # ⚠️ 第一版用 `re.fullmatch` —— 于是 `tickInterval` / `initialSnakeLength`
+    #    这种**复合名**全部匹配不上，误判成「配置不全」。
+    #    真实模型就是这么命名的（实测：gridSize / cellSize /
+    #    initialSnakeLength / tickInterval）。
+    #    改成 `search`（子串命中），并把常见命名都收进来。
+    #
+    #    注意：`gridSize` 这种**方形棋盘**同时满足宽/高 —— 这是允许的，
+    #    报告里会说明棋盘是方的。
+    "board_width": r"width|cols?|columns?|size",
+    "board_height": r"height|rows?|size",
+    "speed": r"speed|interval|tick|delay|fps|ms",
+    "initial_length": r"initial|start|len|length",
+    "wrap_walls": r"wrap|through|portal|pass|toroidal",
+}
+
+
+def _snake_inspect_config(files: list, declared: str) -> tuple:
+    """
+    找出配置文件，并检查「它**真的**被主逻辑用」。
+
+    返回 `(config_file, fields, problems, missing_concepts)`。
+
+    ⚠️ **`missing_concepts` 必须显式返回** ——
+       第一版让调用方用 `zip(_SNAKE_CONFIG_CONCEPTS, fields)` 去算，
+       但 `fields` 是**过滤过空值**的列表，于是 zip 静默错位：
+       缺 1 个概念时 `missing` 算出来是**空**，
+       修复机制**从未触发**（而且不报错）。
+
+       这是一个「用长度/位置隐式表达缺失」的经典坑。
+
+
+    ⚠️ 这里做的是**最低限度的静态检查**：
+       「配置对象被别的 JS 引用了」+「五个概念都能在配置里找到」。
+       **真正的验证是人工测试**（改 speed 重新加载）。
+       代码里明确写清这一点，不假装它比实际更强。
+    """
+    import re as _re
+
+    js = [(str(f.get("path") or ""), str(f.get("content") or ""))
+          for f in files
+          if str(f.get("path") or "").lower().endswith(".js")]
+
+    if not js:
+        return "", [], ["没有任何 .js 文件"]
+
+    # ---- ① 找配置文件 ----
+    config_file = ""
+    if declared:
+        for path, _ in js:
+            if path == declared or path.endswith(declared):
+                config_file = path
+                break
+    if not config_file:
+        for path, _ in js:
+            if "config" in path.lower() or "setting" in path.lower():
+                config_file = path
+                break
+    if not config_file:
+        return "", [], ["没有找到独立的配置文件（文件名里应有 config/settings）"], \
+            list(_SNAKE_CONFIG_CONCEPTS)
+
+    config_content = dict(js)[config_file]
+
+    # ---- ② 配置对象名 ----
+    m = _re.search(
+        r"(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*\{", config_content)
+    if not m:
+        return config_file, [], [
+            f"{config_file} 里没有找到配置对象（期望 `const X = {{...}}`）"
+        ], list(_SNAKE_CONFIG_CONCEPTS)
+    config_name = m.group(1)
+
+    # ---- ③ 五个概念必须都在配置里 ----
+    block = config_content[m.start():]
+    fields = []
+    for concept, pattern in _SNAKE_CONFIG_CONCEPTS.items():
+        hit = _re.search(rf"([A-Za-z_$][\w$]*)\s*:\s*[^,\n]+", block)
+        names = _re.findall(r"([A-Za-z_$][\w$]*)\s*:", block)
+        matched = [n for n in names if _re.search(pattern, n, _re.I)]
+        if matched:
+            fields.append(matched[0])
+        else:
+            fields.append("")
+    # 把没找到的概念报出来
+    problems = []
+    missing = [c for c, f in zip(_SNAKE_CONFIG_CONCEPTS, fields) if not f]
+    # ⚠️ 阈值从 `>= 2` 收紧到 `>= 1`：
+    #    第一版允许**缺 1 个**概念就算通过，于是 DeepSeek 生成的配置
+    #    **没有**「是否允许穿墙」这一项，Demo 却报成功 ——
+    #    而任务书 §5/§10 明确要求 Human 能手工测试它。
+    #    缺任何一个都必须触发修复；修不好就如实失败。
+    if missing:
+        problems.append(
+            f"配置文件里找不到这些概念的字段：{missing}"
+        )
+
+    # ---- ④ 🔒 配置必须被**别的** JS 真正引用 ----
+    others = [(p, c) for p, c in js if p != config_file]
+    referenced = any(config_name in content for _, content in others)
+    if not referenced:
+        problems.append(
+            f"🔒 配置对象 {config_name!r} 没有被其它 JS 引用 —— "
+            f"这会是「看起来有配置，实际游戏不用配置」的假配置"
+        )
+
+    return config_file, [f for f in fields if f], problems, missing
+
+
+def _run_snake_demo(
+    runtime: Runtime,
+    *,
+    operation_id: Optional[str] = None,
+    provider: Optional[str] = None,
+    port: int = SNAKE_DEMO_PORT,
+    start_server: bool = False,
+) -> SnakeDemoResult:
+    """
+    Snake Demo 的核心流程（任务书 §21 的十步）。
+
+    🔒 **单 Agent**（任务书 §13）—— 不引入 A/B/C，不做协商。
+    🔒 **不实现 Patch / TestRun / Acceptance / Merge**（§4）。
+    """
+    agents = list(runtime.economy.all_agents())
+    if not agents:
+        return SnakeDemoResult(ok=False, stage="agent", reason="没有可用 Agent")
+    agent = agents[0]                       # 🔒 只用一个
+
+    if not agent.has_brain:
+        return SnakeDemoResult(ok=False, stage="agent",
+                               reason=f"{agent.name} 没有大脑")
+
+    # ---------- Task（§14：creator 是 Agent，不是 Human）----------
+    task = Task.create(
+        creator=agent.agent_id,
+        description=SNAKE_DEMO_DEMAND,
+        workspace_id=SNAKE_DEMO_WORKSPACE,
+        participants=[agent.agent_id],
+        note="snake-demo",
+    )
+    runtime.tasks.save(task)
+
+    gw = runtime.workspace_gateway
+    ws = SNAKE_DEMO_WORKSPACE
+    ensured = gw.ensure_workspace(ws, agent.agent_id)
+    if not ensured.success:
+        return SnakeDemoResult(ok=False, stage="workspace",
+                               reason=ensured.error_code,
+                               agent_id=agent.agent_id, task_id=task.task_id)
+
+    # ---------- 真实 Git Worktree ----------
+    wt = runtime.worktree_manager.create(
+        ws, operation_id=operation_id, task_id=task.task_id)
+    if not wt.success:
+        return SnakeDemoResult(ok=False, stage="worktree",
+                               reason=wt.error_code,
+                               agent_id=agent.agent_id, task_id=task.task_id)
+
+    rec = runtime.worktrees.get(wt.result["worktree_id"])
+    base = SnakeDemoResult(
+        ok=False, stage="",
+        agent_id=agent.agent_id, task_id=task.task_id,
+        worktree_id=wt.result["worktree_id"],
+        branch=(wt.result.get("git_ref") or "").replace("refs/heads/", ""),
+        physical_path=rec.physical_path if rec else "",
+    )
+
+    # ---------- 真实 LLM ----------
+    chosen, simulated, note = _pick_hello_demo_provider(runtime, provider)
+    try:
+        response = agent.generate(
+            messages=_snake_prompt(SNAKE_DEMO_DEMAND), provider=chosen)
+    except Exception as exc:
+        return replace(base, stage="llm",
+                       reason=f"LLM request failed: {type(exc).__name__}")
+
+    base = replace(base, provider=response.provider, model=response.model,
+                   simulated=simulated or bool(getattr(response, "simulated", False)),
+                   input_tokens=response.input_tokens,
+                   output_tokens=response.output_tokens,
+                   latency_ms=response.latency_ms,
+                   summary=note)
+
+    payload = _extract_json_object(response.content)
+    if not isinstance(payload, dict) or not isinstance(payload.get("files"), list):
+        return replace(base, stage="llm_parse", reason="LLM 未返回期望的 JSON")
+
+    files = [f for f in payload["files"] if isinstance(f, dict)]
+    if not files:
+        return replace(base, stage="llm_parse", reason="files 为空")
+
+    # ---------- 多文件验收（§7）----------
+    counts, problems = _snake_classify(files)
+    base = replace(base, counts=counts)
+    if problems:
+        return replace(base, stage="multi_file", reason="；".join(problems))
+
+    # ---------- 🔒 有界修复：缺概念时最多再问一次 ----------
+    #
+    # ⚠️ 这是 **Demo 级的补救**，**不是** Acceptance / Merge（§4 禁止实现）：
+    #    · 最多 **1** 次（不会无限重试）
+    #    · 只在「已经明确缺哪个概念」时才重问
+    #    · 拿不到合格结果就**如实失败**，绝不假装成功
+    #
+    #    实测动机：DeepSeek 第一次就漏了「是否允许穿墙」这个配置项 ——
+    #    而任务书 §10 要求 Human 能手工测试它。
+    repaired, fields, cfg_problems, missing = _snake_inspect_config(
+        files, str(payload.get("configFile") or ""))
+    if cfg_problems:
+        if missing:
+            followup = (
+                "Your previous JSON was missing config fields for: "
+                + ", ".join(missing)
+                + ". Reply with the FULL corrected JSON object again "
+                  "(same schema, all files). The config file must contain "
+                  "a field controlling each of those, and the game logic "
+                  "must read them from the config."
+            )
+            try:
+                second = agent.generate(
+                    messages=[_snake_prompt(SNAKE_DEMO_DEMAND), followup],
+                    provider=chosen)
+                payload2 = _extract_json_object(second.content)
+                if isinstance(payload2, dict) and isinstance(
+                        payload2.get("files"), list):
+                    files2 = [f for f in payload2["files"]
+                              if isinstance(f, dict)]
+                    c2, p2 = _snake_classify(files2)
+                    if files2 and not p2:
+                        files = files2
+                        counts = c2
+                        payload = payload2
+                        base = replace(
+                            base, input_tokens=(
+                                (base.input_tokens or 0)
+                                + (second.input_tokens or 0)),
+                            output_tokens=(
+                                (base.output_tokens or 0)
+                                + (second.output_tokens or 0)),
+                            latency_ms=base.latency_ms + second.latency_ms,
+                        )
+            except Exception:
+                pass                      # 修复失败就走下面的如实报错
+
+    # ---------- 配置必须真的起作用（§8）----------
+    config_file, fields, cfg_problems, _missing = _snake_inspect_config(
+        files, str(payload.get("configFile") or ""))
+    base = replace(base, config_file=config_file, config_fields=fields,
+                   counts=counts)
+    if cfg_problems:
+        return replace(base, stage="config",
+                       reason="；".join(cfg_problems)
+                       + f"（已尝试 1 次修复；配置字段实测为 {fields}）")
+
+    # ---------- 经 Gateway 写（🔒 Agent 不碰物理路径）----------
+    logical_paths: list[str] = []
+    for f in files:
+        raw_path = str(f.get("path") or "")
+        content = f.get("content")
+        if not isinstance(content, str):
+            return replace(base, stage="llm_parse",
+                           reason=f"{raw_path} 没有内容")
+
+        # 🔒 绝对路径一律拒绝 —— 逻辑路径**必须是相对的**。
+        #    （`normalize_path("/etc/passwd")` 会得到合法的逻辑路径
+        #      `/etc/passwd`，落点是 <worktree>/etc/passwd —— 那不是
+        #      逃逸，但对一个 Demo 来说「看起来像宿主路径」就该拒。）
+        if raw_path.startswith("/") or raw_path.startswith("\\"):
+            return replace(base, stage="path_guard",
+                           reason=f"拒绝绝对路径 {raw_path!r}")
+        try:
+            logical = normalize_path(raw_path).lstrip("/")
+        except Exception:
+            return replace(base, stage="path_guard",
+                           reason=f"拒绝非法路径 {raw_path!r}")
+        if not logical or logical.endswith("/"):
+            return replace(base, stage="path_guard",
+                           reason=f"拒绝目录路径 {raw_path!r}")
+
+        existing = gw.read(ws, f"/{logical}", agent.agent_id)
+        if existing.success:
+            w = gw.edit(ws, f"/{logical}", existing.result["revision"],
+                        content, agent.agent_id)
+        else:
+            parent = "/" + logical.rsplit("/", 1)[0] if "/" in logical else "/"
+            made = gw.create(ws, parent, logical.rsplit("/", 1)[-1],
+                             "file", agent.agent_id, content=content)
+            if not made.success and made.error_code == "RESOURCE_NOT_FOUND":
+                # 父目录不存在 → 逐层建目录再建文件
+                made = _snake_ensure_parents(gw, ws, parent, agent.agent_id)
+                if made.success:
+                    made = gw.create(ws, parent, logical.rsplit("/", 1)[-1],
+                                     "file", agent.agent_id, content=content)
+            w = made
+
+        if not w.success:
+            return replace(base, stage="gateway",
+                           reason=f"写入 {logical} 被拒：{w.error_code}")
+        logical_paths.append(logical)
+
+    base = replace(base, files=logical_paths)
+
+    # ---------- Materialization（V0）----------
+    if not base.physical_path:
+        return replace(base, stage="materialize", reason="拿不到物理路径")
+
+    materializer = WorktreeMaterializer(
+        read_resource=lambda w_, p: _snake_read_logical(gw, w_, p, agent.agent_id),
+        worktree_path_for=lambda wid: (
+            runtime.worktrees.get(wid).physical_path
+            if runtime.worktrees.get(wid) else None
+        ),
+    )
+    try:
+        report = materializer.materialize(ws, base.worktree_id, logical_paths)
+    except Exception as exc:
+        return replace(base, stage="materialize",
+                       reason=f"{type(exc).__name__}: {exc}")
+    base = replace(base, materialized=report.written)
+
+    # ---------- Browser（命令**固定**，§19）----------
+    if start_server:
+        pid = _snake_start_server(base.physical_path, port)
+        if pid is None:
+            return replace(base, stage="browser",
+                           reason="本地 HTTP server 启动失败")
+        base = replace(base, server_pid=pid,
+                       url=f"http://127.0.0.1:{port}/index.html")
+
+    return replace(base, ok=True, stage="done")
+
+
+def _snake_read_logical(gw, workspace_id, logical, agent_id):
+    """把 Gateway 的 read 适配成 Materializer 要的 `read(ws, path)`。"""
+    r = gw.read(workspace_id, "/" + logical, agent_id)
+    return r.result["content"] if r.success else None
+
+
+def _snake_ensure_parents(gw, workspace_id, parent, agent_id):
+    """逐层创建目录（Agent 可能返回 `js/game.js` 这种结构）。"""
+    if parent in ("", "/"):
+        return gw.read(workspace_id, "/", agent_id)
+    parts = [p for p in parent.strip("/").split("/") if p]
+    cur = "/"
+    last = None
+    for part in parts:
+        last = gw.create(workspace_id, cur, part, "directory", agent_id)
+        if not last.success and last.error_code != "NAME_CONFLICT":
+            return last
+        cur = f"{cur.rstrip('/')}/{part}"
+    return last if last is not None else gw.read(workspace_id, "/", agent_id)
+
+
+def _snake_start_server(physical_root: str, port: int) -> Optional[int]:
+    """
+    🔒 **命令由 Demo 固定**（任务书 §19）：
+       `python -m http.server <port> --bind 127.0.0.1`，cwd 固定为 worktree。
+
+       **LLM 无权决定 shell command。**
+    """
+    import json as _json
+
+    try:
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "http.server", str(port),
+             "--bind", "127.0.0.1"],
+            cwd=physical_root,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        return None
+
+    Path(SNAKE_DEMO_PIDFILE).parent.mkdir(parents=True, exist_ok=True)
+    Path(SNAKE_DEMO_PIDFILE).write_text(_json.dumps({
+        "pid": proc.pid,
+        "port": port,
+        "url": f"http://127.0.0.1:{port}/index.html",
+        "worktree_path": physical_root,
+    }), encoding="utf-8")
+    return proc.pid
+
+
+def _snake_stop_server() -> bool:
+    """停掉之前起的 server（简单实现，不做 process manager，§22）。"""
+    import json as _json
+
+    path = Path(SNAKE_DEMO_PIDFILE)
+    if not path.exists():
+        return False
+    try:
+        info = _json.loads(path.read_text(encoding="utf-8"))
+        os.kill(int(info["pid"]), 15)
+    except Exception:
+        pass
+    try:
+        path.unlink()
+    except OSError:
+        pass
+    return True
+
+
+def cmd_snake_demo(runtime: Runtime, args: argparse.Namespace) -> int:
+    """`./dev.sh snake-demo` —— 单 Agent 完成一个真实小项目。"""
+    import shutil as _shutil
+
+    if getattr(args, "stop", False):
+        print("停止 snake-demo server...",
+              "done" if _snake_stop_server() else "（没有在跑的 server）")
+        return 0
+
+    if getattr(args, "cleanup", False):
+        _snake_stop_server()
+        removed = 0
+        for rec in runtime.worktrees.list_for_workspace(SNAKE_DEMO_WORKSPACE):
+            if rec.physical_path and os.path.isdir(rec.physical_path):
+                _shutil.rmtree(rec.physical_path, ignore_errors=True)
+                removed += 1
+        try:
+            runtime.worktree_manager.git.worktree_prune()
+        except Exception:
+            pass
+        print(f"清理完成：{removed} 个 worktree 目录。")
+        return 0
+
+    banner = "=" * 48
+    print()
+    print(banner)
+    print("  AI Economy OS — Snake Demo")
+    print(banner)
+
+    def step(n, title, body=""):
+        print()
+        print(f"[{n}/10] {title}")
+        for line in (body or "").splitlines():
+            print(f"        {line}")
+
+    step(1, "Human Demand", SNAKE_DEMO_DEMAND)
+
+    result = _run_snake_demo(
+        runtime,
+        provider=getattr(args, "provider", None),
+        port=int(getattr(args, "port", SNAKE_DEMO_PORT)),
+        start_server=True,
+    )
+
+    if result.agent_id:
+        step(2, "Agent", f"{result.agent_id}   (single agent)")
+    if result.task_id:
+        step(3, "Task", result.task_id)
+    step(4, "Workspace", result.workspace_id)
+    if result.worktree_id:
+        step(5, "Git Worktree", f"{result.worktree_id}\nbranch: {result.branch}")
+
+    if not result.ok:
+        print()
+        print(banner)
+        print("  DEMO FAILED")
+        print(banner)
+        print(f"  Stage:  {result.stage}")
+        print(f"  Reason: {result.reason}")
+        if result.stage == "multi_file":
+            print("  Expected a multi-file application.")
+        return 1
+
+    step(6, "LLM",
+         f"provider: {result.provider}\n"
+         f"model:    {result.model}\n"
+         f"request:  successful\n"
+         f"tokens:   {result.input_tokens}+{result.output_tokens}  "
+         f"latency: {result.latency_ms:.0f} ms")
+    if result.simulated:
+        print("        ⚠️  本次是 mock（不是真实 API）")
+
+    step(7, "Generated Project",
+         "\n".join(f"  {p}" for p in result.files))
+    step(8, "Materialization",
+         f"{len(result.materialized)} files written to Worktree")
+    step(9, "Browser", result.url or "（未启动 server）")
+    step(10, "Demo", "READY FOR HUMAN TEST")
+
+    print()
+    print(banner)
+    print(f"  config file : {result.config_file}")
+    print(f"  config fields: {', '.join(result.config_fields)}")
+    print(banner)
+    print()
+    print("  Open the URL above in your browser.")
+    print()
+    print(f"  Worktree ID : {result.worktree_id}")
+    print(f"  Workspace ID: {result.workspace_id}")
+    print(f"  Git branch  : {result.branch}")
+    if getattr(args, "show_path", False):
+        print(f"  Worktree path: {result.physical_path}")
+        print(f"    open {result.physical_path}")
+    else:
+        print("  （加 --show-path 显示 Worktree 本地路径）")
+    print()
+    print("  人工测试：修改配置文件里的 speed / wrapWalls / boardWidth，")
+    print("            刷新浏览器即可看到变化。")
+    print("  停止 server: ./dev.sh snake-demo --stop")
+    print("  清理:        ./dev.sh snake-demo --cleanup")
+    print()
+    return 0
+
+
 def cmd_context_demo(runtime: Runtime, args: argparse.Namespace) -> int:
     """
     Task Shared Context / Alignment 演示（Step 4F）。
@@ -5222,6 +5858,20 @@ def build_parser() -> argparse.ArgumentParser:
     hello.add_argument("--provider", default=None,
                        help="指定 LLM provider（默认自动挑一个配了 key 的真实 provider）")
     hello.set_defaults(func=cmd_hello_demo)
+
+    snake = subparsers.add_parser(
+        "snake-demo", parents=[shared],
+        help="Task Demo V2：单 Agent 用真实 LLM 生成一个可运行的网页小项目",
+    )
+    snake.add_argument("--show-path", action="store_true",
+                       help="显示 Worktree 本地路径（仅 Human）")
+    snake.add_argument("--cleanup", action="store_true",
+                       help="停止 server 并清理 worktree")
+    snake.add_argument("--stop", action="store_true", help="只停止 server")
+    snake.add_argument("--port", type=int, default=SNAKE_DEMO_PORT,
+                       help=f"本地 HTTP 端口（默认 {SNAKE_DEMO_PORT}）")
+    snake.add_argument("--provider", default=None, help="指定 LLM provider")
+    snake.set_defaults(func=cmd_snake_demo)
 
     return parser
 
