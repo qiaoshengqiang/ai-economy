@@ -49,6 +49,7 @@
 | [0022](0022-lazy-provisioning-and-workspace-lifecycle.md) | Lazy Provisioning + Workspace Lifecycle + Human Participation | Accepted（实现为 FUTURE） | Lifecycle / Human / Iteration | Task Workspace |
 | [0023](0023-task-origin-and-lineage.md) | Task Origin / Creator / Lineage / Funding 是独立概念 | Accepted（实现为 FUTURE） | Task Origin & Lineage | Task |
 | [0024](0024-human-demand-not-task-creator.md) | **Human Demand ≠ Task；Human ≠ Task Creator** | Accepted（实现为 FUTURE） | Task 起源模型修正 | Task |
+| [0025](0025-resource-control-authorization-delegation.md) | **Controller / Authorization / Delegation / Write Lock 四者分离** | Accepted（实现为 FUTURE） | Resource 层核心设计 | Workspace |
 
 ---
 

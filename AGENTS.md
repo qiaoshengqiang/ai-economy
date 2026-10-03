@@ -30,7 +30,7 @@
 | | |
 |---|---|
 | **阶段** | `Post-Step-4F / Pre-Task-Workspace` |
-| **测试基线** | **2850 passed, 30 deselected** |
+| **测试基线** | **2918 passed, 30 deselected** |
 | **协议版本** | `protocol_version = "1"` |
 | **命令数** | 16（`./dev.sh` 查看全部） |
 | **数据库表** | 13 |
@@ -74,8 +74,7 @@ Step 4F       Task Shared Context / Alignment 最小可运行原型  ← 当前
 不该有 `HumanTask` / `Front-created Task`；④ ❌ Front Agent **不是**中央
 Coordinator —— 只做 `Human → OS` 入口，Agent 间仍可直接协作。
 
-> **兼容性 ≠ 提前实现**：`V1 简单 + 边界清楚 + 接口稳定 = 可扩展`（详见
-> [`TASK_ORIGIN_LINEAGE.md`](docs/architecture/TASK_ORIGIN_LINEAGE.md) §2.9）。
+> **兼容性 ≠ 提前实现**：`V1 简单 + 边界清楚 + 接口稳定 = 可扩展`。
 
 ---
 
@@ -345,7 +344,7 @@ Vector DB · Knowledge graph · 分布式共识 · Multi-agent 投票 · 复杂 
         ↓
 2. 先调查真实代码（不要凭空设计）
         ↓
-3. 跑基线：./dev.sh test   （必须是 2850 passed）
+3. 跑基线：./dev.sh test   （必须是 2918 passed）
         ↓
 4. 实施最小修改
         ↓
@@ -364,7 +363,7 @@ Vector DB · Knowledge graph · 分布式共识 · Multi-agent 投票 · 复杂 
 
 1. **先调查，再动手。** 不要在设计之前改代码。
 2. **每一步结束跑全量测试。** 不是只跑自己改的那个文件。
-   基线现在是 **2850 passed**。
+   基线现在是 **2918 passed**。
 3. **新增守卫必须配反向测试。** 把违规注入进去，确认守卫**真的变红**。
 
 ---
@@ -377,7 +376,7 @@ Vector DB · Knowledge graph · 分布式共识 · Multi-agent 投票 · 复杂 
 ./dev.sh test tests/test_xxx.py -k 名字  # 单个测试
 ```
 
-基线 **2850 passed / 30 deselected** · 测试文件 51 个 ·
+基线 **2918 passed / 30 deselected** · 测试文件 51 个 ·
 守卫文件 10 个约 390 项 · 真实 API 测试 30 项（单独跑，需要 Key）。
 
 **必须用 `./dev.sh test`，不要直接 `pytest`** —— 它会正确设置环境。
@@ -432,6 +431,7 @@ AGENTS.md → 判断任务领域 → 只读相关 Specification → 必要时读
 | **Task Workspace / Permission / Write Lock / Backend** | [`TASK_WORKSPACE.md`](docs/architecture/TASK_WORKSPACE.md) | **`FUTURE`**（只有架构定义） |
 | 消息协议 | [`PROTOCOL.md`](PROTOCOL.md) | `CURRENT` |
 | **Task Origin / Lineage / Funding** | [`TASK_ORIGIN_LINEAGE.md`](docs/architecture/TASK_ORIGIN_LINEAGE.md) | **`FUTURE`**（逻辑模型已定） |
+| **Resource / Controller / Delegation** | [`RESOURCE_LAYER.md`](docs/architecture/RESOURCE_LAYER.md) | **`FUTURE`**（设计冻结） |
 
 **Workspace 导航**（规范 §23.4）：
 
@@ -508,8 +508,8 @@ docs/architecture/adr/0024-*.md            ← 为什么 Human ≠ Task Creator
 > **租约时长必须大于最慢的 handler。** 默认 300 秒。有长任务时必须先决定：
 > 调长租约？实现续租？还是换一种占用模型？
 >
-> ⚠️ 这是 **Message Claim Lease**（`CURRENT`，已实现）。
-> **Workspace Write Lock 明确不用时间租约**（见下）——不要混淆这两个。
+> ⚠️ 这是 **Message Claim Lease**（`CURRENT`）。
+> **Workspace Write Lock 明确不用时间租约** —— 不要混淆。
 
 ### Workspace Readiness（架构决策状态）
 

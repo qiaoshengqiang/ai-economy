@@ -260,7 +260,7 @@ def flat(text: str) -> str:
 
 def plain(text: str) -> str:
     """
-    去掉 Markdown 强调标记后压平 —— 用于匹配**跨粗体边界**的短语。
+    去掉 Markdown **强调标记**后压平 —— 用于匹配**跨粗体边界**的短语。
 
     【为什么必须要有它（真实踩过的坑）】
         文档里写的是：
@@ -270,10 +270,47 @@ def plain(text: str) -> str:
         而守卫查的是 `"而不是" in block` ——
         中间夹着 `**`，**子串匹配找不到**。
 
-        `plain()` 把 `*` / `_` / `` ` `` 去掉再压平，
+        `plain()` 把强调标记去掉再压平，
         于是 `而**不是**` → `而不是`。
+
+    ============================================================
+    【第一版是错的：把 `_` 全部删掉（真实踩到的坑）】
+    ============================================================
+
+        第一版是：
+
+            re.sub(r"[*_`]", "", text)
+
+        它对 `*` 没问题，但 `_` **在标识符里不是强调**：
+
+            TASK_WORKSPACE.md   →  TASKWORKSPACE.md   ❌
+            resource_scope      →  resourcescope      ❌
+            delegation_id       →  delegationid       ❌
+
+        后果：守卫查 `"TASK_WORKSPACE.md" in plain(block)` 永远为假，
+        于是**把文档里明明写好的一句话判成缺失**（假红）。
+
+        这不是「文档写错了」，是**工具过度清洗**。
+
+    ------------------------------------------------------------
+    【正确做法】只删**真正的**强调标记：
+        `**bold**` · `__bold__` · `*italic*` · `_italic_` · `` `code` ``
+
+        其中 `_` 只有在**词边界**上才是强调 ——
+        `(?<!\w)_ ... _(?!\w)` 保证 `TASK_WORKSPACE` 不被碰。
     """
-    return " ".join(re.sub(r"[*_`]", "", text).split())
+    # ①② 成对标粗：**bold** / __bold__（`_` 必须在词边界）
+    text = re.sub(r"\*\*(.+?)\*\*", r"\1", text, flags=re.S)
+    text = re.sub(r"(?<!\w)__(.+?)__(?!\w)", r"\1", text, flags=re.S)
+
+    # ③④ 成对斜体：*italic* / _italic_
+    text = re.sub(r"\*(.+?)\*", r"\1", text, flags=re.S)
+    text = re.sub(r"(?<!\w)_(.+?)_(?!\w)", r"\1", text, flags=re.S)
+
+    # ⑤ 行内代码
+    text = re.sub(r"`([^`]*)`", r"\1", text)
+
+    return " ".join(text.split())
 
 
 def strip_fenced_blocks(document: str) -> str:

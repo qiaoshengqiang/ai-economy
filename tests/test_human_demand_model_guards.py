@@ -577,12 +577,43 @@ class TestADRTrail:
         assert "0024-human-demand-not-task-creator.md" in index
 
     def test_adr_numbering_continuous(self):
+        """
+        ADR 编号必须**连续无空缺**。
+
+        【这条守卫第一版是错的 —— 与 lineage 文件里那条同样的毛病】
+            第一版写 `assert max(numbers) == 24` —— 把「当前最大编号」写死了。
+            结果下一个 ADR（0025）一加进来，这条就失败。
+
+            守卫的名字叫 "numbering continuous"，
+            那就该测**连续性**，不该测**具体最大值**。
+            写死最大值 = 每加一个 ADR 都要改一次守卫，
+            而且改的时候很容易顺手改成更大的数字，
+            于是它永远抓不到真正的编号空缺。
+
+        【注意】索引里链接的 0001–0011 / 0013 / 0015–0017 是**历史缺失**
+        （见 AGENTS.md 技术债 #8），它们**没有文件**，所以不在 `numbers` 里。
+        连续性只对**实际存在的**编号检查。
+        """
         numbers = sorted(
             int(p.name[:4])
             for p in (ARCH_DIR / "adr").glob("*.md")
             if p.name[:4].isdigit()
         )
-        assert max(numbers) == 24, f"最大 ADR 编号是 {max(numbers)}，应为 24"
+
+        assert 24 in numbers, "ADR-0024 不存在"
+        assert 25 in numbers, "ADR-0025 不存在"
+
+        # 实际存在的编号之间不能有空洞
+        # （0001–0011 等历史缺失本来就没有文件，不属于「空洞」）
+        recent = [n for n in numbers if n >= 18]
+        gaps = [
+            n for n in range(min(recent), max(recent) + 1)
+            if n not in recent
+        ]
+        assert not gaps, (
+            f"0018 之后的 ADR 编号有空洞：{gaps}\n"
+            f"（实际存在：{recent}）"
+        )
 
 
 class TestUnchangedModelsPreserved:

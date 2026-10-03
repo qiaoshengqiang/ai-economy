@@ -484,6 +484,53 @@ class TestOtherHelpers:
     def test_plain_strips_code_and_underscore(self):
         assert plain("`code` and _em_") == "code and em"
 
+    def test_plain_does_not_strip_underscores_inside_identifiers(self):
+        """
+        **反向测试：`plain()` 不许把标识符里的 `_` 当成强调标记删掉。**
+
+        【这是真实踩到的坑】
+            第一版 `re.sub(r"[*_`]", "", text)` 会把：
+
+                TASK_WORKSPACE.md  →  TASKWORKSPACE.md
+                resource_scope     →  resourcescope
+                delegation_id      →  delegationid
+
+            于是守卫查 `"TASK_WORKSPACE.md" in plain(block)` 永远为假，
+            **把文档里明明写好的引用判成缺失** —— 假红。
+
+            根因：工具**过度清洗**，不是文档错。
+        """
+        for identifier in (
+            "TASK_WORKSPACE.md",
+            "TASK_ORIGIN_LINEAGE.md",
+            "RESOURCE_LAYER.md",
+            "resource_scope",
+            "delegation_id",
+            "granted_rights",
+            "parent_delegation",
+            "authorization_source",
+        ):
+            assert plain(identifier) == identifier, (
+                f"plain({identifier!r}) 把标识符里的 `_` 删掉了 → "
+                f"{plain(identifier)!r}"
+            )
+
+    def test_plain_still_strips_real_emphasis(self):
+        """反向的另一面：真正的强调标记**仍然**要被剥掉。"""
+        assert plain("而**不是**：") == "而不是："
+        assert plain("__bold__") == "bold"
+        assert plain("_italic_") == "italic"
+        assert plain("*italic*") == "italic"
+        assert plain("`code`") == "code"
+
+    def test_plain_handles_mixed_content(self):
+        """混合内容：标识符保留，强调剥掉。"""
+        got = plain("见 **TASK_WORKSPACE.md** §9 的关系")
+
+        assert "TASK_WORKSPACE.md" in got, f"标识符丢了：{got!r}"
+        assert "**" not in got, f"强调标记没剥干净：{got!r}"
+        assert got == "见 TASK_WORKSPACE.md §9 的关系"
+
     def test_strip_fenced_blocks_removes_fence_content(self):
         doc = md("""
             keep-before

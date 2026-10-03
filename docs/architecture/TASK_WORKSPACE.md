@@ -617,6 +617,10 @@ Task-001
 
 ## 8. Resource Model
 
+> ⚠️ **本节的资源级控制细节（Controller / Authorization /
+> Delegation / Cascade Revocation）见 [`RESOURCE_LAYER.md`](RESOURCE_LAYER.md)。**
+> 那是对 §8–§11 的**下层细化**，不是另一套模型。
+
 ### 8.1 Resource 是什么（`SETTLED` 原则 / `OPEN` 细节）
 
 Task Workspace 里的一个**资源**可以是：
@@ -782,6 +786,10 @@ WRITE  requires  调用方持有该资源的有效 Write Lock
 ---
 
 ## 11. Permission vs Lock
+
+> ⚠️ 本节确立 **`Permission ≠ Write Lock`**。
+> [`RESOURCE_LAYER.md`](RESOURCE_LAYER.md) §5 在此之上再分出
+> **Controller**（谁负责）与 **Authorization**（谁有资格）—— 三者不可合并。
 
 ### 11.1 正式定义（`SETTLED`）
 
