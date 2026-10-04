@@ -1,5 +1,31 @@
 # Decision Lab V1
 
+> **Round 1**：`decider-0.8b` —— 安装被网络阻断（见 §本机网络事实）
+> **Round 2**：**Laya**（`laya-multilingual`）—— 进行中
+
+## Laya（Round 2）
+
+```python
+from laya import Router
+router = Router()                       # 🔒 按需加载，**不要** preload=True
+router.predict(state, questions, model="multilingual")
+```
+
+- Python 要求 **>=3.10**（本机 3.13.15 ✅）
+- 依赖：`torch` + `transformers` + `safetensors` + `huggingface_hub` + `numpy`
+- ✅ **没有** `flash-linear-attention` —— 比 decider-ai 轻，Apple Silicon 可行性更高
+- `Router` 官方 docstring 写着 *"Lazily loads Laya checkpoints"*，
+  与「不要 preload 三个 checkpoint」一致
+
+### 实测到的下载速率（本轮失败的直接原因）
+
+```
+hf_xet-1.6.0 (3.9 MB)  →  11.3 kB/s  →  6 分 09 秒
+```
+
+torch（macOS arm64，约 100–200 MB）在此速率下需要**数小时**。
+
+
 > **这是一个完全隔离的研究/基准实验。**
 > 它**不是** AI Economy OS 的一部分 —— 不改任何生产代码，
 > 不注册 Provider，不进 pytest，不被 `main.py` import。

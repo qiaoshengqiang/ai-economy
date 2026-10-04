@@ -29,12 +29,27 @@ from pathlib import Path
 OUT = Path(__file__).with_name("benchmark_cases.json")
 
 
+#: 每个类别的问句要出中英两个版本（任务书 §十一：30 中文 + 30 English）
+QUESTION_CN = {
+    "self_vs_delegate": "这个任务应该委托出去吗？",
+    "agent_selection": "哪个 Agent 是更好的选择？",
+    "tool_vs_llm": "应该用哪个？",
+    "think_vs_wait": "Agent 现在应该思考吗？",
+    "task_priority": "应该先处理哪个任务？",
+    "accept_reject_task": "这个任务应该接吗？",
+    "invest_tool": "应该投资建设这个工具吗？",
+    "model_selection": "应该用哪个模型？",
+    "need_human": "这件事需要人参与吗？",
+    "recheck_result": "A 应该怎么处理这个结果？",
+}
+
+
 def _case(cid, category, difficulty, state, question, options,
-          expected, reason):
+          expected, reason, lang="en"):
     return {
         "id": cid, "category": category, "difficulty": difficulty,
-        "state": state, "question": question, "options": options,
-        "expected_choice": expected, "reason": reason,
+        "lang": lang, "state": state, "question": question,
+        "options": options, "expected_choice": expected, "reason": reason,
     }
 
 
@@ -425,7 +440,22 @@ def cat10():
 def main():
     cases = []
     for fn in (cat1, cat2, cat3, cat4, cat5, cat6, cat7, cat8, cat9, cat10):
-        cases.extend(fn())
+        group = fn()
+        # 每个类别 6 条：前 3 条中文、后 3 条英文
+        #   → 10 类 × 3 = 30 中文 / 30 英文
+        #   → 每类里 spec 的难度顺序是 easy,medium,hard,easy,medium,hard
+        #     所以前 3 = 1 easy + 1 medium + 1 hard，后 3 同理
+        #   → 20 easy / 20 medium / 20 hard 保持不变 ✅
+        for idx, c in enumerate(group):
+            if idx < 3:
+                c["lang"] = "zh"
+                c["question"] = QUESTION_CN[c["category"]]
+                c["id"] = c["id"].replace(c["category"].split("_")[0], "zh", 1) \
+                    if False else f"zh_{c['id']}"
+            else:
+                c["lang"] = "en"
+                c["id"] = f"en_{c['id']}"
+        cases.extend(group)
 
     # 难度分布核对（任务书 §十二：20 easy / 20 medium / 20 hard）
     dist = {}
@@ -436,6 +466,10 @@ def main():
                    encoding="utf-8")
     print(f"  ✅ {len(cases)} cases → {OUT.name}")
     print(f"     难度分布: {dist}")
+    lang = {}
+    for c in cases:
+        lang[c["lang"]] = lang.get(c["lang"], 0) + 1
+    print(f"     语言分布: {lang}")
     cats = {}
     for c in cases:
         cats[c["category"]] = cats.get(c["category"], 0) + 1

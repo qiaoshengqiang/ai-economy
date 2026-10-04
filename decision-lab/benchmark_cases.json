@@ -1,14 +1,15 @@
 [
   {
-    "id": "delegate_001",
+    "id": "zh_delegate_001",
     "category": "self_vs_delegate",
     "difficulty": "easy",
+    "lang": "zh",
     "state": {
       "self_cost": 12,
       "delegate_cost": 4,
       "delegate_success": 0.92
     },
-    "question": "Should the Agent delegate this task?",
+    "question": "这个任务应该委托出去吗？",
     "options": [
       "SELF",
       "DELEGATE"
@@ -17,15 +18,16 @@
     "reason": "delegate_cost=4 < self_cost=12: True; success=0.92 >= 0.85: True"
   },
   {
-    "id": "delegate_002",
+    "id": "zh_delegate_002",
     "category": "self_vs_delegate",
     "difficulty": "medium",
+    "lang": "zh",
     "state": {
       "self_cost": 10,
       "delegate_cost": 9,
       "delegate_success": 0.95
     },
-    "question": "Should the Agent delegate this task?",
+    "question": "这个任务应该委托出去吗？",
     "options": [
       "SELF",
       "DELEGATE"
@@ -34,15 +36,16 @@
     "reason": "delegate_cost=9 < self_cost=10: True; success=0.95 >= 0.85: True"
   },
   {
-    "id": "delegate_003",
+    "id": "zh_delegate_003",
     "category": "self_vs_delegate",
     "difficulty": "hard",
+    "lang": "zh",
     "state": {
       "self_cost": 8,
       "delegate_cost": 2,
       "delegate_success": 0.55
     },
-    "question": "Should the Agent delegate this task?",
+    "question": "这个任务应该委托出去吗？",
     "options": [
       "SELF",
       "DELEGATE"
@@ -51,9 +54,10 @@
     "reason": "delegate_cost=2 < self_cost=8: True; success=0.55 >= 0.85: False"
   },
   {
-    "id": "delegate_004",
+    "id": "en_delegate_004",
     "category": "self_vs_delegate",
     "difficulty": "easy",
+    "lang": "en",
     "state": {
       "self_cost": 20,
       "delegate_cost": 5,
@@ -68,9 +72,10 @@
     "reason": "delegate_cost=5 < self_cost=20: True; success=0.97 >= 0.85: True"
   },
   {
-    "id": "delegate_005",
+    "id": "en_delegate_005",
     "category": "self_vs_delegate",
     "difficulty": "medium",
+    "lang": "en",
     "state": {
       "self_cost": 6,
       "delegate_cost": 5,
@@ -85,9 +90,10 @@
     "reason": "delegate_cost=5 < self_cost=6: True; success=0.88 >= 0.85: True"
   },
   {
-    "id": "delegate_006",
+    "id": "en_delegate_006",
     "category": "self_vs_delegate",
     "difficulty": "hard",
+    "lang": "en",
     "state": {
       "self_cost": 15,
       "delegate_cost": 3,
@@ -102,9 +108,10 @@
     "reason": "delegate_cost=3 < self_cost=15: True; success=0.7 >= 0.85: False"
   },
   {
-    "id": "agent_001",
+    "id": "zh_agent_001",
     "category": "agent_selection",
     "difficulty": "medium",
+    "lang": "zh",
     "state": {
       "candidates": [
         {
@@ -121,7 +128,7 @@
         }
       ]
     },
-    "question": "Which agent is the better choice?",
+    "question": "哪个 Agent 是更好的选择？",
     "options": [
       "B",
       "C"
@@ -130,9 +137,10 @@
     "reason": "min(cost / success)，平局看 latency"
   },
   {
-    "id": "agent_002",
+    "id": "zh_agent_002",
     "category": "agent_selection",
     "difficulty": "hard",
+    "lang": "zh",
     "state": {
       "candidates": [
         {
@@ -149,7 +157,7 @@
         }
       ]
     },
-    "question": "Which agent is the better choice?",
+    "question": "哪个 Agent 是更好的选择？",
     "options": [
       "B",
       "C"
@@ -158,9 +166,10 @@
     "reason": "min(cost / success)，平局看 latency"
   },
   {
-    "id": "agent_003",
+    "id": "zh_agent_003",
     "category": "agent_selection",
     "difficulty": "easy",
+    "lang": "zh",
     "state": {
       "candidates": [
         {
@@ -177,7 +186,7 @@
         }
       ]
     },
-    "question": "Which agent is the better choice?",
+    "question": "哪个 Agent 是更好的选择？",
     "options": [
       "B",
       "C"
@@ -186,9 +195,10 @@
     "reason": "min(cost / success)，平局看 latency"
   },
   {
-    "id": "agent_004",
+    "id": "en_agent_004",
     "category": "agent_selection",
     "difficulty": "medium",
+    "lang": "en",
     "state": {
       "candidates": [
         {
@@ -214,9 +224,10 @@
     "reason": "min(cost / success)，平局看 latency"
   },
   {
-    "id": "agent_005",
+    "id": "en_agent_005",
     "category": "agent_selection",
     "difficulty": "easy",
+    "lang": "en",
     "state": {
       "candidates": [
         {
@@ -242,9 +253,10 @@
     "reason": "min(cost / success)，平局看 latency"
   },
   {
-    "id": "agent_006",
+    "id": "en_agent_006",
     "category": "agent_selection",
     "difficulty": "hard",
+    "lang": "en",
     "state": {
       "candidates": [
         {
@@ -270,15 +282,16 @@
     "reason": "min(cost / success)，平局看 latency"
   },
   {
-    "id": "tool_001",
+    "id": "zh_tool_001",
     "category": "tool_vs_llm",
     "difficulty": "easy",
+    "lang": "zh",
     "state": {
       "tool_cost": 0.2,
       "llm_cost": 4.0,
       "tool_reliable": true
     },
-    "question": "Which should be used?",
+    "question": "应该用哪个？",
     "options": [
       "TOOL",
       "LLM"
@@ -287,15 +300,16 @@
     "reason": "tool_cost*5(1.0) < llm_cost(4.0): True; reliable=True"
   },
   {
-    "id": "tool_002",
+    "id": "zh_tool_002",
     "category": "tool_vs_llm",
     "difficulty": "medium",
+    "lang": "zh",
     "state": {
       "tool_cost": 3.5,
       "llm_cost": 4.0,
       "tool_reliable": true
     },
-    "question": "Which should be used?",
+    "question": "应该用哪个？",
     "options": [
       "TOOL",
       "LLM"
@@ -304,15 +318,16 @@
     "reason": "tool_cost*5(17.5) < llm_cost(4.0): False; reliable=True"
   },
   {
-    "id": "tool_003",
+    "id": "zh_tool_003",
     "category": "tool_vs_llm",
     "difficulty": "hard",
+    "lang": "zh",
     "state": {
       "tool_cost": 0.1,
       "llm_cost": 5.0,
       "tool_reliable": false
     },
-    "question": "Which should be used?",
+    "question": "应该用哪个？",
     "options": [
       "TOOL",
       "LLM"
@@ -321,9 +336,10 @@
     "reason": "tool_cost*5(0.5) < llm_cost(5.0): True; reliable=False"
   },
   {
-    "id": "tool_004",
+    "id": "en_tool_004",
     "category": "tool_vs_llm",
     "difficulty": "easy",
+    "lang": "en",
     "state": {
       "tool_cost": 0.5,
       "llm_cost": 8.0,
@@ -338,9 +354,10 @@
     "reason": "tool_cost*5(2.5) < llm_cost(8.0): True; reliable=True"
   },
   {
-    "id": "tool_005",
+    "id": "en_tool_005",
     "category": "tool_vs_llm",
     "difficulty": "medium",
+    "lang": "en",
     "state": {
       "tool_cost": 2.0,
       "llm_cost": 2.5,
@@ -355,9 +372,10 @@
     "reason": "tool_cost*5(10.0) < llm_cost(2.5): False; reliable=True"
   },
   {
-    "id": "tool_006",
+    "id": "en_tool_006",
     "category": "tool_vs_llm",
     "difficulty": "hard",
+    "lang": "en",
     "state": {
       "tool_cost": 0.3,
       "llm_cost": 6.0,
@@ -372,15 +390,16 @@
     "reason": "tool_cost*5(1.5) < llm_cost(6.0): True; reliable=False"
   },
   {
-    "id": "think_001",
+    "id": "zh_think_001",
     "category": "think_vs_wait",
     "difficulty": "easy",
+    "lang": "zh",
     "state": {
       "pending_high_priority": true,
       "next_heartbeat_sec": 300,
       "balance_aic": 50
     },
-    "question": "Should the Agent think now?",
+    "question": "Agent 现在应该思考吗？",
     "options": [
       "THINK",
       "WAIT",
@@ -390,15 +409,16 @@
     "reason": "有高优先级活 → THINK；否则 heartbeat<=60 → WAIT；否则 SLEEP"
   },
   {
-    "id": "think_002",
+    "id": "zh_think_002",
     "category": "think_vs_wait",
     "difficulty": "easy",
+    "lang": "zh",
     "state": {
       "pending_high_priority": false,
       "next_heartbeat_sec": 20,
       "balance_aic": 50
     },
-    "question": "Should the Agent think now?",
+    "question": "Agent 现在应该思考吗？",
     "options": [
       "THINK",
       "WAIT",
@@ -408,15 +428,16 @@
     "reason": "有高优先级活 → THINK；否则 heartbeat<=60 → WAIT；否则 SLEEP"
   },
   {
-    "id": "think_003",
+    "id": "zh_think_003",
     "category": "think_vs_wait",
     "difficulty": "medium",
+    "lang": "zh",
     "state": {
       "pending_high_priority": false,
       "next_heartbeat_sec": 600,
       "balance_aic": 5
     },
-    "question": "Should the Agent think now?",
+    "question": "Agent 现在应该思考吗？",
     "options": [
       "THINK",
       "WAIT",
@@ -426,9 +447,10 @@
     "reason": "有高优先级活 → THINK；否则 heartbeat<=60 → WAIT；否则 SLEEP"
   },
   {
-    "id": "think_004",
+    "id": "en_think_004",
     "category": "think_vs_wait",
     "difficulty": "hard",
+    "lang": "en",
     "state": {
       "pending_high_priority": false,
       "next_heartbeat_sec": 600,
@@ -444,9 +466,10 @@
     "reason": "有高优先级活 → THINK；否则 heartbeat<=60 → WAIT；否则 SLEEP"
   },
   {
-    "id": "think_005",
+    "id": "en_think_005",
     "category": "think_vs_wait",
     "difficulty": "medium",
+    "lang": "en",
     "state": {
       "pending_high_priority": true,
       "next_heartbeat_sec": 10,
@@ -462,9 +485,10 @@
     "reason": "有高优先级活 → THINK；否则 heartbeat<=60 → WAIT；否则 SLEEP"
   },
   {
-    "id": "think_006",
+    "id": "en_think_006",
     "category": "think_vs_wait",
     "difficulty": "hard",
+    "lang": "en",
     "state": {
       "pending_high_priority": false,
       "next_heartbeat_sec": 45,
@@ -480,9 +504,10 @@
     "reason": "有高优先级活 → THINK；否则 heartbeat<=60 → WAIT；否则 SLEEP"
   },
   {
-    "id": "priority_001",
+    "id": "zh_priority_001",
     "category": "task_priority",
     "difficulty": "easy",
+    "lang": "zh",
     "state": {
       "tasks": [
         {
@@ -505,7 +530,7 @@
         }
       ]
     },
-    "question": "Which task should be handled first?",
+    "question": "应该先处理哪个任务？",
     "options": [
       "A",
       "B",
@@ -515,9 +540,10 @@
     "reason": "max(value * urgency / risk)"
   },
   {
-    "id": "priority_002",
+    "id": "zh_priority_002",
     "category": "task_priority",
     "difficulty": "hard",
+    "lang": "zh",
     "state": {
       "tasks": [
         {
@@ -540,7 +566,7 @@
         }
       ]
     },
-    "question": "Which task should be handled first?",
+    "question": "应该先处理哪个任务？",
     "options": [
       "A",
       "B",
@@ -550,9 +576,10 @@
     "reason": "max(value * urgency / risk)"
   },
   {
-    "id": "priority_003",
+    "id": "zh_priority_003",
     "category": "task_priority",
     "difficulty": "easy",
+    "lang": "zh",
     "state": {
       "tasks": [
         {
@@ -575,7 +602,7 @@
         }
       ]
     },
-    "question": "Which task should be handled first?",
+    "question": "应该先处理哪个任务？",
     "options": [
       "A",
       "B",
@@ -585,9 +612,10 @@
     "reason": "max(value * urgency / risk)"
   },
   {
-    "id": "priority_004",
+    "id": "en_priority_004",
     "category": "task_priority",
     "difficulty": "hard",
+    "lang": "en",
     "state": {
       "tasks": [
         {
@@ -620,9 +648,10 @@
     "reason": "max(value * urgency / risk)"
   },
   {
-    "id": "priority_005",
+    "id": "en_priority_005",
     "category": "task_priority",
     "difficulty": "medium",
+    "lang": "en",
     "state": {
       "tasks": [
         {
@@ -655,9 +684,10 @@
     "reason": "max(value * urgency / risk)"
   },
   {
-    "id": "priority_006",
+    "id": "en_priority_006",
     "category": "task_priority",
     "difficulty": "medium",
+    "lang": "en",
     "state": {
       "tasks": [
         {
@@ -690,16 +720,17 @@
     "reason": "max(value * urgency / risk)"
   },
   {
-    "id": "accept_001",
+    "id": "zh_accept_001",
     "category": "accept_reject_task",
     "difficulty": "easy",
+    "lang": "zh",
     "state": {
       "estimated_cost": 15,
       "reward": 3,
       "success_prob": 0.7,
       "balance": 20
     },
-    "question": "Should the Agent accept this task?",
+    "question": "这个任务应该接吗？",
     "options": [
       "ACCEPT",
       "REJECT"
@@ -708,16 +739,17 @@
     "reason": "balance 20 >= cost 15: True; reward*success=2.10 > cost 15: False"
   },
   {
-    "id": "accept_002",
+    "id": "zh_accept_002",
     "category": "accept_reject_task",
     "difficulty": "easy",
+    "lang": "zh",
     "state": {
       "estimated_cost": 2,
       "reward": 10,
       "success_prob": 0.9,
       "balance": 20
     },
-    "question": "Should the Agent accept this task?",
+    "question": "这个任务应该接吗？",
     "options": [
       "ACCEPT",
       "REJECT"
@@ -726,16 +758,17 @@
     "reason": "balance 20 >= cost 2: True; reward*success=9.00 > cost 2: True"
   },
   {
-    "id": "accept_003",
+    "id": "zh_accept_003",
     "category": "accept_reject_task",
     "difficulty": "medium",
+    "lang": "zh",
     "state": {
       "estimated_cost": 10,
       "reward": 12,
       "success_prob": 0.85,
       "balance": 15
     },
-    "question": "Should the Agent accept this task?",
+    "question": "这个任务应该接吗？",
     "options": [
       "ACCEPT",
       "REJECT"
@@ -744,9 +777,10 @@
     "reason": "balance 15 >= cost 10: True; reward*success=10.20 > cost 10: True"
   },
   {
-    "id": "accept_004",
+    "id": "en_accept_004",
     "category": "accept_reject_task",
     "difficulty": "hard",
+    "lang": "en",
     "state": {
       "estimated_cost": 8,
       "reward": 12,
@@ -762,9 +796,10 @@
     "reason": "balance 100 >= cost 8: True; reward*success=7.20 > cost 8: False"
   },
   {
-    "id": "accept_005",
+    "id": "en_accept_005",
     "category": "accept_reject_task",
     "difficulty": "hard",
+    "lang": "en",
     "state": {
       "estimated_cost": 5,
       "reward": 20,
@@ -780,9 +815,10 @@
     "reason": "balance 4 >= cost 5: False; reward*success=19.00 > cost 5: True"
   },
   {
-    "id": "accept_006",
+    "id": "en_accept_006",
     "category": "accept_reject_task",
     "difficulty": "medium",
+    "lang": "en",
     "state": {
       "estimated_cost": 3,
       "reward": 4,
@@ -798,15 +834,16 @@
     "reason": "balance 50 >= cost 3: True; reward*success=3.60 > cost 3: True"
   },
   {
-    "id": "invest_001",
+    "id": "zh_invest_001",
     "category": "invest_tool",
     "difficulty": "medium",
+    "lang": "zh",
     "state": {
       "per_task_cost": 5,
       "tool_setup_cost": 15,
       "remaining_uses": 10
     },
-    "question": "Should the Agent invest in building the tool?",
+    "question": "应该投资建设这个工具吗？",
     "options": [
       "INVEST",
       "KEEP_WORKING"
@@ -815,15 +852,16 @@
     "reason": "break_even=3.00, 需要 remaining >= 4.50, 实际 10"
   },
   {
-    "id": "invest_002",
+    "id": "zh_invest_002",
     "category": "invest_tool",
     "difficulty": "hard",
+    "lang": "zh",
     "state": {
       "per_task_cost": 5,
       "tool_setup_cost": 15,
       "remaining_uses": 3
     },
-    "question": "Should the Agent invest in building the tool?",
+    "question": "应该投资建设这个工具吗？",
     "options": [
       "INVEST",
       "KEEP_WORKING"
@@ -832,15 +870,16 @@
     "reason": "break_even=3.00, 需要 remaining >= 4.50, 实际 3"
   },
   {
-    "id": "invest_003",
+    "id": "zh_invest_003",
     "category": "invest_tool",
     "difficulty": "easy",
+    "lang": "zh",
     "state": {
       "per_task_cost": 2,
       "tool_setup_cost": 40,
       "remaining_uses": 100
     },
-    "question": "Should the Agent invest in building the tool?",
+    "question": "应该投资建设这个工具吗？",
     "options": [
       "INVEST",
       "KEEP_WORKING"
@@ -849,9 +888,10 @@
     "reason": "break_even=20.00, 需要 remaining >= 30.00, 实际 100"
   },
   {
-    "id": "invest_004",
+    "id": "en_invest_004",
     "category": "invest_tool",
     "difficulty": "easy",
+    "lang": "en",
     "state": {
       "per_task_cost": 8,
       "tool_setup_cost": 10,
@@ -866,9 +906,10 @@
     "reason": "break_even=1.25, 需要 remaining >= 1.88, 实际 2"
   },
   {
-    "id": "invest_005",
+    "id": "en_invest_005",
     "category": "invest_tool",
     "difficulty": "medium",
+    "lang": "en",
     "state": {
       "per_task_cost": 1,
       "tool_setup_cost": 50,
@@ -883,9 +924,10 @@
     "reason": "break_even=50.00, 需要 remaining >= 75.00, 实际 20"
   },
   {
-    "id": "invest_006",
+    "id": "en_invest_006",
     "category": "invest_tool",
     "difficulty": "hard",
+    "lang": "en",
     "state": {
       "per_task_cost": 6,
       "tool_setup_cost": 20,
@@ -900,9 +942,10 @@
     "reason": "break_even=3.33, 需要 remaining >= 5.00, 实际 8"
   },
   {
-    "id": "model_001",
+    "id": "zh_model_001",
     "category": "model_selection",
     "difficulty": "easy",
+    "lang": "zh",
     "state": {
       "models": [
         {
@@ -924,7 +967,7 @@
       "required_quality": 0.5,
       "task": "简单分类"
     },
-    "question": "Which model should be used?",
+    "question": "应该用哪个模型？",
     "options": [
       "A",
       "B",
@@ -934,9 +977,10 @@
     "reason": "满足 quality>=0.5 里挑最便宜的"
   },
   {
-    "id": "model_002",
+    "id": "zh_model_002",
     "category": "model_selection",
     "difficulty": "medium",
+    "lang": "zh",
     "state": {
       "models": [
         {
@@ -958,7 +1002,7 @@
       "required_quality": 0.9,
       "task": "复杂推理"
     },
-    "question": "Which model should be used?",
+    "question": "应该用哪个模型？",
     "options": [
       "A",
       "B",
@@ -968,9 +1012,10 @@
     "reason": "满足 quality>=0.9 里挑最便宜的"
   },
   {
-    "id": "model_003",
+    "id": "zh_model_003",
     "category": "model_selection",
     "difficulty": "hard",
+    "lang": "zh",
     "state": {
       "models": [
         {
@@ -992,7 +1037,7 @@
       "required_quality": 0.99,
       "task": "复杂推理"
     },
-    "question": "Which model should be used?",
+    "question": "应该用哪个模型？",
     "options": [
       "A",
       "B",
@@ -1002,9 +1047,10 @@
     "reason": "满足 quality>=0.99 里挑最便宜的"
   },
   {
-    "id": "model_004",
+    "id": "en_model_004",
     "category": "model_selection",
     "difficulty": "medium",
+    "lang": "en",
     "state": {
       "models": [
         {
@@ -1036,9 +1082,10 @@
     "reason": "满足 quality>=0.7 里挑最便宜的"
   },
   {
-    "id": "model_005",
+    "id": "en_model_005",
     "category": "model_selection",
     "difficulty": "easy",
+    "lang": "en",
     "state": {
       "models": [
         {
@@ -1070,9 +1117,10 @@
     "reason": "满足 quality>=0.35 里挑最便宜的"
   },
   {
-    "id": "model_006",
+    "id": "en_model_006",
     "category": "model_selection",
     "difficulty": "hard",
+    "lang": "en",
     "state": {
       "models": [
         {
@@ -1104,15 +1152,16 @@
     "reason": "满足 quality>=0.7 里挑最便宜的"
   },
   {
-    "id": "human_001",
+    "id": "zh_human_001",
     "category": "need_human",
     "difficulty": "easy",
+    "lang": "zh",
     "state": {
       "risk": 0.1,
       "reversible": true,
       "system_level": false
     },
-    "question": "Does this need Human involvement?",
+    "question": "这件事需要人参与吗？",
     "options": [
       "HUMAN",
       "NO_HUMAN"
@@ -1121,15 +1170,16 @@
     "reason": "risk>=0.7: False; reversible=True; system_level=False"
   },
   {
-    "id": "human_002",
+    "id": "zh_human_002",
     "category": "need_human",
     "difficulty": "easy",
+    "lang": "zh",
     "state": {
       "risk": 0.9,
       "reversible": false,
       "system_level": true
     },
-    "question": "Does this need Human involvement?",
+    "question": "这件事需要人参与吗？",
     "options": [
       "HUMAN",
       "NO_HUMAN"
@@ -1138,15 +1188,16 @@
     "reason": "risk>=0.7: True; reversible=False; system_level=True"
   },
   {
-    "id": "human_003",
+    "id": "zh_human_003",
     "category": "need_human",
     "difficulty": "medium",
+    "lang": "zh",
     "state": {
       "risk": 0.5,
       "reversible": true,
       "system_level": true
     },
-    "question": "Does this need Human involvement?",
+    "question": "这件事需要人参与吗？",
     "options": [
       "HUMAN",
       "NO_HUMAN"
@@ -1155,9 +1206,10 @@
     "reason": "risk>=0.7: False; reversible=True; system_level=True"
   },
   {
-    "id": "human_004",
+    "id": "en_human_004",
     "category": "need_human",
     "difficulty": "hard",
+    "lang": "en",
     "state": {
       "risk": 0.6,
       "reversible": false,
@@ -1172,9 +1224,10 @@
     "reason": "risk>=0.7: False; reversible=False; system_level=False"
   },
   {
-    "id": "human_005",
+    "id": "en_human_005",
     "category": "need_human",
     "difficulty": "medium",
+    "lang": "en",
     "state": {
       "risk": 0.35,
       "reversible": true,
@@ -1189,9 +1242,10 @@
     "reason": "risk>=0.7: False; reversible=True; system_level=False"
   },
   {
-    "id": "human_006",
+    "id": "en_human_006",
     "category": "need_human",
     "difficulty": "hard",
+    "lang": "en",
     "state": {
       "risk": 0.69,
       "reversible": true,
@@ -1206,16 +1260,17 @@
     "reason": "risk>=0.7: False; reversible=True; system_level=False"
   },
   {
-    "id": "recheck_001",
+    "id": "zh_recheck_001",
     "category": "recheck_result",
     "difficulty": "medium",
+    "lang": "zh",
     "state": {
       "reviewer_found_issues": true,
       "issue_severity": 0.2,
       "contractor_success_rate": 0.9,
       "price": 3
     },
-    "question": "What should A do with this result?",
+    "question": "A 应该怎么处理这个结果？",
     "options": [
       "ACCEPT",
       "RETRY",
@@ -1226,16 +1281,17 @@
     "reason": "issues=True severity=0.2 success=0.9"
   },
   {
-    "id": "recheck_002",
+    "id": "zh_recheck_002",
     "category": "recheck_result",
     "difficulty": "easy",
+    "lang": "zh",
     "state": {
       "reviewer_found_issues": false,
       "issue_severity": 0.0,
       "contractor_success_rate": 0.95,
       "price": 4
     },
-    "question": "What should A do with this result?",
+    "question": "A 应该怎么处理这个结果？",
     "options": [
       "ACCEPT",
       "RETRY",
@@ -1246,16 +1302,17 @@
     "reason": "issues=False severity=0.0 success=0.95"
   },
   {
-    "id": "recheck_003",
+    "id": "zh_recheck_003",
     "category": "recheck_result",
     "difficulty": "hard",
+    "lang": "zh",
     "state": {
       "reviewer_found_issues": true,
       "issue_severity": 0.8,
       "contractor_success_rate": 0.6,
       "price": 2
     },
-    "question": "What should A do with this result?",
+    "question": "A 应该怎么处理这个结果？",
     "options": [
       "ACCEPT",
       "RETRY",
@@ -1266,9 +1323,10 @@
     "reason": "issues=True severity=0.8 success=0.6"
   },
   {
-    "id": "recheck_004",
+    "id": "en_recheck_004",
     "category": "recheck_result",
     "difficulty": "medium",
+    "lang": "en",
     "state": {
       "reviewer_found_issues": false,
       "issue_severity": 0.0,
@@ -1286,9 +1344,10 @@
     "reason": "issues=False severity=0.0 success=0.55"
   },
   {
-    "id": "recheck_005",
+    "id": "en_recheck_005",
     "category": "recheck_result",
     "difficulty": "hard",
+    "lang": "en",
     "state": {
       "reviewer_found_issues": true,
       "issue_severity": 0.5,
@@ -1306,9 +1365,10 @@
     "reason": "issues=True severity=0.5 success=0.8"
   },
   {
-    "id": "recheck_006",
+    "id": "en_recheck_006",
     "category": "recheck_result",
     "difficulty": "easy",
+    "lang": "en",
     "state": {
       "reviewer_found_issues": false,
       "issue_severity": 0.0,
