@@ -191,11 +191,53 @@ class Workspace:
         注意：memory 和工作空间是平级的两个目录，
         但都属于同一个 Agent，所以它同样受边界保护。
         """
-        if Path(name).is_absolute() or ".." in Path(name).parts:
+        # 【为什么这里重写过一次 —— 审计发现的真实漏洞】
+        #
+        #   旧版只查两件事：is_absolute() 和 ".." in parts。
+        #   它**看起来**够了，但和 `_resolve()` 不是同一套原则：
+        #
+        #       ❌ 不 resolve() → **符号链接可以逃逸**
+        #
+        #   实测（修之前）：
+        #       os.symlink("/etc/passwd", memory/evil)
+        #       workspace.memory_path("evil")     → 放行
+        #       Path(...).read_text()             → **真的读到 /etc/passwd**
+        #
+        #   现在统一成和 `_resolve()` **完全一致**的三步：
+        #       ① 拒绝绝对路径
+        #       ② resolve()（展开 .. 与 symlink）
+        #       ③ relative_to() 确认仍在 memory 根内
+        #
+        #   两道闸用同一套语义 —— 「路径安全」全项目只有一个定义。
+        raw = Path(name)
+
+        # ① 绝对路径直接拒
+        if raw.is_absolute():
             raise WorkspaceViolationError(
-                f"Agent {self.agent_id} 的记忆文件名不合法：{name}"
+                f"Agent {self.agent_id} 的记忆名不允许绝对路径：{name}\n"
+                f"请用相对于记忆目录的名字，例如 'identity.txt'"
             )
-        return self.memory_dir / name
+
+        memory_root = self.memory_dir.resolve()
+
+        # ② resolve() 展开 .. 和符号链接
+        candidate = (memory_root / raw).resolve()
+
+        # ③ 必须仍在 memory 根内。
+        #    用 relative_to 而不是 startswith：
+        #    startswith 会把 .../memory_evil 误判为在 .../memory 里
+        try:
+            candidate.relative_to(memory_root)
+        except ValueError:
+            raise WorkspaceViolationError(
+                f"Agent {self.agent_id} 试图访问自己记忆目录之外的文件：\n"
+                f"  请求：{name}\n"
+                f"  解析后：{candidate}\n"
+                f"  允许范围：{memory_root}\n"
+                f"这是被禁止的操作。"
+            )
+
+        return candidate
 
     def write_memory(self, name: str, content: str) -> Path:
         target = self.memory_path(name)

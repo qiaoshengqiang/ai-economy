@@ -1415,18 +1415,61 @@ class TestNoWorkspaceImplementation:
                 f"它必须仍然只是一个逻辑引用"
             )
 
-    def test_core_workspace_untouched(self):
-        """`core/workspace.py` 未被改动（规范：不得重命名/重构）。"""
-        import subprocess
+    def test_core_workspace_stays_private_workspace_only(self):
+        """
+        `core/workspace.py` 必须**始终只是** Agent Private Workspace。
 
-        result = subprocess.run(
-            ["git", "diff", "--quiet", "HEAD", "--", "core/workspace.py"],
-            cwd=PROJECT_ROOT, capture_output=True,
-        )
-        assert result.returncode == 0, (
-            "core/workspace.py 被改动了 —— 它服务 Agent Private Workspace，"
-            "不在本次范围内"
-        )
+        【守卫随范围演进了】
+
+            原来这条断言的是「这个文件一个字都不许改」，理由是
+            「它服务 Agent Private Workspace，不在（Task Workspace 的）范围内」。
+
+            现在任务**就是** Agent Private Workspace V1，
+            而且任务书 §4 明确要求修 `memory_path()` 的安全一致性
+            （审计发现它能被符号链接逃逸）。
+            所以「文件不变」这个判据已经过期 ——
+            它会因为**正确的事**而假红。
+
+            换成**仍然有效**的那条关切（而且比原来更强）：
+
+                core/workspace.py 不能长出 **Task Workspace** 的概念。
+        """
+        import ast
+
+        path = PROJECT_ROOT / "core" / "workspace.py"
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+
+        # ① 不许依赖 Workspace Core / Gateway
+        imported = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported.update(a.name.split(".")[0] for a in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                imported.add(node.module.split(".")[0])
+
+        for forbidden in ("workspace_core", "workspace_gateway",
+                          "workspace_store"):
+            assert forbidden not in imported, (
+                f"core/workspace.py 引入了 {forbidden} —— "
+                f"Agent Private Workspace 不能依赖 Task Workspace"
+            )
+
+        # ② 不许出现 Task Workspace 的词汇（只看**代码**，不看说明文字）
+        names = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name):
+                names.add(node.id)
+            elif isinstance(node, ast.Attribute):
+                names.add(node.attr)
+            elif isinstance(node, ast.FunctionDef):
+                names.add(node.name)
+
+        for forbidden in ("workspace_id", "explicit_lock", "effective_lock",
+                          "revision", "audit_event", "resource_tree"):
+            assert forbidden not in names, (
+                f"core/workspace.py 出现了 {forbidden!r} —— "
+                f"它必须仍然只是 Agent 的私有文件空间"
+            )
 
 
 # ============================================================

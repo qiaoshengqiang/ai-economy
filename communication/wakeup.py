@@ -27,17 +27,25 @@ class WakeupReason:
     为什么被叫醒。
 
     本阶段**只实现 MESSAGE**（任务书 §7 明确要求不要提前实现其它类型）。
-    其余常量先留名字，是为了让调用方从一开始就按
-    「reason 是参数」而不是「只有一种情况」来写代码。
+
+    【为什么连「预留常量」都没有】
+
+        第一版我在这里留了 HEARTBEAT / TASK_EVENT / WORKSPACE_EVENT /
+        SYSTEM_EVENT 四个占位常量，想着「先留名字，以后好扩展」。
+
+        结果 `tests/test_multiprocess_guards.py::TestGuard8NoHeartbeat`
+        立刻红了 —— 它禁止 `communication/` 里出现 "heartbeat" 这个词。
+
+        我一开始觉得是守卫太粗，但**重读之后发现守卫是对的**：
+        项目有一条 `FORBIDDEN NOW`：不得提前实现 Heartbeat。
+        而 §7 原话也是「**不要**把未来所有类型都实现」——
+        **预留常量本身就是一种提前实现**（它让未来看起来已经开始）。
+
+        所以正确的做法不是我改守卫，而是**撤掉这些常量**。
+        将来真要加 Heartbeat，那时再把它加进来 —— 那时它才是一个真实需要。
     """
 
     MESSAGE = "message"
-
-    # ---- 以下**本阶段未实现**（只占位，不要用）----
-    HEARTBEAT = "heartbeat"            # FUTURE
-    TASK_EVENT = "task_event"          # FUTURE
-    WORKSPACE_EVENT = "workspace_event"  # FUTURE
-    SYSTEM_EVENT = "system_event"      # FUTURE
 
     @classmethod
     def implemented(cls) -> tuple:

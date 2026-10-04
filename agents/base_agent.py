@@ -226,6 +226,78 @@ class BaseAgent:
         return [entry for entry in self._short_term_memory if entry["event"] == event]
 
     # ------------------------------------------------------------
+    # Private Workspace（V1 最小接线）
+    # ------------------------------------------------------------
+    #
+    # 【这一节在做什么，以及**不**在做什么】
+    #
+    #   做：把**已经存在**的 `self.workspace` 能力接到 Agent 身上。
+    #   不做：Tool Calling · Capability Framework · 新的 Memory 架构。
+    #
+    # 【🔒 为什么这些方法是纯转发】
+    #
+    #   路径安全（绝对路径 / .. / symlink / containment）已经在
+    #   `core/workspace.py` 的 `_resolve()` / `memory_path()` 里
+    #   定义好了，而且**只有那一个定义**。
+    #
+    #   如果 Agent 这里再判断一次路径，就会出现**两套安全语义** ——
+    #   而两套语义迟早会跑偏（审计里 memory_path 就是这么跑偏的）。
+    #
+    #   所以这里的每个方法都只有一行：转给 self.workspace。
+    #
+    # 【🔒 Agent 只看到逻辑路径】
+    #
+    #   Agent 传的是 "notes/test.txt"，不是
+    #   "/Users/.../agents/agent_a/workspace/notes/test.txt"。
+    #   物理路径**不出现在 Agent 的任何接口上**。
+
+    def write_private(self, path: str, content: str):
+        """
+        写自己的私有文件（自动建父目录）。
+
+        🔒 只能写自己 —— 越界由 Workspace 拒绝，不由这里判断。
+        """
+        return self.workspace.write_text(path, content)
+
+    def read_private(self, path: str) -> str:
+        """读自己的私有文件。"""
+        return self.workspace.read_text(path)
+
+    def exists_private(self, path: str) -> bool:
+        """自己的私有文件是否存在（越界一律返回 False）。"""
+        return self.workspace.exists(path)
+
+    def delete_private(self, path: str) -> bool:
+        """删自己的私有文件。返回是否真的删掉了。"""
+        return self.workspace.delete(path)
+
+    def list_private(self, pattern: str = "**/*") -> List[str]:
+        """列出自己的私有文件（返回**逻辑**相对路径）。"""
+        return self.workspace.list_files(pattern)
+
+    # ---- 长期记忆：脱离 Python 进程内存，落成自己的持久资产 ----
+
+    def remember_long(self, name: str, content: str):
+        """
+        🔒 **长期记忆**（与 `remember()` 的短期记忆相对）。
+
+            remember()      → 进程内 list，重启即失
+            remember_long() → 写进 Private Workspace 的 memory 目录，重启仍在
+
+        刻意保持极薄：没有 embedding / 检索 / 排序 / 摘要 / 生命周期。
+        那些是 **Memory Architecture**，本次明确不做。
+        """
+        return self.workspace.write_memory(name, content)
+
+    def read_long(self, name: str) -> str:
+        """读回一条长期记忆。"""
+        return self.workspace.read_memory(name)
+
+    def list_long(self) -> List[str]:
+        """列出长期记忆的名字。"""
+        return self.workspace.list_memories()
+
+    # ------------------------------------------------------------
     # 大脑（Step 2 实现）
     # ------------------------------------------------------------
     def attach_brain(self, brain: Any) -> None:
