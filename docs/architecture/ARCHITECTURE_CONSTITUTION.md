@@ -166,6 +166,46 @@ Agent
 
 ---
 
+### 2.3 Agent / World / Asset / Capability 的十个不变量（`CONFIRMED`）
+
+> **正式冻结于 [ADR-0038](adr/0038-agent-world-core-boundaries.md)。**
+> 完整语境见 [`AGENT_CORE_MODEL_V1.md`](AGENT_CORE_MODEL_V1.md)。
+>
+> ⚠️ **这些是 Architecture Invariants（架构不变量），不是实现方式。**
+> 它们说的是「概念之间不能相等」，因此不受具体实现选型影响。
+
+| # | 不变量 | 搞混的后果 |
+|---|---|---|
+| 1 | `Agent Identity ≠ Runtime` | 进程重启就换了个 Agent；Runtime 状态被当成主体 |
+| 2 | `Agent Identity ≠ LLM` | 换模型就换身份；把智力来源当成主体 |
+| 3 | `Agent Identity ≠ Provider Account` | 同一个账号下的 Agent 被当成同一个主体 |
+| 4 | `Agent Identity ≠ API Credential` | 换一把 key 就换了身份 |
+| 5 | `Agent Identity ≠ Workspace` | 删掉目录就等于消灭 Agent |
+| 6 | `Agent Identity ≠ Capability` | 拥有身份就自动拥有一切能力 |
+| 7 | `Agent-owned Assets ≠ Machine Permissions` | 有资产就自动有机器权限 |
+| 8 | `Task Responsibility ≠ Agent Identity` | 用任务归属反推 Agent 是谁 |
+| 9 | `World ≠ Agent` | 把环境的状态当成主体的记忆 |
+| 10 | `Private Workspace ≠ Task Workspace` | 私有资产与共享资源混成一个空间 |
+
+**地基**（[`AGENT_CORE_MODEL_V1.md`](AGENT_CORE_MODEL_V1.md) §1）：
+
+> **Agent 是一个持续存在的数字主体（persistent digital subject）。**
+
+第 1–6 条都是它的直接推论 —— **载体、工具、环境会变，主体不变。**
+第 7 条与 §2.2 的 `Wallet Ownership ≠ Machine Permission` **同源**。
+第 10 条与 §4.1 的 Memory 边界一致。
+
+> 🔒 **`Capability` 不是 `Permission`。**
+> 它是 **Agent 与 World 之间进行感知与行动的受控接口**
+> （分 `Perception` / `Action` 两类）。
+> `Authorization` 决定能否获得/使用，但 **`Authorization ≠ Capability`** ——
+> 授权是门禁，Capability 是器官。
+>
+> 🔒 `Gateway` **是** Agent 与 World 之间的接口层；
+> 但它与 Capability 的**代码关系不冻结**（继续 `PROVISIONAL` / `OPEN`）。
+
+---
+
 ## 3. 核心原则清单
 
 **这十四条是项目的架构骨架。** 每一条都对应代码里的一个真实边界，
