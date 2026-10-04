@@ -94,6 +94,74 @@ def isolate_from_user_dotenv(request, monkeypatch):
 # ============================================================
 # 基础夹具
 # ============================================================
+# ============================================================
+# 🔒 测试基线 ≠ 本地实验配置
+# ============================================================
+#
+# 【为什么需要这个】
+#
+#   开发者本机会为了真实实验改 `agents/*/config.yaml`（agent_a = deepseek），
+#   也可能在 main.py 里把 Agent 加到 3 个。
+#
+#   而**仓库测试基线**假设的是：provider = mock，2 个 Agent。
+#
+#   两者混在一起就会出现「28 failed 但其实没有回归」的假象 ——
+#   测试读到的是**某台机器的本地配置**，不是仓库的确定状态。
+#
+# 【做法：让测试看到一个确定的配置】
+#
+#   不修改生产配置，也不改测试断言 ——
+#   而是在测试进程里把两个**来源**钉死：
+#
+#       ① Agent 数量           → 老规矩的 2 个
+#       ② Agent 的 brain 配置  → mock（并清掉 credential）
+#
+#   于是：
+#       本地实验配置  仍然可用（真实运行时照读不误）
+#       pytest        永远跑在 mock + 2 Agent 上
+#
+#   ⚠️ 生产代码一行没改 —— 这只在 pytest 进程里生效。
+@pytest.fixture(autouse=True)
+def isolate_from_local_agent_config(request, monkeypatch):
+    """
+    把「仓库测试基线」和「开发者本地的实验配置」隔开。
+
+    只对 real_api 测试放行 —— 那些测试本来就要用真实配置。
+    """
+    if request.node.get_closest_marker("real_api"):
+        return
+
+    import core.economy as economy_module
+    import main as main_module
+    from core.config import AgentConfig
+
+    # ① Agent 数量固定 —— 本地可能已经加到 3 个以上
+    monkeypatch.setattr(main_module, "DEFAULT_AGENTS",
+                        ["agent_a", "agent_b"])
+
+    # ② Agent 的大脑固定为 mock
+    real_load = economy_module.load_agent_config
+
+    def deterministic_load(agent_id, global_config=None,
+                           agent_config_path=None):
+        cfg = real_load(agent_id, global_config, agent_config_path)
+        data = cfg.to_dict()
+
+        brain = dict(data.get("brain") or {})
+        brain["provider"] = "mock"
+        brain["model"] = ""
+        # 本地可能配了 credential（真实 API Key）—— 测试里不该碰
+        brain.pop("credential", None)
+        brain.pop("credential_ref", None)
+        brain["fallback_provider"] = ""
+        data["brain"] = brain
+
+        return AgentConfig(data, source=cfg.source)
+
+    monkeypatch.setattr(economy_module, "load_agent_config",
+                        deterministic_load)
+
+
 @pytest.fixture
 def db():
     """一个干净的、只在内存里的数据库，建好所有表。"""

@@ -539,7 +539,10 @@ def build_change_services(
     return store, manager, git
 
 
-def build_runtime(db_path: Optional[str] = None) -> Runtime:
+def build_runtime(
+    db_path: Optional[str] = None,
+    agent_ids: Optional[list] = None,
+) -> Runtime:
     """
     组装一次运行的完整环境：经济系统 + LLM 路由 + 调用记录 + 给 Agent 装大脑。
 
@@ -608,7 +611,10 @@ def build_runtime(db_path: Optional[str] = None) -> Runtime:
     )
 
     # --- 创建 Agent，给每个装上大脑，并接入通信层 ---
-    for agent_id in DEFAULT_AGENTS:
+    # 🔒 `agent_ids` 是**显式覆盖**，给测试与脚本用。
+    #    不传就按 DEFAULT_AGENTS（也就是「本地实验配置」——
+    #    开发者可能已经把它加到 3 个 Agent）。
+    for agent_id in (agent_ids if agent_ids is not None else DEFAULT_AGENTS):
         agent = economy.create_agent(agent_id)
 
         # 每个 Agent 的大脑配置来自它自己的 config.yaml，
@@ -784,7 +790,10 @@ def build_runtime(db_path: Optional[str] = None) -> Runtime:
     )
 
 
-def build_economy(db_path: Optional[str] = None) -> Economy:
+def build_economy(
+    db_path: Optional[str] = None,
+    agent_ids: Optional[list] = None,
+) -> Economy:
     """
     向后兼容的入口：只要 Economy。
 
@@ -792,7 +801,7 @@ def build_economy(db_path: Optional[str] = None) -> Economy:
     现在它会顺带把大脑也装好 —— 也就是说通过这些测试创建出来的
     Agent 同样能调用模型，行为和真实运行一致。
     """
-    return build_runtime(db_path=db_path).economy
+    return build_runtime(db_path=db_path, agent_ids=agent_ids).economy
 
 
 # ============================================================
@@ -5852,6 +5861,12 @@ def build_parser() -> argparse.ArgumentParser:
     """
     shared = argparse.ArgumentParser(add_help=False)
     shared.add_argument(
+        "--agents",
+        default=argparse.SUPPRESS,
+        help="逗号分隔的 Agent 列表（覆盖默认，测试/脚本用）。"
+             "例如 --agents agent_a,agent_b",
+    )
+    shared.add_argument(
         "--db",
         default=argparse.SUPPRESS,
         help="数据库文件路径（默认读 config/config.yaml 里的 storage.database_path）",
@@ -6241,8 +6256,16 @@ def main(argv: Optional[List[str]] = None) -> int:
     # --quiet 在 start 之外的命令里没有意义，忽略掉即可
     db_path = getattr(args, "db", None)
 
+    # 🔒 `--agents` 让「用哪几个 Agent」变成**显式**的，
+    #    而不是隐式依赖 main.py 里当前的 DEFAULT_AGENTS。
+    #    测试必须显式传 —— 这样仓库测试基线就不会被
+    #    开发者本机的实验配置（比如加到 3 个 Agent）影响。
+    raw_agents = getattr(args, "agents", None)
+    agent_ids = ([a.strip() for a in str(raw_agents).split(",") if a.strip()]
+                 if raw_agents else None)
+
     try:
-        runtime = build_runtime(db_path=db_path)
+        runtime = build_runtime(db_path=db_path, agent_ids=agent_ids)
     except Exception as exc:  # noqa: BLE001
         print()
         print("!! 启动失败 !!")

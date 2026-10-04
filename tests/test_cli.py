@@ -42,6 +42,29 @@ def run_cli(*args, db_path=None, timeout=60):
     统一注入 --db，保证测试不碰真实的 data/economy.db。
     """
     command = [sys.executable, "main.py"]
+
+    # 🔒 显式钉死测试环境 —— 不要隐式依赖开发者本机的实验配置：
+    #    · --agents  本机可能已经把 DEFAULT_AGENTS 加到 3 个以上
+    #    · 下面还会给 provider 命令显式传 --provider mock
+    command += ["--agents", "agent_a,agent_b"]
+
+    # 🔒 provider 也显式钉死。
+    #
+    #    【为什么必须显式】
+    #       `agents/agent_a/config.yaml` 在本机被改成了 deepseek
+    #       （用于真实实验）。测试如果依赖它，就会：
+    #           · 断言 mock 的地方失败
+    #           · 更糟：**真的调用了真实 API**（实测烧掉 259 tokens）
+    #
+    #    这些测试考的是「mock 路径」—— 所以它们应该**说出来**，
+    #    而不是靠环境恰好是 mock。
+    if args and args[0] in ("ask", "demo") and "--provider" not in args:
+        # ⚠️ 必须插在**子命令之后** —— `--provider` 是定义在 ask/demo
+        #    这两个 **subparser** 上的，不是全局参数。
+        #    第一版把它拼在子命令前面，argparse 直接
+        #    "unrecognized arguments" → 13 个测试全红。
+        args = (args[0], "--provider", "mock") + tuple(args[1:])
+
     if db_path is not None:
         command += ["--db", str(db_path)]
     command += list(args)
