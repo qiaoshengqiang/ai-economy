@@ -33,9 +33,12 @@ economy:
 # ------------------------------------------------------------
 brain:
   # mock / deepseek / doubao / grok
-  provider: "mock"
-  # 留空表示用 config/config.yaml 里该 provider 的默认模型
-  model: ""
+  provider: "deepseek"                 # ← 用真实 API
+  model: "deepseek-flash"              # 留空 = 用全局 deepseek 默认模型
+
+  credential_ref: "agent_a_deepseek"   # 逻辑标识（日志/usage 里显示这个）
+  credential:
+    api_key_env: "DEEPSEEK_KEY_AGENT_A"  # 🔒 只写变量名，key 在 .env 里
 
   # 系统提示词：定义这个 Agent 是谁
   system_prompt: |

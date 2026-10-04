@@ -199,6 +199,9 @@ case "$COMMAND" in
           echo "    ./dev.sh hello-demo --show-path            附带 Worktree 本地路径"
           echo "    ./dev.sh hello-demo --cleanup              清理保留的 Demo Worktree"
           echo
+          echo "（communication-wakeup-demo 是 Event Wakeup V1：B 睡着 → A 发消息 → B 自动醒）"
+          echo "    ./dev.sh communication-wakeup-demo         Event Wakeup 演示（不用真实 LLM）"
+          echo
           echo "（snake-demo 是 Task Demo V2：单 Agent 生成网页贪吃蛇）"
           echo "    ./dev.sh snake-demo                       生成并在本地起 HTTP server"
           echo "    ./dev.sh snake-demo --show-path            附带 Worktree 本地路径"

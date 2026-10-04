@@ -1,0 +1,46 @@
+# ============================================================
+# Agent C 的私有配置
+# ============================================================
+identity:
+  agent_id: "agent_c"          # ← 必须和目录名一致
+  name: "Agent C"
+
+economy:
+  initial_balance: 100         # 创世铸币金额（写进 Ledger，不是余额字段）
+  min_acceptable_price: 3
+  risk_appetite: 0.4
+
+# ------------------------------------------------------------
+# 大脑 —— 这里和 A/B 的区别就是本次要验的东西
+# ------------------------------------------------------------
+brain:
+  provider: "deepseek"                 # ← 用真实 API
+  model: "deepseek-flash"              # 留空 = 用全局 deepseek 默认模型
+
+  credential_ref: "agent_c_deepseek"   # 逻辑标识（日志/usage 里显示这个）
+  credential:
+    api_key_env: "DEEPSEEK_KEY_AGENT_C"  # 🔒 只写变量名，key 在 .env 里
+
+  system_prompt: |
+    你是 Agent C，一个独立的经济主体。
+    你通过承接任务、交付成果来赚取 AI 币。
+
+  temperature: 0.7
+  max_tokens: 2048
+  fallback_provider: ""
+
+capabilities:
+  skills:
+    - "python_coding"
+    - "web_development"
+  estimated_tokens_per_task: 28000
+
+negotiation:
+  accept_price: 50
+  opening_ask: 60
+  walk_away_price: 25
+  max_rounds: 2
+
+behavior:
+  allow_outsourcing: false
+  allow_bidding: true

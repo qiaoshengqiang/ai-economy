@@ -180,6 +180,10 @@ class CommunicationManager:
         # 注意：这里【只放本地 Agent】。
         self._handlers: Dict[str, MessageHandler] = {}
 
+        #: 哪些 Agent 当前有活跃的 Runtime 处理循环（§10）。
+        #: 按 agent_id 分键 —— 不是全局锁，A 和 B 互不影响。
+        self._active_runtimes: set = set()
+
         # 按消息类型注册的处理器（可选的扩展点，见 register_type_handler）
         self._type_handlers: Dict[str, MessageHandler] = {}
 
@@ -750,6 +754,68 @@ class CommunicationManager:
             )
 
         return self.recorder.claim_message(message, owner)
+
+    # ------------------------------------------------------------
+    # Wakeup（薄代理 —— 真正的信号在 Transport 上）
+    # ------------------------------------------------------------
+    async def wait_wakeup(
+        self, agent_id: str, timeout: Optional[float] = None
+    ) -> bool:
+        """
+        等到这个 Agent 被唤醒。
+
+        🔒 它**不返回消息** —— wakeup 只是「有事了」的信号，
+           消息仍然要 `receive()` 从信箱取。这个区分很重要：
+           否则调用方会以为「拿到 wakeup = 拿到内容」。
+        """
+        return await self.transport.wait_wakeup(agent_id, timeout=timeout)
+
+    # ------------------------------------------------------------
+    # 活跃 Runtime 登记（§10：同一 Agent 最多一个处理循环）
+    # ------------------------------------------------------------
+    def try_acquire_runtime(self, agent_id: str) -> bool:
+        """
+        尝试给这个 Agent 登记一个活跃 Runtime。
+
+        返回 True = 拿到了；False = **已经有**一个在跑。
+
+        🔒 为什么登记在 manager 上，而不是 Runtime 实例自己身上：
+            锁在实例上 = 「一个实例一把锁」——
+            那么**两个** AgentRuntime 实例服务同一个 Agent 时
+            谁都不会发现自己重复了（实测挂死就是这么来的）。
+
+            登记在 manager 上就是**按 Agent** 的：
+                A 的 runtime ≠ B 的 runtime（互不影响）
+                但同一个 A 只能有一个。
+
+        🔒 它是「按 agent_id 分键的登记表」，**不是全局锁** ——
+           A 和 B 之间没有任何互相等待。
+        """
+        key = str(agent_id).strip()
+        if key in self._active_runtimes:
+            return False
+        self._active_runtimes.add(key)
+        return True
+
+    def release_runtime(self, agent_id: str) -> None:
+        self._active_runtimes.discard(str(agent_id).strip())
+
+    def has_active_runtime(self, agent_id: str) -> bool:
+        return str(agent_id).strip() in self._active_runtimes
+
+    def signal_wakeup(self, agent_id: str) -> None:
+        """主动叫醒一个 Agent（不用伪造消息）。"""
+        self.transport.signal_wakeup(agent_id)
+
+    def is_woken(self, agent_id: str) -> bool:
+        return self.transport.is_woken(agent_id)
+
+    def clear_wakeup(self, agent_id: str) -> None:
+        self.transport.clear_wakeup(agent_id)
+
+    def pending(self, agent_id: str) -> int:
+        """信箱里还有几条没被取走。"""
+        return self.transport.pending(agent_id)
 
     def was_processed(self, message_id: str) -> bool:
         """

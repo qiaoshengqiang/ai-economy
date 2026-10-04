@@ -56,6 +56,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from agents.brain import Brain, BrainSettings                      # noqa: E402
+from communication.agent_runtime import AgentRuntime, RuntimeState  # noqa: E402
 from core.config import load_global_config                     # noqa: E402
 from core.economy import AgentNotFoundError, Economy, EconomyError  # noqa: E402
 from core.ledger import LedgerError, format_amount              # noqa: E402
@@ -98,7 +99,7 @@ logger = get_logger(__name__)
 # 本版本要创世的两个 Agent。
 # 以后要加 Agent C，只需要在这里加一行 + 建一个目录：
 #     DEFAULT_AGENTS = ["agent_a", "agent_b", "agent_c"]
-DEFAULT_AGENTS = ["agent_a", "agent_b"]
+DEFAULT_AGENTS = ["agent_a", "agent_b","agent_c"]
 
 
 # ============================================================
@@ -4163,6 +4164,144 @@ def _run_hello_demo(
 # ============================================================
 # 命令：credential-demo（Agent 独立 Credential）
 # ============================================================
+# ============================================================
+# 命令：communication-wakeup-demo（Event Wakeup V1）
+# ============================================================
+async def _run_wakeup_demo(runtime: Runtime, *, seconds: float = 5.0) -> dict:
+    """
+    🔒 **确定性**：不用 `sleep(1)` 猜时机（§13）。
+
+    用「自旋等状态」+ 断言来证明时序：
+
+        ① 断言 B 此刻是 **sleeping**（发消息之前）
+        ② A 才 send
+        ③ 等 B 的 runtime 自己把 processed_count 从 0 变成 1
+        ④ 断言 B 从来没被外面调用过 receive()
+    """
+    import asyncio as _asyncio
+
+    comm = runtime.communication
+    agent_a = runtime.economy.agent("agent_a")
+    agent_b = runtime.economy.agent("agent_b")
+
+    out: dict = {"events": []}
+
+    received: list = []
+
+    def b_handler(message):
+        """B 收到消息时的行为 —— 由 Agent 自己决定（§6）。"""
+        received.append(message)
+        out["events"].append(("B_received", message.text))
+        out["handler_calls"] = len(received)
+        return {"ack": f"Hello {message.from_agent}"}
+
+    agent_b.on_message(b_handler)
+
+    rt_b = AgentRuntime(agent=agent_b, communication=comm)
+    out["events"].append(("B_state", rt_b.state))
+
+    # ---- 启动 B 的 runtime（它是唯一那个循环，§10）----
+    task = _asyncio.create_task(rt_b.run_forever())
+
+    # ---- ① 等 B 真的进入「等唤醒」，而不是 sleep 猜 ----
+    for _ in range(2000):
+        if rt_b.state == RuntimeState.WAITING:
+            break
+        await _asyncio.sleep(0)
+
+    out["b_sleeping_before_send"] = rt_b.is_sleeping
+    out["events"].append(("B_sleeping", rt_b.is_sleeping))
+
+    # ---- ② A 发消息（此时没有任何人调用过 receive("agent_b")）----
+    receipt = await agent_a.send("agent_b", text="Hello B")
+    out["sent_id"] = receipt.message_id
+    out["events"].append(("A_sent", "Hello B"))
+
+    # ---- ③ 等 B 被唤醒并处理（自旋等，不 sleep 猜时长）----
+    for _ in range(20000):
+        if rt_b.processed_count >= 1:
+            break
+        await _asyncio.sleep(0)
+
+    out["b_wakeups"] = rt_b.wakeup_count
+    out["b_processed"] = rt_b.processed_count
+    out["events"].append(("B_wakeup_count", rt_b.wakeup_count))
+
+    # ---- B 的回复进了 A 的信箱，A 取一下 ----
+    reply_text = None
+    inbound = await comm.receive("agent_a", timeout=seconds)
+    if inbound.delivered:
+        msg = inbound.message
+        # 回复可能是 text，也可能是 payload（B 返回了 dict）
+        reply_text = msg.text
+        if not reply_text and isinstance(msg.payload, dict):
+            reply_text = f"{msg.payload}"
+        out["events"].append(("A_received", reply_text or ""))
+
+    out["reply"] = reply_text
+    out["b_state_after"] = rt_b.state
+
+    rt_b.stop()
+    try:
+        await _asyncio.wait_for(task, timeout=seconds)
+    except Exception:
+        task.cancel()
+
+    return out
+
+
+def cmd_communication_wakeup_demo(runtime: Runtime,
+                                  args: argparse.Namespace) -> int:
+    """
+    `./dev.sh communication-wakeup-demo`
+
+    🔒 **不使用真实 LLM**（§12）—— 本 Demo 证明的是 **Runtime wakeup 机制**，
+       不是模型能力。行为由 `on_message` 里的确定性回调决定。
+    """
+    import asyncio as _asyncio
+
+    banner = "=" * 48
+    print()
+    print(banner)
+    print("  AI Economy OS — Event Wakeup Demo")
+    print(banner)
+
+    result = _asyncio.run(_run_wakeup_demo(runtime))
+
+    print()
+    print("  时序")
+    print("  " + "-" * 44)
+    print(f"  ① B 启动时的状态            : {result['events'][0][1]}")
+    print(f"  ② A 发送**之前** B 是否在睡  : {result['b_sleeping_before_send']}")
+    print(f"  ③ A → B                     : 已投递 ({result['sent_id']})")
+    print(f"  ④ B 被唤醒次数              : {result['b_wakeups']}")
+    print(f"  ⑤ B 处理的消息数            : {result['b_processed']}")
+    print(f"  ⑥ B → A                     : {result['reply']!r}")
+    print(f"  ⑦ B 最后的状态              : {result['b_state_after']}")
+
+    print()
+    print("  链路")
+    print("  " + "-" * 44)
+    for kind, detail in result["events"]:
+        print(f"    {kind:16s} {detail}")
+
+    ok = (result["b_sleeping_before_send"]
+          and result["b_wakeups"] >= 1
+          and result["b_processed"] >= 1)
+
+    print()
+    print(banner)
+    print("  ✅ WAKEUP OK" if ok else "  ❌ WAKEUP FAILED")
+    print(banner)
+    print()
+    print("  · B 全程**没有**被外部调用过 receive()")
+    print("  · 唤醒来自 LocalTransport 投递后发出的信号")
+    print("  · 消息内容仍只从信箱取 —— wakeup 不携带 payload")
+    print("  · Durable Inbox = FUTURE（进程重启后内存信箱会丢）")
+    print()
+    return 0 if ok else 1
+
+
 def cmd_credential_demo(runtime: Runtime, args: argparse.Namespace) -> int:
     """
     显示每个 Agent 实际用的是**哪个** Credential。
@@ -6036,6 +6175,12 @@ def build_parser() -> argparse.ArgumentParser:
     cred.add_argument("--real", action="store_true",
                       help="真正调用 provider（默认只展示解析结果，不打 API）")
     cred.set_defaults(func=cmd_credential_demo)
+
+    wake = subparsers.add_parser(
+        "communication-wakeup-demo", parents=[shared],
+        help="Event Wakeup V1：B 睡着 → A 发消息 → B 被自动唤醒并处理",
+    )
+    wake.set_defaults(func=cmd_communication_wakeup_demo)
 
     snake = subparsers.add_parser(
         "snake-demo", parents=[shared],

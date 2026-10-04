@@ -83,6 +83,17 @@ class LocalTransport(Transport):
         # 信箱：agent_id → 队列。注意存的是队列，不是 Agent。
         self._mailboxes: Dict[str, "asyncio.Queue"] = {}
 
+        # 🔒 Wakeup 信号：agent_id → Event（**每个 Agent 独立一个**）。
+        #
+        #    为什么不是「一个全局 Event」？
+        #        全局 Event 会让「谁被叫醒了」变成不可区分 ——
+        #        A 收到消息会顺带叫醒 B/C。有测试盯着这条线。
+        #
+        #    为什么不是「一条消息一个 Event」？
+        #        Wakeup 的语义是「有事了」（可以合并），
+        #        不是「一条消息对应一次唤醒」。§9 明确要求可以合并。
+        self._wakeups: Dict[str, "asyncio.Event"] = {}
+
         self._closed = False
 
         # 统计，方便调试和测试
@@ -121,10 +132,13 @@ class LocalTransport(Transport):
 
         if key not in self._mailboxes:
             self._mailboxes[key] = asyncio.Queue(maxsize=self.max_queue_size)
+            self._wakeups[key] = asyncio.Event()
             logger.debug("已开设信箱：%s", key)
 
     def close_mailbox(self, agent_id: str) -> None:
-        self._mailboxes.pop(str(agent_id).strip(), None)
+        key = str(agent_id).strip()
+        self._mailboxes.pop(key, None)
+        self._wakeups.pop(key, None)
 
     def has_mailbox(self, agent_id: str) -> bool:
         return str(agent_id).strip() in self._mailboxes
@@ -180,6 +194,25 @@ class LocalTransport(Transport):
                 f"{target} 的信箱已满（上限 {self.max_queue_size}），消息被丢弃"
             ) from exc
 
+        # ============================================================
+        # 🔒 **顺序至关重要**：先入信箱，再发 wakeup。
+        # ============================================================
+        #
+        #    反过来会有一个真实且难查的竞态：
+        #
+        #        wakeup.set()
+        #        queue.put_nowait(message)     ← 还没进去
+        #
+        #        Runtime 被叫醒 → 立刻 receive() → **信箱是空的**
+        #        → 它以为「没有工作」→ 回去睡 → 而消息此刻才进信箱
+        #        → **这条消息要等到下一次唤醒才会被处理**（可能永远不）
+        #
+        #    这就是任务书 §4/§8 说的：
+        #        「不能出现 wakeup → receive → 发现 message 还没进入 inbox」
+        #
+        #    有测试用 Barrier 卡在这个窗口上验证过。
+        self.signal_wakeup(target)
+
         self.sent_count += 1
 
         return DeliveryReceipt(
@@ -224,6 +257,70 @@ class LocalTransport(Transport):
     # ------------------------------------------------------------
     # 调试辅助
     # ------------------------------------------------------------
+    # ------------------------------------------------------------
+    # Wakeup
+    # ------------------------------------------------------------
+    def signal_wakeup(self, agent_id: str) -> None:
+        """
+        把某个 Agent 的 wakeup 置位（幂等 —— 已经是 SET 就保持 SET）。
+
+        🔒 它是**公开**的，因为「叫醒」不应该只有投递时才发生 ——
+           未来 Heartbeat / TaskEvent 也要能叫醒同一个 Agent，
+           而它们不该伪造一条消息（§7）。
+        """
+        event = self._wakeups.get(agent_id)
+        if event is not None:
+            event.set()
+
+    def wakeup_event(self, agent_id: str) -> "asyncio.Event":
+        """拿到某个 Agent 的 wakeup Event（**独立**，不共享）。"""
+        key = str(agent_id).strip()
+        event = self._wakeups.get(key)
+        if event is None:
+            raise AgentNotFoundError(
+                f"{key} 没有信箱，因此也没有 wakeup 信号。"
+            )
+        return event
+
+    def is_woken(self, agent_id: str) -> bool:
+        """这个 Agent 当前是否处于「被叫醒但还没处理」的状态。"""
+        event = self._wakeups.get(str(agent_id).strip())
+        return bool(event is not None and event.is_set())
+
+    def clear_wakeup(self, agent_id: str) -> None:
+        """
+        清掉 wakeup 标志。
+
+        ⚠️ 调用方**必须**在「已经把信箱 drain 干净」之后才清 ——
+           否则会丢掉唤醒。Runtime 里的顺序是：
+               clear → 取消息 → 如果没有则回去睡
+           见 `agents/agent_runtime.py`。
+        """
+        event = self._wakeups.get(str(agent_id).strip())
+        if event is not None:
+            event.clear()
+
+    async def wait_wakeup(
+        self, agent_id: str, timeout: Optional[float] = None
+    ) -> bool:
+        """
+        等到这个 Agent 被唤醒（或超时）。
+
+        返回 True = 被唤醒；False = 超时。
+        🔒 它**不返回消息** —— wakeup 只是信号，消息仍要从 receive() 取。
+        """
+        import asyncio as _asyncio
+
+        event = self.wakeup_event(agent_id)
+        try:
+            if timeout is None:
+                await event.wait()
+                return True
+            await _asyncio.wait_for(event.wait(), timeout=timeout)
+            return True
+        except _asyncio.TimeoutError:
+            return False
+
     def pending(self, agent_id: str) -> int:
         """某个信箱里还积压多少条（测试用）。"""
         queue = self._mailboxes.get(str(agent_id).strip())
