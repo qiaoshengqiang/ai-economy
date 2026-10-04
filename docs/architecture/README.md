@@ -21,6 +21,7 @@
 
 | 文档 | 长度 | 作用 | 什么时候读 |
 |---|---|---|---|
+| [AGENT_CORE_MODEL_V1.md](AGENT_CORE_MODEL_V1.md) | **高** | **Agent 是什么 · World · Gateway · Capability · Cognitive Substrate**（上层架构地图，全部标 `CONFIRMED` / `PROVISIONAL` / `OPEN`） | **讨论任何新概念之前先读** —— Autonomous Agent / Tool / Browser / Game / Multi-World / 生产资料 |
 | [`../../AGENTS.md`](../../AGENTS.md) | 短 | **Developer Context** —— 导航与入口 | **每次开始工作前** |
 | [ARCHITECTURE_CONSTITUTION.md](ARCHITECTURE_CONSTITUTION.md) | 长 | **长期 Source of Truth** —— 完整架构事实 | 动手改架构之前 |
 | [TASK_SHARED_CONTEXT.md](TASK_SHARED_CONTEXT.md) | 中 | Task Shared Context / Alignment 的数据模型规范 | 做 Shared Context 相关工作时 |
