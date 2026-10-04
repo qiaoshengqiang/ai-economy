@@ -1,0 +1,1328 @@
+[
+  {
+    "id": "delegate_001",
+    "category": "self_vs_delegate",
+    "difficulty": "easy",
+    "state": {
+      "self_cost": 12,
+      "delegate_cost": 4,
+      "delegate_success": 0.92
+    },
+    "question": "Should the Agent delegate this task?",
+    "options": [
+      "SELF",
+      "DELEGATE"
+    ],
+    "expected_choice": "DELEGATE",
+    "reason": "delegate_cost=4 < self_cost=12: True; success=0.92 >= 0.85: True"
+  },
+  {
+    "id": "delegate_002",
+    "category": "self_vs_delegate",
+    "difficulty": "medium",
+    "state": {
+      "self_cost": 10,
+      "delegate_cost": 9,
+      "delegate_success": 0.95
+    },
+    "question": "Should the Agent delegate this task?",
+    "options": [
+      "SELF",
+      "DELEGATE"
+    ],
+    "expected_choice": "DELEGATE",
+    "reason": "delegate_cost=9 < self_cost=10: True; success=0.95 >= 0.85: True"
+  },
+  {
+    "id": "delegate_003",
+    "category": "self_vs_delegate",
+    "difficulty": "hard",
+    "state": {
+      "self_cost": 8,
+      "delegate_cost": 2,
+      "delegate_success": 0.55
+    },
+    "question": "Should the Agent delegate this task?",
+    "options": [
+      "SELF",
+      "DELEGATE"
+    ],
+    "expected_choice": "SELF",
+    "reason": "delegate_cost=2 < self_cost=8: True; success=0.55 >= 0.85: False"
+  },
+  {
+    "id": "delegate_004",
+    "category": "self_vs_delegate",
+    "difficulty": "easy",
+    "state": {
+      "self_cost": 20,
+      "delegate_cost": 5,
+      "delegate_success": 0.97
+    },
+    "question": "Should the Agent delegate this task?",
+    "options": [
+      "SELF",
+      "DELEGATE"
+    ],
+    "expected_choice": "DELEGATE",
+    "reason": "delegate_cost=5 < self_cost=20: True; success=0.97 >= 0.85: True"
+  },
+  {
+    "id": "delegate_005",
+    "category": "self_vs_delegate",
+    "difficulty": "medium",
+    "state": {
+      "self_cost": 6,
+      "delegate_cost": 5,
+      "delegate_success": 0.88
+    },
+    "question": "Should the Agent delegate this task?",
+    "options": [
+      "SELF",
+      "DELEGATE"
+    ],
+    "expected_choice": "DELEGATE",
+    "reason": "delegate_cost=5 < self_cost=6: True; success=0.88 >= 0.85: True"
+  },
+  {
+    "id": "delegate_006",
+    "category": "self_vs_delegate",
+    "difficulty": "hard",
+    "state": {
+      "self_cost": 15,
+      "delegate_cost": 3,
+      "delegate_success": 0.7
+    },
+    "question": "Should the Agent delegate this task?",
+    "options": [
+      "SELF",
+      "DELEGATE"
+    ],
+    "expected_choice": "SELF",
+    "reason": "delegate_cost=3 < self_cost=15: True; success=0.7 >= 0.85: False"
+  },
+  {
+    "id": "agent_001",
+    "category": "agent_selection",
+    "difficulty": "medium",
+    "state": {
+      "candidates": [
+        {
+          "name": "B",
+          "cost": 3,
+          "success": 0.91,
+          "latency": 8
+        },
+        {
+          "name": "C",
+          "cost": 5,
+          "success": 0.98,
+          "latency": 3
+        }
+      ]
+    },
+    "question": "Which agent is the better choice?",
+    "options": [
+      "B",
+      "C"
+    ],
+    "expected_choice": "B",
+    "reason": "min(cost / success)，平局看 latency"
+  },
+  {
+    "id": "agent_002",
+    "category": "agent_selection",
+    "difficulty": "hard",
+    "state": {
+      "candidates": [
+        {
+          "name": "B",
+          "cost": 2,
+          "success": 0.6,
+          "latency": 2
+        },
+        {
+          "name": "C",
+          "cost": 4,
+          "success": 0.95,
+          "latency": 5
+        }
+      ]
+    },
+    "question": "Which agent is the better choice?",
+    "options": [
+      "B",
+      "C"
+    ],
+    "expected_choice": "B",
+    "reason": "min(cost / success)，平局看 latency"
+  },
+  {
+    "id": "agent_003",
+    "category": "agent_selection",
+    "difficulty": "easy",
+    "state": {
+      "candidates": [
+        {
+          "name": "B",
+          "cost": 9,
+          "success": 0.99,
+          "latency": 1
+        },
+        {
+          "name": "C",
+          "cost": 1,
+          "success": 0.99,
+          "latency": 9
+        }
+      ]
+    },
+    "question": "Which agent is the better choice?",
+    "options": [
+      "B",
+      "C"
+    ],
+    "expected_choice": "C",
+    "reason": "min(cost / success)，平局看 latency"
+  },
+  {
+    "id": "agent_004",
+    "category": "agent_selection",
+    "difficulty": "medium",
+    "state": {
+      "candidates": [
+        {
+          "name": "B",
+          "cost": 5,
+          "success": 0.8,
+          "latency": 4
+        },
+        {
+          "name": "C",
+          "cost": 6,
+          "success": 0.8,
+          "latency": 4
+        }
+      ]
+    },
+    "question": "Which agent is the better choice?",
+    "options": [
+      "B",
+      "C"
+    ],
+    "expected_choice": "B",
+    "reason": "min(cost / success)，平局看 latency"
+  },
+  {
+    "id": "agent_005",
+    "category": "agent_selection",
+    "difficulty": "easy",
+    "state": {
+      "candidates": [
+        {
+          "name": "B",
+          "cost": 1,
+          "success": 0.3,
+          "latency": 1
+        },
+        {
+          "name": "C",
+          "cost": 3,
+          "success": 0.9,
+          "latency": 1
+        }
+      ]
+    },
+    "question": "Which agent is the better choice?",
+    "options": [
+      "B",
+      "C"
+    ],
+    "expected_choice": "C",
+    "reason": "min(cost / success)，平局看 latency"
+  },
+  {
+    "id": "agent_006",
+    "category": "agent_selection",
+    "difficulty": "hard",
+    "state": {
+      "candidates": [
+        {
+          "name": "B",
+          "cost": 7,
+          "success": 0.93,
+          "latency": 6
+        },
+        {
+          "name": "C",
+          "cost": 8,
+          "success": 0.94,
+          "latency": 2
+        }
+      ]
+    },
+    "question": "Which agent is the better choice?",
+    "options": [
+      "B",
+      "C"
+    ],
+    "expected_choice": "B",
+    "reason": "min(cost / success)，平局看 latency"
+  },
+  {
+    "id": "tool_001",
+    "category": "tool_vs_llm",
+    "difficulty": "easy",
+    "state": {
+      "tool_cost": 0.2,
+      "llm_cost": 4.0,
+      "tool_reliable": true
+    },
+    "question": "Which should be used?",
+    "options": [
+      "TOOL",
+      "LLM"
+    ],
+    "expected_choice": "TOOL",
+    "reason": "tool_cost*5(1.0) < llm_cost(4.0): True; reliable=True"
+  },
+  {
+    "id": "tool_002",
+    "category": "tool_vs_llm",
+    "difficulty": "medium",
+    "state": {
+      "tool_cost": 3.5,
+      "llm_cost": 4.0,
+      "tool_reliable": true
+    },
+    "question": "Which should be used?",
+    "options": [
+      "TOOL",
+      "LLM"
+    ],
+    "expected_choice": "LLM",
+    "reason": "tool_cost*5(17.5) < llm_cost(4.0): False; reliable=True"
+  },
+  {
+    "id": "tool_003",
+    "category": "tool_vs_llm",
+    "difficulty": "hard",
+    "state": {
+      "tool_cost": 0.1,
+      "llm_cost": 5.0,
+      "tool_reliable": false
+    },
+    "question": "Which should be used?",
+    "options": [
+      "TOOL",
+      "LLM"
+    ],
+    "expected_choice": "LLM",
+    "reason": "tool_cost*5(0.5) < llm_cost(5.0): True; reliable=False"
+  },
+  {
+    "id": "tool_004",
+    "category": "tool_vs_llm",
+    "difficulty": "easy",
+    "state": {
+      "tool_cost": 0.5,
+      "llm_cost": 8.0,
+      "tool_reliable": true
+    },
+    "question": "Which should be used?",
+    "options": [
+      "TOOL",
+      "LLM"
+    ],
+    "expected_choice": "TOOL",
+    "reason": "tool_cost*5(2.5) < llm_cost(8.0): True; reliable=True"
+  },
+  {
+    "id": "tool_005",
+    "category": "tool_vs_llm",
+    "difficulty": "medium",
+    "state": {
+      "tool_cost": 2.0,
+      "llm_cost": 2.5,
+      "tool_reliable": true
+    },
+    "question": "Which should be used?",
+    "options": [
+      "TOOL",
+      "LLM"
+    ],
+    "expected_choice": "LLM",
+    "reason": "tool_cost*5(10.0) < llm_cost(2.5): False; reliable=True"
+  },
+  {
+    "id": "tool_006",
+    "category": "tool_vs_llm",
+    "difficulty": "hard",
+    "state": {
+      "tool_cost": 0.3,
+      "llm_cost": 6.0,
+      "tool_reliable": false
+    },
+    "question": "Which should be used?",
+    "options": [
+      "TOOL",
+      "LLM"
+    ],
+    "expected_choice": "LLM",
+    "reason": "tool_cost*5(1.5) < llm_cost(6.0): True; reliable=False"
+  },
+  {
+    "id": "think_001",
+    "category": "think_vs_wait",
+    "difficulty": "easy",
+    "state": {
+      "pending_high_priority": true,
+      "next_heartbeat_sec": 300,
+      "balance_aic": 50
+    },
+    "question": "Should the Agent think now?",
+    "options": [
+      "THINK",
+      "WAIT",
+      "SLEEP"
+    ],
+    "expected_choice": "THINK",
+    "reason": "有高优先级活 → THINK；否则 heartbeat<=60 → WAIT；否则 SLEEP"
+  },
+  {
+    "id": "think_002",
+    "category": "think_vs_wait",
+    "difficulty": "easy",
+    "state": {
+      "pending_high_priority": false,
+      "next_heartbeat_sec": 20,
+      "balance_aic": 50
+    },
+    "question": "Should the Agent think now?",
+    "options": [
+      "THINK",
+      "WAIT",
+      "SLEEP"
+    ],
+    "expected_choice": "WAIT",
+    "reason": "有高优先级活 → THINK；否则 heartbeat<=60 → WAIT；否则 SLEEP"
+  },
+  {
+    "id": "think_003",
+    "category": "think_vs_wait",
+    "difficulty": "medium",
+    "state": {
+      "pending_high_priority": false,
+      "next_heartbeat_sec": 600,
+      "balance_aic": 5
+    },
+    "question": "Should the Agent think now?",
+    "options": [
+      "THINK",
+      "WAIT",
+      "SLEEP"
+    ],
+    "expected_choice": "SLEEP",
+    "reason": "有高优先级活 → THINK；否则 heartbeat<=60 → WAIT；否则 SLEEP"
+  },
+  {
+    "id": "think_004",
+    "category": "think_vs_wait",
+    "difficulty": "hard",
+    "state": {
+      "pending_high_priority": false,
+      "next_heartbeat_sec": 600,
+      "balance_aic": 50
+    },
+    "question": "Should the Agent think now?",
+    "options": [
+      "THINK",
+      "WAIT",
+      "SLEEP"
+    ],
+    "expected_choice": "SLEEP",
+    "reason": "有高优先级活 → THINK；否则 heartbeat<=60 → WAIT；否则 SLEEP"
+  },
+  {
+    "id": "think_005",
+    "category": "think_vs_wait",
+    "difficulty": "medium",
+    "state": {
+      "pending_high_priority": true,
+      "next_heartbeat_sec": 10,
+      "balance_aic": 100
+    },
+    "question": "Should the Agent think now?",
+    "options": [
+      "THINK",
+      "WAIT",
+      "SLEEP"
+    ],
+    "expected_choice": "THINK",
+    "reason": "有高优先级活 → THINK；否则 heartbeat<=60 → WAIT；否则 SLEEP"
+  },
+  {
+    "id": "think_006",
+    "category": "think_vs_wait",
+    "difficulty": "hard",
+    "state": {
+      "pending_high_priority": false,
+      "next_heartbeat_sec": 45,
+      "balance_aic": 30
+    },
+    "question": "Should the Agent think now?",
+    "options": [
+      "THINK",
+      "WAIT",
+      "SLEEP"
+    ],
+    "expected_choice": "WAIT",
+    "reason": "有高优先级活 → THINK；否则 heartbeat<=60 → WAIT；否则 SLEEP"
+  },
+  {
+    "id": "priority_001",
+    "category": "task_priority",
+    "difficulty": "easy",
+    "state": {
+      "tasks": [
+        {
+          "name": "A",
+          "value": 10,
+          "risk": 0.1,
+          "deadline_soon": true
+        },
+        {
+          "name": "B",
+          "value": 3,
+          "risk": 0.1,
+          "deadline_soon": false
+        },
+        {
+          "name": "C",
+          "value": 6,
+          "risk": 0.8,
+          "deadline_soon": false
+        }
+      ]
+    },
+    "question": "Which task should be handled first?",
+    "options": [
+      "A",
+      "B",
+      "C"
+    ],
+    "expected_choice": "A",
+    "reason": "max(value * urgency / risk)"
+  },
+  {
+    "id": "priority_002",
+    "category": "task_priority",
+    "difficulty": "hard",
+    "state": {
+      "tasks": [
+        {
+          "name": "A",
+          "value": 5,
+          "risk": 0.5,
+          "deadline_soon": false
+        },
+        {
+          "name": "B",
+          "value": 9,
+          "risk": 0.2,
+          "deadline_soon": true
+        },
+        {
+          "name": "C",
+          "value": 9,
+          "risk": 0.9,
+          "deadline_soon": true
+        }
+      ]
+    },
+    "question": "Which task should be handled first?",
+    "options": [
+      "A",
+      "B",
+      "C"
+    ],
+    "expected_choice": "B",
+    "reason": "max(value * urgency / risk)"
+  },
+  {
+    "id": "priority_003",
+    "category": "task_priority",
+    "difficulty": "easy",
+    "state": {
+      "tasks": [
+        {
+          "name": "A",
+          "value": 2,
+          "risk": 0.1,
+          "deadline_soon": true
+        },
+        {
+          "name": "B",
+          "value": 2,
+          "risk": 0.1,
+          "deadline_soon": false
+        },
+        {
+          "name": "C",
+          "value": 2,
+          "risk": 0.1,
+          "deadline_soon": false
+        }
+      ]
+    },
+    "question": "Which task should be handled first?",
+    "options": [
+      "A",
+      "B",
+      "C"
+    ],
+    "expected_choice": "A",
+    "reason": "max(value * urgency / risk)"
+  },
+  {
+    "id": "priority_004",
+    "category": "task_priority",
+    "difficulty": "hard",
+    "state": {
+      "tasks": [
+        {
+          "name": "A",
+          "value": 8,
+          "risk": 0.3,
+          "deadline_soon": false
+        },
+        {
+          "name": "B",
+          "value": 4,
+          "risk": 0.1,
+          "deadline_soon": true
+        },
+        {
+          "name": "C",
+          "value": 7,
+          "risk": 0.35,
+          "deadline_soon": true
+        }
+      ]
+    },
+    "question": "Which task should be handled first?",
+    "options": [
+      "A",
+      "B",
+      "C"
+    ],
+    "expected_choice": "B",
+    "reason": "max(value * urgency / risk)"
+  },
+  {
+    "id": "priority_005",
+    "category": "task_priority",
+    "difficulty": "medium",
+    "state": {
+      "tasks": [
+        {
+          "name": "A",
+          "value": 1,
+          "risk": 0.9,
+          "deadline_soon": true
+        },
+        {
+          "name": "B",
+          "value": 4,
+          "risk": 0.2,
+          "deadline_soon": false
+        },
+        {
+          "name": "C",
+          "value": 2,
+          "risk": 0.9,
+          "deadline_soon": false
+        }
+      ]
+    },
+    "question": "Which task should be handled first?",
+    "options": [
+      "A",
+      "B",
+      "C"
+    ],
+    "expected_choice": "B",
+    "reason": "max(value * urgency / risk)"
+  },
+  {
+    "id": "priority_006",
+    "category": "task_priority",
+    "difficulty": "medium",
+    "state": {
+      "tasks": [
+        {
+          "name": "A",
+          "value": 6,
+          "risk": 0.1,
+          "deadline_soon": false
+        },
+        {
+          "name": "B",
+          "value": 6,
+          "risk": 0.1,
+          "deadline_soon": false
+        },
+        {
+          "name": "C",
+          "value": 6,
+          "risk": 0.1,
+          "deadline_soon": false
+        }
+      ]
+    },
+    "question": "Which task should be handled first?",
+    "options": [
+      "A",
+      "B",
+      "C"
+    ],
+    "expected_choice": "A",
+    "reason": "max(value * urgency / risk)"
+  },
+  {
+    "id": "accept_001",
+    "category": "accept_reject_task",
+    "difficulty": "easy",
+    "state": {
+      "estimated_cost": 15,
+      "reward": 3,
+      "success_prob": 0.7,
+      "balance": 20
+    },
+    "question": "Should the Agent accept this task?",
+    "options": [
+      "ACCEPT",
+      "REJECT"
+    ],
+    "expected_choice": "REJECT",
+    "reason": "balance 20 >= cost 15: True; reward*success=2.10 > cost 15: False"
+  },
+  {
+    "id": "accept_002",
+    "category": "accept_reject_task",
+    "difficulty": "easy",
+    "state": {
+      "estimated_cost": 2,
+      "reward": 10,
+      "success_prob": 0.9,
+      "balance": 20
+    },
+    "question": "Should the Agent accept this task?",
+    "options": [
+      "ACCEPT",
+      "REJECT"
+    ],
+    "expected_choice": "ACCEPT",
+    "reason": "balance 20 >= cost 2: True; reward*success=9.00 > cost 2: True"
+  },
+  {
+    "id": "accept_003",
+    "category": "accept_reject_task",
+    "difficulty": "medium",
+    "state": {
+      "estimated_cost": 10,
+      "reward": 12,
+      "success_prob": 0.85,
+      "balance": 15
+    },
+    "question": "Should the Agent accept this task?",
+    "options": [
+      "ACCEPT",
+      "REJECT"
+    ],
+    "expected_choice": "ACCEPT",
+    "reason": "balance 15 >= cost 10: True; reward*success=10.20 > cost 10: True"
+  },
+  {
+    "id": "accept_004",
+    "category": "accept_reject_task",
+    "difficulty": "hard",
+    "state": {
+      "estimated_cost": 8,
+      "reward": 12,
+      "success_prob": 0.6,
+      "balance": 100
+    },
+    "question": "Should the Agent accept this task?",
+    "options": [
+      "ACCEPT",
+      "REJECT"
+    ],
+    "expected_choice": "REJECT",
+    "reason": "balance 100 >= cost 8: True; reward*success=7.20 > cost 8: False"
+  },
+  {
+    "id": "accept_005",
+    "category": "accept_reject_task",
+    "difficulty": "hard",
+    "state": {
+      "estimated_cost": 5,
+      "reward": 20,
+      "success_prob": 0.95,
+      "balance": 4
+    },
+    "question": "Should the Agent accept this task?",
+    "options": [
+      "ACCEPT",
+      "REJECT"
+    ],
+    "expected_choice": "REJECT",
+    "reason": "balance 4 >= cost 5: False; reward*success=19.00 > cost 5: True"
+  },
+  {
+    "id": "accept_006",
+    "category": "accept_reject_task",
+    "difficulty": "medium",
+    "state": {
+      "estimated_cost": 3,
+      "reward": 4,
+      "success_prob": 0.9,
+      "balance": 50
+    },
+    "question": "Should the Agent accept this task?",
+    "options": [
+      "ACCEPT",
+      "REJECT"
+    ],
+    "expected_choice": "ACCEPT",
+    "reason": "balance 50 >= cost 3: True; reward*success=3.60 > cost 3: True"
+  },
+  {
+    "id": "invest_001",
+    "category": "invest_tool",
+    "difficulty": "medium",
+    "state": {
+      "per_task_cost": 5,
+      "tool_setup_cost": 15,
+      "remaining_uses": 10
+    },
+    "question": "Should the Agent invest in building the tool?",
+    "options": [
+      "INVEST",
+      "KEEP_WORKING"
+    ],
+    "expected_choice": "INVEST",
+    "reason": "break_even=3.00, 需要 remaining >= 4.50, 实际 10"
+  },
+  {
+    "id": "invest_002",
+    "category": "invest_tool",
+    "difficulty": "hard",
+    "state": {
+      "per_task_cost": 5,
+      "tool_setup_cost": 15,
+      "remaining_uses": 3
+    },
+    "question": "Should the Agent invest in building the tool?",
+    "options": [
+      "INVEST",
+      "KEEP_WORKING"
+    ],
+    "expected_choice": "KEEP_WORKING",
+    "reason": "break_even=3.00, 需要 remaining >= 4.50, 实际 3"
+  },
+  {
+    "id": "invest_003",
+    "category": "invest_tool",
+    "difficulty": "easy",
+    "state": {
+      "per_task_cost": 2,
+      "tool_setup_cost": 40,
+      "remaining_uses": 100
+    },
+    "question": "Should the Agent invest in building the tool?",
+    "options": [
+      "INVEST",
+      "KEEP_WORKING"
+    ],
+    "expected_choice": "INVEST",
+    "reason": "break_even=20.00, 需要 remaining >= 30.00, 实际 100"
+  },
+  {
+    "id": "invest_004",
+    "category": "invest_tool",
+    "difficulty": "easy",
+    "state": {
+      "per_task_cost": 8,
+      "tool_setup_cost": 10,
+      "remaining_uses": 2
+    },
+    "question": "Should the Agent invest in building the tool?",
+    "options": [
+      "INVEST",
+      "KEEP_WORKING"
+    ],
+    "expected_choice": "INVEST",
+    "reason": "break_even=1.25, 需要 remaining >= 1.88, 实际 2"
+  },
+  {
+    "id": "invest_005",
+    "category": "invest_tool",
+    "difficulty": "medium",
+    "state": {
+      "per_task_cost": 1,
+      "tool_setup_cost": 50,
+      "remaining_uses": 20
+    },
+    "question": "Should the Agent invest in building the tool?",
+    "options": [
+      "INVEST",
+      "KEEP_WORKING"
+    ],
+    "expected_choice": "KEEP_WORKING",
+    "reason": "break_even=50.00, 需要 remaining >= 75.00, 实际 20"
+  },
+  {
+    "id": "invest_006",
+    "category": "invest_tool",
+    "difficulty": "hard",
+    "state": {
+      "per_task_cost": 6,
+      "tool_setup_cost": 20,
+      "remaining_uses": 8
+    },
+    "question": "Should the Agent invest in building the tool?",
+    "options": [
+      "INVEST",
+      "KEEP_WORKING"
+    ],
+    "expected_choice": "INVEST",
+    "reason": "break_even=3.33, 需要 remaining >= 5.00, 实际 8"
+  },
+  {
+    "id": "model_001",
+    "category": "model_selection",
+    "difficulty": "easy",
+    "state": {
+      "models": [
+        {
+          "name": "A",
+          "cost": 8,
+          "quality": 0.95
+        },
+        {
+          "name": "B",
+          "cost": 2,
+          "quality": 0.6
+        },
+        {
+          "name": "C",
+          "cost": 1,
+          "quality": 0.3
+        }
+      ],
+      "required_quality": 0.5,
+      "task": "简单分类"
+    },
+    "question": "Which model should be used?",
+    "options": [
+      "A",
+      "B",
+      "C"
+    ],
+    "expected_choice": "B",
+    "reason": "满足 quality>=0.5 里挑最便宜的"
+  },
+  {
+    "id": "model_002",
+    "category": "model_selection",
+    "difficulty": "medium",
+    "state": {
+      "models": [
+        {
+          "name": "A",
+          "cost": 8,
+          "quality": 0.95
+        },
+        {
+          "name": "B",
+          "cost": 2,
+          "quality": 0.6
+        },
+        {
+          "name": "C",
+          "cost": 1,
+          "quality": 0.3
+        }
+      ],
+      "required_quality": 0.9,
+      "task": "复杂推理"
+    },
+    "question": "Which model should be used?",
+    "options": [
+      "A",
+      "B",
+      "C"
+    ],
+    "expected_choice": "A",
+    "reason": "满足 quality>=0.9 里挑最便宜的"
+  },
+  {
+    "id": "model_003",
+    "category": "model_selection",
+    "difficulty": "hard",
+    "state": {
+      "models": [
+        {
+          "name": "A",
+          "cost": 8,
+          "quality": 0.95
+        },
+        {
+          "name": "B",
+          "cost": 2,
+          "quality": 0.6
+        },
+        {
+          "name": "C",
+          "cost": 1,
+          "quality": 0.3
+        }
+      ],
+      "required_quality": 0.99,
+      "task": "复杂推理"
+    },
+    "question": "Which model should be used?",
+    "options": [
+      "A",
+      "B",
+      "C"
+    ],
+    "expected_choice": "A",
+    "reason": "满足 quality>=0.99 里挑最便宜的"
+  },
+  {
+    "id": "model_004",
+    "category": "model_selection",
+    "difficulty": "medium",
+    "state": {
+      "models": [
+        {
+          "name": "A",
+          "cost": 3,
+          "quality": 0.8
+        },
+        {
+          "name": "B",
+          "cost": 4,
+          "quality": 0.8
+        },
+        {
+          "name": "C",
+          "cost": 5,
+          "quality": 0.8
+        }
+      ],
+      "required_quality": 0.7,
+      "task": "复杂推理"
+    },
+    "question": "Which model should be used?",
+    "options": [
+      "A",
+      "B",
+      "C"
+    ],
+    "expected_choice": "A",
+    "reason": "满足 quality>=0.7 里挑最便宜的"
+  },
+  {
+    "id": "model_005",
+    "category": "model_selection",
+    "difficulty": "easy",
+    "state": {
+      "models": [
+        {
+          "name": "A",
+          "cost": 10,
+          "quality": 0.4
+        },
+        {
+          "name": "B",
+          "cost": 1,
+          "quality": 0.4
+        },
+        {
+          "name": "C",
+          "cost": 2,
+          "quality": 0.4
+        }
+      ],
+      "required_quality": 0.35,
+      "task": "简单分类"
+    },
+    "question": "Which model should be used?",
+    "options": [
+      "A",
+      "B",
+      "C"
+    ],
+    "expected_choice": "B",
+    "reason": "满足 quality>=0.35 里挑最便宜的"
+  },
+  {
+    "id": "model_006",
+    "category": "model_selection",
+    "difficulty": "hard",
+    "state": {
+      "models": [
+        {
+          "name": "A",
+          "cost": 6,
+          "quality": 0.75
+        },
+        {
+          "name": "B",
+          "cost": 5,
+          "quality": 0.72
+        },
+        {
+          "name": "C",
+          "cost": 7,
+          "quality": 0.9
+        }
+      ],
+      "required_quality": 0.7,
+      "task": "复杂推理"
+    },
+    "question": "Which model should be used?",
+    "options": [
+      "A",
+      "B",
+      "C"
+    ],
+    "expected_choice": "B",
+    "reason": "满足 quality>=0.7 里挑最便宜的"
+  },
+  {
+    "id": "human_001",
+    "category": "need_human",
+    "difficulty": "easy",
+    "state": {
+      "risk": 0.1,
+      "reversible": true,
+      "system_level": false
+    },
+    "question": "Does this need Human involvement?",
+    "options": [
+      "HUMAN",
+      "NO_HUMAN"
+    ],
+    "expected_choice": "NO_HUMAN",
+    "reason": "risk>=0.7: False; reversible=True; system_level=False"
+  },
+  {
+    "id": "human_002",
+    "category": "need_human",
+    "difficulty": "easy",
+    "state": {
+      "risk": 0.9,
+      "reversible": false,
+      "system_level": true
+    },
+    "question": "Does this need Human involvement?",
+    "options": [
+      "HUMAN",
+      "NO_HUMAN"
+    ],
+    "expected_choice": "HUMAN",
+    "reason": "risk>=0.7: True; reversible=False; system_level=True"
+  },
+  {
+    "id": "human_003",
+    "category": "need_human",
+    "difficulty": "medium",
+    "state": {
+      "risk": 0.5,
+      "reversible": true,
+      "system_level": true
+    },
+    "question": "Does this need Human involvement?",
+    "options": [
+      "HUMAN",
+      "NO_HUMAN"
+    ],
+    "expected_choice": "HUMAN",
+    "reason": "risk>=0.7: False; reversible=True; system_level=True"
+  },
+  {
+    "id": "human_004",
+    "category": "need_human",
+    "difficulty": "hard",
+    "state": {
+      "risk": 0.6,
+      "reversible": false,
+      "system_level": false
+    },
+    "question": "Does this need Human involvement?",
+    "options": [
+      "HUMAN",
+      "NO_HUMAN"
+    ],
+    "expected_choice": "HUMAN",
+    "reason": "risk>=0.7: False; reversible=False; system_level=False"
+  },
+  {
+    "id": "human_005",
+    "category": "need_human",
+    "difficulty": "medium",
+    "state": {
+      "risk": 0.35,
+      "reversible": true,
+      "system_level": false
+    },
+    "question": "Does this need Human involvement?",
+    "options": [
+      "HUMAN",
+      "NO_HUMAN"
+    ],
+    "expected_choice": "NO_HUMAN",
+    "reason": "risk>=0.7: False; reversible=True; system_level=False"
+  },
+  {
+    "id": "human_006",
+    "category": "need_human",
+    "difficulty": "hard",
+    "state": {
+      "risk": 0.69,
+      "reversible": true,
+      "system_level": false
+    },
+    "question": "Does this need Human involvement?",
+    "options": [
+      "HUMAN",
+      "NO_HUMAN"
+    ],
+    "expected_choice": "NO_HUMAN",
+    "reason": "risk>=0.7: False; reversible=True; system_level=False"
+  },
+  {
+    "id": "recheck_001",
+    "category": "recheck_result",
+    "difficulty": "medium",
+    "state": {
+      "reviewer_found_issues": true,
+      "issue_severity": 0.2,
+      "contractor_success_rate": 0.9,
+      "price": 3
+    },
+    "question": "What should A do with this result?",
+    "options": [
+      "ACCEPT",
+      "RETRY",
+      "REVIEW",
+      "DELEGATE"
+    ],
+    "expected_choice": "ACCEPT",
+    "reason": "issues=True severity=0.2 success=0.9"
+  },
+  {
+    "id": "recheck_002",
+    "category": "recheck_result",
+    "difficulty": "easy",
+    "state": {
+      "reviewer_found_issues": false,
+      "issue_severity": 0.0,
+      "contractor_success_rate": 0.95,
+      "price": 4
+    },
+    "question": "What should A do with this result?",
+    "options": [
+      "ACCEPT",
+      "RETRY",
+      "REVIEW",
+      "DELEGATE"
+    ],
+    "expected_choice": "ACCEPT",
+    "reason": "issues=False severity=0.0 success=0.95"
+  },
+  {
+    "id": "recheck_003",
+    "category": "recheck_result",
+    "difficulty": "hard",
+    "state": {
+      "reviewer_found_issues": true,
+      "issue_severity": 0.8,
+      "contractor_success_rate": 0.6,
+      "price": 2
+    },
+    "question": "What should A do with this result?",
+    "options": [
+      "ACCEPT",
+      "RETRY",
+      "REVIEW",
+      "DELEGATE"
+    ],
+    "expected_choice": "DELEGATE",
+    "reason": "issues=True severity=0.8 success=0.6"
+  },
+  {
+    "id": "recheck_004",
+    "category": "recheck_result",
+    "difficulty": "medium",
+    "state": {
+      "reviewer_found_issues": false,
+      "issue_severity": 0.0,
+      "contractor_success_rate": 0.55,
+      "price": 3
+    },
+    "question": "What should A do with this result?",
+    "options": [
+      "ACCEPT",
+      "RETRY",
+      "REVIEW",
+      "DELEGATE"
+    ],
+    "expected_choice": "RETRY",
+    "reason": "issues=False severity=0.0 success=0.55"
+  },
+  {
+    "id": "recheck_005",
+    "category": "recheck_result",
+    "difficulty": "hard",
+    "state": {
+      "reviewer_found_issues": true,
+      "issue_severity": 0.5,
+      "contractor_success_rate": 0.8,
+      "price": 5
+    },
+    "question": "What should A do with this result?",
+    "options": [
+      "ACCEPT",
+      "RETRY",
+      "REVIEW",
+      "DELEGATE"
+    ],
+    "expected_choice": "REVIEW",
+    "reason": "issues=True severity=0.5 success=0.8"
+  },
+  {
+    "id": "recheck_006",
+    "category": "recheck_result",
+    "difficulty": "easy",
+    "state": {
+      "reviewer_found_issues": false,
+      "issue_severity": 0.0,
+      "contractor_success_rate": 0.75,
+      "price": 6
+    },
+    "question": "What should A do with this result?",
+    "options": [
+      "ACCEPT",
+      "RETRY",
+      "REVIEW",
+      "DELEGATE"
+    ],
+    "expected_choice": "ACCEPT",
+    "reason": "issues=False severity=0.0 success=0.75"
+  }
+]
