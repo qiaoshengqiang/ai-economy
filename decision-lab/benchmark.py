@@ -119,6 +119,60 @@ class DeciderBaseline:
         }
 
 
+
+# ============================================================
+# Baseline B：Laya（本地 laya-multilingual）
+# ============================================================
+class LayaBaseline:
+    """
+    很薄的适配层。
+
+    🔒 官方 schema（读 `laya/agent.py` 的 docstring 得到，**不是猜的**）：
+        choice: {"type":"choice","instructions":"...","criteria":{"optA":"...",...}}
+        score:  {"type":"score", "instructions":"...","criteria":["lvl0",...]}
+        noul:   {"type":"noul",  "instructions":"...",
+                 "criteria":{"false":"..","true":".."},"labels":{...}}
+
+    ⚠️ 实测踩到的两个错误（写在这里省得下次再踩）：
+       ① 漏 `type`        → ValueError: unknown type None
+       ② 用 options 而不是 criteria → "no 'instructions'"
+    """
+
+    def __init__(self, model="multilingual", preload=False):
+        from laya import Router
+        self.model = model
+        t0 = time.perf_counter()
+        # 🔒 **不加 preload=True** —— 那会一次加载三个 checkpoint，
+        #    对 16GB 机器是不必要的压力（任务书 §三）
+        self.r = Router(preload=preload) if preload else Router()
+        self.load_seconds = time.perf_counter() - t0
+
+    @staticmethod
+    def _state_text(case):
+        s = case["state"]
+        parts = [f"{k} = {v}" for k, v in s.items()]
+        return ("AI Economy OS decision state:\n"
+                + "\n".join(parts)
+                + f"\n\nQuestion:\n{case['question']}")
+
+    def decide(self, case):
+        q = {"q": {
+            "type": "choice",
+            "instructions": case["question"],
+            "criteria": {o: o for o in case["options"]},
+        }}
+        t0 = time.perf_counter()
+        out = self.r.predict(self._state_text(case), q, model=self.model)
+        dt = (time.perf_counter() - t0) * 1000.0
+        ans = (out.get("answers") or {}).get("q") or {}
+        return {
+            "choice": ans.get("choice"),
+            "confidence": ans.get("answer_confidence") or ans.get("confidence"),
+            "probs": ans.get("probabilities"),
+            "latency_ms": dt,
+            "raw": out,
+        }
+
 # ============================================================
 # 跑一个 baseline
 # ============================================================
@@ -223,11 +277,14 @@ def show(result):
 
 def main():
     ap = argparse.ArgumentParser(description="Decision Benchmark V1")
-    ap.add_argument("--decider", action="store_true",
-                    help="跑 decider-0.8b（需要先装好模型）")
+    ap.add_argument("--laya", action="store_true",
+                    help="跑 Laya laya-multilingual（需要先装好）")
+    ap.add_argument("--laya-model", default="multilingual")
+    ap.add_argument("--limit", type=int, default=None)
+    ap.add_argument("--consistency-laya", default=None,
+                    help="对某个 case id 用 Laya 重复跑 20 次")
     ap.add_argument("--real-llm", action="store_true",
                     help="跑远程 LLM 对照（**会烧真实 API**，默认只跑 10 条）")
-    ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--consistency", default=None,
                     help="对某个 case id 重复跑 20 次，看 choice 是否稳定")
     ap.add_argument("--model", default="Mapika/decider-0.8b")
@@ -243,22 +300,37 @@ def main():
     (RESULTS / "rule_baseline.json").write_text(
         json.dumps(rule, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    if not args.decider and not args.real_llm and not args.consistency:
-        print("\n  （只跑了 rule baseline。加 --decider 跑本地模型，"
+    if args.laya:
+        try:
+            lb = LayaBaseline(args.laya_model)
+        except Exception as exc:                        # noqa: BLE001
+            print(f"  ❌ 无法加载 Laya：{type(exc).__name__}: {exc}")
+            return 1
+        print(f"  Laya Router 构造: {lb.load_seconds:.2f}s（按需加载）")
+        res = run_baseline("laya_multilingual", cases, lb.decide, args.limit)
+        show(res)
+        (RESULTS / "laya.json").write_text(
+            json.dumps({k: v for k, v in res.items() if k != "rows"},
+                       ensure_ascii=False, indent=2), encoding="utf-8")
+        # 完整 rows 单独存（含 per-case 明细，便于分析 confidence）
+        (RESULTS / "laya_rows.json").write_text(
+            json.dumps(res["rows"], ensure_ascii=False, indent=2),
+            encoding="utf-8")
+
+    if args.consistency_laya:
+        lb = LayaBaseline(args.laya_model)
+        case = next(c for c in cases if c["id"] == args.consistency_laya)
+        picks = [lb.decide(case)["choice"] for _ in range(20)]
+        from collections import Counter
+        cnt = Counter(picks)
+        print(f"\n  consistency [{args.consistency_laya}] 20 次: {dict(cnt)}")
+        print(f"    same-choice ratio = {cnt.most_common(1)[0][1]}/20 "
+              f"= {cnt.most_common(1)[0][1]/20:.0%}")
+
+    if not args.real_llm and not args.consistency and not args.laya and not args.consistency_laya:
+        print("\n  （只跑了 rule baseline。加 --laya 跑本地 Laya，"
               "加 --real-llm 跑远程对照）")
         return 0
-
-    if args.decider:
-        try:
-            db = DeciderBaseline(args.model)
-        except Exception as exc:                        # noqa: BLE001
-            print(f"  ❌ 无法加载 decider：{type(exc).__name__}: {exc}")
-            return 1
-        print(f"  decider 加载耗时: {db.load_seconds:.1f}s")
-        res = run_baseline("decider_0_8b", cases, db.decide, args.limit)
-        show(res)
-        (RESULTS / "decider_0_8b.json").write_text(
-            json.dumps(res, ensure_ascii=False, indent=2), encoding="utf-8")
 
     if args.consistency:
         db = DeciderBaseline(args.model)

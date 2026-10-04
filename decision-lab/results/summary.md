@@ -1,165 +1,192 @@
 # Decision Lab V1 — 结果
 
-**Round 1（decider-0.8b）：安装被网络阻断**
-**Round 2（Laya）：安装进行中，本轮未完成**
+**Round 1（decider-0.8b）**：安装被网络阻断 → 放弃
+**Round 2（Laya `laya-multilingual`）**：✅ **跑通并完成基准**
 
 ---
 
-## 已经实测到的硬事实
+## 1. 是否成功在 Mac 本地运行？
 
-### 数据集（已完成，可复现）
-
-```
-60 cases = 10 类 × 6
-  难度: 20 easy / 20 medium / 20 hard   ✅ 完全均衡
-  语言: 30 中文 / 30 English            ✅ 完全均衡
-```
-
-生成器：`make_cases.py`（判定规则显式编码在 `_rule_*` 函数里，
-**ground truth 不来自任何 LLM**）。
-
-难度按「因素数量」分级，不靠主观判断：
-```
-easy    单因素占绝对优势，无 trade-off
-medium  两因素冲突，但一个明显更强
-hard    多因素冲突，**没有压倒性答案**
-```
-
-### Baseline A（天真规则）—— **已实测**
+# ✅ YES
 
 ```
-overall:  68.3%   (n=60)
-  easy    90.0%   (n=20)
-  medium  70.0%   (n=20)
-  hard    45.0%   (n=20)
-
-invest_tool        100.0%      agent_selection     83.3%
-need_human          83.3%      task_priority       83.3%
-accept_reject_task  66.7%  ←   self_vs_delegate    66.7%  ←
-think_vs_wait       66.7%  ←   model_selection     50.0%  ←
-recheck_result      50.0%  ←   tool_vs_llm         33.3%  ←
+chip  Apple M1
+torch 2.14.1
+laya  0.3.26
+模型  convaiinnovations/laya/multilingual（routing 自己报的 repo）
 ```
 
-**证明了什么**：
-1. **数据集有效** —— 难度梯度单调（90→70→45），说明分级确实按因素数量分开了
-2. **天真规则的天花板 = 68.3%** —— 这是 Laya 必须超过的线
-3. 掉得最狠的三类（`tool_vs_llm` 33% / `model_selection` 50% /
-   `recheck_result` 50%）**正好是最需要判断力的地方** ——
-   也就是 Fast Decision Layer 真正要解决的问题
+实测踩到并修掉的 4 个问题：
 
-### 网络（实测，两次实验一致）
-
-| 主机 | Round 1 | Round 2 |
+| # | 问题 | 修法 |
 |---|---|---|
-| `pypi.org` | ✅ | ✅ |
-| `huggingface.co` | ❌ Timeout | ❌ Timeout |
-| `cdn-lfs.huggingface.co` | ❌ Timeout | — |
-| `hf-mirror.com` | ✅ | ✅ |
+| 1 | venv 用了系统 Python 3.9 | 改用 `/opt/homebrew/bin/python3.13`（laya 要 ≥3.10） |
+| 2 | `huggingface.co` 不通 | `HF_ENDPOINT=https://hf-mirror.com` |
+| 3 | HF 缓存目录不可写（sandbox） | `HF_HOME=<workspace>/decision-lab/.hf-cache` |
+| 4 | 我按文档猜 schema，错两次 | **读 `laya/agent.py` 的 docstring** 拿到准确 schema |
 
-> 🔒 **必须** `export HF_ENDPOINT=https://hf-mirror.com`，否则模型下载卡死。
-
-### 实测到的下载速度
-
+准确 schema（**不是猜的**）：
 ```
-hf_xet-1.6.0 (3.9 MB)  →  11.3 kB/s  →  6 分 09 秒
-```
-
-**这是本轮失败的直接原因。** torch（macOS arm64，约 100–200 MB）
-在这个速率下需要数小时。
-
----
-
-## Laya 的安装体量（已确认，比 decider 轻）
-
-```
-Requires-Python: >=3.10                    ✅ 本机 3.13.15
-torch>=2.0.0                               ← 大头
-transformers>=4.48.0
-safetensors>=0.4.0
-huggingface_hub>=0.20.0
-numpy>=1.20.0
+choice: {"type":"choice","instructions":"...","criteria":{"optA":"...",...}}
+score:  {"type":"score", "instructions":"...","criteria":["lvl0",...]}
+noul:   {"type":"noul",  "instructions":"...","criteria":{"false":"..","true":".."}}
 ```
 
-✅ **没有** `flash-linear-attention` —— 这是 decider-ai 的 CUDA 坑，
-Laya 没有它，所以 **Apple Silicon 上的可行性明显更高**。
+## 2. 是否使用 MPS？
 
-官方接口已确认存在于 0.3.26 wheel 中：
-```python
-from laya import Router
-router = Router()                       # 按需加载，不 preload
-router.predict(state, questions, model="multilingual")
+✅ **是**（`torch.backends.mps.is_available() == True`）。
+未观察到 CPU fallback 报错。
+
+## 3. 模型加载实际占多少内存？
+
+用 `memory_pressure` 的 free percentage 观测（未用重量级监控）：
+
 ```
-`Router` 的 docstring 自己写着 **"Lazily loads Laya checkpoints"** ——
-与任务书 §三「不要 preload 三个 checkpoint」的要求一致。
+Router() 构造前        free 68–69%
+Router() 构造后        0.00s —— 它是**按需加载**，构造时不占内存
+首次 predict 之后      free 61%
+连续 60 case 之后      free 55–56%
+swap                   全程 0.00 M（未触发换页）
+模型缓存落盘           663 MB
+```
 
----
+> 粗略推算：常驻约 **13–14% × 16GB ≈ 2.1–2.2 GB**。
+> 在 swap 为 0 的前提下稳定 —— **16GB 机器能承受**。
 
-## 本轮**未完成**的部分
+## 4. Cold Start 多久？
 
-| 项 | 状态 | 原因 |
+```
+import laya              快（秒级）
+Router() 构造            0.00s   ← 按需加载，构造近乎免费
+首次 predict（含加载）   12385 ms
+```
+
+## 5. Warm Median / P95
+
+```
+median  36.0 ms
+p95    676.2 ms
+```
+
+> ⚠️ p95 是 median 的 **18 倍** —— 长尾明显。
+> 对「Fast Decision Layer」来说，**p95 比 median 更值得关注**。
+
+## 6. 60 个 AI Economy cases 的准确率
+
+| | rule（天真规则） | **Laya** |
 |---|---|---|
-| Laya 安装 | ⏳ 后台进行中 | 网络 11 kB/s |
-| 模型下载 | ❌ | 同上 |
-| Smoke test | ❌ | 依赖安装 |
-| MPS 可用性 | ❌ | 依赖安装 |
-| 内存 / 冷启动 / 热推理 | ❌ | 依赖安装 |
-| 60 case 准确率（Laya） | ❌ | 依赖安装 |
-| 一致性（10 case × 20 次） | ❌ | 依赖安装 |
-| Confidence vs 正确率 | ❌ | 依赖安装 |
-| Baseline C（真实 DeepSeek） | ❌ | 要等 B 才有意义 |
+| **overall** | **68.3%** | **41.7%** |
+| easy | 90.0% | 45.0% |
+| medium | 70.0% | 50.0% |
+| **hard** | 45.0% | **30.0%** |
+| **中文（30）** | 70.0% | **50.0%** |
+| **英文（30）** | 66.7% | **33.3%** |
 
-**代码已就绪**：`benchmark.py` 里的 `latencies()` /
-`confidence_analysis()` / `--consistency` 装上模型即可产出。
+按类别（Laya）：
 
----
-
-## 结论
-
-# 无法给出 §二十 的 11 个答案中的第 3–11 项。
-
-**已能回答的：**
-
-1. **是否成功在 Mac 本地运行？** — ❌ **否**（安装未完成，网络阻断）
-2. **是否使用 MPS？** — ❌ 未到那一步
-
-**不能给的**：内存占用 / Cold Start / Warm P95 / 准确率 /
-稳定性 / confidence 相关性 / 与规则基线对比 / 是否建议进入 V1。
-
-> ⚠️ 我**不会**因为没有数据就猜一个「NO」或「仅适用于部分决策」。
-> 任务书 §十六 自己提醒了「不要看到模型非常快就默认它适合」——
-> 反过来也一样：**不要因为装不上就判它不行。**
-
----
-
-## 网络好转后怎么继续
-
-```bash
-cd decision-lab
-
-# 1) 装（后台任务 bash-1062 可能已经完成；先查）
-./.venv/bin/python -c "import laya; print(laya.__version__)"
-
-# 2) 如果没装完
-export HF_ENDPOINT=https://hf-mirror.com
-./.venv/bin/python -m pip install --retries 50 --timeout 300 -r requirements.txt
-
-# 3) Smoke test（只跑一次，不 preload）
-./.venv/bin/python -c "
-from laya import Router
-r = Router()                      # 🔒 不加 preload=True
-out = r.predict(
-    'Agent A has 30 AIC. Self execution costs 12 AIC. '
-    'Agent B costs 4 AIC. Agent B success probability is high.',
-    {'strategy': {'question': 'Which strategy should be selected?',
-                  'options': ['SELF', 'DELEGATE_B', 'WAIT']}},
-    model='multilingual')
-print(out)
-"
-
-# 4) 基准
-./.venv/bin/python benchmark.py --laya
-./.venv/bin/python benchmark.py --consistency zh_delegate_001
+```
+invest_tool         66.7%      accept_reject_task  50.0%
+agent_selection     50.0%      need_human          50.0%
+self_vs_delegate    50.0%      tool_vs_llm         50.0%
+task_priority       33.3%      think_vs_wait       33.3%
+model_selection     16.7%      recheck_result      16.7%
 ```
 
-> ⚠️ 第 4 步需要 `benchmark.py` 增加一个 `--laya` 适配器（**尚未写**，
-> 因为还没验证 Laya 的实际返回结构 —— 我不想照着文档猜一个形状写死）。
+### 三条最重要的事实
+
+1. **Laya（41.7%）打不过零成本的规则基线（68.3%）** —— 差 27 个百分点
+2. **它在 easy 上就崩了**（45% vs 规则 90%）—— 不是「难才不行」，是**普遍不行**
+3. **中文明显好于英文**（50.0% vs 33.3%）—— 对以中文为主的 Agent Context 是**好消息**，
+   但仍不足以追上规则基线
+
+> 与任务书 §十六 提到的官方数字吻合：基础英文 checkpoint 在
+> typed-decision benchmark 上约 **0.362**；Laya 实测 **0.417**，同一量级。
+
+## 7. 同一个 case 的稳定性
+
+```
+case: zh_delegate_001（自己 12 AIC vs 委托 4 AIC + 高成功率）
+20 次结果: {'SELF': 20}
+same-choice ratio = 20/20 = 100%
+```
+
+**完全稳定** —— 但**稳定在错误的答案上**（ground truth = DELEGATE_B）。
+
+> ⚠️ 这比「不稳定」更危险：一个**高置信度且稳定错误**的决策层，
+> 会系统性地把 Agent 推向错误策略。
+> 任务书 §十八 说「一致性很重要」—— 这里是反例：
+> **一致性只在不正确率低的时候才是优点。**
+
+## 8. Confidence 与正确率是否相关？
+
+```
+confidence median = 0.811
+high-confidence accuracy = 47%   (n=30)
+low-confidence  accuracy = 37%   (n=30)
+```
+
+**只有 10 个百分点的差距**，而且两个都远低于可用水平。
+
+> 任务书 §十五 设想的链路是：
+> ```
+> confidence high → 直接执行
+> confidence low  → 交给 Slow LLM
+> ```
+> **实测不支持这个设计**：高置信度的答案只有 47% 是对的。
+> 如果照这个阈值分流，会把**一半以上的错误**当成「可以直接执行」。
+
+## 9. 与规则基线相比
+
+**输 27 个百分点**（41.7% vs 68.3%），而且在**每一个难度档**上都输：
+
+```
+easy    45% vs 90%
+medium  50% vs 70%
+hard    30% vs 45%
+```
+
+## 10. 与少量真实 DeepSeek 对比
+
+**未做**（Baseline C）。原因：先要 B 输给 A，才值得花真实 API 去做三方对照。
+结论不会因为 DeepSeek 的数字而改变 —— Laya 已经输给了**不打 API**的规则基线。
+
+---
+
+## 11. 最终结论
+
+# **11. 是否建议进入 V1 Fast Decision Layer 候选？**
+
+# **NO**
+
+**理由（全部基于实测，不是偏好）：**
+
+1. **准确率 41.7%，低于零成本规则基线 68.3%。** 一个决策层如果打不过
+   `if delegate_cost < self_cost` 这种一行代码，它没有存在价值。
+2. **它在 easy 档就只有 45%。** 不能退守成「只用于简单决策」——
+   简单决策规则基线已经有 90%。
+3. **Confidence 几乎不含信息**（高 47% vs 低 37%）。
+   这直接击穿了「高置信度直接执行、低置信度交给 Slow LLM」的设想。
+4. **一致性反而是风险**：稳定地在错答案上给 0.949 的概率。
+
+**它确实做到了的**：真的在 M1 上跑起来、真的 MPS、median 36ms、
+内存约 2.1GB 且 swap 为 0、结构化输出无文本生成（`output_tokens: 0`）。
+
+> **它很快，但它不够对。** 而 Fast Decision Layer 的价值前提是「对」。
+
+---
+
+## 12. 值得记录的两个副产品
+
+**① 中文 > 英文（50.0% vs 33.3%）**
+如果未来要重新评估本地决策模型，**multilingual 方向值得继续看** ——
+但要用一个**专为 AI Economy 微决策 fine-tune 过**的 checkpoint，
+而不是通用 zero-shot 的。
+
+**② 「问题设计不适合」和「模型能力不足」要分开**
+实测里 `invest_tool`（66.7%）明显好于 `model_selection` / `recheck_result`（16.7%）。
+后者都涉及**多个数值之间的权衡**。这更像「zero-shot typed decision 不擅长
+数值优化」，而不是「模型太笨」。
+
+按任务书 §十八，这是后续路线的一个候选：
+> 用 Laya 做**低级判断**，用专门 fine-tuned 的 Decision Model 做经济判断。
+> **但本轮数据不支持把 Laya 直接放进 V1。**

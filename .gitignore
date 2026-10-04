@@ -61,3 +61,6 @@ agents/*/workspace/*
 .vscode/settings.json
 .idea/
 *.swp
+
+# Decision Lab 的 HF 模型缓存（大文件，不进仓库）
+decision-lab/.hf-cache/
