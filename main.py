@@ -81,6 +81,7 @@ from services import (
 )
 from core.paths import ensure_runtime_dirs                      # noqa: E402
 from llm import LLMCallRecorder, LLMRouter, LLMError            # noqa: E402
+from llm.credential import CredentialResolver                   # noqa: E402
 from communication import (                                     # noqa: E402
     CommunicationManager,
     DEFAULT_CLAIM_LEASE_SECONDS,
@@ -562,6 +563,10 @@ def build_runtime(db_path: Optional[str] = None) -> Runtime:
 
     # --- LLM 层 ---
     router = LLMRouter(config)
+
+    # 凭据解析器：全局配置 + 每个 Agent 自己的 credential。
+    # 🔒 它是**唯一**知道「key 从哪来 / 优先级是什么」的地方。
+    credential_resolver = CredentialResolver(config)
     # 记录器需要知道当前的兑换比例，好在每条记录里存下汇率快照。
     # 注意：这里只【存快照】，不算成本 —— 算成本是 Step 6 的事。
     recorder = LLMCallRecorder(
@@ -612,6 +617,9 @@ def build_runtime(db_path: Optional[str] = None) -> Runtime:
             router=router,
             settings=BrainSettings.from_agent_config(agent.config),
             recorder=recorder,
+            # 🔒 交给 Brain 的是「**怎么解析**凭据」，而**不是** key 本身。
+            credential_resolver=credential_resolver,
+            credential_config=agent.config.credential,
         )
         agent.attach_brain(brain)
 
@@ -4152,6 +4160,69 @@ def _run_hello_demo(
     return replace(base, ok=True, stage="done")
 
 
+# ============================================================
+# 命令：credential-demo（Agent 独立 Credential）
+# ============================================================
+def cmd_credential_demo(runtime: Runtime, args: argparse.Namespace) -> int:
+    """
+    显示每个 Agent 实际用的是**哪个** Credential。
+
+    🔒 只显示 `credential_ref` / source / available —— **绝不显示 key**。
+
+    默认**不打真实 API**（只展示解析结果）。
+    加 `--real` 才会各调一次真实 provider ——
+    这样「多 Key 真实验证」永远不会混进 pytest（任务书 §18）。
+    """
+    agents = list(runtime.economy.all_agents())
+    if not agents:
+        print("没有可用 Agent。")
+        return 1
+
+    banner = "=" * 52
+    print()
+    print(banner)
+    print("  AI Economy OS — Agent Credential Demo")
+    print(banner)
+
+    only = getattr(args, "agent", None)
+    rows = []
+    for agent in agents:
+        if only and agent.agent_id != only:
+            continue
+        provider = getattr(args, "provider", None) or agent.brain.provider
+        cred = agent.brain.credential_for(provider)
+        rows.append((agent, provider, cred))
+
+    print()
+    for agent, provider, cred in rows:
+        print(f"  {agent.agent_id}")
+        print(f"    provider       = {provider}")
+        print(f"    model          = {agent.brain.model or '（provider 默认）'}")
+        print(f"    credential_ref = {cred.ref}")
+        print(f"    source         = {cred.source}")
+        print(f"    available      = {cred.available}")
+        if getattr(args, "real", False):
+            try:
+                resp = agent.generate(messages="Reply with exactly: OK",
+                                      provider=provider)
+                print(f"    request        = successful")
+                print(f"    response model = {resp.model}")
+                print(f"    tokens         = {resp.input_tokens}"
+                      f"+{resp.output_tokens}  latency={resp.latency_ms:.0f}ms")
+            except Exception as exc:                    # noqa: BLE001
+                # 🔒 异常信息里也**不能**有 key（provider 已做 scrub）
+                print(f"    request        = FAILED ({type(exc).__name__})")
+                print(f"    reason         = {str(exc)[:160]}")
+        print()
+
+    print(banner)
+    print("  🔒 上面没有任何 API Key —— 只有 credential_ref。")
+    if not getattr(args, "real", False):
+        print("     加 --real 才会真正调用 provider（默认不打真实 API）。")
+    print()
+    return 0
+
+
 def cmd_hello_demo(runtime: Runtime, args: argparse.Namespace) -> int:
     """
     `./dev.sh hello-demo` —— 第一次真正“使用”这个系统。
@@ -5955,6 +6026,16 @@ def build_parser() -> argparse.ArgumentParser:
     hello.add_argument("--provider", default=None,
                        help="指定 LLM provider（默认自动挑一个配了 key 的真实 provider）")
     hello.set_defaults(func=cmd_hello_demo)
+
+    cred = subparsers.add_parser(
+        "credential-demo", parents=[shared],
+        help="显示每个 Agent 实际使用的 LLM Credential（🔒 不显示 key）",
+    )
+    cred.add_argument("--agent", default=None, help="只看某个 Agent")
+    cred.add_argument("--provider", default=None, help="按指定 provider 解析凭据")
+    cred.add_argument("--real", action="store_true",
+                      help="真正调用 provider（默认只展示解析结果，不打 API）")
+    cred.set_defaults(func=cmd_credential_demo)
 
     snake = subparsers.add_parser(
         "snake-demo", parents=[shared],

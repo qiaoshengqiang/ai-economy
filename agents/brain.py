@@ -68,6 +68,14 @@ class BrainSettings:
     temperature: float = 0.7
     max_tokens: int = 2048
 
+    #: 🔒 **这里刻意只有 `credential_ref`，没有 `api_key`。**
+    #:
+    #:    任务书 §9：Brain 应该知道「我要用哪个 Credential」，
+    #:    但**不应该成为 Secret Store**。
+    #:    真正的明文 key 由 `CredentialResolver` 解析、直接交给 router，
+    #:    Brain 自己从不持有它。
+    credential_ref: str = ""
+
     @classmethod
     def from_agent_config(cls, agent_config: Any) -> "BrainSettings":
         """
@@ -84,6 +92,7 @@ class BrainSettings:
             system_prompt=str(agent_config.system_prompt or ""),
             temperature=float(agent_config.temperature),
             max_tokens=int(agent_config.max_tokens),
+            credential_ref=str(getattr(agent_config, "credential_ref", "") or ""),
         )
 
 
@@ -106,10 +115,19 @@ class Brain:
         router: LLMRouter,
         settings: BrainSettings,
         recorder: Optional[LLMCallRecorder] = None,
+        credential_resolver: Optional[Any] = None,
+        credential_config: Optional[dict] = None,
     ):
         self.router = router
         self.settings = settings
         self.recorder = recorder
+
+        # ---- Credential（凭据）----
+        # ⚠️ Brain **不持有 key** —— 它只持有「怎么解析 key」这件事，
+        #    并把它交给 router。这样 Brain 不会变成 Secret Store。
+        self._credential_resolver = credential_resolver
+        self._credential_config = dict(credential_config or {})
+        self._credential_cache: dict = {}
 
         # 本 Brain 被用过多少次（调试 / 测试用）
         self.call_count = 0
@@ -127,6 +145,40 @@ class Brain:
     def provider(self) -> str:
         """这个 Agent 主要用哪家。注意这只是个名字，不是代码依赖。"""
         return self.settings.provider
+
+    @property
+    def credential_ref(self) -> str:
+        """逻辑凭据标识（可安全显示）。🔒 里面没有 key。"""
+        return self.settings.credential_ref
+
+    def credential_for(self, provider: Optional[str] = None):
+        """拿到（并缓存）某个 provider 上的 Credential。🔒 返回值不可直接打印。"""
+        return self._credential_for(provider or self.settings.provider)
+
+    def _credential_for(self, provider: Optional[str]):
+        """
+        按 **实际使用的 provider** 解析凭据。
+
+        ⚠️ 为什么按 effective provider 而不是配置里的 provider：
+            `--provider doubao` 这种临时切换必须换到 doubao 的凭据，
+            否则会拿 deepseek 的 key 去请求豆包。
+        """
+        resolver = self._credential_resolver
+        if resolver is None:
+            return None
+
+        name = (provider or self.settings.provider or "").strip().lower()
+        if name in self._credential_cache:
+            return self._credential_cache[name]
+
+        cred = resolver.resolve(
+            provider=name,
+            agent_id=self.agent_id,
+            credential=self._credential_config,
+            credential_ref=self.settings.credential_ref,
+        )
+        self._credential_cache[name] = cred
+        return cred
 
     @property
     def model(self) -> str:
@@ -216,6 +268,7 @@ class Brain:
             response = self.router.generate(
                 messages=messages,
                 provider=effective_provider,
+                credential=self._credential_for(effective_provider),
                 system=effective_system or None,
                 model=effective_model,
                 temperature=effective_temperature,

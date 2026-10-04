@@ -363,6 +363,29 @@ class AgentConfig:
         return int(self.get("brain.max_tokens", 2048))
 
     @property
+    def credential(self) -> dict:
+        """
+        这个 Agent 自己的 LLM 凭据配置（§2 的两种来源）。
+
+            brain:
+              credential:
+                api_key_env: "DEEPSEEK_KEY_AGENT_A"   # 推荐
+                # 或
+                api_key: "sk-..."                      # 测试阶段合法方式
+
+        返回 {} 表示「这个 Agent 没有自己的凭据」→ 回退到全局。
+        """
+        raw = self.get("brain.credential", None)
+        if not isinstance(raw, dict):
+            return {}
+        return {k: v for k, v in raw.items() if k in ("api_key", "api_key_env")}
+
+    @property
+    def credential_ref(self) -> str:
+        """逻辑标识（日志/usage 用）。🔒 绝不含明文 key。"""
+        return str(self.get("brain.credential_ref", "") or "").strip()
+
+    @property
     def estimated_tokens_per_task(self) -> int:
         return int(self.get("capabilities.estimated_tokens_per_task", 25000))
 

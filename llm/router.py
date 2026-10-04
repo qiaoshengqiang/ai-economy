@@ -175,6 +175,7 @@ class ProviderRegistry:
         name: str,
         provider_config: Optional[Mapping[str, Any]] = None,
         default_model: str = "",
+        **extra: Any,
     ) -> LLMProvider:
         """
         造一个 Provider 实例。
@@ -202,10 +203,13 @@ class ProviderRegistry:
         factory = self._factories[key]
 
         try:
-            provider = factory(provider_config or {}, default_model)
+            provider = factory(provider_config or {}, default_model, **extra)
         except TypeError:
-            # 兼容「工厂函数只接受 provider_config」这种写法
-            provider = factory(provider_config or {})
+            try:
+                provider = factory(provider_config or {}, default_model)
+            except TypeError:
+                # 兼容「工厂函数只接受 provider_config」这种写法
+                provider = factory(provider_config or {})
 
         if not isinstance(provider, LLMProvider):
             raise ProviderNotFoundError(
@@ -321,7 +325,17 @@ class LLMRouter:
         # 为什么缓存？因为每次调用都新建一个实例的话，
         # 真实 Provider 就没法复用 HTTP 连接，而且 MockProvider
         # 的 call_count 之类的内部状态会丢失。
-        self._instances: Dict[str, LLMProvider] = {}
+        # 🔒 【本次改造的核心】缓存键从 `provider` 变成
+        #    `(provider, credential_identity)`。
+        #
+        #    以前：Agent A / Agent B 都拿 `_instances["deepseek"]` ——
+        #          同一个实例、同一个 API Key。
+        #    现在：不同 Credential 必然拿到**不同实例**，
+        #          因此不可能串 Key。
+        #
+        #    ⚠️ `credential_identity` 是**加盐哈希**，不是明文 key
+        #       （见 llm/credential.py）。
+        self._instances: Dict[Any, LLMProvider] = {}
 
     # ------------------------------------------------------------
     # 默认值
@@ -365,19 +379,31 @@ class LLMRouter:
             return True
         return bool(configured.get("enabled"))
 
-    def get_provider(self, name: Optional[str] = None) -> LLMProvider:
+    def get_provider(
+        self,
+        name: Optional[str] = None,
+        credential: Optional[Any] = None,
+    ) -> LLMProvider:
         """
-        拿到一个 Provider 实例（带缓存）。
+        拿到一个 Provider 实例（带缓存，**按 Credential 隔离**）。
 
         这一层负责把三种「用不了」的情况翻译成清晰的异常：
             enabled: false  → ProviderDisabledError
             未实现          → ProviderNotImplementedError
             名字写错        → ProviderNotFoundError
+
+        `credential`：`llm.credential.Credential` 或 None。
+            None 表示「用这个 provider 自己的全局 credential」（旧行为）。
         """
         key = (name or self.default_provider).strip().lower()
 
+        # 🔒 缓存键 = (provider, credential 身份)
+        #    没有 credential 时用 "~default" 保持旧语义。
+        credential_id = credential.identity if credential is not None else "~default"
+        cache_key = (key, credential_id)
+
         # 已缓存且可用 → 直接返回
-        cached = self._instances.get(key)
+        cached = self._instances.get(cache_key)
         if cached is not None and self.is_enabled(key):
             return cached
 
@@ -391,8 +417,14 @@ class LLMRouter:
         configured = self.provider_config(key)
         default_model = str(configured.get("model", "") or "")
 
-        provider = self.registry.create(key, configured, default_model)
-        self._instances[key] = provider
+        # 🔒 只有「解析出来确实有值」时才注入 ——
+        #    否则让 provider 走它自己的全局路径（旧配置兼容）。
+        extra: Dict[str, Any] = {}
+        if credential is not None and getattr(credential, "available", False):
+            extra["api_key_override"] = credential.material
+
+        provider = self.registry.create(key, configured, default_model, **extra)
+        self._instances[cache_key] = provider
         return provider
 
     # ------------------------------------------------------------
@@ -406,13 +438,15 @@ class LLMRouter:
         model: Optional[str] = None,
         temperature: float = 0.7,
         max_tokens: int = 2048,
+        credential: Optional[Any] = None,
         **kwargs: Any,
     ) -> LLMResponse:
         """
         派发一次生成请求。
 
         参数：
-            provider: 不传就用配置里的默认 provider
+            provider:   不传就用配置里的默认 provider
+            credential: 用哪个凭据（None = provider 的全局凭据）
             其余参数原样透传给 Provider
 
         返回：LLMResponse（统一结构）
@@ -421,7 +455,7 @@ class LLMRouter:
             这里以后会加自动 fallback —— 主 provider 失败时
             按配置换备用 provider 重试。
         """
-        target = self.get_provider(provider)
+        target = self.get_provider(provider, credential=credential)
 
         if not target.is_available():
             reason = target.unavailable_reason() or "原因未知"

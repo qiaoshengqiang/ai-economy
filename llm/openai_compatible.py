@@ -209,12 +209,24 @@ class OpenAICompatibleProvider(LLMProvider):
         provider_config: Optional[Mapping[str, Any]] = None,
         default_model: str = "",
         http_post: Optional[HTTPPost] = None,
+        api_key_override: Optional[str] = None,
     ):
         """
         参数：
             provider_config: config.yaml 里该 provider 那一段
             default_model:   兜底模型名
             http_post:       注入自定义 HTTP 实现（测试用）
+            api_key_override: **已经解析好的** key
+
+        【为什么是「已解析好的」而不是「credential 配置」】
+
+            Provider **不应该**去理解 credential 配置的优先级规则 ——
+            那是 `CredentialResolver` 的职责。
+            Provider 只接受最终结果，于是「key 从哪来」这件事
+            全项目只有**一个**地方定义（resolver）。
+
+        🔒 注意它**仍然不读配置文件里的 key** ——
+           传进来的是 resolver 的结果，不是让它自己去翻 config。
         """
         super().__init__(provider_config=provider_config, default_model=default_model)
 
@@ -223,7 +235,10 @@ class OpenAICompatibleProvider(LLMProvider):
         # --- Key：只从环境变量读，绝不从配置文件读 ---
         # 存的是「环境变量的名字」，不是 key 本身。
         self.api_key_env = str(cfg.get("api_key_env") or self.DEFAULT_API_KEY_ENV)
-        self._api_key = os.environ.get(self.api_key_env, "").strip()
+        # 🔒 优先级：注入的（已由 CredentialResolver 解析）> 环境变量
+        self._api_key = (
+            api_key_override or os.environ.get(self.api_key_env, "")
+        ).strip()
 
         # --- base_url：环境变量 > 配置 > 类默认值 ---
         self.base_url_env = str(cfg.get("base_url_env") or self.DEFAULT_BASE_URL_ENV)
@@ -647,8 +662,16 @@ class OpenAICompatibleProvider(LLMProvider):
         started = time.perf_counter()
         try:
             result = self._http_post(self.endpoint, payload, headers, self.timeout)
-        except LLMRequestError:
+        except LLMRequestError as exc:
+            # ⚠️ **实测抓到的泄露点**：
+            #    以前这里直接 `raise` —— 如果 HTTP 层把 key 拼进了消息
+            #    （连接失败的 URL / 头部回显等），这个 key 会**原样**
+            #    进日志、进 llm_calls 表、进 CLI。
+            #    任务书 §12.4 明确要求「错误信息里不能出现 key」。
             self.error_count += 1
+            scrubbed = self._scrub(str(exc))
+            if scrubbed != str(exc):
+                raise LLMRequestError(scrubbed) from exc
             raise
         except Exception as exc:  # noqa: BLE001
             # 任何没预料到的异常也统一进异常体系，
