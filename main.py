@@ -4371,6 +4371,530 @@ def cmd_credential_demo(runtime: Runtime, args: argparse.Namespace) -> int:
     return 0
 
 
+# ============================================================
+# 命令：three-agent-demo（第一次真实三 Agent 协作实验）
+# ============================================================
+#
+# ⚠️ 【这是什么，不是什么】
+#
+#   这是一个 **Smoke Demo 专用的编排代码**。
+#   它存在的原因：系统当前**没有**通用 Tool Calling，
+#   所以 LLM 的自然语言输出需要一个很薄的东西接回系统 API。
+#
+#   🔒 它**不是**：
+#       · Tool Calling Framework / Function Calling
+#       · Capability Framework / Tool Registry / Action Schema
+#       · 通用 Agent Orchestrator
+#       · 正式 Workspace → Worktree Materializer
+#
+#   下面那个 parser 只认「本 Demo 约定的行格式」，
+#   换一个任务就得重写 —— 这正说明它不是通用抽象。
+
+THREE_DEMO_DEMAND = (
+    "请实现一个极小的 Python calculator 模块："
+    "提供 add(a, b) / subtract(a, b) / multiply(a, b) 三个函数，"
+    "并提供对应的测试。"
+)
+
+THREE_DEMO_WORKSPACE = "WS-THREE-AGENT-DEMO"
+
+#: 三个 Agent 的角色（§五/§六/§七）
+THREE_ROLES = {
+    "agent_a": "Planner / Coordinator",
+    "agent_b": "Implementer",
+    "agent_c": "Reviewer / Tester",
+}
+
+
+# ------------------------------------------------------------
+# Demo 专用 parser（只认简单文本，不要求模型输出 JSON）
+# ------------------------------------------------------------
+# 🔒 §十二：**故意不用 JSON**。
+#    实测 doubao 在「把代码转义进 JSON 字符串」时约 50% 会吐坏 JSON，
+#    所以这里用「行标记 + 裸文本」，模型不需要转义任何东西。
+def _td_section(text: str, marker: str) -> str:
+    """取 `marker` 之后、下一个 `===` 标记之前的**原样文本**。"""
+    if not text:
+        return ""
+    idx = text.find(marker)
+    if idx < 0:
+        return ""
+    body = text[idx + len(marker):]
+    nxt = body.find("\n===")
+    return (body if nxt < 0 else body[:nxt]).strip()
+
+
+def _td_parse_files(text: str) -> dict:
+    """
+    解析 `===FILE: <name>===` 块。
+
+    ⚠️ 同样**不转义** —— 代码原样写在标记之间。
+       这和 snake-demo 的分隔符格式是同一个思路。
+    """
+    import re as _re
+
+    files: dict = {}
+    pattern = _re.compile(r"^===\s*FILE:\s*(.+?)\s*===\s*$", _re.MULTILINE)
+    marks = list(pattern.finditer(text))
+    for i, m in enumerate(marks):
+        name = m.group(1).strip().strip("`\"'")
+        start = m.end()
+        end = marks[i + 1].start() if i + 1 < len(marks) else len(text)
+        body = text[start:end]
+        # 去掉尾部的 ===END=== 之类
+        body = _re.split(r"^===\s*(?:END|REVIEW|SUMMARY)\s*===\s*$",
+                         body, flags=_re.MULTILINE)[0]
+        # 去掉可能包着的 ``` 围栏
+        body = _re.sub(r"^\s*```[a-zA-Z]*\s*\n", "", body)
+        body = _re.sub(r"\n```\s*$", "\n", body)
+        if name:
+            files[name] = body.strip("\n") + "\n"
+    return files
+
+
+def _td_prompt_a(demand: str, task_id: str, ws: str) -> str:
+    return (
+        "你是 Planner Agent（规划者）。\n"
+        "你**不能**直接修改共享的 Task Workspace —— 你只负责规划。\n"
+        "你会把计划交给 Implementer Agent。\n\n"
+        f"Human Demand:\n{demand}\n\n"
+        f"Task ID: {task_id}\nTask Workspace: {ws}\n"
+        "当前角色: Planner / Coordinator\n\n"
+        "请给出一个**最小**实现计划（3-5 条即可）。\n"
+        "只输出下面这个格式，不要任何额外说明：\n\n"
+        "===PLAN===\n"
+        "<你的计划>\n"
+        "===END===\n"
+    )
+
+
+def _td_prompt_b(demand: str, plan: str, task_id: str) -> str:
+    return (
+        "你是 Implementer Agent（实现者）。\n"
+        "你接收 Planner 的计划，并生成完整可运行的文件。\n\n"
+        f"Human Demand:\n{demand}\n\n"
+        f"Planner 的计划:\n{plan}\n\n"
+        f"Task ID: {task_id}\n\n"
+        "请生成两个文件：calculator.py 和 test_calculator.py\n"
+        "要求：add(a, b) / subtract(a, b) / multiply(a, b)，并用 pytest 测试。\n\n"
+        "只输出下面这个格式，**不要用 JSON、不要加解释**，\n"
+        "文件内容**原样**写在标记之间（不要做任何转义）：\n\n"
+        "===NOTE===\n<一句话说明你的实现>\n"
+        "===FILE: calculator.py===\n"
+        "<calculator.py 的完整内容>\n"
+        "===FILE: test_calculator.py===\n"
+        "<test_calculator.py 的完整内容>\n"
+        "===END===\n"
+    )
+
+
+def _td_prompt_c(demand: str, files: dict, test_output: str,
+                 test_ok: bool) -> str:
+    listing = "\n\n".join(f"--- {k} ---\n{v}" for k, v in files.items())
+    return (
+        "你是 Reviewer Agent（审查者）。\n"
+        "你**不能**重写代码 —— 只做审查。\n\n"
+        f"Human Demand:\n{demand}\n\n"
+        f"Task Workspace 中的代码:\n{listing}\n\n"
+        f"Demo Harness 实际运行 pytest 的结果（退出码 "
+        f"{'0 = 通过' if test_ok else '非 0 = 失败'}）:\n{test_output[:1500]}\n\n"
+        "请审查，至少覆盖这四点：\n"
+        "  1. 代码是否满足需求（三个函数）\n"
+        "  2. 测试是否覆盖三个函数\n"
+        "  3. 是否存在明显错误\n"
+        "  4. 测试是否通过（结合上面的真实结果，不要自己猜）\n\n"
+        "只输出下面这个格式，不要额外说明：\n\n"
+        "===REVIEW===\n<你的审查结果>\n"
+        "===VERDICT===\nPASS 或 FAIL\n"
+        "===END===\n"
+    )
+
+
+def _td_prompt_a_final(demand: str, plan: str, note: str,
+                       review: str, test_ok: bool) -> str:
+    return (
+        "你是 Planner Agent。这次协作已经结束，请做**最终总结**。\n\n"
+        f"Human Demand:\n{demand}\n\n"
+        f"你的计划:\n{plan}\n\n"
+        f"Implementer 的说明:\n{note}\n\n"
+        f"Reviewer 的审查:\n{review}\n\n"
+        f"真实 pytest 结果: {'通过' if test_ok else '失败'}\n\n"
+        "请输出最终总结，至少包含：\n"
+        "  1. 任务是否完成\n  2. B 是否完成实现\n"
+        "  3. C 是否通过审查\n  4. 测试是否通过\n\n"
+        "只输出下面这个格式：\n\n"
+        "===FINAL SUMMARY===\n<总结>\n"
+        "===END===\n"
+    )
+
+
+# ------------------------------------------------------------
+# 主流程
+# ------------------------------------------------------------
+async def _run_three_agent_demo(runtime: Runtime, *, keep=None) -> dict:
+    """
+    A → B → C → A 的真实协作闭环（全程真 LLM + 真通信 + 真唤醒）。
+    """
+    import asyncio as _asyncio
+
+    comm = runtime.communication
+    gw = runtime.workspace_gateway
+    log: list = []
+    calls: dict = {}
+
+    def say(n, text):
+        log.append((n, text))
+        print(f"  [{n:2d}] {text}")
+
+    agents = {a.agent_id: a for a in runtime.economy.all_agents()}
+    a, b, c = agents["agent_a"], agents["agent_b"], agents["agent_c"]
+
+    # ---------- [1] Human Demand ----------
+    say(1, "Human Demand created")
+    say(2, f"Task Workspace: {THREE_DEMO_WORKSPACE}")
+
+    task = Task.create(
+        creator="agent_a",
+        description=THREE_DEMO_DEMAND,
+        workspace_id=THREE_DEMO_WORKSPACE,
+        participants=["agent_a", "agent_b", "agent_c"],
+        note="three-agent-demo",
+    )
+    runtime.tasks.save(task)
+
+    # 🔒 【实测踩到的 Workspace Core 语义】
+    #
+    #   第一版写的是 `ensure_workspace(WS, "agent_a")`，
+    #   B 写 Task Workspace 时被拒：
+    #       NOT_EFFECTIVE_LOCK_HOLDER
+    #
+    #   原因：Workspace Core **没有 lock() API** ——
+    #   「责任」只能来自 Create / Handoff / Release。
+    #   谁**创建**了根，谁就持有根的锁；B 在 A 持有的根下创建文件 → 被拒。
+    #
+    #   按本次角色分工，**写共享代码的是 B**（§五：A 不直接修改共享代码），
+    #   所以根应当由 **B** 创建 —— 于是 B 天然持有写责任。
+    #   （C 只读，读靠 participation，不需要锁。）
+    gw.ensure_workspace(THREE_DEMO_WORKSPACE, "agent_b")
+
+    # ---------- 角色状态 ----------
+    state: dict = {"plan": "", "note": "", "review": "", "files": {},
+                   "test_ok": False, "test_out": "", "summary": "",
+                   "errors": []}
+
+    # ============================================================
+    # Agent B：收到 A 的消息后被唤醒
+    # ============================================================
+    async def b_on_message(message):
+        plan = message.text
+        state["plan"] = plan
+        say(6, "Agent B woke up  ← 被 A 的消息唤醒（不是直接调用）")
+        say(7, f"Agent B thinking... provider={b.brain.provider}")
+        r = await _asyncio.to_thread(
+            b.generate, _td_prompt_b(THREE_DEMO_DEMAND, plan, task.task_id))
+        calls["b"] = _td_call_info(r)
+        say(8, f"Agent B LLM: {r.provider} / {r.model}  "
+               f"simulated={r.simulated}  {r.latency_ms:.0f}ms")
+
+        files = _td_parse_files(r.content)
+        if not files:
+            raise RuntimeError("B 没有产出可解析的文件（格式不符）")
+        state["files"] = files
+        state["note"] = _td_section(r.content, "===NOTE===") or "(无说明)"
+
+        # Private Workspace
+        b.write_private("implementation.txt",
+                        f"# Agent B 实现记录\n\n{state['note']}\n\n"
+                        f"产出文件: {', '.join(sorted(files))}\n")
+        say(9, "Agent B wrote private implementation.txt")
+
+        # Task Workspace（共享）
+        for name, content in files.items():
+            existing = gw.read(THREE_DEMO_WORKSPACE, f"/{name}", "agent_b")
+            if existing.success:
+                gw.edit(THREE_DEMO_WORKSPACE, f"/{name}",
+                        existing.result["revision"], content, "agent_b")
+            else:
+                made = gw.create(THREE_DEMO_WORKSPACE, "/", name, "file",
+                                 "agent_b", content=content)
+                if not made.success:
+                    raise RuntimeError(f"写 Task Workspace 失败：{name} "
+                                       f"{made.error_code}")
+        say(10, f"Agent B wrote Task Workspace files: "
+                f"{', '.join(sorted(files))}")
+
+        await b.send("agent_c", text=f"implementation finished\n\n"
+                                     f"{state['note']}")
+        say(11, "B -> C message sent")
+
+    # ============================================================
+    # Agent C：收到 B 的消息后被唤醒
+    # ============================================================
+    async def c_on_message(message):
+        say(12, "Agent C woke up  ← 被 B 的消息唤醒")
+        say(13, "Agent C thinking... 先读 Task Workspace")
+
+        # 读共享代码（经 Workspace Gateway，不是直接读盘）
+        files = {}
+        for name in ("calculator.py", "test_calculator.py"):
+            rd = gw.read(THREE_DEMO_WORKSPACE, f"/{name}", "agent_c")
+            if rd.success:
+                files[name] = rd.result["content"]
+
+        # Demo Harness 的**临时** materialize + 真跑 pytest
+        test_out, test_ok = _td_run_pytest(files, keep)
+        state["test_out"], state["test_ok"] = test_out, test_ok
+        say(14, f"Tests executed: exit={'0 (PASS)' if test_ok else '? (FAIL)'}"
+                f"  ← Demo 临时物化，不是正式 Materializer")
+
+        r = await _asyncio.to_thread(
+            c.generate, _td_prompt_c(THREE_DEMO_DEMAND, files,
+                                     test_out, test_ok))
+        calls["c"] = _td_call_info(r)
+        say(15, f"Agent C LLM: {r.provider} / {r.model}  "
+                f"simulated={r.simulated}  {r.latency_ms:.0f}ms")
+
+        review = _td_section(r.content, "===REVIEW===") or r.content.strip()
+        verdict = _td_section(r.content, "===VERDICT===") or "(未给出)"
+        state["review"] = f"{review}\n\nVERDICT: {verdict}"
+
+        c.write_private("review.txt",
+                        f"# Agent C 审查记录\n\n{state['review']}\n\n"
+                        f"pytest exit ok: {test_ok}\n")
+        say(16, "Agent C wrote private review.txt")
+
+        await c.send("agent_a", text=f"review finished\n\n{state['review']}")
+        say(17, "C -> A message sent")
+
+    # ============================================================
+    # Agent A：收到 C 的消息后被唤醒 → 最终总结
+    # ============================================================
+    async def a_on_message(message):
+        say(18, "Agent A woke up  ← 被 C 的消息唤醒（第二次思考）")
+        r = await _asyncio.to_thread(
+            a.generate, _td_prompt_a_final(
+                THREE_DEMO_DEMAND, state["plan"], state["note"],
+                state["review"], state["test_ok"]))
+        calls["a_final"] = _td_call_info(r)
+        say(19, f"Agent A final LLM: {r.provider} / {r.model}  "
+                f"simulated={r.simulated}  {r.latency_ms:.0f}ms")
+        state["summary"] = _td_section(r.content, "===FINAL SUMMARY===") \
+            or r.content.strip()
+
+    # 🔒 handler 里的异常如果不管，就会变成「Demo 卡住但什么都不报」
+    def _guard(name, fn):
+        async def wrapped(message):
+            try:
+                return await fn(message)
+            except Exception as exc:                      # noqa: BLE001
+                import traceback as _tb
+                state["errors"].append(
+                    f"{name}: {type(exc).__name__}: {exc}\n"
+                    + _tb.format_exc()[-800:])
+                print(f"  [!!] {name} handler 出错: {type(exc).__name__}: {exc}")
+                raise
+        return wrapped
+
+    a.on_message(_guard("agent_a", a_on_message))
+    b.on_message(_guard("agent_b", b_on_message))
+    c.on_message(_guard("agent_c", c_on_message))
+
+    # ---------- 启动三个 Runtime（每人**一个**循环） ----------
+    rts = {aid: AgentRuntime(agent=ag, communication=comm)
+           for aid, ag in (("agent_a", a), ("agent_b", b), ("agent_c", c))}
+    rttasks = [asyncio.create_task(rt.run_forever()) for rt in rts.values()]
+    for rt in rts.values():
+        for _ in range(5000):
+            if rt.is_busy:
+                break
+            await asyncio.sleep(0)
+    say(3, "Three Agent Runtimes started (sleeping, waiting for wakeup)")
+
+    # ---------- A 作为 Planner 先动 ----------
+    say(4, "Agent A thinking...（规划）")
+    r0 = await asyncio.to_thread(
+        a.generate, _td_prompt_a(THREE_DEMO_DEMAND, task.task_id,
+                                 THREE_DEMO_WORKSPACE))
+    calls["a_plan"] = _td_call_info(r0)
+    say(5, f"Agent A LLM: {r0.provider} / {r0.model}  "
+           f"simulated={r0.simulated}  {r0.latency_ms:.0f}ms")
+
+    plan = _td_section(r0.content, "===PLAN===") or r0.content.strip()
+    state["plan"] = plan
+    a.write_private("plan.txt", f"# Agent A 规划\n\n{plan}\n")
+    say(5, "Agent A wrote private plan.txt")
+
+    await a.send("agent_b", text=plan)
+    say(5, "A -> B message sent")
+
+    # ---------- 等闭环完成 ----------
+    # 🔒 用**挂钟超时**，不是迭代次数。
+    #    第一版是 `for _ in range(40000): sleep(0.05)` = 2000 秒，
+    #    失败时看起来就是「卡死」，而且不给任何诊断。
+    deadline = asyncio.get_event_loop().time() + 240.0
+    while asyncio.get_event_loop().time() < deadline:
+        if state["summary"] or state["errors"]:
+            break
+        await asyncio.sleep(0.05)
+
+    # ---------- 收尾 ----------
+    for rt in rts.values():
+        rt.stop()
+    try:
+        await asyncio.wait_for(asyncio.gather(*rttasks), timeout=10)
+    except Exception:
+        for tk in rttasks:
+            tk.cancel()
+
+    return {
+        "log": log, "calls": calls, "state": state,
+        "wakeups": {aid: rt.wakeup_count for aid, rt in rts.items()},
+        "processed": {aid: rt.processed_count for aid, rt in rts.items()},
+        "task_id": task.task_id,
+    }
+
+
+def _td_call_info(resp) -> dict:
+    return {
+        "provider": resp.provider, "model": resp.model,
+        "simulated": bool(resp.simulated),
+        "input_tokens": resp.input_tokens, "output_tokens": resp.output_tokens,
+        "latency_ms": resp.latency_ms,
+    }
+
+
+def _td_run_pytest(files: dict, keep) -> tuple:
+    """
+    🔒 **Demo Harness 的临时测试机制**，不是正式 Materializer。
+
+    把 Task Workspace 里的文件写到一个临时目录，然后跑 pytest。
+    正式 Materializer（Workspace → Worktree）属于 Patch 阶段，本 Demo 不做。
+    """
+    import tempfile as _tempfile
+
+    if not files:
+        return "(Task Workspace 里没有文件)", False
+
+    root = Path(keep) if keep else Path(
+        _tempfile.mkdtemp(prefix="aieco-three-agent-demo-"))
+    root.mkdir(parents=True, exist_ok=True)
+    for name, content in files.items():
+        target = root / Path(name).name
+        target.write_text(content, encoding="utf-8")
+
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider"],
+            cwd=str(root), capture_output=True, text=True, timeout=120,
+        )
+    except Exception as exc:                              # noqa: BLE001
+        return f"pytest 运行失败：{type(exc).__name__}: {exc}", False
+
+    out = (proc.stdout or "") + (proc.stderr or "")
+    return out.strip()[-1500:], proc.returncode == 0
+
+
+def cmd_three_agent_demo(runtime: Runtime, args: argparse.Namespace) -> int:
+    """
+    `./dev.sh three-agent-demo` —— 第一次真实三 Agent 协作。
+
+    ⚠️ 这是一个 **真实 API Demo**（会调用 DeepSeek + Doubao）。
+       它**不在** pytest 里 —— 必须显式运行。
+    """
+    import asyncio as _asyncio
+
+    banner = "=" * 60
+    print()
+    print(banner)
+    print("  AI Economy OS — Three-Agent Collaboration Demo")
+    print(banner)
+    print()
+    print("  A = Planner     (agent_a)   B = Implementer (agent_b)")
+    print("  C = Reviewer    (agent_c)")
+    print()
+
+    result = _asyncio.run(_run_three_agent_demo(
+        runtime, keep=getattr(args, "keep_artifacts", None)))
+
+    state = result["state"]
+    banner2 = "=" * 60
+    print()
+    print(banner2)
+    print("  协作链路")
+    print(banner2)
+    # ⚠️ 用**真实计数**判断，不是无条件打勾。
+    #    （第一版这六行全是写死的 ✓ —— 而 C/A 其实一次都没被唤醒。）
+    wk, pr = result["wakeups"], result["processed"]
+    def mark(n):
+        return "✓" if n >= 1 else "✗"
+    print(f"  A -> B   message          {'✓' if pr.get('agent_b',0) else '✗'}")
+    print(f"  B wakeup                  {mark(wk.get('agent_b',0))} "
+          f"({wk.get('agent_b',0)} 次)")
+    print(f"  B -> C   message          "
+          f"{'✓' if pr.get('agent_c',0) else '✗'}")
+    print(f"  C wakeup                  {mark(wk.get('agent_c',0))} "
+          f"({wk.get('agent_c',0)} 次)")
+    print(f"  C -> A   message          "
+          f"{'✓' if result['state'].get('summary') else '✗'}")
+    print(f"  A wakeup                  {mark(wk.get('agent_a',0))} "
+          f"({wk.get('agent_a',0)} 次)")
+
+    print()
+    print(banner2)
+    print("  真实 LLM 调用")
+    print(banner2)
+    labels = {"a_plan": "A 规划", "b": "B 实现", "c": "C 审查",
+              "a_final": "A 总结"}
+    all_real = True
+    for key in ("a_plan", "b", "c", "a_final"):
+        info = result["calls"].get(key)
+        if not info:
+            print(f"  {labels[key]:8s} ❌ 没有记录")
+            all_real = False
+            continue
+        ok = not info["simulated"]
+        all_real = all_real and ok
+        print(f"  {labels[key]:8s} {info['provider']:9s} "
+              f"{info['model']:36s} simulated={info['simulated']}  "
+              f"{info['latency_ms']:.0f}ms")
+
+    print()
+    print(banner2)
+    print("  最终总结（Agent A 真实 LLM 输出）")
+    print(banner2)
+    for line in (state["summary"] or "(空)").splitlines():
+        print(f"  {line}")
+
+    print()
+    print(banner2)
+    print(f"  pytest（由 Demo Harness 临时物化后真实运行）: "
+          f"{'通过 ✅' if state['test_ok'] else '失败 ❌'}")
+    print(banner2)
+    print()
+    print("  Private Workspace（各自的私有资产）:")
+    for aid in ("agent_a", "agent_b", "agent_c"):
+        ag = runtime.economy.agent(aid)
+        names = [n for n in ag.list_private() if not n.startswith(".")]
+        print(f"    {aid}: {names}")
+    print()
+    print("  Task Workspace（三个 Agent 共享）:")
+    listing = runtime.workspace_gateway.list(THREE_DEMO_WORKSPACE, "/",
+                                             "agent_a")
+    if listing.success:
+        for entry in listing.result["entries"]:
+            print(f"    {entry.get('name')}")
+    print()
+    if all_real and state["test_ok"] and state["summary"]:
+        print(banner2)
+        print("  ✅ THREE-AGENT COLLABORATION OK")
+        print(banner2)
+        return 0
+    print(banner2)
+    print("  ❌ DEMO INCOMPLETE")
+    print(banner2)
+    return 1
+
+
 def cmd_hello_demo(runtime: Runtime, args: argparse.Namespace) -> int:
     """
     `./dev.sh hello-demo` —— 第一次真正“使用”这个系统。
@@ -6196,6 +6720,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Event Wakeup V1：B 睡着 → A 发消息 → B 被自动唤醒并处理",
     )
     wake.set_defaults(func=cmd_communication_wakeup_demo)
+
+    three = subparsers.add_parser(
+        "three-agent-demo", parents=[shared],
+        help="真实三 Agent 协作：A(规划) → B(实现) → C(审查) → A(总结)",
+    )
+    three.add_argument("--keep-artifacts", default=None,
+                       help="把 Demo 的临时测试目录保留到这个路径")
+    three.set_defaults(func=cmd_three_agent_demo)
 
     snake = subparsers.add_parser(
         "snake-demo", parents=[shared],

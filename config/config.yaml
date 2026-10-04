@@ -128,7 +128,19 @@ llm:
       #   ① 模型名称（推荐）：doubao-seed-1-6-250615
       #   ② 推理接入点 ID：ep-2024xxxxxxxxx-xxxxx
       # 一般填在 .env 的 DOUBAO_MODEL 里，不用改这里。
-      model: "Doubao-Seed-Evolving"
+      # 【修：这里原来是 "Doubao-Seed-Evolving" —— 那不是方舟的 model id】
+      #
+      #   实测错误体：
+      #     "The model or endpoint Doubao-Seed-Evolving does not exist"
+      #
+      #   而 .env 里的 DOUBAO_MODEL=ep-2026... 是**有效**的
+      #   （直接 curl 方舟返回 200）。
+      #
+      #   为什么留空才对：`BrainSettings.model` 留空时会回退到
+      #   这里的值，于是**盖住了** .env 的 DOUBAO_MODEL。
+      #   本段的注释本来就写着「一般填在 .env 的 DOUBAO_MODEL 里，
+      #   不用改这里」—— 现在恢复成那个设计。
+      model: ""
 
       # 【实测：这里原来也是 60，会超时】
       #

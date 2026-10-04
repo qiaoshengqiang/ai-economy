@@ -28,9 +28,13 @@ economy:
 # 大脑
 # ------------------------------------------------------------
 brain:
-  # v0.1 先用 mock。以后改成 "doubao" 就能让 B 用豆包干活。
-  provider: "mock"
-  model: ""
+  # 【本次实验：B 用真实豆包】
+  #   原来这里是 "mock"。但任务书 §一 明确要求三个 Agent
+  #   都必须是真实 LLM（不得 mock / simulated=True），
+  #   而 .env 里 DOUBAO_API_KEY / DOUBAO_MODEL 都已配好。
+  provider: "doubao"
+  model: ""                       # 留空 = 用 .env 的 DOUBAO_MODEL
+  credential_ref: "agent_b_doubao"
 
   system_prompt: |
     你是 Agent B，一个独立的经济主体。

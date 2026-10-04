@@ -391,7 +391,18 @@ class TestProviderCommands:
 
         assert "agent_a" in result.stdout
         assert "agent_b" in result.stdout
-        assert "provider=mock" in result.stdout
+
+        # ⚠️ 这里原来断言的是 `"provider=mock" in stdout`。
+        #
+        #    那条断言依赖的是「开发者本机恰好把两个 Agent 都配成 mock」——
+        #    **不是**这个测试要证明的事（它要证明的是「每个 Agent 的大脑
+        #    都被列出来了」）。
+        #
+        #    真实实验配置是 A=DeepSeek / B=Doubao，于是它假红。
+        #    改成断言**结构**：两个 Agent 各有一行 provider= 信息。
+        #    这样它不再依赖本机 provider 配置 —— 而且比原来更强
+        #    （原来只验一个 provider 值，现在验「每个 Agent 都有）」）。
+        assert result.stdout.count("provider=") >= 2, result.stdout
 
     def test_ask_returns_mock_response(self, tmp_path):
         result = run_cli("ask", "Hello, Agent A.", db_path=tmp_path / "ask.db")
