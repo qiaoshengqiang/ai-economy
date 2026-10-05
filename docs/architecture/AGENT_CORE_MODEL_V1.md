@@ -621,6 +621,8 @@ same asset  =  different semantic interpretation in different worlds
 18. Continuous Responsiveness  ≠  Continuous Thinking
 19. Work Offer / Request  ≠  Work Execution
 20. Commitment / Agreement  ≠  Execution
+21. Stimulus  ≠  Text  ≠  Agent 对 Stimulus 的理解
+22. Agent Identity ≠ Runtime Session ≠ Cognitive Runtime ≠ Provider ≠ Model
 ```
 
 特别强调两条：
@@ -1511,6 +1513,167 @@ Goal / Task / Action 的最终结构              OPEN
 ```
 
 > 🔴 **不要因为本次同步提前冻结 Goal / Task / Action 的 schema。**
+
+### §22.31 Stimulus 的定义进一步明确【`CONFIRMED`】
+
+> **Stimulus 是进入 Agent 感知范围、需要 Agent 进行处理的输入本身，
+> 而不是 Agent 对该输入的理解结果。**
+
+**载体可以不同**：
+
+```
+text · image · audio · video · structured data
+binary data · multimodal input · 未来其他 World / Gateway 提供的输入
+```
+
+例：「帮我拿一下快递」可以通过**口头语言 / 纸条 / 短信 / 图片 / 录音**
+传达 —— 媒介不同，**它们都可以成为 Agent 的 Stimulus**。
+
+```
+Stimulus  ≠  Text
+```
+
+> 🔴 **不要把 Stimulus 限定为某一种媒体。**
+
+#### 🔴 Stimulus ≠ Agent 对 Stimulus 的理解
+
+收到：「我愿意支付你 20 AIC，请帮我修复这个项目。」
+
+| | 是什么 |
+|---|---|
+| 这段输入本身 | **Stimulus** |
+| 「这是一个工作邀请，报价 20 AIC，需要进一步评估。」 | Agent 对它的**理解 / Assessment / Initial Decision** |
+
+> **不要把二者混为一谈。**
+
+### §22.32 Agent 与 Cognition Runtime 的边界【`PROVISIONAL`】
+
+**架构方向**：当前已有的 Agent Runtime / Harness 类系统通常已经提供：
+
+```
+Model Request → Tool Call → Tool Execution → Tool Result
+              → Next Model Request → …
+```
+
+> 🔴 **AI Economy OS 不应重新发明这种底层模型-工具循环。**
+
+**建议保持的分层**：
+
+```
+AI Economy OS Agent
+        ↓
+Cognitive Runtime / Harness
+        ↓
+Model
+        ↕
+Tools / Tool Results
+```
+
+**必须特别保持**：
+
+```
+AI Economy Agent Identity
+   ≠  Runtime Session
+   ≠  Cognitive Runtime
+   ≠  Provider
+   ≠  Model
+```
+
+> 因此未来可以让**同一个持久 Agent**使用不同 Cognitive Runtime /
+> Provider / Model，**而不改变 Agent Identity**。
+
+### §22.33 Initial Cognitive Run / Initial Decision【`PROVISIONAL` —— V1 候选方向】
+
+Agent 收到 Stimulus 后，**第一次真正需要模型认知时**，
+可以优先进行一次**低成本、快速**的 Initial Cognitive Run。
+
+> **目的不是立即完成完整任务**，而是：
+> **判断当前 Agent 下一步应该做什么，以及是否需要进一步认知。**
+
+可能产生：
+
+```
+Direct Reply · Reject · Ask Clarification · Evaluate Offer
+Request Information / Tool · Start Deeper Cognition · Wait / End
+```
+
+| 输入 | 第一次认知可能只得到 |
+|---|---|
+| 「你好」 | 一次模型调用 → 直接生成回复 |
+| 「支付 20 AIC，请帮我修复项目」 | 「这是工作邀请 → 需要交易 / 资源评估 → 下一步应进一步评估」 |
+
+> 🔴 **不要冻结具体实现。**
+
+#### 关于思考模式（V1 候选方向）
+
+Initial Cognitive Run 可以**优先采用非深度思考模式**，
+以降低 Token / AIC / 时间成本；只有当任务真正需要更深认知时，
+再进入更深的 Cognitive Run。
+
+🔴 **不要冻结**：
+
+```
+❌ reasoning effort 的具体值        ❌ 特定 Provider 的具体参数
+❌ 必须使用某种模型                 ❌ 必须有几个认知层级
+❌ Fast Decision Model              ❌ 独立 Decision Engine
+```
+
+> 保持此前已确认的 **`Decision Owner = Agent`** ——
+> 任何规则、工具、小模型或其他 Cognitive Resource，
+> 都只是 Agent **可使用的认知资源**，不成为独立的决策主体。
+
+### §22.34 两层 Agent Loop 的架构关系【`PROVISIONAL`】
+
+```
+Stimulus
+   ↓
+Wakeup
+   ↓
+Initial Cognitive Run
+   ↓
+Initial Decision
+   ↓
+是否需要继续
+   ├── End / Reply
+   ├── Transaction / Commitment
+   └── Deep Cognition
+             ↓
+       Cognitive Runtime
+             ↓
+       Model ↔ Tools ↔ Results
+             ↓
+       完成 / 继续 / 退出
+```
+
+> 🔴 **这里只同步「架构关系」。不要实现该流程。**
+
+#### Token / 计算资源原则【`CONFIRMED` 原则 · 归属已有概念】
+
+> **Agent 应尽可能避免不必要的认知和 Token 消耗。**
+
+这属于已有的 **Resource Stewardship**。
+
+> 🔴 **不要因此新增一个新的 Core Drive。**
+> 重点是：**降低浪费，而不是为了省 Token 而拒绝必要工作。**
+
+### §22.35 本次**未**同步的内容【保持 `OPEN` / `PROVISIONAL`】
+
+以下**本次一律不冻结**：
+
+```
+Event / Trigger / Stimulus 的全部最终语义
+Observation 的完整定义
+Assessment 的最终定义
+Gateway 与 Harness Tool Adapter 的最终关系
+Software Production World 的完整 Host / System Capability 范围
+Non-Interference 的正式规则
+System Action 的 Approval Policy
+Goal / Task / Action 最终 schema
+Initial Cognitive Run 的具体协议
+认知成本的具体计算公式
+```
+
+> 这些将在后续讨论后再单独同步。
 
 ## §23 本次**没有**因为本文档而做的事
 
