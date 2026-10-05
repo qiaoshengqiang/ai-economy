@@ -375,9 +375,10 @@ Agent Core Model V1
 │
 ├── Identity
 ├── Core Drives              ← §13  OPEN
+│                               （Self Model 的完整讨论见 §22）
 ├── Core Invariants          ← §14  PROVISIONAL
 ├── Constitution             ← §14  PROVISIONAL
-├── Self Model               ← OPEN
+├── Self Model               ← **§22**（PROVISIONAL）
 ├── Cognitive Substrate      ← §3   PROVISIONAL
 ├── Memory
 ├── Experience
@@ -621,6 +622,8 @@ same asset  =  different semantic interpretation in different worlds
 
 ## §21 最终概念地图
 
+> Self Model / Facts / Beliefs / Strategies / Meta-Cognition 见 **§22**。
+
 ```
 Agent
   ↓  是一个持续存在的数字主体
@@ -652,7 +655,276 @@ Cognitive Substrate
 
 ---
 
-## §22 本次**没有**因为本文档而做的事
+## §22 Self Model / Facts / Beliefs / Strategies / Meta-Cognition【全部 `PROVISIONAL`】
+
+> 本节把 Self Model 相关的架构讨论同步进来。
+> **除已标更高状态者外，本节全部为 `PROVISIONAL`。**
+>
+> 🔒 **这不代表要开始实现 Self Model。** 见 §23 的禁止清单。
+
+### §22.1 Self Model 的新理解
+
+不再把 Self Model 理解成简单的：
+
+```
+agent_id · balance · role · tasks · tools
+```
+
+> **Self Model 是 Agent 对自身，以及与自身行动相关的世界的动态内部认知模型。**
+
+关键区分：
+
+```
+Memory      长期经验 / 信息存储
+Self Model  当前用于认知和决策的**工作模型**
+```
+
+> **Self Model ≠ 全部 Memory。** 前者是「现在用来想事情的那张图」，
+> 后者是「存起来的资料」。
+
+### §22.2 认知信息必须区分事实、观点和策略
+
+```
+Fact
+Belief / Claim
+Strategy
+Meta-Cognition
+```
+
+> 🔴 **不要把这些混成普通 memory entries。**
+
+### §22.3 Fact（事实）
+
+暂时区分三类：
+
+| 类型 | 来源 | 例 |
+|---|---|---|
+| **Authoritative / System Fact** | 系统权威来源 | Agent Identity · AIC balance · Workspace state · Task state · Capability state |
+| **Observed Fact** | Agent 通过 World / Gateway / Message / Tool **观察**得到 | |
+| **Derived Fact** | Agent 根据其他事实**推导**得到 | |
+
+### §22.4 Belief / Claim（观点 / 主张）
+
+> **Agent 在一定条件、范围和时间内，对某个命题成立程度的认知断言。**
+
+例：「Agent B 很擅长 OCR」
+
+**应当能够进一步限定**：
+
+```
+Scope · Condition · Time · Evidence · Confidence · Source / Provenance
+```
+
+重要原则：
+
+> **条件和适用范围越明确，观点通常越容易变得可靠；
+> 但过度缩小范围也可能降低观点的普适价值。**
+
+> 🔴 **未来 Belief 不应只记录一个真假值。**
+
+### §22.5 Belief 可以形成层级
+
+```
+Fact:              B 完成 OCR 18/20 次
+                        ↓
+Belief:            B 在类似 OCR 任务上成功率较高
+                        ↓
+Higher-level:      B 是值得优先考虑的 OCR 协作者
+```
+
+越高层越抽象，**越需要依赖下层证据**。
+
+未来可以考虑记录「高层观点由哪些事实 / 观点支持」。
+
+> 🔒 **本次不要实现知识图谱。**
+
+### §22.6 Strategy（策略）
+
+> **Strategy 是 Agent 针对某类问题或情境形成的、可以重复使用的
+> 思考或行动模板，用于减少每次从零开始决策的成本。**
+
+```
+Situation:  重复的数据转换任务
+Strategy:   先检查 Private Workspace 是否已有工具
+
+Situation:  某类 OCR 任务
+Strategy:   优先询问 Agent B
+```
+
+### §22.7 Strategy 不要求绝对正确
+
+「三长一短选最短、三短一长选最长、长度接近选 C」是一个很好的例子 ——
+它是**低质量启发式**，但在「不会做题 + 时间极少 + 必须立即行动」时
+可能仍有**局部价值**。
+
+所以 Strategy 应关注：
+
+```
+Applicability · Expected Benefit · Cost · Risk
+Evidence · Failure Conditions
+```
+
+> 🔴 **而不是简单标记 `Good` / `Bad`。**
+
+### §22.8 Strategy 应该允许层级
+
+```
+Meta-Strategy
+    ↓
+General / Domain Strategy
+    ↓
+Situation Strategy
+    ↓
+Concrete Action Heuristic
+```
+
+> 🔴 **不要把策略设计成一个无结构的平面文件列表。**
+
+### §22.9 Meta-Cognition（元认知）
+
+> **Meta-Cognition 是 Agent 对自己的认知、观点和策略进行观察、评价、
+> 选择、修正和管理的能力。**
+
+至少可以包含：
+
+```
+Strategy Selection · Strategy Validation · Strategy Revision
+Strategy Abandonment · Strategy Creation
+Evidence Management · Uncertainty Management
+```
+
+自问：
+
+- 我为什么相信这个观点？
+- 这个观点的证据是什么？
+- 这个策略为什么有效？
+- 它现在还适用吗？
+- 我是否可能犯了系统性错误？
+
+### §22.10 三层认知模型（V1 建议）
+
+为了避免无限递归，V1 暂时**只考虑三层**：
+
+```
+L0   Facts / Observation
+L1   Beliefs / Strategies
+L2   Meta-Cognition —— 对 Beliefs / Strategies 进行评价和修正
+```
+
+> 🔴 **不要实现** `Meta-Meta-Strategy` / `Meta-Meta-Cognition` / …
+
+### §22.11 Experience 与 Strategy 的关系
+
+```
+Experience
+    ↓ 抽象
+Belief / Strategy
+    ↓
+未来低成本决策
+```
+
+也就是说：
+
+> **Strategy 可以看成 Agent 对过去昂贵认知过程的一种压缩。**
+
+这与 AI Economy OS 的长期目标直接相关：
+
+```
+第一次：  高认知成本
+以后：    复用 Strategy / Experience
+最终：    通过 Strategy + Tool 降低未来 AIC / Token / Time 成本
+```
+
+### §22.12 Decision 的定位【`CONFIRMED`】
+
+> **Decision 是 Agent 自身的认知活动，不建立独立的中央 Decision Model。**
+
+Agent 可以使用：
+
+```
+Facts · Beliefs · Goals · Strategies · Meta-Cognition
+Resource State · World State · LLM
+```
+
+进行自己的判断。
+
+**实测依据**（Decision Lab V1 Round 2，2026）：
+
+```
+Laya multilingual     41.7%
+Simple rule baseline  68.3%
+```
+
+详见 [`../../../decision-lab/results/summary.md`](../../../decision-lab/results/summary.md)。
+
+因此 V1：
+
+> 🔴 **不引入独立 Fast Decision Model 作为 Agent 决策中枢。**
+
+未来可以允许专门模型作为 Agent 的**一种认知资源**，
+但**这不是当前 V1 的前置条件**。
+
+### §22.13 Cognitive Budget（认知预算）
+
+即使 Decision 属于 Agent 自身，也**必须受到资源约束**。
+
+V1 至少考虑：
+
+```
+AIC Budget · Token Budget · Time Budget · Reasoning / Iteration Budget
+```
+
+原则：
+
+```
+System  →  提供**硬上限**
+Agent   →  在硬上限内自主决定如何使用认知资源
+```
+
+> 🔒 **不要把具体预算参数现在冻结。**
+
+### §22.14 Self Model 的当前候选结构
+
+**只是概念模型**：
+
+```
+Self / Cognitive Model
+│
+├── Self Facts
+├── World-Relevant Facts
+├── Beliefs / Claims
+├── Evidence / Provenance
+├── Confidence / Uncertainty
+├── Goals / Commitments
+├── Strategies
+│
+└── Meta-Cognition
+    ├── Belief Evaluation
+    └── Strategy Management
+```
+
+> 🔴 **这不是最终数据结构。**
+> **不要**设计数据库 schema · **不要**实现专门的 `SelfModel` 类 ·
+> **不要**改 Agent Runtime。
+
+### §22.15 明确留给未来的问题【全部 `OPEN`】
+
+```
+1.  Fact / Belief / Strategy 的最终数据结构
+2.  Belief 如何自动生成
+3.  Belief 冲突如何解决
+4.  来源可信度如何计算
+5.  Strategy 如何形成
+6.  Strategy 如何评价
+7.  Strategy 如何废弃
+8.  Meta-Cognition 什么时候触发
+9.  Self Model 如何从 Memory 中更新
+10. Self Model 中哪些内容必须保持最新
+```
+
+---
+
+## §23 本次**没有**因为本文档而做的事
 
 本文档是**架构同步，不是功能开发**。以下**全部未实现**，且**禁止**因为
 本文档而实现：
@@ -666,9 +938,22 @@ Cognitive Substrate
 ❌ 修改 Workspace / Communication / Credential / Worktree 基础设施
 ```
 
+**§22（Self Model）同步进来后，以下也一并明确禁止**：
+
+```
+❌ SelfModel class                ❌ Belief Engine
+❌ Strategy Engine                ❌ Meta-Cognition Engine
+❌ Knowledge Graph                ❌ Decision Engine
+❌ Fast Decision Model            ❌ Self Model 的数据库 schema
+❌ 修改 Agent Runtime（为了 Self Model）
+```
+
+> 🔒 **§22 只是把架构讨论同步给编程 Agent，避免未来开发方向偏离 ——
+> 它不是「开始实现 Self Model」的指令。**
+
 ---
 
-## §23 相关文档
+## §24 相关文档
 
 | 我想了解 | 去哪 |
 |---|---|
