@@ -611,6 +611,10 @@ same asset  =  different semantic interpretation in different worlds
 8.  World  ≠  Agent
 9.  World Capability  ≠  automatic Machine authority
 10. Private Workspace  ≠  Task Workspace
+11. Self Model      ≠  Memory
+12. Self Model      ≠  World Model
+13. World           ≠  World Model
+14. Public Manifest  ≠  Capability  ≠  Authorization
 ```
 
 特别强调两条：
@@ -670,7 +674,33 @@ Cognitive Substrate
 agent_id · balance · role · tasks · tools
 ```
 
-> **Self Model 是 Agent 对自身，以及与自身行动相关的世界的动态内部认知模型。**
+### 🔴 修正：Self Model **不**包含「世界」
+
+> **Self Model 是 Agent 对自身的动态内部认知模型。**
+
+**上一版写的是「对自身，以及与自身行动相关的世界的动态内部认知模型」——
+那会造成 Self Model 与 World Model 的概念重叠。已修正。**
+
+Self Model **可以包含**：
+
+```
+我是谁 · 我的当前状态 · 我的能力与限制 · 我的资源
+我的长期属性 · 我的目标/承诺
+我对自身认知和策略的判断
+与自身行动**直接相关**的自我知识
+```
+
+而：
+
+> **World Model = Agent 对某个 World 的动态认知。**
+
+```
+Self Model   ≠   World Model
+```
+
+World Model 属于**特定 World Context / World Presence**（见 §22.17）。
+Self Model **可以引用** World Model 中与自身有关的信息，
+但**不能因此把 World Model 纳入 Self Model 本体**。
 
 关键区分：
 
@@ -857,12 +887,48 @@ Simple rule baseline  68.3%
 
 详见 [`../../../decision-lab/results/summary.md`](../../../decision-lab/results/summary.md)。
 
-因此 V1：
+### 🔴 修正：不要把实验结果解释成「独立 Decision Model 没有意义」
 
-> 🔴 **不引入独立 Fast Decision Model 作为 Agent 决策中枢。**
+实验真正支持的是：
 
-未来可以允许专门模型作为 Agent 的**一种认知资源**，
-但**这不是当前 V1 的前置条件**。
+> **V1 不引入「独立的中央 Decision Engine」，也不把 generic
+> Fast Decision Model 当作 Agent 的「外部决策中枢」。**
+
+它**不**支持「未来任何独立决策模型都没有意义」。
+
+保持在原有边界内：
+
+```
+Decision / Deliberation                belongs to Agent
+```
+
+Agent 可以综合使用：
+
+```
+Facts · Beliefs · Strategies · Experience · Rules
+Memory · LLM · Cognitive Budget · Tools
+```
+
+未来**也可以存在**：
+
+```
+Specialized Decision Model
+```
+
+但它只能是 Agent **可使用的一种认知资源**，
+而**不是独立的「决策主体」**。
+
+```
+Agent
+  └── Decision / Deliberation
+        ├── internal reasoning
+        ├── strategies
+        ├── rules
+        ├── experience
+        └── optional cognitive resources
+```
+
+> 🔒 **Decision Owner 始终是 Agent。**
 
 ### §22.13 Cognitive Budget（认知预算）
 
@@ -887,11 +953,41 @@ Agent   →  在硬上限内自主决定如何使用认知资源
 
 **只是概念模型**：
 
+**V1 Core Model 候选结构**（§22.16–§22.22 接入后）：
+
+```
+Agent
+├── Identity / Core Self
+├── Core Drives
+├── Constitution
+├── Cognitive Substrate
+├── Memory
+├── Experience
+├── Beliefs / Claims
+├── Strategies
+├── Meta-Cognition
+├── Self Model
+├── Public Manifest
+├── World Presence[]
+│   ├── World
+│   ├── Role
+│   ├── Contextual Self
+│   ├── World Model
+│   └── Other-Agent Models
+├── Goals
+├── Tasks
+├── Decision / Deliberation
+├── Actions
+├── Assets
+└── Capabilities
+```
+
+**Self Model 自身的候选结构**：
+
 ```
 Self / Cognitive Model
 │
 ├── Self Facts
-├── World-Relevant Facts
 ├── Beliefs / Claims
 ├── Evidence / Provenance
 ├── Confidence / Uncertainty
@@ -902,6 +998,13 @@ Self / Cognitive Model
     ├── Belief Evaluation
     └── Strategy Management
 ```
+
+> ⚠️ 注意：上一版这里有一个 `World-Relevant Facts` ——
+> 按 §22.1 的修正，**World 相关认知归 World Model（§22.18），不归 Self Model**。
+> Self Model 只保留「与自身行动**直接相关**的自我知识」。
+
+> 🔴 **这仍然只是 Candidate Core Model。
+> 不要因为本次同步直接创建最终 schema。**
 
 > 🔴 **这不是最终数据结构。**
 > **不要**设计数据库 schema · **不要**实现专门的 `SelfModel` 类 ·
@@ -923,6 +1026,241 @@ Self / Cognitive Model
 ```
 
 ---
+
+### §22.16 World-specific Cognition
+
+**确认的架构思想**：
+
+```
+一个 Agent 是持久存在的数字主体
+同一个 Agent 可以进入不同 World
+进入某个 World 后，**不产生新的 Agent Identity**，
+而是在该 World 中形成一个 **World Presence**
+```
+
+```
+Agent
+├── Core Self
+│
+├── …
+│
+└── World Presence[]
+      ├── World
+      ├── Role
+      ├── Contextual Self
+      ├── World Model
+      └── Other-Agent Models
+```
+
+> **World Presence = 同一个持久 Agent 在特定 World / Role 中的上下文存在。**
+
+它**不是**：
+
+```
+❌ 新 Agent     ❌ 新 Identity
+❌ Agent clone  ❌ 独立生命体
+```
+
+### §22.17 Contextual Self
+
+> **Contextual Self = Agent 在某个特定 World / Role 中对
+> 「我是谁、我处于什么状态、我承担什么角色」的上下文认知。**
+
+同一个 Agent：
+
+```
+Core Self                       同一个持久 Agent
+──────────────────────────────  ──────────────────────
+Software World Presence          coding agent / implementation role
+Game World Presence              NPC / character role
+```
+
+> **Contextual Self 可以不同，但不能覆盖 Core Self。**
+> 🔴 **不要把 Contextual Self 实现成新的 Identity 系统。**
+
+### §22.18 World Model
+
+> **World Model = Agent 对特定 World 的内部认知模型。**
+
+可能包括：
+
+```
+World Rules · World State · Resources · Actors / Entities
+Events · Interaction Structure · Constraints
+已知 / 未知信息 · 对 World 行为规律的认知
+```
+
+```
+World        ≠   World Model
+实际环境          Agent 对这个环境的**认知**
+```
+
+因此 World Model **可以错误、不完整、有置信度**，
+也可以随着观察和经验不断变化。
+
+### §22.19 Other-Agent Model
+
+在 World Presence 中保留 **Other-Agent Model**：
+
+> **Agent 对其他 Agent 的内部认知。**
+
+例：B 的 Public Manifest 是
+
+```
+display_name = Builder-B
+provider     = DeepSeek
+model        = xxx
+tags         = [coding, python]
+```
+
+A 据此形成**自己的** Other-Agent Model：
+
+```
+B → Python implementation capability 较强
+  → reliability 较高
+  → confidence = 0.82
+  → evidence = previous tasks
+```
+
+> 🔴 **二者绝不能混为一谈**：
+> ```
+> Public Manifest     是**公开资料 / 当前公开事实**
+> Other-Agent Model   是观察者**自己的认知、判断、belief**
+> ```
+
+### §22.20 Public Manifest【V1 引入，轻量级】
+
+> **目标只是：让其他 Agent / 系统知道这个 Agent 是谁，
+> 以及哪些身份与当前认知基底信息是**公开的**。**
+
+> 🔒 **不要做复杂 Appearance 系统。**
+
+**来源有两部分**：
+
+**A. User-configured public information**（创建/配置时由 Human/User 初始化）
+
+```
+Display Name · Public Tags · Optional Role
+其他明确允许公开的静态描述
+```
+
+**B. System-maintained public facts**（由 OS 根据**真实运行配置**自动维护）
+
+```
+Agent ID · Current Provider · Current Model · Current Model Version
+```
+
+> Provider / Model / Version 属于 **Dynamic runtime facts**。
+>
+> 例：初始 `doubao/model-A` → 用户切到 `deepseek/model-B`
+> → **系统必须自动更新 Public Manifest**，
+> 其他 Agent 查询时应看到**新的**公开模型信息。
+
+### §22.21 Public Manifest **不是**能力证明
+
+```
+Public Manifest  ≠  Capability
+                 ≠  Authorization
+                 ≠  Ability Evaluation
+                 ≠  Other-Agent Belief
+```
+
+例：
+
+```
+Public Manifest:  "我当前使用 DeepSeek，标签是 Python / Coding。"
+```
+
+**并不意味着**：
+
+```
+❌ 我真的擅长 Python
+❌ 我有权限修改 Workspace X
+❌ 我拥有某个 Capability
+```
+
+> **Public Tags 只是公开发现标签；Optional Role 只是公开角色描述。
+> 它们不能产生权限。**
+
+### §22.22 Public Manifest 与其他概念的关系
+
+**与 Cognitive Substrate**：
+
+```
+Agent
+    ↓
+Cognitive Substrate
+    ↓
+Current Provider / Model
+    ↓
+System-maintained facts
+    ↓
+Public Manifest
+```
+
+> **不要把二者等同。** Cognitive Substrate 是 Agent **实际使用的认知实现**；
+> Public Manifest 只是**对外公开其中允许公开的一部分事实**。
+
+🔴 **不要公开**：
+
+```
+API key · credential · secret · provider account secret · 私有上下文
+```
+
+**与 Self Model / Other-Agent Model 的三分**：
+
+```
+Core Self          =  我是谁
+Self Model         =  我对自己的当前认知
+Public Manifest    =  我允许别人看到的公开身份 / 配置事实
+Other-Agent Model  =  我认为别人是什么样
+```
+
+例：
+
+```
+Self Model        「我现在 Python 实现能力较强，但对前端能力没有把握。」
+Public Manifest   「tags = coding, python」
+A 的 Other-Agent  「B 的 Python implementation 很可靠，confidence=0.82」
+```
+
+> 🔴 **三者必须分开。**
+
+**与 Gateway / Capability**：
+
+```
+Agent
+   ↓
+World Presence
+   ↓
+Gateway
+   ↓
+Capability
+   ↓
+World
+```
+
+| 概念 | 是什么 |
+|---|---|
+| World | 环境 |
+| World Presence | Agent 在该 World 中的上下文存在 |
+| Gateway | Agent ↔ World 接口层 |
+| Capability | 受控感知 / 行动接口 |
+| Authorization | 决定某 Capability 是否允许使用 |
+
+> 🔴 **Public Manifest 不得进入 Authorization 链。**
+
+### §22.23 V1 明确**不需要**实现
+
+```
+❌ Avatar                 ❌ Voice identity
+❌ 3D embodiment          ❌ Game-specific appearance system
+❌ Complex social profile ❌ Public reputation system
+❌ Global Agent rating    ❌ Open Internet identity
+❌ Cross-world migration  ❌ Autonomous migration
+❌ World Presence runtime ❌ Public Manifest runtime
+❌ Agent 自己修改核心 Provider / Model 事实
+```
 
 ## §23 本次**没有**因为本文档而做的事
 
