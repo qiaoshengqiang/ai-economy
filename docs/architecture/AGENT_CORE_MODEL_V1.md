@@ -616,6 +616,11 @@ same asset  =  different semantic interpretation in different worlds
 13. World           ≠  World Model
 14. Public Manifest  ≠  Capability  ≠  Authorization
 15. Identity ≠ Capability ≠ Authorization ≠ Cognitive Substrate
+16. Wakeup      ≠  LLM Call      ≠  Deep Cognition
+17. Wakeup      ≠  Action
+18. Continuous Responsiveness  ≠  Continuous Thinking
+19. Work Offer / Request  ≠  Work Execution
+20. Commitment / Agreement  ≠  Execution
 ```
 
 特别强调两条：
@@ -1332,6 +1337,180 @@ V3   加入 Browser / Computer World · 更强 distributed / P2P network
 > 🔴 **不要因为这次讨论 World-specific cognition 与 Public Manifest，
 > 就实现**跨 World migration · 复杂 avatar · 开放互联网身份体系 ·
 > 复杂社交系统。**这些属于未来方向。**
+
+### §22.27 唤醒与响应性【`CONFIRMED`】
+
+#### 只要消息到达输入通道，就应唤醒 Agent
+
+> **消息到达本身就是足以触发 Agent Wakeup 的事件。**
+
+🔴 **不要加入「消息是否有价值才决定是否唤醒」的前置判断。**
+即使消息非常简单，也应进入 Agent 的处理流程。
+
+消息可能来自：
+
+```
+Human · Other Agent · System · Task / Workspace system
+World / Gateway · 其他未来输入来源
+```
+
+```
+Message Arrival  →  Wakeup  →  Agent begins processing
+```
+
+#### Wakeup ≠ LLM Call
+
+> **Agent 被唤醒，不等于必须调用背后的大模型。**
+
+Wakeup 是 **Agent Runtime 层面的状态变化**：
+
+```
+Sleeping / Waiting  →  Wakeup  →  Processing
+```
+
+醒来后可以使用**不同成本**的处理方式，例如：
+
+```
+读取结构化信息 · 查询状态 · 查询 Ledger · 简单分类
+简单规则判断 · 简单回复 · 接受 · 拒绝 · 等待 · 请求进一步信息
+```
+
+**而不需要进入高成本 LLM cognition。**
+
+> 🔒 **Wakeup cost 与 Deep Cognition cost 必须概念上分离。**
+
+#### Continuous Responsiveness ≠ Continuous Thinking
+
+> **Agent 应当持续对输入保持响应能力，但不需要持续运行高成本认知过程。**
+
+```
+Agent is responsive   ≠   Agent is continuously thinking
+```
+
+```
+Wake → Process → No deep work needed → Respond / Wait / Sleep
+```
+
+> 这**不是**「没有生命活动」，而是**自主资源管理**的一部分。
+
+### §22.28 认知深度是动态决定的【`CONFIRMED` 原则 · `PROVISIONAL` 结构】
+
+确认：**Agent 每次被唤醒后需要多少认知，不应固定相同。**
+
+| 输入 | 认知深度 |
+|---|---|
+| 简单问候 | 简单处理 |
+| 余额查询 | 状态查询 |
+| 工作邀请 | 交易 / 资源评估 |
+| 复杂软件任务 | 深度认知 / 规划 / 执行 |
+
+> **Wakeup 是统一的，但后续认知深度可以不同。**
+
+**概念路径**（`PROVISIONAL`）：
+
+```
+Wakeup
+  ↓
+Initial Processing
+  ↓
+Determine Needed Cognitive Depth
+  ├── Low-cost handling
+  ├── Transaction / Commitment cognition
+  └── Deep cognition
+```
+
+🔴 **不要正式冻结**：
+
+```
+❌ Level 0 / Level 1 / Level 2 / Level 3
+❌ Fast Decision Engine（尤其：**不建立独立 Decision Engine**）
+❌ 特定小模型 / 特定规则引擎 / 特定 LLM 路由机制
+❌ 「认知等级」的最终数量
+```
+
+> 保持此前已确认的：**`Decision Owner = Agent`**。
+> 低成本处理如果未来使用规则、工具、小模型或其他 Cognitive Resource，
+> 那也只是 **Agent 的认知资源**，不构成独立决策主体。
+
+### §22.29 工作邀请 → 承诺 → 生产（重要 V1 场景）【`CONFIRMED` 边界】
+
+**行为模型**：
+
+```
+Other Agent / Human
+        ↓
+Work Offer / Request
+        ↓
+Agent Wakeup
+        ↓
+初步理解消息
+        ↓
+Transaction / Commitment Assessment
+        ↓
+Accept / Reject / Counter-offer / Clarify
+        ↓
+形成 Commitment
+        ↓
+进入 Production Work
+```
+
+例：Agent B 收到「我愿意支付 20 AIC，请你完成某项工作」。
+
+> 🔴 **B 不应该因为收到任务就自动开始完整执行。**
+
+首先要做的是：
+
+```
+工作内容的初步理解 · 报酬判断 · 预估资源成本
+自身能力 / 风险初步判断 · 当前资源状况 · 机会成本
+```
+
+然后可以：`Accept` / `Reject` / `Counter-offer` / `Request Clarification`。
+
+**只有形成接受 / 承诺之后，才进入真正的生产工作循环。**
+
+#### 🔒 重要边界
+
+```
+Receiving a work offer   ≠   Starting the work
+Agreement / Commitment   ≠   Execution
+```
+
+**工作交易本身可能需要认知和计算资源，但其认知深度不应默认等于完整生产过程。**
+
+只有真正决定承担任务后，才进入：
+
+```
+Task → Planning → Workspace → Tools → Execution
+     → Testing → Acceptance → Delivery
+```
+
+> ⚠️ 本次**不重新定义** Task / Goal / Action 的最终结构。见 §22.30。
+
+### §22.30 Stimulus 与 Goal/Task/Action —— 保持未决【`OPEN`】
+
+🔴 **本次不强行冻结 Stimulus 的最终定义。**
+
+当前可以保留：**Message / external input 可以成为 Agent 需要处理的刺激来源。**
+
+仍然保持 `OPEN` / `PROVISIONAL`：
+
+```
+Event 与 Trigger 的最终关系
+Event / Trigger / Stimulus 的精确定义
+Observation 与 Stimulus 的最终边界
+Proactive wakeup 如何形成刺激
+内部状态变化能否形成刺激
+```
+
+以及 —— **Goal / Task / Action 的最终设计是下一阶段的事**：
+
+```
+Goal / Task / Action 的最终结构              OPEN
+工作交易 / 承诺发生后才进入正式生产工作循环    CONFIRMED（边界，见 §22.29）
+```
+
+> 🔴 **不要因为本次同步提前冻结 Goal / Task / Action 的 schema。**
 
 ## §23 本次**没有**因为本文档而做的事
 
