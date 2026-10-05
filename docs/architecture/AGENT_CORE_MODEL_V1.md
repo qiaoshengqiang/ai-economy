@@ -615,6 +615,7 @@ same asset  =  different semantic interpretation in different worlds
 12. Self Model      ≠  World Model
 13. World           ≠  World Model
 14. Public Manifest  ≠  Capability  ≠  Authorization
+15. Identity ≠ Capability ≠ Authorization ≠ Cognitive Substrate
 ```
 
 特别强调两条：
@@ -1027,7 +1028,7 @@ Self / Cognitive Model
 
 ---
 
-### §22.16 World-specific Cognition
+### §22.16 World-specific Cognition【`CONFIRMED`】
 
 **确认的架构思想**：
 
@@ -1054,6 +1055,17 @@ Agent
 
 > **World Presence = 同一个持久 Agent 在特定 World / Role 中的上下文存在。**
 
+🔒 **Agent 不应该只拥有一个脱离 World 的、完全统一的「世界认知」。**
+World-specific cognition 是**设计上的确认**，不是实现细节 ——
+所以本节标 `CONFIRMED`。
+
+**Core Self 回答「我是谁？」**，跨 World 持续存在，包含：
+
+```
+Agent Identity · Core Drives · Constitution
+长期资产 · 长期记忆 · 长期经验 · 长期策略 · 持久关系
+```
+
 它**不是**：
 
 ```
@@ -1061,7 +1073,7 @@ Agent
 ❌ Agent clone  ❌ 独立生命体
 ```
 
-### §22.17 Contextual Self
+### §22.17 Contextual Self【`PROVISIONAL`】
 
 > **Contextual Self = Agent 在某个特定 World / Role 中对
 > 「我是谁、我处于什么状态、我承担什么角色」的上下文认知。**
@@ -1078,7 +1090,7 @@ Game World Presence              NPC / character role
 > **Contextual Self 可以不同，但不能覆盖 Core Self。**
 > 🔴 **不要把 Contextual Self 实现成新的 Identity 系统。**
 
-### §22.18 World Model
+### §22.18 World Model【`CONFIRMED`】
 
 > **World Model = Agent 对特定 World 的内部认知模型。**
 
@@ -1098,7 +1110,7 @@ World        ≠   World Model
 因此 World Model **可以错误、不完整、有置信度**，
 也可以随着观察和经验不断变化。
 
-### §22.19 Other-Agent Model
+### §22.19 Other-Agent Model【`PROVISIONAL`】
 
 在 World Presence 中保留 **Other-Agent Model**：
 
@@ -1128,7 +1140,7 @@ B → Python implementation capability 较强
 > Other-Agent Model   是观察者**自己的认知、判断、belief**
 > ```
 
-### §22.20 Public Manifest【V1 引入，轻量级】
+### §22.20 Public Manifest【`CONFIRMED`（V1 引入）· 字段 schema `OPEN`】
 
 > **目标只是：让其他 Agent / 系统知道这个 Agent 是谁，
 > 以及哪些身份与当前认知基底信息是**公开的**。**
@@ -1261,6 +1273,65 @@ World
 ❌ World Presence runtime ❌ Public Manifest runtime
 ❌ Agent 自己修改核心 Provider / Model 事实
 ```
+
+### §22.24 核心原则（11 条）【`CONFIRMED`】
+
+```
+ 1. 同一个 Agent 可以存在于多个 World 中
+ 2. World-specific cognition 不产生新的 Agent Identity
+ 3. Core Self 是跨 World 持久的
+ 4. Contextual Self 是 World / Role-specific 的
+ 5. World Model 是 Agent 对某个 World 的认知，**而不是 World 本身**
+ 6. Other-Agent Model 是 Agent 对其他 Agent 的**主观 / 条件性认知**，
+    不等于对方真实属性
+ 7. Public Manifest 是公开身份信息，**不等于能力证明**
+ 8. Provider / Model / Model Version 是**可能变化的动态事实**
+ 9. Agent 更换模型后，**其他 Agent 应能够获得更新后的公开模型信息**
+10. Public Manifest 中的公开信息**不能直接产生 Authorization 或 Capability**
+11. Identity ≠ Capability ≠ Authorization ≠ Cognitive Substrate
+```
+
+### §22.25 Public Manifest —— V1 字段（**概念层，不是 schema**）
+
+```
+Public Manifest
+├── Agent ID        系统身份事实
+├── Display Name    用户配置
+├── Provider        系统维护
+├── Model           系统维护
+├── Model Version   系统维护
+├── Public Tags     用户配置
+└── Optional Role   用户配置，或经系统约束的公开角色描述
+```
+
+```
+Public Manifest = User-configured public identity information
+                + System-maintained public runtime facts
+```
+
+> 🔴 **不要在本阶段把字段结构做成不可修改的数据库 schema。**
+> 它目前属于 V1 **架构概念**，应保持未来可扩展性。
+> → 所以本节标题标的是「`CONFIRMED`（V1 引入）· 字段 schema `OPEN`」。
+
+### §22.26 版本范围（本次同步**不**改变边界）
+
+```
+V1   单机 Agent Production OS
+     Persistent Agent · Human ↔ Agent continuous conversation
+     Multi-Agent collaboration · AIC
+     Private Workspace · Task Workspace · Controlled production
+     Agent cognition · Self Model · Memory / Experience / Strategy
+     Public Manifest · World Presence 的**架构概念**
+     Software / Workspace World
+
+V2   加入 LAN multi-node · 更多 World · Game / NPC 等
+
+V3   加入 Browser / Computer World · 更强 distributed / P2P network
+```
+
+> 🔴 **不要因为这次讨论 World-specific cognition 与 Public Manifest，
+> 就实现**跨 World migration · 复杂 avatar · 开放互联网身份体系 ·
+> 复杂社交系统。**这些属于未来方向。**
 
 ## §23 本次**没有**因为本文档而做的事
 
