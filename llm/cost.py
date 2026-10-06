@@ -71,6 +71,11 @@ class CostRule:
     """
 
     ai_per_1k_tokens: float = DEFAULT_AI_PER_1K_TOKENS
+
+    #: 按 `"provider/model"` 覆盖费率（§五：不同模型可以不同价）。
+    #: 🔒 仍然只是**数字**，不含任何「该不该用这个模型」的判断。
+    #: 查不到就回落到 `ai_per_1k_tokens`。
+    model_rates: Optional[Mapping] = None
     #: token 不知道时（API 没返回 usage）怎么算。
     #: `"zero"`   → 记 0（**但 cost_known=False**，调用方知道这是「不知道」）
     #: `"unknown"` → 同样记 0，语义更明确
@@ -86,12 +91,37 @@ class CostRule:
                 else DEFAULT_AI_PER_1K_TOKENS
         except (TypeError, ValueError):            # pragma: no cover
             rate_f = DEFAULT_AI_PER_1K_TOKENS
+        raw_rates = _config_get(config, "llm.cost.model_rates", {}) or {}
+        rates = {}
+        if isinstance(raw_rates, Mapping):
+            for k, v in raw_rates.items():
+                try:
+                    rates[str(k)] = max(0.0, float(v))
+                except (TypeError, ValueError):
+                    continue
         return cls(ai_per_1k_tokens=max(0.0, rate_f),
+                   model_rates=rates,
                    unknown_token_policy=str(policy or "zero"))
+
+    def rate_for(self, provider: Optional[str],
+                 model: Optional[str]) -> float:
+        """查这个 (provider, model) 的费率；查不到返回默认。"""
+        rates = self.model_rates or {}
+        if provider and model:
+            hit = rates.get(f"{provider}/{model}")
+            if hit is not None:
+                return hit
+        if model:
+            hit = rates.get(str(model))
+            if hit is not None:
+                return hit
+        return self.ai_per_1k_tokens
 
     def compute(self, *, input_tokens: Optional[int],
                 output_tokens: Optional[int],
-                total_tokens: Optional[int] = None):
+                total_tokens: Optional[int] = None,
+                provider: Optional[str] = None,
+                model: Optional[str] = None):
         """
         算出这次调用的 AIC 成本。
 
@@ -112,7 +142,7 @@ class CostRule:
             # 0 token 是**真的 0**（比如空输入），成本确实是 0
             return 0.0, tokens, True
 
-        cost = (tokens / 1000.0) * self.ai_per_1k_tokens
+        cost = (tokens / 1000.0) * self.rate_for(provider, model)
         return round(cost, 6), tokens, True
 
 
@@ -139,6 +169,8 @@ class CostCalculator:
             input_tokens=getattr(response, "input_tokens", None),
             output_tokens=getattr(response, "output_tokens", None),
             total_tokens=getattr(response, "total_tokens", None),
+            provider=getattr(response, "provider", None),
+            model=getattr(response, "model", None),
         )
 
     def __repr__(self) -> str:

@@ -418,21 +418,42 @@ class TestCallRecording:
         #    我们不编。
         assert row["api_cost_usd"] == 0
 
-    def test_llm_call_does_not_touch_wallet(self, agent_a):
+    def test_llm_call_does_not_touch_wallet_when_unwired(self, agent_a):
         """
-        【关键边界】调用模型【暂时】不扣钱。
+        【迁移说明】本测试断言的是「**未接线**的 recorder 不扣费」。
 
-        本阶段只记录 token 消耗，不连接经济系统。
-        等 Step 6 接上 Cost Calculator 之后，这里才会开始扣费。
+            ⚠️ 它**不再**描述生产行为。
+            生产路径（`main.build_runtime`）**已经**通过 `on_cost`
+            把成本记进 Ledger（§0.5 审计 A-02 / H-2）。
+
+            本测试守的仍然有效的问题：
+              成本**只在有人在 `on_cost` 上接线时才发生** ——
+              `LLMCallRecorder` 自己**不会**偷偷扣钱。
+              也就是说「接线」是一件显式的事，不是隐式副作用。
+
+            生产接线的行为由
+            `TestLLMCostWiring::test_production_runtime_charges_agent` 守。
         """
+        assert agent_a.brain.recorder.on_cost is None, (
+            "本测试的前提是 fixture 未接 on_cost；"
+            "若已接线，请改测 TestLLMCostWiring"
+        )
         before = agent_a.balance
 
         agent_a.generate(messages="hi")
 
         assert agent_a.balance == before
 
-    def test_ledger_is_untouched_by_llm_calls(self, agent_a, economy):
-        """账本不该因为一次模型调用而变化。"""
+    def test_ledger_is_untouched_by_llm_calls_when_unwired(
+            self, agent_a, economy):
+        """
+        【迁移说明】同上 —— 断言的是**未接线** recorder 的行为。
+
+            ⚠️ 生产路径**会**产生 LLM_COST 交易。
+            本测试守的仍然有效的问题：
+              未接线时，LLM 调用**不产生任何账本副作用**
+              （即记账不是 recorder 的内建行为）。
+        """
         before = economy.ledger.count()
 
         agent_a.generate(messages="hi")
@@ -529,3 +550,62 @@ class TestCallRecording:
         assert fresh.count("agent_a") == 1
         # 新 Recorder 的汇率不同，但旧记录里的快照没变
         assert fresh.recent(agent_id="agent_a")[0]["tokens_per_ai_coin"] == 10000
+
+
+class TestLLMCostWiring:
+    """
+    §0.5 审计 A-02 / H-2：**生产路径**的 LLM 成本必须真的进 Ledger。
+
+    🔒 这里守的是「接线」（`main.build_runtime` 把 on_cost 接上），
+       不是「怎么算钱」（那是 `llm/cost.py` 的事）。
+    """
+
+    def test_production_runtime_charges_agent(self, tmp_path):
+        """一次真实调用后，Agent 的 AIC 余额必须**下降**。"""
+        from main import build_runtime
+
+        rt = build_runtime(db_path=str(tmp_path / "wired.db"))
+        try:
+            agent = next(a for a in rt.economy.all_agents()
+                         if a.agent_id == "agent_a")
+            before = rt.economy.ledger.balance_of(agent.agent_id)
+
+            agent.brain.generate(messages="hi")
+
+            after = rt.economy.ledger.balance_of(agent.agent_id)
+
+            assert after < before, (
+                "生产路径没有扣费 —— on_cost 没接上？"
+            )
+            assert before - after > 0
+        finally:
+            try:
+                rt.economy.close()
+            except Exception:                              # noqa: BLE001
+                pass
+
+    def test_cost_lands_in_ledger_as_llm_cost_tx(self, tmp_path):
+        """成本必须以 `LLM_COST` 交易出现，且进 SYS_TREASURY。"""
+        from main import build_runtime
+        from core.ledger import TX_LLM_COST, SYSTEM_TREASURY
+
+        rt = build_runtime(db_path=str(tmp_path / "tx.db"))
+        try:
+            agent = next(a for a in rt.economy.all_agents()
+                         if a.agent_id == "agent_a")
+            agent.brain.generate(messages="hi")
+
+            rows = rt.economy.db.fetchall(
+                "SELECT tx_type, from_agent, to_agent, amount "
+                "FROM ledger_transactions WHERE tx_type = ?",
+                (TX_LLM_COST,),
+            )
+            assert rows, "账本里没有 LLM_COST 交易"
+            assert rows[-1]["from_agent"] == agent.agent_id
+            assert rows[-1]["to_agent"] == SYSTEM_TREASURY
+            assert rows[-1]["amount"] > 0
+        finally:
+            try:
+                rt.economy.close()
+            except Exception:                              # noqa: BLE001
+                pass

@@ -82,6 +82,7 @@ from services import (
 )
 from core.paths import ensure_runtime_dirs                      # noqa: E402
 from llm import LLMCallRecorder, LLMRouter, LLMError            # noqa: E402
+from llm.cost import CostCalculator                             # noqa: E402
 from llm.credential import CredentialResolver                   # noqa: E402
 from communication import (                                     # noqa: E402
     CommunicationManager,
@@ -572,10 +573,22 @@ def build_runtime(
     # 🔒 它是**唯一**知道「key 从哪来 / 优先级是什么」的地方。
     credential_resolver = CredentialResolver(config)
     # 记录器需要知道当前的兑换比例，好在每条记录里存下汇率快照。
-    # 注意：这里只【存快照】，不算成本 —— 算成本是 Step 6 的事。
     recorder = LLMCallRecorder(
         db=economy.db,
         tokens_per_ai_coin=economy.tokens_per_ai_coin,
+        # §0.5 审计 A-02 / H-2：LLM 认知成本**真正进入 Ledger**。
+        # 🔒 规则来自配置（含 per-provider/model 费率），不硬编码。
+        # 🔒 这里只是「接线」—— 成本怎么算是 llm/cost.py 的事，
+        #    记账是 economy.charge_llm_cost 的事，两者都不替 Agent 做策略。
+        cost_calculator=CostCalculator.from_config(config),
+        on_cost=lambda agent_id, cost, call_id, row: (
+            economy.charge_llm_cost(
+                agent_id, cost, call_id=call_id,
+                memo={"provider": row.get("provider"),
+                      "model": row.get("model"),
+                      "task_id": row.get("task_id")},
+            )
+        ),
     )
 
     # --- 通信层（Step 3）---
