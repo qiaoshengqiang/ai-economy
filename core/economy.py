@@ -50,7 +50,7 @@ from core.config import (
     require_positive_int,
 )
 from core.identity import AgentIdentity, utc_now_iso
-from core.ledger import Ledger, Transaction
+from core.ledger import Ledger, Transaction, TX_LLM_COST, SYSTEM_TREASURY
 from core.logging_setup import get_logger
 from core.paths import ensure_runtime_dirs
 from core.wallet import Wallet, WalletRepository
@@ -369,6 +369,55 @@ class Economy:
     # ------------------------------------------------------------
     # 经济动作：转账（OS 级执行入口）
     # ------------------------------------------------------------
+    def charge_llm_cost(
+        self,
+        agent_id: str,
+        cost_ai: float,
+        call_id: Optional[str] = None,
+        memo: Optional[Any] = None,
+    ) -> Optional[Any]:
+        """
+        把一次 LLM 认知活动的成本，从 Agent 记到系统金库（burn）。
+
+        【§0.5 审计 A-02 / H-2】
+
+            审计发现 `LLMCallRecorder.cost_ai` 恒为 0 ——
+            于是 §0.5.3「激励塑造行为」**结构性不成立**：
+            Agent 可以无限调用 LLM 而没有任何经济后果。
+
+            本方法把那笔成本**真正落进 Ledger**，
+            于是「消耗 AI Coin → 为当前行动支付机会成本」成立。
+
+        【🔒 边界：这里不算「应该花多少」】
+
+            本方法**只记账**。它不判断「这次调用值不值」，
+            也不因为余额低就拒绝调用（那会变成 OS 替 Agent 做策略）。
+
+            ⚠️ 但**余额不足时仍然会失败** —— 那不是策略判断，
+               是 §0.5.5 的**结构约束**（付不起就是付不起）。
+               与「Ledger 余额不足 → 无法完成支付」是同一条。
+
+        为什么记到 SYS_TREASURY？
+            因为这是**消耗**（burn），不是转账给另一个 Agent。
+            项目已有 `SYSTEM_TREASURY` 与 `TX_LLM_COST` 两个常量，
+            这里只是第一次真正用上它们。
+        """
+        amount = float(cost_ai or 0.0)
+        if amount <= 0:
+            return None
+
+        # 余额不足 → 这里会抛出（结构约束，不是策略）
+        with self.db.transaction() as conn:
+            return self.ledger.record(
+                TX_LLM_COST,
+                amount,
+                from_agent=agent_id,
+                to_agent=SYSTEM_TREASURY,
+                reason=f"LLM 认知成本 {call_id or ''}".strip(),
+                memo=memo,
+                conn=conn,
+            )
+
     def transfer(
         self,
         from_agent_id: str,

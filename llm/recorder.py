@@ -22,7 +22,10 @@ LLM Call Recorder —— 把每次模型调用记进账
 
 【为什么还要存 tokens_per_ai_coin 的快照】
 
-    注意 cost_ai 现在是 0 —— 表示「还没算」。
+    cost_ai 由 `llm.cost.CostCalculator` 算出（§0.5 审计 A-02）。
+
+    🔒 **成本规则不是 Agent Strategy。** 本模块只说「花了多少 AIC」，
+       不说「所以你该少思考」。见 `llm/cost.py` 的模块 docstring。
     但汇率快照【现在就存】。
 
     因为如果你今天用 1:10000 跑了一批记录，明天改成 1:5000，
@@ -81,11 +84,24 @@ class LLMCallRecorder:
         调用记录和账本一样，是历史事实，不该被追改。
     """
 
-    def __init__(self, db: Database, tokens_per_ai_coin: Optional[int] = None):
+    def __init__(self, db: Database, tokens_per_ai_coin: Optional[int] = None,
+                 cost_calculator: Optional[Any] = None,
+                 on_cost: Optional[Any] = None):
         self.db = db
         # 汇率快照。可以为 None —— 那说明系统还没配置好经济参数，
         # 这时记 0，表示「本次调用没有对应的汇率上下文」。
         self.tokens_per_ai_coin = int(tokens_per_ai_coin or 0)
+
+        #: 算 AIC 成本的规则（§0.5 审计 A-02）。
+        if cost_calculator is None:
+            from llm.cost import CostCalculator
+            cost_calculator = CostCalculator()
+        self.cost_calculator = cost_calculator
+
+        #: 成本入账回调：`(agent_id, cost_ai, call_id, row) -> None`。
+        #: 🔒 用回调是为了**不让 llm/ 反向依赖 core/**（依赖方向：
+        #:    main.py 组装，core/ 实现，llm/ 只发通知）。
+        self.on_cost = on_cost
 
     # ------------------------------------------------------------
     # 写
@@ -113,6 +129,12 @@ class LLMCallRecorder:
             而且失败率会影响 Agent 的声誉和它要不要换模型。
         """
         call_id = new_call_id()
+        # 先算成本（纯函数，不碰 Strategy / Ledger）
+        if response is not None:
+            cost_ai, _cost_tokens, _cost_known = \
+                self.cost_calculator.cost_of(response)
+        else:
+            cost_ai = 0.0
 
         if response is not None:
             row_provider = response.provider
@@ -163,7 +185,9 @@ class LLMCallRecorder:
                     # cost_ai / api_cost_usd 本阶段【故意留 0】。
                     # 0 在这里的含义是「还没算」，不是「免费」。
                     # 算钱的逻辑在 Step 6 的 Cost Calculator 里。
-                    0.0,
+# ✅ 现已由 llm.cost.CostCalculator 算出（§0.5 审计 A-02）。
+                    cost_ai,
+                    # api_cost_usd：Provider 侧真实美元账单，本阶段仍留 0
                     0.0,
                     task_id,
                     1 if success else 0,
@@ -171,6 +195,16 @@ class LLMCallRecorder:
                     utc_now_iso(),
                 ),
             )
+
+        # 成本入账（§0.5 审计 A-02 / Test 7+8）。
+        # 记账失败不能让调用记录丢失，所以只记日志、不抛出。
+        if cost_ai > 0 and self.on_cost is not None:
+            try:
+                self.on_cost(agent_id, cost_ai, call_id,
+                             {"provider": row_provider,
+                              "model": row_model, "task_id": task_id})
+            except Exception as exc:                  # noqa: BLE001
+                logger.warning("LLM 成本入账失败 %s: %s", call_id, exc)
 
         logger.debug(
             "记录 LLM 调用 %s：%s/%s %d tokens",

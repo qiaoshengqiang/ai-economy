@@ -386,17 +386,36 @@ class TestCallRecording:
 
         assert row["tokens_per_ai_coin"] == economy.tokens_per_ai_coin
 
-    def test_cost_is_not_computed_yet(self, agent_a, recorder):
+    def test_cost_is_computed_from_tokens_but_usd_is_unknown(
+            self, agent_a, recorder):
         """
-        【本阶段的边界】只记 token，不算钱。
+        【迁移说明】本测试原名 `test_cost_is_not_computed_yet`。
 
-        cost_ai = 0 在这里的含义是「还没算」，不是「免费」。
-        算钱的逻辑属于 Step 6 的 Cost Calculator。
+            旧前提：「只记 token，不算钱。算钱的逻辑属于 Step 6。」
+            → 该前提**已过期**：§0.5 审计 A-02 与 H-2 正是要实现它，
+              现在 `cost_ai` 由 `llm.cost.CostCalculator` 算出。
+
+            仍然有效的问题（本测试现在守的就是这个）：
+              · `cost_ai` 必须**由 token 推出**，不能凭空造
+              · `api_cost_usd` 仍是 0 —— 那是 Provider 侧的真实美元账单，
+                我们**不知道**，不能编
+              · 0 的含义是「真的没花」或「不知道」，**不是**「免费」
         """
         agent_a.generate(messages="hi")
         row = recorder.recent(agent_id="agent_a", limit=1)[0]
 
-        assert row["cost_ai"] == 0
+        # cost_ai 必须是「由 token 算出来的」——
+        # 只要真的用了 token，它就不该是 0。
+        if row["total_tokens"] > 0:
+            assert row["cost_ai"] > 0, (
+                "有 token 却算出 0 成本：CostCalculator 没接上"
+            )
+        # token 拿不到时，0 的含义是「不知道」，不是「免费」
+        else:
+            assert row["cost_ai"] == 0
+
+        # 🔒 这一条**没有变**：真实美元账单属于 Provider 侧事实，
+        #    我们不编。
         assert row["api_cost_usd"] == 0
 
     def test_llm_call_does_not_touch_wallet(self, agent_a):
