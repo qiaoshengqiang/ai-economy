@@ -623,6 +623,11 @@ same asset  =  different semantic interpretation in different worlds
 20. Commitment / Agreement  ≠  Execution
 21. Stimulus  ≠  Text  ≠  Agent 对 Stimulus 的理解
 22. Agent Identity ≠ Runtime Session ≠ Cognitive Runtime ≠ Provider ≠ Model
+23. AI Economy OS Agent  ≠  DeepSeek Harness Agent
+24. Tool  ≠  Capability  ≠  Authorization
+25. Gateway（治理边界）  ≠  Sandbox（执行隔离）
+26. Executor  ≠  Decision  ≠  Authorization  ≠  Agent
+27. DSH Tool 集合  ≠  AI Economy OS 的最终 Capability 集合
 ```
 
 特别强调两条：
@@ -1516,8 +1521,15 @@ Goal / Task / Action 的最终结构              OPEN
 
 ### §22.31 Stimulus 的定义进一步明确【`CONFIRMED`】
 
-> **Stimulus 是进入 Agent 感知范围、需要 Agent 进行处理的输入本身，
-> 而不是 Agent 对该输入的理解结果。**
+> **Stimulus 是进入 Agent 输入 / 感知通道的输入本身；
+> 是否值得进一步处理、需要多深的认知，由后续
+> Initial Cognitive Run / Decision 决定。**
+>
+> 它**不是** Agent 对该输入的理解结果。
+>
+> ⚠️ 【措辞修正】上一版写的是「需要 Agent 进行处理的输入本身」——
+> 那个「需要处理」容易被读成「先判断价值再决定是否唤醒」，
+> 与 §22.27「**消息到达即唤醒**」相冲突。已按后者改写。
 
 **载体可以不同**：
 
@@ -1674,6 +1686,335 @@ Initial Cognitive Run 的具体协议
 ```
 
 > 这些将在后续讨论后再单独同步。
+
+### §22.36 V1 Cognitive Execution 的总体方向【`CONFIRMED` 方向】
+
+> **AI Economy OS 不重新实现底层的
+> 「Model → Tool → Tool Result → Model → …」任务执行循环。**
+
+对于 V1 单机 **Software Production World**，可以直接采用
+**DeepSeek Harness（DSH）** 作为工程任务的
+**Cognitive Execution / Engineering Execution 基座**。
+
+🔒 **但必须明确**：
+
+> **DSH 是 AI Economy OS 的「执行基座 / 插件式执行组件」，
+> 不是 AI Economy OS Agent 本身。**
+
+```
+AI Economy OS
+    ↓
+Persistent Agent
+    ↓
+Initial Cognitive Run / Decision
+    ↓
+需要进入工程执行
+    ↓
+DeepSeek Harness Execution Layer
+    ↓
+Model ↔ Tool ↔ Tool Result ↔ Model
+```
+
+#### 🔴 一个关键架构反转
+
+**不要**设计成：
+
+```
+❌ AI Economy OS → 调用外部 DeepSeek Harness Agent
+```
+
+而应理解为：
+
+```
+✅ AI Economy OS
+      ↓
+   自己的 Persistent Agent
+      ↓
+   使用 DeepSeek Harness 作为当前 V1
+   Cognitive Execution Plugin / Backend
+```
+
+> 也就是说：**DSH 被纳入 AI Economy OS 的执行层**，
+> 而不是 AI Economy OS 依赖一个外部 Agent 产品来管理自己的 Agent。
+> **未来仍然允许替换执行基座。**
+
+### §22.37 AI Economy OS Agent ≠ DeepSeek Harness Agent【`CONFIRMED`】
+
+```
+AI Economy Agent
+   ≠  DeepSeek Harness Agent
+   ≠  Runtime Session
+   ≠  Cognitive Runtime
+   ≠  Provider
+   ≠  Model
+```
+
+| DSH 负责 | AI Economy OS 负责 |
+|---|---|
+| Model invocation | **Persistent Agent Identity** |
+| Tool calling | Core Drives · Constitution |
+| Tool execution loop | Memory · Self Model · World Presence |
+| Tool result injection | Goals / Tasks |
+| 多步骤工程任务执行 | **AIC · Assets** |
+| filesystem / shell / terminal / sandbox | **Gateway · Capability · Authorization / Governance** |
+| | **Agent Economy · Multi-Agent collaboration** |
+
+> 🔴 **不要让 DSH 的 Agent 概念覆盖或替代 AI Economy OS 的 Persistent Agent 概念。**
+
+### §22.38 Tool / Capability / Gateway / Executor 四者边界【`CONFIRMED`】
+
+#### 1. Tool —— 模型表达「我想做什么」的接口
+
+```
+read_file(path) · write_file(path, content)
+edit_file(...) ·  run_command(command)
+```
+
+> Tool 主要解决：**Model 如何提出一个操作请求。**
+> 🔴 **Tool 本身不等于 Authorization，也不自动赋予 Agent Capability。**
+
+#### 2. Capability —— Agent 在某个 World 中被授予 / 拥有的能力
+
+```
+File.Read · File.Write · File.Edit · Process.Execute
+System.Inspect · Package.Install
+```
+
+> Capability 回答：**Agent 能做什么？**
+
+```
+Capability  ≠  Tool  ≠  Authorization
+```
+
+> 🔴 **Capability 属于 AI Economy OS 的 Agent / World / Governance 模型，
+> 而不是 DSH 专属概念。**
+
+#### 3. Gateway —— 受控接口 / 治理边界
+
+Gateway 可以检查：
+
+```
+Authorization · Policy · Workspace scope · Lock / Responsibility
+Resource state · Impact on other Agents · Human Approval · 其他约束
+```
+
+然后决定：`Allow` / `Approval Required` / `Reject`
+
+> Gateway 回答：**这一次请求，现在是否允许真正进入 World？**
+
+```
+Tool Request
+    ↓
+Capability Request
+    ↓
+Gateway
+    ↓
+Policy / Authorization / Constraints
+    ↓
+Executor
+```
+
+#### 4. Executor —— 真正把动作执行掉的机制
+
+```
+Local filesystem · subprocess · shell · terminal
+package manager · system inspection · future external services
+```
+
+> Executor 解决：**被允许以后，实际怎么做。**
+
+```
+Executor  ≠  Decision  ≠  Authorization  ≠  Agent
+```
+
+### §22.39 V1 推荐的整体关系（**架构关系，不是本次要实现的东西**）
+
+```
+AI Economy Agent
+        ↓
+Cognitive Runtime
+        ↓
+DeepSeek Harness
+        ↓
+Model
+        ↓
+DSH Tool Call
+        ↓
+Tool / Capability Bridge
+        ↓
+AI Economy OS Capability
+        ↓
+Gateway
+        ↓
+Authorization / Policy / Impact / Approval
+        ↓
+Executor
+        ↓
+Software Production World
+        ↓
+Tool Result
+        ↓
+DeepSeek Harness
+        ↓
+Model
+```
+
+> 🔴 **本图是架构关系，不是要求本次实现这个 Bridge。**
+
+#### V1 候选：DSH Tool → Capability 映射【`PROVISIONAL`，不是最终 schema】
+
+**Filesystem**
+
+| DSH Tool | AI Economy Capability |
+|---|---|
+| `read` | `File.Read` |
+| `read_image` | `File.ReadImage` |
+| `write` | `File.Write` |
+| `edit` | `File.Edit` |
+| `glob` | `File.Discover` |
+| `grep` | `File.Search` |
+
+```
+read("src/main.py")
+    ↓
+File.Read
+    ↓
+Workspace Gateway
+    ↓
+Path / Participant / Lock / Revision / Scope checks
+```
+
+**Shell / Terminal（候选）**
+
+```
+bash            →  Process.Execute
+terminal_open   →  Terminal.Create      terminal_read  →  Terminal.Read
+terminal_send   →  Terminal.Send        terminal_signal → Process.Control
+terminal_close  →  Terminal.Close       terminal_list  →  Terminal.Inspect
+```
+
+> 🔴 **`bash` 只是 Tool，`Process.Execute` 才是 AI Economy OS Capability。**
+> **不要把「拥有 bash tool」理解成「Agent 自动拥有整台 Host 的任意系统权限」。**
+
+### §22.40 Capability 模型必须**独立存在**【`CONFIRMED`】
+
+🔴 **不要要求所有 Capability 必须来自 DSH。**
+
+AI Economy OS 自己可能还需要：
+
+```
+File.Delete · File.Move · System.Inspect · Process.Inspect
+Package.Install · Environment.Modify
+```
+
+其中某些**并不需要**依赖 DSH 现有 Tool。
+
+> **DSH Tool 集合不定义 AI Economy OS 的最终 Capability 集合。
+> AI Economy OS 的 Capability 模型必须独立存在。**
+
+#### Software Production World 的现实范围【`PROVISIONAL`】
+
+V1 Agent 主要用于：软件工程 · 代码生产 · 文件生产 · 项目创建 ·
+编译 · 测试 · Git / Worktree 等工程活动 · 必要的运行环境观察 ·
+**必要的、受控的**系统操作。
+
+🔒 **V1 不提供 `Host.Restart`。**
+Agent **可以建议 Human 做，但不能自主执行**。
+
+#### System Observation 与 System Action【`PROVISIONAL`】
+
+```
+Perception   System.Inspect · Process.Inspect · Runtime version · OS
+             CPU architecture · Memory / Disk · Git / Python / Node …
+
+Action       Process.Execute · Package.Install · Environment.Modify
+             · Process.Control
+```
+
+> 🔴 本次**不冻结**这些 Capability 的最终 schema，也**不实现**。
+
+### §22.41 Non-Interference 原则【`CONFIRMED` 原则 · 具体策略 `PROVISIONAL`】
+
+> **Agent 在完成自身任务时，应避免无必要地干扰其他 Agent、
+> 其他 Task 或 AI Economy OS 的正常运行。**
+
+⚠️ **这不是说「所有可能影响其他 Agent 的行为都绝对禁止」**，而是：
+
+> **Agent 应优先选择对其他 Agent 和系统影响较小、
+> 但仍能有效完成自身目标的方案。**
+
+例：
+
+```
+可以用 Task-local environment  →  就不应无必要修改**全局**环境
+可以用自己的进程              →  就不应无必要干扰其他 Agent 的进程
+可以用 Workspace-local 依赖   →  就不应无必要改变**全局**依赖环境
+```
+
+> 🔒 **本原则暂不冻结具体 Impact Policy。**
+
+#### Authorization / Approval / Forbidden 的三类方向【`PROVISIONAL`】
+
+```
+A. Forbidden / Capability not exposed
+B. Capability exposed + Human Approval Required
+C. Capability exposed + Pre-authorized
+```
+
+例：
+
+| 动作 | V1 处理 |
+|---|---|
+| `Host.Restart` | **V1 不暴露** |
+| `Package.Install` | 默认**可要求 Human Approval** |
+| Workspace `File.Read` | 可以**直接允许** |
+| Workspace `File.Write` | 按 Workspace / Lock / Responsibility 检查 |
+| 某些系统级修改 | 默认 **Human Approval** |
+
+> 🔴 **不要本次冻结完整 Approval Policy。**
+
+### §22.42 Sandbox ≠ Gateway【`CONFIRMED` 区分】
+
+```
+Gateway  =  Agent-level governance / authorization boundary
+Sandbox  =  Execution-level confinement
+```
+
+> 🔴 **DSH 自身的 Sandbox / Approval 机制不能取代
+> AI Economy OS 的 Gateway / Authorization。**
+
+- **AI Economy OS Gateway** 决定：Agent **是否被允许**进行某种行为
+- **DSH Sandbox** 等执行机制进一步决定：被允许的动作在 Host 上**能触及哪些资源**
+
+> **二者可以共同存在。**
+
+#### 未来与其他 Cognitive Runtime 的兼容【`PROVISIONAL`】
+
+```
+AI Economy OS
+      ↓
+Cognitive Runtime Interface
+      ↓
+DeepSeek Harness（V1）
+```
+
+未来可替换为 `Other Runtime` / `Local Runtime` / `Future Runtime`。
+
+> 🔒 **但 Agent Core、Gateway、Capability、World 等
+> AI Economy OS 核心概念不因此改变。**
+
+### §22.43 本次**未**做（§十四 逐条）
+
+```
+❌ 实现 Cognitive Runtime        ❌ 集成 DeepSeek Harness
+❌ 修改 DSH                     ❌ 实现 Tool / Capability Bridge
+❌ 实现 Gateway Adapter          ❌ 新增 Capability schema
+❌ 新增数据库 schema              ❌ 实现 System Capability
+❌ 实现 Approval Policy           ❌ 实现 Host/System Action
+❌ 实现 Non-Interference Policy
+```
+
+> 本次**只同步架构方向与概念边界**。
 
 ## §23 本次**没有**因为本文档而做的事
 
