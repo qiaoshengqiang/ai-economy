@@ -353,6 +353,22 @@ class BaseAgent:
 
         return response
 
+    def act(self, messages=None, *, dispatcher=None, execute: bool = True,
+            **kwargs):
+        """
+        跑一次 Cognition，**并在 Agent 决定时执行它的 Action**（Action Seam）。
+
+        🔒 与 generate() 的关系：
+            generate()  只拿到 LLM 的文本（既有行为，**完全不变**）
+            act()       在此之上解析结构化 Decision，必要时执行 Action
+
+        §十八 向后兼容：Agent 只回文本时，act() 不调用 Executor，
+                        decision.kind == "reply"。
+        """
+        from actions.run import run_cognition
+        return run_cognition(self, messages, dispatcher=dispatcher,
+                             execute=execute, **kwargs)
+
     def think(self, prompt: str, **kwargs: Any) -> str:
         """
         只想拿到文本时用这个。
