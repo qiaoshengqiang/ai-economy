@@ -151,18 +151,31 @@ class ExperienceStore:
 
         🔒 这里只做**翻译**（把结果搬进 Experience），
            不做任何解读 —— 不降 confidence、不改 Strategy。
+
+        🔴 M1：额外把 Executor **真的给出**的机器可读错误码
+           （`ActionResult.metadata["code"]`）原样带上 —— 它是
+           「为什么失败」的结构化事实，旧实现把它丢在内存里。
+
+           ⚠️ **没有就不写这个键** —— 不补 `None`、不猜一个默认码。
+              这样没有 code 的旧记录形状**一个字节都不变**。
         """
+        result: Dict[str, Any] = {
+            "success": bool(getattr(action_result, "success", False)),
+            "output": getattr(action_result, "output", None),
+            "error": getattr(action_result, "error", None),
+            "action_type": getattr(intent, "action_type", ""),
+            "parameters": dict(getattr(intent, "parameters", {}) or {}),
+        }
+        code = (dict(getattr(action_result, "metadata", None) or {})
+                .get("code"))
+        if code:
+            result["code"] = code
+
         return self.record(
             agent_id,
             SOURCE_ACTION_RESULT,
             event_ref=getattr(intent, "intent_id", "") or "",
-            result={
-                "success": bool(getattr(action_result, "success", False)),
-                "output": getattr(action_result, "output", None),
-                "error": getattr(action_result, "error", None),
-                "action_type": getattr(intent, "action_type", ""),
-                "parameters": dict(getattr(intent, "parameters", {}) or {}),
-            },
+            result=result,
             scope=scope,
             metadata={"intent_id": getattr(intent, "intent_id", "")},
         )

@@ -47,6 +47,10 @@ from typing import Any, Dict, List, Optional
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
+from actions import (  # noqa: E402
+    ACTION_WORKSPACE_WRITE, ActionDispatcher, ActionIntent,
+    WorkspaceWriteExecutor, new_intent_id,
+)
 from services.artifacts import (  # noqa: E402
     ARTIFACT_NAMESPACES, MODE_APPEND, MODE_CREATE, MODE_REPLACE,
     provision_namespaces, write_artifact,
@@ -304,6 +308,66 @@ def _ensure_environment(rt: Any) -> None:
             status=STATUS_ACTIVE, stage_id="stage_hetero_root")
 
 
+def _action_seam(rt: Any) -> tuple:
+    """
+    🔴 M3：把「写操作 → ActionResult → Experience」接起来。
+
+    【为什么需要这一小段】
+
+        原先 `_turn` 直接调用 `write_artifact()`，拿到一个**裸 dict**，
+        只写进内存日志 —— 于是 Gateway 明明知道「这个文件已存在」，
+        Agent 下一轮完全不知道（真实证据见
+        `results/ACTION_FEEDBACK_AUDIT.md`）。
+
+    🔒 **它只做接线，不做任何决策：**
+
+        · Dispatcher   —— 只把 intent 路由到 Executor
+        · Executor     —— 只把 write_artifact 的返回值翻成 ActionResult
+        · ExperienceStore —— 只把 ActionResult **原样**记下来
+
+      没有任何一步替 Agent 选 write_mode / 选路径 / 挑下一步策略。
+
+    🔒 `ExperienceStore` 建在 `rt.economy.db` 上 —— 与 `main.py`
+       注入给 `CognitiveContextBuilder` 的那个**是同一个库**，
+       所以这里记下的经历下一轮会被 `retrieve_relevant()` 取到。
+    """
+    from experience import ExperienceStore
+
+    dispatcher = ActionDispatcher([
+        WorkspaceWriteExecutor(write_artifact,
+                               gateway=rt.workspace_gateway,
+                               workspace_id=WS_ID)])
+    try:
+        experience_store = ExperienceStore(rt.economy.db)
+    except Exception as exc:                              # noqa: BLE001
+        # Fail-soft ≠ Fail-silent：写不进去要说出来，但**不许**因此
+        # 伪造一条经历，也不许让整轮认知崩掉。
+        print(f"  ⚠️  ExperienceStore 不可用（{type(exc).__name__}: {exc}）"
+              f"—— 行动反馈**不会**进入下一轮认知")
+        experience_store = None
+    return dispatcher, experience_store
+
+
+def _record_action_experience(store: Any, agent_id: str, intent: Any,
+                              result: Any) -> Optional[str]:
+    """
+    §五：ActionResult → Experience —— **原样记录，不做解读**。
+
+    🔒 它不回写 Self Model、不降 confidence、不改策略、不选下一步。
+       唯一作用是让**下一轮** Cognition 能检索到「刚刚发生了什么」。
+
+    返回 experience_id（供运行日志留证）；未记录时返回 None。
+    """
+    if store is None:
+        return None
+    try:
+        exp = store.record_action_result(agent_id, intent, result)
+    except Exception as exc:                              # noqa: BLE001
+        print(f"    ⚠️  Experience 记录失败：{type(exc).__name__}: {exc}")
+        return None
+    return getattr(exp, "experience_id", None)
+
+
 def _run_session(rt: Any, bridge: Any, index: int, limit: float,
                  log: Dict[str, Any], stats: Dict[str, Any]) -> tuple:
     import channels
@@ -313,6 +377,8 @@ def _run_session(rt: Any, bridge: Any, index: int, limit: float,
     bridge = bridge or channels.SyncBridge()
     st = StageStore(rt.economy.db)
     stage = next((s for s in st.list_stages(TASK_ID) if s.is_open), None)
+    # 🔴 M3：Action Seam —— 写操作必须经过 Dispatcher，结果必须落成 Experience
+    dispatcher, experience_store = _action_seam(rt)
 
     sess = RuntimeSession(limit_seconds=limit).start()
     s_log: Dict[str, Any] = {"index": index, "limit_seconds": limit,
@@ -322,14 +388,23 @@ def _run_session(rt: Any, bridge: Any, index: int, limit: float,
     rnd = 0
     while not sess.is_exceeded() and rnd < MAX_ROUNDS_PER_SESSION:
         rnd += 1
-        stage_txt = render_stage(stage, limit_seconds=limit,
+        # 🔴 M5：把**真实的** checkpoint 交给 render_stage。
+        #    旧实现不传它 → 上一轮的 workspace revision 从未进入下一轮认知。
+        ckpt = (st.latest_checkpoint(stage.stage_id)
+                if stage is not None else None)
+        stage_txt = render_stage(stage, checkpoint=ckpt, limit_seconds=limit,
                                  elapsed_seconds=sess.elapsed_seconds())
+        if ckpt is not None:
+            # 可观测证据：这一轮的 prompt 里**确实**带了哪个 checkpoint
+            s_log["checkpoint_in_context"] = ckpt.checkpoint_id
         print(f"  ── 第 {rnd} 轮 (已用 {sess.elapsed_seconds():.0f}s)")
         for aid in AGENTS:
             if sess.is_exceeded():
                 print("  🛑 Hard Limit 到达，本轮中止")
                 break
-            turn = _turn(rt, bridge, st, stage, aid, rnd, stage_txt, log, stats)
+            turn = _turn(rt, bridge, st, stage, aid, rnd, stage_txt, log, stats,
+                         dispatcher=dispatcher,
+                         experience_store=experience_store)
             s_log["turns"].append(turn)
             _print_turn(aid, turn)
 
@@ -378,7 +453,8 @@ def _workspace_revision(gw: Any) -> str:
 
 def _turn(rt: Any, bridge: Any, st: Any, stage: Any, aid: str, rnd: int,
           stage_txt: str, log: Dict[str, Any],
-          stats: Dict[str, Any]) -> Dict[str, Any]:
+          stats: Dict[str, Any], *, dispatcher: Any = None,
+          experience_store: Any = None) -> Dict[str, Any]:
     import channels
 
     comm, gw = rt.communication, rt.workspace_gateway
@@ -442,18 +518,48 @@ def _turn(rt: Any, bridge: Any, st: Any, stage: Any, aid: str, rnd: int,
             s["appended"] += 1
         else:
             s["replaced"] += 1
-        wr = write_artifact(gw, WS_ID, aid, art["path"], art["content"],
-                            write_mode=mode)
+
+        # 🔴 M3：**经过 ActionDispatcher**，不再直连 Gateway。
+        #
+        #   旧路径：write_artifact() → 裸 dict → turn["write"] → 进程结束即消失
+        #   新路径：ActionIntent → Dispatcher → WorkspaceWriteExecutor
+        #           → write_artifact() → **ActionResult**
+        #
+        #   🔒 write_mode 仍然是 **Agent 自己声明的那个**，原样透传；
+        #      Executor 不重试、不改 mode、不改路径。
+        if dispatcher is None:                            # pragma: no cover
+            raise RuntimeError(
+                "_turn 需要 ActionDispatcher —— 写操作必须经过 Action Seam（M3）")
+        action_intent = ActionIntent(
+            action_type=ACTION_WORKSPACE_WRITE, agent_id=aid,
+            parameters={"path": art["path"], "content": art["content"],
+                        "write_mode": mode},
+            reason=str(intent.get("assessment") or "")[:200],
+            intent_id=new_intent_id())
+        action_result = dispatcher.dispatch(action_intent)
+
+        out = (action_result.output
+               if isinstance(action_result.output, dict) else {})
         turn["write"] = {"path": art["path"], "mode": mode,
-                         "ok": wr["ok"], "code": wr.get("code"),
-                         "revision": wr.get("revision"),
-                         "previous_chars": wr.get("previous_chars"),
-                         "appended_chars": wr.get("appended_chars")}
-        if wr["ok"]:
+                         "ok": bool(action_result.success),
+                         "code": (action_result.metadata or {}).get("code"),
+                         "revision": out.get("revision"),
+                         "previous_chars": out.get("previous_chars"),
+                         "appended_chars": out.get("appended_chars")}
+        if action_result.success:
             s["writes_ok"] += 1
             s["chars_written"] += len(art["content"])
         else:
             s["writes_fail"] += 1
+
+        # 🔴 M3：ActionResult → Experience —— **成功与失败都记**。
+        #
+        #   这一行就是审计里「Gateway 知道 → Runtime 知道 → **Agent 不知道**」
+        #   那个缺口的补法：记下来之后，下一轮 `Brain.generate` 经
+        #   `CognitiveContextBuilder.build()` → `retrieve_relevant()` 会取到它，
+        #   渲染进 system —— 闭环成立。
+        turn["experience"] = _record_action_experience(
+            experience_store, aid, action_intent, action_result)
 
     if intent["message"]:
         res = channels.send(comm, bridge, from_agent=aid,
@@ -486,6 +592,34 @@ def _print_turn(aid: str, turn: Dict[str, Any]) -> None:
 
 
 # ================================================================
+def _describe_entry(e: Dict[str, Any]) -> str:
+    """
+    🔴 M4：把 `gateway.list()` 的一个条目渲染成一行。
+
+    🔒 **只陈述 Gateway 已经返回的字段**：
+        name · type · revision · effective_controller · effective_lock_holder
+      不新增字段、不做推断、不做权限判断。
+
+    【为什么必须带上 revision（真实证据）】
+
+        旧实现只取 `e.get("name")`，把 Gateway **已经算好**的 `revision` 丢掉。
+        于是 Agent 只能看到「这个文件在」，看不到「它已经是 R2」——
+        无法区分「这是我上轮改的」和「这是别人刚建的」。
+        实测：`novel_plot_architect` 5 轮重复 `CREATE` 同一路径。
+    """
+    name = str(e.get("name") or "")
+    facts: List[str] = []
+    if e.get("type"):
+        facts.append(str(e["type"]))
+    if e.get("revision") is not None:
+        facts.append(f"R{e['revision']}")
+    if e.get("effective_controller"):
+        facts.append(f"controller={e['effective_controller']}")
+    if e.get("effective_lock_holder"):
+        facts.append(f"lock={e['effective_lock_holder']}")
+    return f"{name}（{', '.join(facts)}）" if facts else name
+
+
 def _workspace_facts(gw: Any, agent: str) -> str:
     """
     §七：把 Workspace 的**真实环境事实**给 Agent。
@@ -494,23 +628,30 @@ def _workspace_facts(gw: Any, agent: str) -> str:
        不列出来 Agent 就不知道 `/manuscript/` 存在，只能瞎猜路径，
        然后全部 `locked_by_other`。那是**事实投递问题**，不是 Agent 行为问题。
 
-    🔒 只陈述事实，不写「你应该写 /world/」。
+    🔴 M4：每个条目带上 Gateway 已经给出的 `type` / `revision` /
+       `effective_controller` / `effective_lock_holder` ——
+       否则 Agent 不知道当前状态，只知道「有这么个名字」。
+
+    🔒 只陈述事实，不写「你应该写 /world/」，也不写「这个文件是你的」。
     """
     lines = [f"workspace_id = {WS_ID}"]
     for d, owner in ARTIFACT_NAMESPACES.items():
         got = gw.list(WS_ID, "/" + d, agent)
-        names = ([e.get("name") for e in got.result.get("entries", [])]
-                 if got.success else [])
+        entries = ([e for e in (got.result or {}).get("entries", []) or []]
+                   if got.success else [])
         mine = "（你的命名空间）" if owner == agent else ""
-        body = ", ".join(names) if names else "（空）"
+        body = (", ".join(_describe_entry(e) for e in entries)
+                if entries else "（空）")
         lines.append(f"  /{d}/  负责人={owner}{mine}  内容: {body}")
 
     # 根目录下的既有 Artifact
     root = gw.list(WS_ID, "/", agent)
     if root.success:
-        files = [e.get("name") for e in root.result.get("entries", [])
+        files = [e for e in (root.result or {}).get("entries", []) or []
                  if e.get("type") == "file"]
-        lines.append(f"  / 根目录文件: {', '.join(files) if files else '（无）'}")
+        body = (", ".join(_describe_entry(e) for e in files)
+                if files else "（无）")
+        lines.append(f"  / 根目录文件: {body}")
     return "\n".join(lines)
 
 

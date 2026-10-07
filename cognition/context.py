@@ -54,6 +54,7 @@ Cognitive Context V1 —— 当前这一轮认知实际需要看到的信息集�
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -316,14 +317,87 @@ def _experience_line(e: Experience) -> str:
     return f"[{e.source}] {status}: {_experience_detail(e)}"
 
 
+def _render_value(value: Any) -> str:
+    """把一个事实渲染成**单行**文本（dict / list 用 JSON，避免 Python repr）。"""
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return str(value)
+    try:
+        return json.dumps(value, ensure_ascii=False, sort_keys=True)
+    except (TypeError, ValueError):                           # pragma: no cover
+        return str(value)
+
+
 def _experience_detail(e: Experience) -> str:
+    """
+    🔴 M1：把一次经历的**关键事实**摊成一行。
+
+    【为什么必须改（真实证据）】
+
+        旧实现只渲染 `feedback` → `error` → `action_type`。
+        而 `record_action_result()` **一直**把 `parameters`（含 path /
+        write_mode）和 `output`（含 revision）存进数据库 —— 只是从不渲染。
+
+        于是下一轮 Cognition 只能读到：
+
+            [action_result] failed: error=同名资源已存在：/plot/…
+            [action_result] succeeded: action=workspace_write     ← 连文件都没有
+
+        实测（`hetero_novel_v1`）：`novel_plot_architect` 因此连续 5 轮
+        重复 `CREATE` 同一个**已存在**的文件，并在同一秒对外宣称"已写入"。
+        详见 `experiments/heterogeneous_production/results/ACTION_FEEDBACK_AUDIT.md`。
+
+    【纪律】
+
+        ✅ **只渲染 Experience 里真实存在的字段** —— 不推断、不补默认值、
+           不创造 Gateway 没有给出的事实。
+        ✅ 缺哪个字段就少渲染哪一段（少写 ≠ 写错）。
+        🔒 它是**材料**，不是指令 —— 这里不出现 must / should / never。
+    """
     if e.feedback:
         return e.feedback
+
     r = e.result or {}
+    action_type = r.get("action_type")
+    if not action_type:
+        # 非 Action 来源（例如只有 result={"success": False}）：
+        # 保持旧的极简行为，**不**给它编一个 action 名。
+        if r.get("error"):
+            return f"error={r['error']}"
+        return ""
+
+    params = dict(r.get("parameters") or {})
+    out = r.get("output")
+    out = dict(out) if isinstance(out, dict) else {}
+    declared_mode = params.get("write_mode")
+
+    parts = [f"action={action_type}"]
+
+    # ---- 对**什么**做了（target）----
+    target = params.get("path") or out.get("path")
+    if target:
+        parts.append(f"target={target}")
+
+    # ---- 用**什么语义**做的（write_mode：Agent 自己声明的那个）----
+    if declared_mode:
+        parts.append(f"write_mode={declared_mode}")
+
+    # ---- 结果里的真实字段（有才渲染）----
+    for key in ("revision", "previous_revision", "mode",
+                "previous_chars", "appended_chars", "chars",
+                "changed", "observed_state"):
+        value = out.get(key)
+        if value is None or value == "":
+            continue
+        if key == "mode" and declared_mode and value == declared_mode:
+            continue                       # 与上面的 write_mode 重复，不重复打印
+        parts.append(f"{key}={_render_value(value)}")
+
+    # ---- 机器可读的失败码 / 人类可读的失败原因 ----
+    if r.get("code"):
+        parts.append(f"code={r['code']}")
     if r.get("error"):
-        return f"error={r['error']}"
-    at = r.get("action_type")
-    return f"action={at}" if at else ""
+        parts.append(f"error={r['error']}")
+    return " ".join(parts)
 
 
 def _experience_block(e: Experience) -> str:
