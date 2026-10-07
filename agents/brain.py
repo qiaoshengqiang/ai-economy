@@ -110,6 +110,10 @@ class Brain:
         text = brain.think("你好")
     """
 
+    #: 🔒 「最近一次 generate 用到的 Cognitive Context」，只读观测用。
+    #:    记录它不违反任何边界 —— 它只是**已经发出去的东西**的回执。
+    last_context_stats: Optional[Dict[str, Any]] = None
+
     def __init__(
         self,
         router: LLMRouter,
@@ -117,9 +121,16 @@ class Brain:
         recorder: Optional[LLMCallRecorder] = None,
         credential_resolver: Optional[Any] = None,
         credential_config: Optional[dict] = None,
+        context_builder: Optional[Any] = None,
     ):
         self.router = router
         self.settings = settings
+
+        #: Cognitive Context Builder（可选）。
+        #: 🔒 它是**可注入**的 —— Brain 不认识 SelfModelStore，
+        #:    只认识「给我一个 query，我还你一段上下文文本」这个契约。
+        #:    （依赖方向：main.py 组装，cognition/ 实现，agents/ 只使用）
+        self.context_builder = context_builder
         self.recorder = recorder
 
         # ---- Credential（凭据）----
@@ -201,12 +212,24 @@ class Brain:
         max_tokens: Optional[int] = None,
         record: bool = True,
         task_id: Optional[str] = None,
+        context_query: Optional[dict] = None,
         **kwargs: Any,
     ) -> LLMResponse:
         """
         生成一次回复。
 
         参数全部可选 —— 不传就用这个 Agent 配置里的默认值。
+
+        context_query（§十七 Cognitive Context 的接入点）：
+            传一个 dict（world/domain/situation/stimulus/task/...），
+            Brain 会用它构建本轮的 Cognitive Context，
+            并把渲染结果**前置到 system** 里。
+
+            🔒 三个刻意的设计选择：
+              ① 它是**可选的** —— 不传就跟以前完全一样（零回归）
+              ② Brain **不知道** Self Model 在哪 —— 只调用注入的 builder
+              ③ 渲染出来的语气是「我目前持有的相关认知」，
+                 **不是**「你必须…」—— 见 cognition/context.py
 
         record=False 表示这次调用不记账。
             什么情况下用？比如系统自己发一个「探活」请求，
@@ -220,6 +243,29 @@ class Brain:
         # 注意 system 的处理：显式传入的优先，
         # 没传才用 Agent 自己的 system_prompt。
         effective_system = system if system is not None else self.system_prompt
+
+        # ---- Cognitive Context V1（§十七）--------------------------------
+        # 若注入了 builder 且调用方给了 context_query，就构建本轮上下文，
+        # 并把渲染结果**前置**到 system。
+        # 🔒 不改变 messages；不改变 provider；只是把「我目前持有的
+        #    相关认知」放进 system 的最前面。
+        self.last_context_stats = None
+        if self.context_builder is not None and context_query:
+            try:
+                ctx = self.context_builder.build(
+                    self.settings.agent_id, **context_query)
+                self.last_context_stats = ctx.stats()
+                rendered = ctx.to_text()
+                if rendered:
+                    effective_system = (
+                        f"{rendered}\n\n{effective_system}"
+                        if effective_system else rendered
+                    )
+            except Exception as exc:                      # noqa: BLE001
+                # 上下文构建失败**不能让 LLM 调用失败**（§十四：
+                # Cognitive Context 是增量增强，不是绝对依赖）
+                logger.warning("Cognitive Context 构建失败，本次降级为空: %s",
+                               exc)
         effective_provider = provider or self.settings.provider
 
         # 判断这次是不是「临时换了另一家 provider」。

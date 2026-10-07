@@ -399,9 +399,13 @@ class SelfModelStore:
             and (min_confidence is None or s.confidence >= min_confidence)
         ]
 
-        claims.sort(key=lambda c: (-c.scope.specificity(), -c.confidence,
+        # 排序：情境相关度 → scope 具体度 → confidence → 近期修正
+        claims.sort(key=lambda c: (-c.scope.relevance(ctx),
+                                   -c.scope.specificity(),
+                                   -c.confidence,
                                    _neg_str(c.updated_at)))
-        strategies.sort(key=lambda s: (-_strat_specificity(s),
+        strategies.sort(key=lambda s: (-_strat_relevance(s, ctx),
+                                       -_strat_specificity(s),
                                        -s.confidence,
                                        _neg_str(s.updated_at)))
 
@@ -412,9 +416,13 @@ class SelfModelStore:
     @staticmethod
     def _scope_ok(claim_scope: Scope, ctx: Scope, world, domain,
                   situation) -> bool:
+        """
+        🔒 只按 **world / domain 硬边界**排除（§九 的「优先」不是「只」）。
+           situation 不一致的降级为**排序靠后**，而不是被丢掉。
+        """
         if not any(v is not None for v in (world, domain, situation)):
             return True                      # 未给情境 → 不筛
-        return claim_scope.matches(ctx)
+        return claim_scope.compatible(ctx)
 
     @staticmethod
     def _strategy_ok(s: Strategy, ctx: Scope, domain, situation) -> bool:
@@ -470,3 +478,16 @@ def _neg_str(value: Any) -> str:
 
 def _strat_specificity(s: Strategy) -> int:
     return sum(1 for v in (s.domain, s.situation) if v)
+
+
+def _strat_relevance(s: Strategy, ctx: Scope) -> int:
+    """策略的情境相关度。**仅用于排序。**"""
+    score = 0
+    if s.domain is not None and ctx.domain is not None and \
+            str(s.domain).strip().lower() == str(ctx.domain).strip().lower():
+        score += 1
+    if s.situation is not None and ctx.situation is not None and \
+            str(s.situation).strip().lower() == \
+            str(ctx.situation).strip().lower():
+        score += 1
+    return score

@@ -118,6 +118,44 @@ class Scope:
         """有几个维度被限定了。用于检索排序 —— **仅用于排序**。"""
         return sum(1 for v in (self.world, self.domain, self.situation) if v)
 
+    def compatible(self, other: "Scope") -> bool:
+        """
+        **硬兼容**判断 —— 只把 world / domain 的不一致当作排除理由。
+
+        🔴 为什么 situation 不参与硬排除？
+           §九 说 fiction/story_planning 应该「**优先看到**」
+           fiction、digital_production/fiction —— 是**优先**，不是**只**。
+
+           如果把 situation 不一致当作排除，
+           一条 scope=character_design 的 claim 在 story_planning 场景下
+           会被**静默漏掉** —— 实测踩过这个坑（selected_claims = 0）。
+        """
+        for mine, theirs in ((self.world, other.world),
+                             (self.domain, other.domain)):
+            if mine is None or theirs is None:
+                continue
+            if str(mine).strip().lower() != str(theirs).strip().lower():
+                return False
+        return True
+
+    def relevance(self, other: "Scope") -> int:
+        """
+        **软相关度**：匹配上了几个维度。**仅用于排序，不用于排除。**
+
+        用来实现 §九 的「优先看到」：
+            situation 也匹配的 > 只有 domain 匹配的 > 无 scope 的
+        """
+        score = 0
+        for mine, theirs in ((self.world, other.world),
+                             (self.domain, other.domain),
+                             (self.situation, other.situation)):
+            if mine is None:
+                continue
+            if theirs is not None and \
+                    str(mine).strip().lower() == str(theirs).strip().lower():
+                score += 1
+        return score
+
     def matches(self, other: "Scope") -> bool:
         """
         本 scope 是否适用于 `other` 情境。
