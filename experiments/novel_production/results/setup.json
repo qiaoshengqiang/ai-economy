@@ -1,0 +1,182 @@
+{
+  "task_id": "task_novel_001",
+  "workspace_id": "WS-NOVEL-001",
+  "workspace_node": "OperationResult(ok, OP-0d5392f426df, {'resource_id': 'RES-fbddb568a152', 'revision': 1, 'created': True})",
+  "stages": [
+    {
+      "stage_id": "stage_novel_1",
+      "task_id": "task_novel_001",
+      "goal": "形成故事世界、主要人物和核心剧情框架",
+      "deliverables": [
+        {
+          "name": "world_bible.md"
+        },
+        {
+          "name": "characters.md"
+        },
+        {
+          "name": "core_conflict.md"
+        },
+        {
+          "name": "plot_outline.md"
+        }
+      ],
+      "status": "ACTIVE",
+      "waiting_for": "",
+      "current_checkpoint": "",
+      "created_at": "2026-10-07T06:42:55.133571+00:00",
+      "updated_at": "2026-10-07T06:42:55.133571+00:00"
+    },
+    {
+      "stage_id": "stage_novel_2",
+      "task_id": "task_novel_001",
+      "goal": "完成小说前段正文",
+      "deliverables": [
+        {
+          "name": "chapters_front.md"
+        },
+        {
+          "name": "consistency_note.md"
+        }
+      ],
+      "status": "PENDING",
+      "waiting_for": "",
+      "current_checkpoint": "",
+      "created_at": "2026-10-07T06:42:55.134034+00:00",
+      "updated_at": "2026-10-07T06:42:55.134034+00:00"
+    },
+    {
+      "stage_id": "stage_novel_3",
+      "task_id": "task_novel_001",
+      "goal": "对已有内容进行编辑与读者体验评估",
+      "deliverables": [
+        {
+          "name": "editor_report.md"
+        },
+        {
+          "name": "reader_report.md"
+        },
+        {
+          "name": "revision_suggestions.md"
+        }
+      ],
+      "status": "PENDING",
+      "waiting_for": "",
+      "current_checkpoint": "",
+      "created_at": "2026-10-07T06:42:55.134209+00:00",
+      "updated_at": "2026-10-07T06:42:55.134209+00:00"
+    },
+    {
+      "stage_id": "stage_novel_4",
+      "task_id": "task_novel_001",
+      "goal": "继续完成中段正文",
+      "deliverables": [
+        {
+          "name": "chapters_middle.md"
+        }
+      ],
+      "status": "PENDING",
+      "waiting_for": "",
+      "current_checkpoint": "",
+      "created_at": "2026-10-07T06:42:55.134332+00:00",
+      "updated_at": "2026-10-07T06:42:55.134332+00:00"
+    },
+    {
+      "stage_id": "stage_novel_5",
+      "task_id": "task_novel_001",
+      "goal": "继续编辑与读者反馈",
+      "deliverables": [
+        {
+          "name": "editor_report_2.md"
+        },
+        {
+          "name": "reader_report_2.md"
+        }
+      ],
+      "status": "PENDING",
+      "waiting_for": "",
+      "current_checkpoint": "",
+      "created_at": "2026-10-07T06:42:55.134460+00:00",
+      "updated_at": "2026-10-07T06:42:55.134460+00:00"
+    },
+    {
+      "stage_id": "stage_novel_6",
+      "task_id": "task_novel_001",
+      "goal": "完成后段与结局",
+      "deliverables": [
+        {
+          "name": "chapters_end.md"
+        }
+      ],
+      "status": "PENDING",
+      "waiting_for": "",
+      "current_checkpoint": "",
+      "created_at": "2026-10-07T06:42:55.134571+00:00",
+      "updated_at": "2026-10-07T06:42:55.134571+00:00"
+    },
+    {
+      "stage_id": "stage_novel_7",
+      "task_id": "task_novel_001",
+      "goal": "完成最终文学修订",
+      "deliverables": [
+        {
+          "name": "manuscript_final.md"
+        }
+      ],
+      "status": "PENDING",
+      "waiting_for": "",
+      "current_checkpoint": "",
+      "created_at": "2026-10-07T06:42:55.134698+00:00",
+      "updated_at": "2026-10-07T06:42:55.134698+00:00"
+    }
+  ],
+  "agents": [
+    "novel_world_builder",
+    "novel_plot_architect",
+    "novel_author",
+    "novel_editor",
+    "novel_reader"
+  ],
+  "credentials": [
+    {
+      "agent_id": "novel_author",
+      "credential_ref": "novel_author_deepseek",
+      "credential_source": "agent_env",
+      "credential_available": true,
+      "provider": "deepseek",
+      "fingerprint": "7b280bb4"
+    },
+    {
+      "agent_id": "novel_editor",
+      "credential_ref": "novel_editor_deepseek",
+      "credential_source": "agent_env",
+      "credential_available": true,
+      "provider": "deepseek",
+      "fingerprint": "7b280bb4"
+    },
+    {
+      "agent_id": "novel_plot_architect",
+      "credential_ref": "novel_plot_architect_deepseek",
+      "credential_source": "agent_env",
+      "credential_available": true,
+      "provider": "deepseek",
+      "fingerprint": "7b280bb4"
+    },
+    {
+      "agent_id": "novel_reader",
+      "credential_ref": "novel_reader_deepseek",
+      "credential_source": "agent_env",
+      "credential_available": true,
+      "provider": "deepseek",
+      "fingerprint": "7b280bb4"
+    },
+    {
+      "agent_id": "novel_world_builder",
+      "credential_ref": "novel_world_builder_deepseek",
+      "credential_source": "agent_env",
+      "credential_available": true,
+      "provider": "deepseek",
+      "fingerprint": "7b280bb4"
+    }
+  ]
+}

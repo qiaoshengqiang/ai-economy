@@ -213,6 +213,33 @@ class Brain:
     # ------------------------------------------------------------
     # 生成
     # ------------------------------------------------------------
+    def preflight_credential(self) -> dict:
+        """
+        调用真实 API **之前**检查凭据是否就绪（§九）。
+
+        🔒 目标：以后再增加 Agent 时，**不要等真实 API 返回 401
+           才发现配置错误**。
+
+        返回 `describe()` 的结果；若 provider 需要 key 但没有拿到，
+        **抛异常**（尽早暴露），而不是让它发出去换一个 401。
+        """
+        provider = self.settings.provider
+        if provider == "mock":
+            return {"source": "none", "provider": provider,
+                    "ref": "", "fingerprint": "", "present": True,
+                    "skipped": "mock 不需要 key"}
+        cred = self._credential_for(provider)
+        info = cred.describe() if hasattr(cred, "describe") else {}
+        if not info.get("credential_available"):
+            raise RuntimeError(
+                f"Agent {self.settings.agent_id!r} 的 provider {provider!r} "
+                f"没有可用的凭据（source={info.get('credential_source')!r}）。\n"
+                f"  · 在 agents/{self.settings.agent_id}/config.yaml 的 "
+                f"brain.credential.api_key_env 指定一个**有值**的环境变量；\n"
+                f"  · 或修好该 provider 的全局 api_key_env。"
+            )
+        return info
+
     def generate(
         self,
         messages: Union[str, Sequence[Message], None] = None,

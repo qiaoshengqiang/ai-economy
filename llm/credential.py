@@ -112,12 +112,27 @@ class Credential:
     __str__ = __repr__
 
     def describe(self) -> dict:
-        """给 CLI / usage 记录用的安全描述。🔒 没有 key。"""
+        """
+        给 CLI / usage / 预检用的安全描述。🔒 **没有 key。**
+
+        【§九：为什么加 fingerprint】
+            以后再增加 Agent 时，不要等真实 API 返回 401 才发现配置错。
+
+            fingerprint 是 `identity` 里那段**不可逆摘要**的前 8 位：
+              · 能区分「换了一把 key」和「还是同一把」
+              · **不能**从它反推出 key
+            它让「Agent D 和 Agent E 到底用没用不同的 key」
+            这类问题**在日志里就能回答**，而不必打印 secret。
+        """
+        fp = ""
+        if self.identity and ":" in self.identity:
+            fp = self.identity.split(":", 1)[1][:8]
         return {
             "credential_ref": self.ref,
             "credential_source": self.source,
             "credential_available": self.available,
             "provider": self.provider,
+            "fingerprint": fp,
         }
 
 
