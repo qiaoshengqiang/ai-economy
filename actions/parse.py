@@ -80,29 +80,91 @@ def _first_balanced_object(text: str) -> Optional[str]:
     return None
 
 
+#: 一个 JSON 对象要算「信封」，至少得有其中一个键。
+#: 🔴 `reflections` / `reflection` 必须在里面 —— 实测发现：
+#:    真实模型常常**只输出 reflections，不输出 action**
+#:    （例如决定「不动手，但要改策略」）。
+#:    第一版白名单漏了它们，导致合法的 Reflection 被静默丢弃，
+#:    进而把「parser bug」误读成「模型不遵守协议」。
+ENVELOPE_KEYS = {"decision", "action", "action_type",
+                 "reflections", "reflection"}
+
+
 def extract_envelope(text: Optional[str]) -> Optional[Dict[str, Any]]:
     """
     从 LLM 输出里找出结构化信封。找不到返回 None。
 
     🔒 **只认显式 JSON**。找不到就是普通回复 —— 不猜。
+
+    接受两种根：
+        { ... }   → 对象信封
+        [ ... ]   → **数组根**，规范化为 {"reflections": [...]}
+                    （实测：真实模型有时直接输出 reflection 数组）
     """
     if not text or not isinstance(text, str):
         return None
 
-    blob = _first_balanced_object(text)
-    if blob is None:
+    data = _first_balanced_json(text)
+    if data is None:
         return None
-    try:
-        data = json.loads(blob)
-    except (ValueError, TypeError):
+
+    # 数组根 → 只可能是 reflection 列表（Action 一定是对象）
+    if isinstance(data, list):
+        if all(isinstance(x, dict) for x in data) and data:
+            return {"reflections": data}
         return None
+
     if not isinstance(data, dict):
         return None
 
     # 必须至少有一个可识别的键，否则这只是一段碰巧是 JSON 的文本
-    if not ({"decision", "action", "action_type"} & set(data.keys())):
+    if not (ENVELOPE_KEYS & set(data.keys())):
         return None
     return data
+
+
+def _first_balanced_json(text: str) -> Any:
+    """
+    找出第一个**括号平衡**的 `{...}` 或 `[...]`，解析成 Python 对象。
+
+    ⚠️ 用括号计数而不是正则 —— JSON 可以嵌套，
+       而且字符串字面量里的括号会骗过朴素正则。
+    """
+    starts = [i for i in (text.find("{"), text.find("[")) if i != -1]
+    if not starts:
+        return None
+    start = min(starts)
+
+    pairs = {"{": "}", "[": "]"}
+    open_ch = text[start]
+    close_ch = pairs[open_ch]
+    depth = 0
+    in_str = False
+    escape = False
+
+    for i in range(start, len(text)):
+        ch = text[i]
+        if escape:
+            escape = False
+            continue
+        if ch == "\\":
+            escape = True
+            continue
+        if ch == '"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if ch == open_ch:
+            depth += 1
+        elif ch == close_ch:
+            depth -= 1
+            if depth == 0:
+                try:
+                    return json.loads(text[start:i + 1])
+                except (ValueError, TypeError):
+                    return None
+    return None
 
 
 def build_intent(agent_id: str, action: Dict[str, Any],

@@ -1,0 +1,72 @@
+{
+  "condition": "A",
+  "provider": "deepseek",
+  "model": "deepseek-flash",
+  "experience_id_in_context": "exp_diag0001",
+  "experience_shown_as": "[feedback] failed: 人物细节过多，导致结构返工。\n  Reference: exp_diag0001",
+  "stimulus_tail": "f whether this experience is worth changing your strategies.\n\nIf you decide to revise your own strategies, put them in the \"reflections\" array, each shaped like:\n{\"kind\":\"create_strategy|revise_strategy|abandon_strategy\",\"target\":\"<strategy id if needed>\",\"proposed_change\":{...},\"reason\":\"...\",\"evidence\":[...],\"scope\":{...}}\n\"reflections\" may be absent or empty if you decide nothing should change.",
+  "raw_reflection_output": {
+    "reflections": [
+      {
+        "kind": "revise_strategy",
+        "target": "STRATEGY_A",
+        "proposed_change": {
+          "new_rule": "先确定情节钩子与核心冲突，再嵌入不超过3个关键人物细节，让人物细节服务于推进，而非单独堆砌。",
+          "priority": "结构/悬念优先，人物细节次之"
+        },
+        "reason": "经验表明人物细节过多会导致结构返工；200字开头更需要快速建立场景、异常事件与悬念。",
+        "evidence": [
+          "exp_diag0001"
+        ],
+        "scope": {
+          "domain": "fiction",
+          "task": "story_opening"
+        }
+      }
+    ]
+  },
+  "model_text": "凌晨四点，林晚在面包房揉最后一团面。烤箱的红光映着玻璃，街上没有一辆车。她本来只想着天亮前把三十个可颂送出去，直到指尖碰到面团里一枚冰冷的硬物。是一把钥匙，铜色，齿痕新得发亮。她愣了几秒，想起昨晚关店后，只有一个人来过。那人没买面包，只站在门口问：“你们还收旧钥匙吗？”她当时以为他喝醉了。现在钥匙上粘着一小片蓝漆，和她前夫失踪那天开走的面包车颜色一模一样。门外忽然传来引擎熄火的声音。林晚把钥匙攥进掌心，没有回头，先伸手关掉了烤箱。\n\n{\"reflections\":[{\"kind\":\"revise_strategy\",\"target\":\"STRATEGY_A\",\"proposed_change\":{\"new_rule\":\"先确定情节钩子与核心冲突，再嵌入不超过3个关键人物细节，让人物细节服务于推进，而非单独堆砌。\",\"priority\":\"结构/悬念优先，人物细节次之\"},\"reason\":\"经验表明人物细节过多会导致结构返工；200字开头更需要快速建立场景、异常事件与悬念。\",\"evidence\":[\"exp_diag0001\"],\"scope\":{\"domain\":\"fiction\",\"task\":\"story_opening\"}}]}",
+  "parsed_reflections": [
+    {
+      "proposal_id": "prop_8f22afbe12f8",
+      "agent_id": "agent_a",
+      "kind": "revise_strategy",
+      "target": "STRATEGY_A",
+      "proposed_change": {
+        "new_rule": "先确定情节钩子与核心冲突，再嵌入不超过3个关键人物细节，让人物细节服务于推进，而非单独堆砌。",
+        "priority": "结构/悬念优先，人物细节次之"
+      },
+      "reason": "经验表明人物细节过多会导致结构返工；200字开头更需要快速建立场景、异常事件与悬念。",
+      "evidence": [
+        "exp_diag0001"
+      ],
+      "scope": {
+        "domain": "fiction",
+        "task": "story_opening"
+      },
+      "created_at": "2026-10-07T04:29:38.192503+00:00"
+    }
+  ],
+  "write_results": [
+    {
+      "committed": false,
+      "code": "target_not_found",
+      "reason": "strategy 'STRATEGY_A' 不存在"
+    }
+  ],
+  "self_model_after": [
+    {
+      "name": "STRATEGY_A：先大量扩写人物细节，再考虑情节",
+      "confidence": 0.8,
+      "status": "active"
+    }
+  ],
+  "wall_ms": 8968.2,
+  "cost": {
+    "tokens": 2308,
+    "cost_ai": 0.02308,
+    "latency_ms": 8965.8,
+    "model": "deepseek-flash",
+    "simulated": false
+  }
+}
