@@ -1,7 +1,7 @@
 {
   "task_id": "task_novel_001",
   "workspace_id": "WS-NOVEL-001",
-  "workspace_node": "OperationResult(ok, OP-0d5392f426df, {'resource_id': 'RES-fbddb568a152', 'revision': 1, 'created': True})",
+  "workspace_node": "OperationResult(ok, OP-2dcdcb44e7f9, {'resource_id': 'RES-fbddb568a152', 'revision': 1, 'created': False})",
   "stages": [
     {
       "stage_id": "stage_novel_1",
@@ -23,9 +23,9 @@
       ],
       "status": "ACTIVE",
       "waiting_for": "",
-      "current_checkpoint": "",
+      "current_checkpoint": "ckpt_574b6e5597a5",
       "created_at": "2026-10-07T06:42:55.133571+00:00",
-      "updated_at": "2026-10-07T06:42:55.133571+00:00"
+      "updated_at": "2026-10-07T06:55:42.066518+00:00"
     },
     {
       "stage_id": "stage_novel_2",
@@ -137,6 +137,72 @@
     "novel_editor",
     "novel_reader"
   ],
+  "participants": [
+    "novel_world_builder",
+    "novel_plot_architect",
+    "novel_author",
+    "novel_editor",
+    "novel_reader"
+  ],
+  "artifacts": [
+    {
+      "path": "world_bible.md",
+      "owner": "novel_world_builder",
+      "ok": true,
+      "status": "created",
+      "revision": 1,
+      "handoff_ok": true,
+      "handoff_error": null
+    },
+    {
+      "path": "plot_outline.md",
+      "owner": "novel_plot_architect",
+      "ok": true,
+      "status": "created",
+      "revision": 1,
+      "handoff_ok": true,
+      "handoff_error": null
+    },
+    {
+      "path": "manuscript.md",
+      "owner": "novel_author",
+      "ok": true,
+      "status": "created",
+      "revision": 1,
+      "handoff_ok": true,
+      "handoff_error": null
+    },
+    {
+      "path": "editor_notes.md",
+      "owner": "novel_editor",
+      "ok": true,
+      "status": "created",
+      "revision": 1,
+      "handoff_ok": true,
+      "handoff_error": null
+    },
+    {
+      "path": "reader_report.md",
+      "owner": "novel_reader",
+      "ok": true,
+      "status": "created",
+      "revision": 1,
+      "handoff_ok": true,
+      "handoff_error": null
+    }
+  ],
+  "workspace_snapshot": {
+    "workspace_id": "WS-NOVEL-001",
+    "files": {
+      "world_bible.md": 1,
+      "plot_outline.md": 1,
+      "manuscript.md": 1,
+      "editor_notes.md": 1,
+      "reader_report.md": 1
+    },
+    "revision": "ws:WS-NOVEL-001@256da3907ca5185d",
+    "sum": 5
+  },
   "credentials": [
     {
       "agent_id": "novel_author",
@@ -144,7 +210,7 @@
       "credential_source": "agent_env",
       "credential_available": true,
       "provider": "deepseek",
-      "fingerprint": "7b280bb4"
+      "fingerprint": "0ade3977"
     },
     {
       "agent_id": "novel_editor",
@@ -152,7 +218,7 @@
       "credential_source": "agent_env",
       "credential_available": true,
       "provider": "deepseek",
-      "fingerprint": "7b280bb4"
+      "fingerprint": "0ade3977"
     },
     {
       "agent_id": "novel_plot_architect",
@@ -160,7 +226,7 @@
       "credential_source": "agent_env",
       "credential_available": true,
       "provider": "deepseek",
-      "fingerprint": "7b280bb4"
+      "fingerprint": "0ade3977"
     },
     {
       "agent_id": "novel_reader",
@@ -168,7 +234,7 @@
       "credential_source": "agent_env",
       "credential_available": true,
       "provider": "deepseek",
-      "fingerprint": "7b280bb4"
+      "fingerprint": "0ade3977"
     },
     {
       "agent_id": "novel_world_builder",
@@ -176,7 +242,7 @@
       "credential_source": "agent_env",
       "credential_available": true,
       "provider": "deepseek",
-      "fingerprint": "7b280bb4"
+      "fingerprint": "0ade3977"
     }
   ]
 }

@@ -167,6 +167,35 @@ class ProviderRegistry:
     def hint_for(self, name: str) -> Optional[str]:
         return self._unimplemented.get(name.strip().lower())
 
+    def requires_api_key(self, name: str) -> bool:
+        """
+        这个 provider **要不要**密钥？
+
+        【为什么问注册表，而不是让调用方判断 provider 名字】
+
+            `Brain.preflight_credential()` 需要在调用**之前**知道
+            「这个 provider 没有 key 是不是真的有问题」。
+
+            第一版它写的是 `if provider == "mock": 跳过` ——
+            结果是 `agents/` 里出现了厂商名分支，被
+            `test_no_provider_branching_anywhere_outside_providers`
+            当场抓住（这是对的：那种写法每加一个 provider 就要改一次 Brain）。
+
+            ✅ 正确的知识来源是 **Provider 自己**：
+               每个 Provider 类用 `requires_api_key` 声明这件事
+               （`llm/base.py`，`MockProvider` 声明 False）。
+               注册表只是把「名字 → 类」这层映射暴露出来。
+
+        🔒 **fail-closed**：查不到（未注册 / 工厂不是类 / 没有该属性）
+           一律返回 True —— 即「假设它需要 key」。
+           反过来会让一个真的缺 key 的 provider 静默通过预检。
+        """
+        key = str(name or "").strip().lower()
+        factory = self._factories.get(key)
+        if factory is None:
+            return True
+        return bool(getattr(factory, "requires_api_key", True))
+
     # ------------------------------------------------------------
     # 创建
     # ------------------------------------------------------------
@@ -375,6 +404,28 @@ class LLMRouter:
             if self.is_enabled(name):
                 result.append(name)
         return result
+
+    def requires_api_key(self, name: Optional[str] = None) -> bool:
+        """
+        这个 provider 要不要密钥？
+
+        【为什么要问注册表，而不是在调用方判断 provider 名字】
+
+            `Brain.preflight_credential()` 需要在**调用之前**知道
+            「这个 provider 没有 key 到底是不是问题」。
+
+            它原来写的是 `if provider == "mock": 跳过` ——
+            于是 `agents/` 里出现了厂商名分支，被
+            `test_no_provider_branching_anywhere_outside_providers`
+            当场抓住（守卫是对的：那种写法每加一个 provider 都要改一次 Brain）。
+
+            ✅ 正确的知识来源是 **Provider 自己**：
+               每个 Provider 类用 `requires_api_key` 声明这件事
+               （见 `llm/base.py`；`MockProvider` 声明为 False）。
+               这里只是把「名字 → 类」那层映射暴露给上层。
+        """
+        return self.registry.requires_api_key(
+            name or self.default_provider)
 
     def is_enabled(self, name: str) -> bool:
         """

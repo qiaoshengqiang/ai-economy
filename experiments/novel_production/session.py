@@ -135,12 +135,22 @@ def main() -> int:
         log["session"] = sess.snapshot()
         log["rounds"] = rnd
 
-        # ---- Checkpoint（引用 Workspace Revision，不复制内容）----
-        rev = f"rev-session-{args.index}"
+        # ---- Checkpoint（引用**真实** Workspace Revision，不复制内容）----
+        #
+        # 🔴 这里原来写的是 `rev = f"rev-session-{args.index}"` ——
+        #    那是**实验器编的标签**，不是 Workspace 的 revision。
+        #    §六 明令删除这种做法。现在改成读每个共享文件的**真实
+        #    revision 号**，压成 `ws:<workspace>@<hash>`。
+        #    revision 号来自 Gateway 返回，本文件不编任何数字。
+        import shared_workspace as sw
+        ws_snap = sw.snapshot(rt.workspace_gateway, WS_ID, AGENTS[0])
+        rev = ws_snap["revision"]
         ck = st.save_checkpoint(current.stage_id, reason="hard_limit",
                                 workspace_id=WS_ID, revision=rev,
-                                progress={"rounds": rnd})
+                                progress={"rounds": rnd,
+                                          "file_revisions": ws_snap["files"]})
         after = st.get_stage(current.stage_id)
+        log["workspace_snapshot"] = ws_snap
         log["checkpoint"] = ck.to_dict()
         log["stage_after"] = after.to_dict()
         print(f"\n  🛑 {sess.state}  Stage={after.status}  "

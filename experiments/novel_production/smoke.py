@@ -29,6 +29,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+
+import shared_workspace as sw                          # noqa: E402
+
 DB = HERE / "data" / "novel.db"
 RESULTS = HERE / "results"
 
@@ -83,11 +87,37 @@ def cmd_setup(_args) -> int:
                              f"主题：{TOPIC}"),
                 workspace_id=WS_ID,
                 task_id=TASK_ID,
+                # 🔒 5 个 Agent 是同一个 Task 的 **Participant**。
+                #    WorkspaceGateway 的 `is_participant` 就查这里 ——
+                #    没有这一步，5 个 Agent 谁都写不进共享 Workspace。
+                participants=list(AGENTS),
             )
             rt.tasks.save(task)
-            print(f"  ✅ Task 已创建: {TASK_ID}")
+            print(f"  ✅ Task 已创建: {TASK_ID}（participants={len(AGENTS)}）")
         else:
-            print(f"  ↩︎  Task 已存在: {TASK_ID}（不重复创建）")
+            # 本次实验前建的 Task 没有 participants —— 补上（幂等）
+            missing = [a for a in AGENTS
+                       if a not in (existing.participants or [])]
+            if missing:
+                existing.participants = list(existing.participants or []) + missing
+                rt.tasks.save(existing)
+                print(f"  ✅ Task 参与者已补齐: {missing}")
+            print(f"  ↩︎  Task 已存在: {TASK_ID}"
+                  f"（participants={len(existing.participants or [])}）")
+
+        # --- Phase 3.5：5 份共享生产资料**真正**建进 Task Workspace ---
+        #
+        # 🔒 这是「Agent 产出只留在内存里」和「共享事实来源」的分界线。
+        #    每个文件被 handoff 给它的自然责任人（Workspace Core 的正式入口）。
+        prov = sw.provision(rt.workspace_gateway, WS_ID, AGENTS[0],
+                            agent_ids=list(AGENTS))
+        for item in prov:
+            mark = "✅" if item.get("ok") and item.get("handoff_ok") else "⚠️"
+            print(f"  {mark} {item['path']:20s} 负责人={item['owner']:20s} "
+                  f"R{item.get('revision', '?')} {item['status']}"
+                  + ("" if item.get("handoff_ok")
+                     else f"  handoff失败={item.get('handoff_error')}"))
+        ws_snap = sw.snapshot(rt.workspace_gateway, WS_ID, AGENTS[0])
 
         # --- Phase 4：Stage ---
         st = StageStore(rt.economy.db)
@@ -108,6 +138,10 @@ def cmd_setup(_args) -> int:
             "workspace_node": getattr(ws, "value", str(ws)),
             "stages": [s.to_dict() for s in st.list_stages(TASK_ID)],
             "agents": AGENTS,
+            "participants": list(AGENTS),
+            # §六：共享生产资料的真实 revision
+            "artifacts": prov,
+            "workspace_snapshot": ws_snap,
             # 凭证预检（§九）
             "credentials": [],
         }
@@ -178,110 +212,23 @@ def _one(aid, st, current, rt, log):
     return rec
 
 def cmd_session(args) -> int:
-    from experience import ExperienceStore
-    from stage import (RuntimeSession, SESSION_STOPPED_HARD_LIMIT,
-                       StageStore, STATUS_ACTIVE)
+    """
+    跑**协作** Session。
 
-    DB.parent.mkdir(parents=True, exist_ok=True)
-    rt = _store()
-    log = {"session_index": args.index, "agents": [], "hard_limit": None,
-           "started_at": time.time()}
-    sess = None
+    🔒 这里**不再自己实现循环** —— 协作循环住在 `collab_session.py`。
+       历史：本文件曾有一份 `cmd_session`，因为一次「字符串替换式修改」
+       把 `try/finally` 结构改坏，导致整个文件 **SyntaxError**。
+       修法不是再补一次补丁，而是**删掉重复实现**，只留一个入口。
+    """
+    import collab_session
+    argv = ["collab_session.py", "--index", str(args.index),
+            "--max-rounds", str(args.max_rounds)]
+    old = sys.argv
+    sys.argv = argv
     try:
-        st = StageStore(rt.economy.db)
-        stages = st.list_stages(TASK_ID)
-        current = next((s for s in stages if s.is_open), None)
-        if current is None:
-            print("  ⚠️ 没有打开的 Stage")
-            return 1
-        if args.index > 1:
-            # 真实 Resume（§七）：新 Runtime Session，读持久状态
-            if current.status != STATUS_ACTIVE:
-                current = st.resume(current.stage_id)
-            print(f"  ↩︎ 新 Session 恢复 Stage: {current.stage_id} "
-                  f"(status={current.status})")
-
-        # 🔴 Session 计时**从第一轮生产之前**开始 ——
-        #    这样 Hard Limit 约束的是**真实的生产时间**，
-        #    而不是「先干完活再空等 10 分钟」。
-        sess = RuntimeSession(limit_seconds=SESSION_LIMIT).start()
-
-        roster = args.agents or AGENTS
-        # 🔒 这是**轮转**，不是 Workflow 顺序 ——
-        #    每一轮每个 Agent 拿到的都是同一段 Stage 状态，
-        #    各自决定说什么。没有「必须先做 A 才能做 B」。
-        rnd = 0
-        while not sess.is_exceeded():
-            rnd += 1
-            print(f"  ── 第 {rnd} 轮（已用 {sess.elapsed_seconds():.0f}s "
-                  f"/ {SESSION_LIMIT:.0f}s）")
-            for aid in roster:
-                if sess.is_exceeded():
-                    print("  🛑 Hard Limit 到达，本轮中止")
-                    break
-                _one(aid, st, current, rt, log)
-            if rnd >= args.max_rounds:
-                print(f"  （达到 --max-rounds={args.max_rounds}，主动收工）")
-                break
-
-        for aid in ():
-            a = next(x for x in rt.economy.all_agents() if x.agent_id == aid)
-            a.brain.preflight_credential()      # 尽早暴露配置错误
-            prompt = KICKOFF.format(
-                topic=TOPIC, stage=_stage_brief(current), ws=WS_ID)
-            t0 = time.perf_counter()
-            rec = {"agent_id": aid}
-            try:
-                r = a.generate(messages=prompt)
-                rec.update({
-                    "ok": True, "simulated": r.simulated,
-                    "tokens": r.total_tokens,
-                    "ms": round((time.perf_counter() - t0) * 1000, 1),
-                    "chars": len(r.content or ""),
-                    "head": (r.content or "")[:600],
-                })
-                print(f"  ✅ {aid:22s} {rec['ms']:7.0f}ms "
-                      f"chars={rec['chars']:5d} tokens={rec['tokens']}")
-            except Exception as exc:                      # noqa: BLE001
-                rec.update({"ok": False, "error": f"{type(exc).__name__}: {exc}"})
-                print(f"  ❌ {aid}: {rec['error'][:80]}")
-            log["agents"].append(rec)
-
-    # ---- Hard Limit：到点强制停止（Runtime 执行，Agent 不能绕过）----
-    stopped = sess.enforce() if not sess.is_exceeded() else True
-    if sess.state != SESSION_STOPPED_HARD_LIMIT:
-        sess.enforce()
-    stage_after = StageStore(rt.economy.db).get_stage(current.stage_id)
-    ck = StageStore(rt.economy.db).save_checkpoint(
-        current.stage_id, reason="hard_limit",
-        workspace_id=WS_ID, revision=f"rev-session-{args.index}",
-        progress={"agents_run": len(log["agents"])})
-    log["hard_limit"] = {
-        "session": sess.snapshot(), "stopped": stopped,
-        "stage_status_after": stage_after.status if stage_after else None,
-        "checkpoint": ck.to_dict(),
-    }
-    print(f"\n  🛑 Hard Limit 触发: {sess.state} "
-          f"| Stage 状态={stage_after.status if stage_after else '?'} "
-          f"| checkpoint={ck.checkpoint_id}")
-
-    exp = ExperienceStore(rt.economy.db).record(
-        AGENTS[2], "observation",
-        result={"kind": "runtime_session", "index": args.index,
-                "stopped": sess.state},
-        scope={"domain": "fiction", "situation": "session_wrap"},
-        metadata={"session_index": args.index})
-    log["experience"] = exp.to_dict()
-    try:
-        rt.economy.close()
-    except Exception: pass
-    log["ended_at"] = time.time()
-    log["wall_seconds"] = round(log["ended_at"] - log["started_at"], 1)
-    RESULTS.mkdir(parents=True, exist_ok=True)
-    (RESULTS / f"session_{args.index:02d}.json").write_text(
-        json.dumps(log, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"  → {RESULTS/f'session_{args.index:02d}.json'}")
-    return 0
+        return collab_session.main()
+    finally:
+        sys.argv = old
 
 
 def main() -> int:

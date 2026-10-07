@@ -224,10 +224,19 @@ class Brain:
         **抛异常**（尽早暴露），而不是让它发出去换一个 401。
         """
         provider = self.settings.provider
-        if provider == "mock":
+        # 🔒 「要不要 key」由 **Provider 自己** 声明
+        #    （`LLMProvider.requires_api_key`），Brain 只负责问。
+        #
+        #    ⚠️ 第一版这里写的是 `if provider == "mock": 跳过` ——
+        #       那让 `agents/` 出现了厂商名分支，
+        #       被 `test_no_provider_branching_anywhere_outside_providers`
+        #       当场抓住。守卫是对的：那种写法每加一个 provider
+        #       就要改一次 Brain。
+        if not self.router.requires_api_key(provider):
             return {"source": "none", "provider": provider,
                     "ref": "", "fingerprint": "", "present": True,
-                    "skipped": "mock 不需要 key"}
+                    "credential_available": True,
+                    "skipped": "这个 provider 声明它不需要 key"}
         cred = self._credential_for(provider)
         info = cred.describe() if hasattr(cred, "describe") else {}
         if not info.get("credential_available"):
