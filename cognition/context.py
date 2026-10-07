@@ -220,7 +220,16 @@ class CognitiveContext:
             lines = ["Relevant strategies I currently hold:"]
             for s in self.strategies:
                 scope = _scope_label(None, s.domain, s.situation)
-                block = f"- {s.name}\n  Confidence: {s.confidence:.2f}"
+                # 🔴 §五：**正式展示 strategy_id**。
+                #    依据是真实 API 诊断（eebf420）：模型会使用它在
+                #    Context 里实际看到的 Strategy 标识 ——
+                #    只给名字 → 它填名字；给 id → 它填 id。
+                #
+                #    🔒 它是**数据**，不是指令。
+                #       绝不能渲染成 "You must use strategy_id…"。
+                block = (f"- {s.name}\n"
+                         f"  Strategy ID: {s.strategy_id}\n"
+                         f"  Confidence: {s.confidence:.2f}")
                 if scope:
                     block += f"\n  Scope: {scope}"
                 if s.rationale:

@@ -304,13 +304,49 @@ class TestContextIsNotSystemRules:
             f"§十三 禁止把 Strategy 伪装成 System Prompt Rules"
         )
 
-    def test_rendered_text_has_no_internal_identifiers(self, seeded):
-        """§十一：LLM 不该看到数据库 id / 内部标识。"""
+    def test_rendered_text_has_no_storage_internals(self, seeded):
+        """
+        【迁移说明】本测试原名 `test_rendered_text_has_no_internal_identifiers`。
+
+            旧前提：「渲染文本里不应出现 claim_ / strat_ / SELECT。」
+            → **已过期**：真实 API 诊断（eebf420）证明
+              **模型会使用它在 Context 里实际看到的 Strategy 标识**。
+              所以 `strategy_id` 现在是**正式业务 ID**，
+              必须出现（见 test_strategy_id_is_rendered）。
+
+            仍然有效的问题（本测试现在守的就是这个）：
+              · LLM 不该看到**存储层实现细节**：
+                表名 / SQL / 数据库路径 / 行 id
+              而不是「任何下划线 id 都不能出现」。
+        """
         b = CognitiveContextBuilder(seeded)
         text = b.build("agent_a", domain="fiction").to_text()
-        assert "claim_" not in text
-        assert "strat_" not in text
-        assert "SELECT" not in text
+        for bad in ("SELECT", "INSERT", "sqlite", ".db",
+                    "self_model_strategies", "self_model_claims"):
+            assert bad not in text, f"渲染文本泄露了存储细节：{bad}"
+
+    def test_strategy_id_is_rendered(self, seeded):
+        """🔴 §五 / §六 Test 1：strategy_id **必须**出现在 Context 里。"""
+        b = CognitiveContextBuilder(seeded)
+        ctx = b.build("agent_a", domain="fiction")
+        text = ctx.to_text()
+        for s in ctx.strategies:
+            assert f"Strategy ID: {s.strategy_id}" in text
+
+    def test_strategy_id_is_data_not_instruction(self, seeded):
+        """§五：它是数据，不是指令。"""
+        text = CognitiveContextBuilder(seeded).build(
+            "agent_a", domain="fiction").to_text().lower()
+        for w in ("must use", "you must", "always use", "required to use"):
+            assert w not in text
+
+    def test_name_confidence_scope_still_present(self, seeded):
+        """§六 Test 3：加 id 不能挤掉原有信息。"""
+        b = CognitiveContextBuilder(seeded)
+        text = b.build("agent_a", domain="fiction").to_text()
+        assert "先确认核心冲突" in text       # name
+        assert "Confidence:" in text
+        assert "Scope:" in text
 
     def test_context_has_no_decision_methods(self):
         """🔴 Context Builder / Context 都不能替 Agent 做 Decision。"""

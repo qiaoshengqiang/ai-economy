@@ -56,6 +56,22 @@ from selfmodel.models import (
 
 logger = get_logger(__name__)
 
+#: 🔒 Canonical Mutable Fields（§八）：V1 正式允许 Reflection 修改的字段。
+#:    依据是**当前 Strategy / SelfClaim 模型真正拥有的字段**
+#:    （selfmodel/models.py），**不是**依据模型某次输出里出现了什么。
+#:    模型曾输出 `summary` / `rules` —— 那些**不在**这里。
+MUTABLE_FIELDS = {
+    KIND_CREATE_STRATEGY: ("name", "rationale", "confidence",
+                           "domain", "situation"),
+    KIND_REVISE_STRATEGY: ("name", "rationale", "confidence",
+                           "domain", "situation"),
+    KIND_CREATE_CLAIM: ("content", "confidence"),
+    KIND_REVISE_CLAIM: ("content", "confidence"),
+    KIND_ABANDON_STRATEGY: (),
+    KIND_RETIRE_CLAIM: (),
+}
+SCOPE_FIELDS = ("world", "domain", "situation")
+
 
 class SelfModelWriteService:
     """
@@ -131,6 +147,17 @@ class SelfModelWriteService:
 
     def _validate_change(self, proposal: ReflectionProposal) -> ValidationResult:
         change = proposal.proposed_change or {}
+        allowed = set(MUTABLE_FIELDS.get(proposal.kind, ()))
+
+        # §九 / §十四：未知字段必须**明确失败并报出字段名**
+        unknown = sorted(k for k in change
+                         if k not in allowed and k not in SCOPE_FIELDS)
+        if unknown:
+            return ValidationResult(
+                False, "unsupported_change_fields",
+                f"{proposal.kind} 不支持这些 proposed_change 字段：{unknown}；"
+                f"V1 正式可改字段：{sorted(allowed)}",
+                fields=unknown)
 
         if proposal.kind in (KIND_CREATE_STRATEGY, KIND_REVISE_STRATEGY):
             if proposal.kind == KIND_CREATE_STRATEGY:
@@ -156,6 +183,18 @@ class SelfModelWriteService:
             if not ok:
                 return ValidationResult(False, "bad_confidence", why)
 
+        # §十 / §十五：不得出现 no-op（只更新 evidence 不算修订 Strategy）
+        if proposal.kind in (KIND_REVISE_STRATEGY, KIND_REVISE_CLAIM):
+            existing = self._target_object(proposal)
+            if existing is not None:
+                would = [f for f in allowed if f in change
+                         and not _same(getattr(existing, f, None), change[f])]
+                if not would:
+                    return ValidationResult(
+                        False, "no_supported_changes",
+                        f"{proposal.kind} 的 proposed_change 不会改变任何"
+                        f"正式字段（只更新 evidence 不算修订）", fields=[])
+
         # target 必须真的存在（revise / abandon / retire）
         if proposal.kind in NEEDS_TARGET:
             if proposal.kind in (KIND_REVISE_STRATEGY,
@@ -170,6 +209,13 @@ class SelfModelWriteService:
                     f"claim {proposal.target!r} 不存在")
 
         return ValidationResult(True, "ok", "")
+
+    def _target_object(self, proposal: ReflectionProposal) -> Any:
+        if proposal.kind in (KIND_REVISE_STRATEGY, KIND_ABANDON_STRATEGY):
+            return self.store.get_strategy(proposal.target)
+        if proposal.kind in (KIND_REVISE_CLAIM, KIND_RETIRE_CLAIM):
+            return self.store.get_claim(proposal.target)
+        return None
 
     @staticmethod
     def _check_confidence(value: Any):
@@ -200,14 +246,48 @@ class SelfModelWriteService:
                 "target=%s, code=%s)",
                 proposal.agent_id, proposal.kind, proposal.target,
                 validation.code)
-            return WriteOutcome(committed=False, validation=validation)
+            return WriteOutcome(committed=False, validation=validation,
+                                changed_fields=[])
+
+        changed = self._changed_fields(proposal)
+        if not changed:
+            logger.warning(
+                "Reflection Proposal 未改变任何字段，按 no-op 拒绝 "
+                "(agent_id=%s, kind=%s)", proposal.agent_id, proposal.kind)
+            return WriteOutcome(
+                committed=False,
+                validation=ValidationResult(
+                    False, "no_supported_changes",
+                    "该 Proposal 不会改变任何正式字段"),
+                changed_fields=[])
 
         result = self._commit(proposal)
         logger.info(
-            "Reflection Proposal 已写入 (agent_id=%s, kind=%s, target=%s)",
-            proposal.agent_id, proposal.kind, proposal.target)
+            "Reflection Proposal 已写入 (agent_id=%s, kind=%s, target=%s, "
+            "changed=%s)", proposal.agent_id, proposal.kind,
+            proposal.target, changed)
         return WriteOutcome(committed=True, validation=validation,
-                            result=result)
+                            result=result, changed_fields=changed)
+
+    def _changed_fields(self, proposal: ReflectionProposal) -> list:
+        """
+        本次写入**实际**会改变哪些字段。
+        🔒 它是 committed=True 的**必要条件** —— 这样 committed
+           代表「目标语义真的变了」，而不是「SQL 没报错」（§七）。
+        """
+        change = proposal.proposed_change or {}
+        allowed = MUTABLE_FIELDS.get(proposal.kind, ())
+        if not allowed:
+            return ["status"]
+        if proposal.kind == KIND_CREATE_STRATEGY:
+            return [f for f in allowed if f in change] or ["name"]
+        if proposal.kind == KIND_CREATE_CLAIM:
+            return [f for f in allowed if f in change] or ["content"]
+        existing = self._target_object(proposal)
+        if existing is None:
+            return []
+        return [f for f in allowed if f in change
+                and not _same(getattr(existing, f, None), change[f])]
 
     def _commit(self, proposal: ReflectionProposal) -> Any:
         change = proposal.proposed_change or {}
@@ -232,9 +312,17 @@ class SelfModelWriteService:
                 kwargs["rationale"] = change["rationale"]
             if "name" in change:
                 kwargs["name"] = change["name"]
-            if scope.domain is not None:
+            # 🔴 `domain` / `situation` 既可能在 `proposed_change` 里，
+            #    也可能在 `scope` 里。MUTABLE_FIELDS 声明了它们可改，
+            #    所以 `_commit` **必须**也读 `proposed_change` —— 否则就是
+            #    「校验说可以改，提交时却悄悄不生效」，又一种 silent no-op。
+            if "domain" in change:
+                kwargs["domain"] = change["domain"]
+            elif scope.domain is not None:
                 kwargs["domain"] = scope.domain
-            if scope.situation is not None:
+            if "situation" in change:
+                kwargs["situation"] = change["situation"]
+            elif scope.situation is not None:
                 kwargs["situation"] = scope.situation
             return self.store.revise_strategy(proposal.target, **kwargs)
 
@@ -261,6 +349,16 @@ class SelfModelWriteService:
             return self.store.retire_claim(proposal.target)
 
         raise AssertionError(f"未处理的 kind：{proposal.kind}")   # pragma: no cover
+
+
+def _same(a: Any, b: Any) -> bool:
+    """值是否等价（判断「到底变没变」）。字符串 strip 后比较。"""
+    if isinstance(a, str) and isinstance(b, str):
+        return a.strip() == b.strip()
+    try:
+        return float(a) == float(b)
+    except (TypeError, ValueError):
+        return a == b
 
 
 def _scope_from(raw: Any) -> Scope:
