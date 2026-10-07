@@ -812,11 +812,30 @@ class TestArchitectureGuards:
 
         Step 2 时只有 mock；
         Step 2.5 接入了真实的 deepseek；
-        之后又接入了豆包。
+        之后又接入了豆包；
+        之后又接入了阿里云百炼的千问 / GLM 两条。
         以后每接一家，这里就多一项。
+
+        【迁移说明】本测试此前断言的是**恰好三项**。
+        接入百炼后该前提过期，已更新为五项 ——
+        并**补强**了一条更本质的不变量（见下），
+        这样它守的就不只是「清单对不对」，而是
+        「登记表不会悄悄漏掉一家没实现的厂商」。
         """
         registry = build_default_registry()
-        assert registry.implemented == ["deepseek", "doubao", "mock"]
+        assert registry.implemented == ["bailian_glm", "bailian_qwen", "deepseek", "doubao", "mock"]
+
+        # 🔒 补强：**每一个已登记的名字，要么已实现，要么被显式声明
+        #    为「已登记未实现」**。这防止将来有人注册了名字却忘了实现，
+        #    用户拿到一句含糊的「未知 provider」。
+        registered = set(registry.known)
+        implemented = set(registry.implemented)
+        unimplemented = registered - implemented
+        for name in unimplemented:
+            assert registry.hint_for(name), (
+                f"provider {name!r} 既未实现、又没有未实现提示 —— "
+                f"用户会拿到一句含糊的错误"
+            )
 
     def test_no_vendor_names_in_agents_after_real_provider(self):
         """

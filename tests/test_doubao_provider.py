@@ -298,9 +298,16 @@ class TestRegistryIntegration:
         assert "grok" in registry.unimplemented
         assert "grok" not in registry.implemented
 
-    def test_all_three_providers_implemented(self):
+    def test_all_implemented_providers(self):
+        """
+        【迁移说明】原名 `test_all_three_providers_implemented`。
+
+            旧前提：「恰好三家已实现」。
+            → 该前提**已过期**：又接入了阿里云百炼的千问 / GLM 两条。
+            已更新为五项。
+        """
         registry = build_default_registry()
-        assert registry.implemented == ["deepseek", "doubao", "mock"]
+        assert registry.implemented == ["bailian_glm", "bailian_qwen", "deepseek", "doubao", "mock"]
 
     def test_created_by_router(self, monkeypatch, config):
         from llm.router import LLMRouter
