@@ -188,12 +188,32 @@ class TestEntersLLMRequest:
         system = prov.seen[-1]["system"] or ""
         assert "核心冲突" not in system
 
-    def test_without_context_query_behaviour_is_unchanged(self, seeded):
-        """🔒 不传 context_query → 与接入前完全一样（零回归）。"""
+    def test_brain_without_builder_behaves_as_before(self, seeded):
+        """
+        【迁移说明】本测试原名 `test_without_context_query_behaviour_is_unchanged`。
+
+            旧前提：「不传 context_query → 不注入上下文。」
+            → 该前提**已过期**：Runtime Wiring 那轮起，
+              默认路径（`build_runtime`）会注入 `default_context_query`，
+              **不传 context_query 也会构建上下文** —— 这正是那一轮的目的
+              （见 tests/test_runtime_context_wiring.py）。
+
+            仍然有效的问题（本测试现在守的就是这个）：
+              ① **没有** context_builder 的 Brain 行为与接入前完全一样
+              ② 显式 `cognitive=False` 时**不**注入（内部 utility 路径）
+        """
+        # ① 没有 builder
         prov = CapturingProvider()
-        brain = self._brain(seeded, prov)
-        brain.generate(messages="hi")
+        from agents.brain import Brain, BrainSettings
+        bare = Brain(FakeRouter(prov), BrainSettings(agent_id="agent_a"))
+        bare.generate(messages="hi")
         assert "先确认核心冲突" not in (prov.seen[-1]["system"] or "")
+
+        # ② 有 builder，但显式 cognitive=False
+        prov2 = CapturingProvider()
+        wired = self._brain(seeded, prov2)
+        wired.generate(messages="hi", cognitive=False)
+        assert "先确认核心冲突" not in (prov2.seen[-1]["system"] or "")
 
     def test_provider_does_not_own_self_model(self, seeded):
         """§十七：Provider 只收到文本，拿不到 store / agent 内部对象。"""

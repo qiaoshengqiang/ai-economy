@@ -627,6 +627,28 @@ def build_runtime(
     # 🔒 `agent_ids` 是**显式覆盖**，给测试与脚本用。
     #    不传就按 DEFAULT_AGENTS（也就是「本地实验配置」——
     #    开发者可能已经把它加到 3 个 Agent）。
+    # --- Self Model / Cognitive Context（§五：默认路径自动接入）--------
+    #
+    # 🔒 依赖方向：main.py（组装）知道 SelfModelStore 在哪；
+    #    Brain **不知道** —— 它只收到一个 context_builder + 一个默认 query。
+    from cognition import CognitiveContextBuilder
+    from selfmodel import SelfModelStore
+
+    self_model = SelfModelStore(economy.db)
+    ctx_cfg = config.get("cognition.context", {}) or {}
+    context_builder = CognitiveContextBuilder(
+        self_model,
+        max_claims=int(ctx_cfg.get("max_claims", 5)),
+        max_strategies=int(ctx_cfg.get("max_strategies", 5)),
+    )
+    #: Runtime 默认的检索情境。
+    #: ⚠️ 现在 Runtime 还没有 World/Domain/Situation 的一等字段（§六：
+    #:    缺失字段允许为 None）。留空表示「不限定情境」——
+    #:    此时 retrieve() 会返回**按 confidence 排序的前 N 条**，
+    #:    仍然受 max_claims / max_strategies 约束（**不是**全量注入）。
+    #:    将来 Task/World 提供情境时，改这里一处即可。
+    default_context_query = dict(ctx_cfg.get("default_query", {}) or {})
+
     for agent_id in (agent_ids if agent_ids is not None else DEFAULT_AGENTS):
         agent = economy.create_agent(agent_id)
 
@@ -640,6 +662,9 @@ def build_runtime(
             # 🔒 交给 Brain 的是「**怎么解析**凭据」，而**不是** key 本身。
             credential_resolver=credential_resolver,
             credential_config=agent.config.credential,
+            # §五：默认路径自动接入 —— 调用方不必手写 context_query
+            context_builder=context_builder,
+            default_context_query=default_context_query,
         )
         agent.attach_brain(brain)
 

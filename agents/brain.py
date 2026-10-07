@@ -122,6 +122,7 @@ class Brain:
         credential_resolver: Optional[Any] = None,
         credential_config: Optional[dict] = None,
         context_builder: Optional[Any] = None,
+        default_context_query: Optional[dict] = None,
     ):
         self.router = router
         self.settings = settings
@@ -131,6 +132,16 @@ class Brain:
         #:    只认识「给我一个 query，我还你一段上下文文本」这个契约。
         #:    （依赖方向：main.py 组装，cognition/ 实现，agents/ 只使用）
         self.context_builder = context_builder
+
+        #: 默认的 Context Query。
+        #: 🔒 Runtime 自动用它 —— 调用方**不需要**手写 context_query（§五）。
+        #: 显式传入的 context_query 优先于它（供测试和特殊场景用）。
+        self.default_context_query = dict(default_context_query or {})
+
+        #: 最近一次 Context 构建失败的信息（§十三：Fail-soft **≠** Fail-silent）。
+        #: ⚠️ 只记 agent_id 与异常类型，**不记**上下文原文。
+        self.last_context_error: Optional[dict] = None
+        self.context_failures: int = 0
         self.recorder = recorder
 
         # ---- Credential（凭据）----
@@ -213,6 +224,7 @@ class Brain:
         record: bool = True,
         task_id: Optional[str] = None,
         context_query: Optional[dict] = None,
+        cognitive: bool = True,
         **kwargs: Any,
     ) -> LLMResponse:
         """
@@ -224,6 +236,19 @@ class Brain:
             传一个 dict（world/domain/situation/stimulus/task/...），
             Brain 会用它构建本轮的 Cognitive Context，
             并把渲染结果**前置到 system** 里。
+
+        cognitive（§十五 区分「Agent Cognition」与「内部 LLM utility」）：
+            True（默认）= 这是一次 **Agent 认知**，应当带上 Cognitive Context。
+            False        = 这是**内部 utility 调用**（探活、解析、格式化…），
+                           不注入上下文。
+
+            ⚠️ 默认是 True，因为默认路径应该**自动**接入（§五）。
+               内部 utility 的调用点必须**显式**写 cognitive=False ——
+               这样「哪些调用属于认知」是一个**显式决定**，不是漏网之鱼。
+
+        不传 context_query 时：
+            用 `default_context_query`（Runtime 组装时注入）。
+            → 这就是「调用方不需要手写 context_query」的实现方式。
 
             🔒 三个刻意的设计选择：
               ① 它是**可选的** —— 不传就跟以前完全一样（零回归）
@@ -250,10 +275,21 @@ class Brain:
         # 🔒 不改变 messages；不改变 provider；只是把「我目前持有的
         #    相关认知」放进 system 的最前面。
         self.last_context_stats = None
-        if self.context_builder is not None and context_query:
+        # 🔴 必须区分 None 与 {} —— 这是两种不同的意思：
+        #      None = 「这次不要 Context」
+        #      {}   = 「要 Context，但不限定检索情境」
+        #    写成 `context_query or default or None` 会把 {} 当成 None，
+        #    默认路径于是**静默不构建上下文**（实测踩过）。
+        if not cognitive:
+            query = None
+        elif context_query is not None:
+            query = context_query
+        else:
+            query = self.default_context_query          # 可能是 {}
+        if self.context_builder is not None and query is not None:
             try:
                 ctx = self.context_builder.build(
-                    self.settings.agent_id, **context_query)
+                    self.settings.agent_id, **query)
                 self.last_context_stats = ctx.stats()
                 rendered = ctx.to_text()
                 if rendered:
@@ -264,8 +300,19 @@ class Brain:
             except Exception as exc:                      # noqa: BLE001
                 # 上下文构建失败**不能让 LLM 调用失败**（§十四：
                 # Cognitive Context 是增量增强，不是绝对依赖）
-                logger.warning("Cognitive Context 构建失败，本次降级为空: %s",
-                               exc)
+                #
+                # §十三：Fail-soft **≠** Fail-silent。必须可观测，
+                # 但**不**记录上下文原文 / Memory / Prompt。
+                self.last_context_error = {
+                    "agent_id": self.settings.agent_id,
+                    "error_type": type(exc).__name__,
+                    "reason": str(exc)[:200],
+                }
+                self.context_failures += 1
+                logger.warning(
+                    "Cognitive Context 构建失败，本次降级为空 "
+                    "(agent_id=%s, error=%s): %s",
+                    self.settings.agent_id, type(exc).__name__, exc)
         effective_provider = provider or self.settings.provider
 
         # 判断这次是不是「临时换了另一家 provider」。
