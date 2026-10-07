@@ -106,6 +106,11 @@ class CognitiveContext:
     drives: Optional[str] = None
     current_stimulus: Optional[str] = None
     current_task: Optional[str] = None
+    #: §二十七 / §二十八：当前 Stage 的**世界状态 / 任务状态**。
+    #: 🔒 它是状态信息，**不是**「你现在必须做 X」的指令。
+    #:    内容如：Stage Goal · Status · Deliverables · 当前 Checkpoint ·
+    #:    Hard runtime limit · 本次 Session 已用时间。
+    current_stage: Optional[str] = None
     self_claims: List[SelfClaim] = field(default_factory=list)
     strategies: List[Strategy] = field(default_factory=list)
     #: §七 / §八：相关历史经历。
@@ -130,6 +135,7 @@ class CognitiveContext:
         add("drives", self.drives, 0.9)
         add("stimulus", self.current_stimulus, 1.0)
         add("task", self.current_task, 0.95)
+        add("stage", self.current_stage, 0.95)
 
         for c in self.self_claims:
             out.append(ContextSource(
@@ -177,6 +183,7 @@ class CognitiveContext:
             "task_present": bool(self.current_task),
             "stimulus_present": bool(self.current_stimulus),
             "identity_present": bool(self.identity),
+            "stage_present": bool(self.current_stage),
             "total_sources": len(self.sources()),
         }
 
@@ -205,6 +212,8 @@ class CognitiveContext:
             parts.append(f"Current input:\n{self.current_stimulus}")
         if self.current_task:
             parts.append(f"Current task:\n{self.current_task}")
+        if self.current_stage:
+            parts.append(f"Current stage:\n{self.current_stage}")
 
         if self.self_claims:
             lines = ["Relevant beliefs I currently hold about myself:"]

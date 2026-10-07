@@ -1,0 +1,49 @@
+"""
+Production Stage V1 —— Long-lived Task 的阶段性生产单元。
+
+    from stage import StageStore, RuntimeSession, StageControlExecutor
+
+🔴 边界：
+    · Stage **不是** Workflow Script（无 steps / sequence / workflow）
+    · **没有** StageEngine / WorkflowEngine / StagePlanner（§三十二）
+    · Hard Limit 是 Runtime 规则；Agent Stop Judgment 是 Agent 决策
+    · Checkpoint **引用** Workspace Revision，不复制 Workspace
+"""
+
+from stage.control import (
+    DECISION_CONTINUE, DECISION_PAUSE, DECISION_REQUEST_FEEDBACK,
+    DECISION_STOP, DECISION_SUBMIT_STAGE, VALID_DECISIONS,
+    StageControlExecutor,
+)
+from stage.limit import (
+    SESSION_RUNNING, SESSION_STOPPED_AGENT, SESSION_STOPPED_CRASH,
+    SESSION_STOPPED_HARD_LIMIT, RuntimeSession,
+)
+from stage.models import (
+    FEEDBACK_EVALUATION, FEEDBACK_EXTERNAL, FEEDBACK_HUMAN,
+    FORBIDDEN_STAGE_FIELDS, REASON_AGENT_PAUSE, REASON_AGENT_STOP,
+    REASON_CRASH, REASON_HARD_LIMIT, REASON_SUBMIT,
+    STATUS_ACTIVE, STATUS_CANCELLED, STATUS_COMPLETED, STATUS_FAILED,
+    STATUS_PENDING, STATUS_WAITING, VALID_STATUSES, VALID_WAITING_FOR,
+    WAITING_FOR_AGENT_DECISION, WAITING_FOR_FEEDBACK, WAITING_FOR_HUMAN_INPUT,
+    WAITING_FOR_RESOURCE, WAITING_FOR_RESUME,
+    Checkpoint, Feedback, Stage,
+)
+from stage.store import StageError, StageStore
+
+__all__ = [
+    "StageStore", "StageError", "Stage", "Checkpoint", "Feedback",
+    "RuntimeSession", "StageControlExecutor",
+    "STATUS_PENDING", "STATUS_ACTIVE", "STATUS_WAITING", "STATUS_COMPLETED",
+    "STATUS_FAILED", "STATUS_CANCELLED", "VALID_STATUSES",
+    "WAITING_FOR_HUMAN_INPUT", "WAITING_FOR_FEEDBACK", "WAITING_FOR_RESOURCE",
+    "WAITING_FOR_RESUME", "WAITING_FOR_AGENT_DECISION", "VALID_WAITING_FOR",
+    "FORBIDDEN_STAGE_FIELDS",
+    "FEEDBACK_HUMAN", "FEEDBACK_EXTERNAL", "FEEDBACK_EVALUATION",
+    "REASON_HARD_LIMIT", "REASON_AGENT_STOP", "REASON_AGENT_PAUSE",
+    "REASON_SUBMIT", "REASON_CRASH",
+    "SESSION_RUNNING", "SESSION_STOPPED_AGENT", "SESSION_STOPPED_HARD_LIMIT",
+    "SESSION_STOPPED_CRASH",
+    "DECISION_CONTINUE", "DECISION_STOP", "DECISION_PAUSE",
+    "DECISION_SUBMIT_STAGE", "DECISION_REQUEST_FEEDBACK", "VALID_DECISIONS",
+]
