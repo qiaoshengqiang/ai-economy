@@ -116,6 +116,44 @@ llm:
       model: "deepseek-chat"
       timeout_seconds: 60
 
+    # ============================================================
+    # 阿里云百炼（DashScope）—— OpenAI 兼容模式
+    # ============================================================
+    #
+    # 【为什么是两个 provider 条目，而不是一个】
+    #   Agent D 和 Agent E **共用同一个百炼端点**，但用**不同的模型**。
+    #   本项目的 `model` / `model_env` 是**每个 provider 一份**，
+    #   所以拆成两条 —— 好处是模型名也放进 .env，你不用改这个文件。
+    #   🔒 两者指向**同一 base_url / 同一 API Key**，只是模型不同。
+    #
+    # 【base_url 必须带 /compatible-mode/v1 后缀】
+    #   那是百炼的 OpenAI 兼容入口；不带后缀的是它的原生协议。
+    #   https://www.alibabacloud.com/help/zh/model-studio/compatibility-of-openai-with-dashscope
+
+    # Agent D —— 千问系列
+    bailian_qwen:
+      enabled: true
+      api_key_env: "BAILIAN_API_KEY"
+      base_url_env: "BAILIAN_BASE_URL"
+      model_env: "BAILIAN_QWEN_MODEL"
+      base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+      # 留空 = 用 .env 的 BAILIAN_QWEN_MODEL。
+      # ⚠️ **故意不填默认模型名** —— 百炼的模型 id 会更新，
+      #    写死在这里容易几个月后变成「模型不存在」。
+      #    （doubao 那段踩过这个坑：写死的 id 盖住了 .env 的正确值。）
+      model: ""
+      timeout_seconds: 300
+
+    # Agent E —— GLM 系列（智谱，托管在百炼上）
+    bailian_glm:
+      enabled: true
+      api_key_env: "BAILIAN_API_KEY"
+      base_url_env: "BAILIAN_BASE_URL"
+      model_env: "BAILIAN_GLM_MODEL"
+      base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+      model: ""
+      timeout_seconds: 300
+
     doubao:
       enabled: true
       api_key_env: "DOUBAO_API_KEY"

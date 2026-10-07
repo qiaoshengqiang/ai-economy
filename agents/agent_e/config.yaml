@@ -1,0 +1,46 @@
+# ============================================================
+# Agent E 的私有配置
+# ============================================================
+identity:
+  agent_id: "agent_e"          # ← 必须和目录名一致
+  name: "Agent E"
+
+economy:
+  initial_balance: 100
+  min_acceptable_price: 3
+  risk_appetite: 0.4
+
+# ------------------------------------------------------------
+# 大脑 —— 阿里云百炼 · GLM 系列（智谱，托管在百炼上）
+# ------------------------------------------------------------
+brain:
+  provider: "bailian_glm"
+
+  # ⚠️ 留空 = 用 .env 的 BAILIAN_GLM_MODEL。
+  model: ""
+
+  credential_ref: "agent_e_bailian"
+
+  system_prompt: |
+    你是 Agent E，一个独立的经济主体。
+    你通过承接任务、交付成果来赚取 AI 币。
+
+  temperature: 0.7
+  max_tokens: 2048
+  fallback_provider: ""
+
+capabilities:
+  skills:
+    - "code_review"
+    - "testing"
+  estimated_tokens_per_task: 28000
+
+negotiation:
+  accept_price: 50
+  opening_ask: 60
+  walk_away_price: 25
+  max_rounds: 2
+
+behavior:
+  allow_outsourcing: false
+  allow_bidding: true

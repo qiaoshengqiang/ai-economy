@@ -99,8 +99,8 @@ logger = get_logger(__name__)
 
 # 本版本要创世的两个 Agent。
 # 以后要加 Agent C，只需要在这里加一行 + 建一个目录：
-#     DEFAULT_AGENTS = ["agent_a", "agent_b", "agent_c"]
-DEFAULT_AGENTS = ["agent_a", "agent_b","agent_c"]
+#     DEFAULT_AGENTS = ["agent_a", "agent_b", "agent_c", "agent_d", "agent_e"]
+DEFAULT_AGENTS = ["agent_a", "agent_b", "agent_c", "agent_d", "agent_e"]
 
 
 # ============================================================

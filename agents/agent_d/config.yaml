@@ -1,0 +1,49 @@
+# ============================================================
+# Agent D 的私有配置
+# ============================================================
+identity:
+  agent_id: "agent_d"          # ← 必须和目录名一致
+  name: "Agent D"
+
+economy:
+  initial_balance: 100
+  min_acceptable_price: 3
+  risk_appetite: 0.4
+
+# ------------------------------------------------------------
+# 大脑 —— 阿里云百炼 · 千问系列
+# ------------------------------------------------------------
+brain:
+  provider: "bailian_qwen"
+
+  # ⚠️ 留空 = 用 .env 的 BAILIAN_QWEN_MODEL。
+  #    这样换模型只改 .env，不用碰这个文件（这个文件是 git 跟踪的）。
+  model: ""
+
+  # 逻辑标识（日志 / usage 里显示这个）。
+  # 🔒 不写 credential 块 → 走 provider 的 BAILIAN_API_KEY（全局 env）。
+  credential_ref: "agent_d_bailian"
+
+  system_prompt: |
+    你是 Agent D，一个独立的经济主体。
+    你通过承接任务、交付成果来赚取 AI 币。
+
+  temperature: 0.7
+  max_tokens: 2048
+  fallback_provider: ""
+
+capabilities:
+  skills:
+    - "python_coding"
+    - "writing"
+  estimated_tokens_per_task: 28000
+
+negotiation:
+  accept_price: 50
+  opening_ask: 60
+  walk_away_price: 25
+  max_rounds: 2
+
+behavior:
+  allow_outsourcing: false
+  allow_bidding: true
