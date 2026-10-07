@@ -335,3 +335,55 @@ class TestWriteModeGuards:
             for m in mods:
                 assert m not in ("os", "shutil", "pathlib", "subprocess"), (
                     f"services/artifacts.py 导入了 {m} —— 它不该碰宿主文件系统")
+
+
+# ================================================================
+# 🔴 真实 smoke 抓到的 bug：深路径 CREATE
+# ================================================================
+class TestDeepPathCreation:
+    """
+    实测：Agent 自主发明了 `novel/chapters/chapter-01-opening.md`，
+    而 `novel/chapters/` 不存在 → `not_found`。
+
+    §七 的示例只有一层，但 Agent **很自然会发明更深的结构**。
+    只支持一层 = 动态创建事实上不可用。
+    """
+
+    def test_deep_path_creates_intermediate_directories(self, gw):
+        provision_namespaces(gw, W, OWNER)
+        r = write_artifact(gw, W, OWNER, "world/regions/north/cities.md",
+                           "北方城市", write_mode=MODE_CREATE)
+        assert r["ok"] is True, r
+        assert _content(gw, "world/regions/north/cities.md") == "北方城市"
+
+    def test_reverse_intermediate_dirs_respect_ownership(self, gw):
+        """
+        🔒 建中间目录**不绕过** Lock：
+            author 不能在 world_builder 的命名空间下造目录。
+        """
+        provision_namespaces(gw, W, OWNER)
+        r = write_artifact(gw, W, AUTHOR, "world/regions/cities.md", "x",
+                           write_mode=MODE_CREATE)
+        assert r["ok"] is False
+        assert r["code"] == "locked_by_other"
+
+    def test_repeat_deep_create_is_idempotent_on_parents(self, gw):
+        provision_namespaces(gw, W, OWNER)
+        a = write_artifact(gw, W, OWNER, "world/regions/a.md", "A",
+                           write_mode=MODE_CREATE)
+        b = write_artifact(gw, W, OWNER, "world/regions/b.md", "B",
+                           write_mode=MODE_CREATE)
+        assert a["ok"] and b["ok"]
+
+    def test_missing_parent_is_detected_by_read_not_by_create(self):
+        """
+        🔒 回归守卫：`_ensure_parents` **不许**再用
+           「create 返回 NAME_CONFLICT」来判断目录是否已存在
+           —— 那个检查顺序会让「已存在」被误读成「无权限」。
+        """
+        import pathlib
+        src = (pathlib.Path(__file__).resolve().parent.parent
+               / "services" / "artifacts.py").read_text("utf-8")
+        block = src[src.index("def _ensure_parents"):src.index("def _create")]
+        assert "gateway.read(" in block, (
+            "_ensure_parents 没有先用 read 探测存在性 —— 会重现那个 bug")

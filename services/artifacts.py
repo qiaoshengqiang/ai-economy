@@ -166,9 +166,69 @@ def _read(gateway: Any, workspace_id: str, agent_id: str,
     return {"ok": True, "result": dict(got.result or {})}
 
 
+def _ensure_parents(gateway: Any, workspace_id: str, agent_id: str,
+                    path: str) -> Optional[Dict[str, Any]]:
+    """
+    按需创建缺失的**中间目录**（逐层，全部经过 Gateway）。
+
+    返回 None 表示父目录链已就绪；否则返回一个失败结果。
+
+    【🔴 为什么需要它（真实 smoke 发现）】
+
+        实测：Agent 自主发明了 `novel/chapters/chapter-01-opening.md`，
+        但 `novel/chapters/` 不存在 → `not_found`。
+
+        §七 的示例（`/manuscript/chapter_01.md`）只有一层，
+        但 Agent **很自然会发明更深的结构**。
+        只支持一层 = 动态创建事实上不可用。
+
+    🔒 逐层 `gateway.create(..., "directory", ...)` ——
+       权限、锁、revision 语义**完全照旧**：
+       建不了目录就说明这个 Agent 在那层没有 Directory Lock，
+       此时如实返回 `locked_by_other`，**不绕过**。
+    """
+    parts = [p for p in path.split("/")[:-1] if p]
+    parent_path = "/"
+    for seg in parts:
+        child_path = parent_path.rstrip("/") + "/" + seg
+
+        # 🔴 **先看它是否已经存在**，再决定要不要建。
+        #
+        #    【为什么不能靠「create 返回 NAME_CONFLICT」来判断】
+        #    实测：`gateway.create` 的检查顺序是
+        #        participant → resolve parent → **父目录 Lock** → 同名冲突
+        #    所以当一个目录**已经存在**、而调用者不持有**它的父目录**锁时，
+        #    create 会在 Lock 那一步就失败，**根本走不到**同名冲突 ——
+        #    于是「已存在」被误读成「无权限」。
+        #    这不是 Gateway 的 bug（它对「新建」而言判断是对的），
+        #    而是**本层不该用 create 去探测存在性**。
+        existing = gateway.read(workspace_id, child_path, agent_id)
+        if existing.success:
+            parent_path = child_path
+            continue
+
+        res = gateway.create(workspace_id, parent_path, seg, "directory",
+                            agent_id)
+        if res.success:
+            parent_path = child_path
+            continue
+        code = str((res.error or {}).get("code") or "")
+        if code == "NAME_CONFLICT":
+            parent_path = child_path
+            continue
+        return _fail(path, _map_code(code),
+                     (res.error or {}).get("message") or "父目录创建失败",
+                     gateway_code=code)
+    return None
+
+
 def _create(gateway: Any, workspace_id: str, agent_id: str,
             path: str, body: str) -> Dict[str, Any]:
-    """CREATE：只在**不存在**时创建。"""
+    """CREATE：只在**不存在**时创建（缺失的中间目录会被逐层建出来）。"""
+    blocked = _ensure_parents(gateway, workspace_id, agent_id, path)
+    if blocked is not None:
+        return blocked
+
     parent, _, name = path.rpartition("/")
     parent_path = "/" + parent if parent else "/"
 
