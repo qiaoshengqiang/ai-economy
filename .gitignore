@@ -64,3 +64,7 @@ agents/*/workspace/*
 
 # Decision Lab 的 HF 模型缓存（大文件，不进仓库）
 decision-lab/.hf-cache/
+
+# 真实 API 实验：库与快照可重建，不进仓库（结果 JSON 进）
+experiments/real_api_self_evolution/data/
+experiments/real_api_self_evolution/snapshot/

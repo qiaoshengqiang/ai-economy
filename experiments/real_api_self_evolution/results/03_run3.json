@@ -1,0 +1,60 @@
+{
+  "run": "03_run3",
+  "wall_ms": 0.6,
+  "context_stats": {
+    "selected_claims": 0,
+    "selected_strategies": 1,
+    "selected_experiences": 1,
+    "failed_experiences": 0,
+    "task_present": false,
+    "stimulus_present": true,
+    "identity_present": false,
+    "total_sources": 3
+  },
+  "context_error": null,
+  "decision_kind": "reply",
+  "decision_reasoning": "Mock response generated for 否要采取行动.",
+  "action": null,
+  "action_result": null,
+  "reflection_proposals": [],
+  "write_outcomes": [],
+  "self_model_before": {
+    "strategies": [
+      {
+        "strategy_id": "strat_05cf83572e2e",
+        "name": "STRATEGY_A：先大量扩写人物细节，再考虑情节",
+        "domain": "fiction",
+        "situation": "story_opening",
+        "confidence": 0.8,
+        "status": "active"
+      }
+    ],
+    "claims": []
+  },
+  "self_model_after": {
+    "strategies": [
+      {
+        "strategy_id": "strat_05cf83572e2e",
+        "name": "STRATEGY_A：先大量扩写人物细节，再考虑情节",
+        "domain": "fiction",
+        "situation": "story_opening",
+        "confidence": 0.8,
+        "status": "active"
+      }
+    ],
+    "claims": []
+  },
+  "self_model_changed": false,
+  "tokens": {
+    "calls": 3,
+    "input_tokens": 1669,
+    "output_tokens": 42,
+    "total_tokens": 1711,
+    "latency_ms": 0.9,
+    "cost_ai": 0.01711,
+    "simulated": true,
+    "models": [
+      "deepseek-flash"
+    ]
+  }
+}

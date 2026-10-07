@@ -1,0 +1,20 @@
+{
+  "agent_id": "agent_a",
+  "provider": "mock",
+  "model": "deepseek-flash",
+  "balance": 100.0,
+  "self_model": {
+    "strategies": [
+      {
+        "strategy_id": "strat_05cf83572e2e",
+        "name": "STRATEGY_A：先大量扩写人物细节，再考虑情节",
+        "domain": "fiction",
+        "situation": "story_opening",
+        "confidence": 0.8,
+        "status": "active"
+      }
+    ],
+    "claims": []
+  },
+  "experiences": 0
+}
