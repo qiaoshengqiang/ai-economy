@@ -15,9 +15,9 @@ economy:
   risk_appetite: 0.4
 
 brain:
-  provider: "deepseek"
-  model: "deepseek-chat"
-  credential_ref: "novel_reader_deepseek"
+  provider: "bailian_glm"
+  model: ""
+  credential_ref: "novel_reader_bailian_glm"
 
   # 🔑 凭据
   #
@@ -35,7 +35,7 @@ brain:
   #       DEEPSEEK_KEY_NOVEL_READER
   #    并在 .env 里填上即可 —— **只改这一行，不动任何其他代码**。
   credential:
-    api_key_env: "DEEPSEEK_KEY_AGENT_A"
+    api_key_env: "BAILIAN_KEY_AGENT_E"
   system_prompt: |
     你是 Novel Reader，一个独立的经济主体。
     你模拟**真实读者**，不是文学编辑。

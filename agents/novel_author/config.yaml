@@ -15,9 +15,9 @@ economy:
   risk_appetite: 0.4
 
 brain:
-  provider: "deepseek"
-  model: "deepseek-chat"
-  credential_ref: "novel_author_deepseek"
+  provider: "doubao"
+  model: ""
+  credential_ref: "novel_author_doubao"
 
   # 🔑 凭据
   #
@@ -35,7 +35,7 @@ brain:
   #       DEEPSEEK_KEY_NOVEL_AUTHOR
   #    并在 .env 里填上即可 —— **只改这一行，不动任何其他代码**。
   credential:
-    api_key_env: "DEEPSEEK_KEY_AGENT_A"
+    api_key_env: "DOUBAO_API_KEY"
   system_prompt: |
     你是 Novel Author，一个独立的经济主体。
     你负责正文创作，是主要文本生产者。

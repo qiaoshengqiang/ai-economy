@@ -115,6 +115,9 @@ class LLMCallRecorder:
         error: Optional[str] = None,
         provider: Optional[str] = None,
         model: Optional[str] = None,
+        credential_ref: Optional[str] = None,
+        credential_source: Optional[str] = None,
+        credential_env: Optional[str] = None,
     ) -> str:
         """
         记录一次调用，返回 call_id。
@@ -167,8 +170,14 @@ class LLMCallRecorder:
                     input_tokens, output_tokens, total_tokens,
                     latency_ms, simulated, token_source,
                     tokens_per_ai_coin, cost_ai, api_cost_usd,
-                    task_id, success, error, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    task_id, success, error, created_at,
+                    requested_model, response_model,
+                    requested_cognitive_budget, actual_max_tokens,
+                    finish_reason, output_status,
+                    requested_credential_ref, requested_credential_source,
+                    requested_credential_env
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                          ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     call_id,
@@ -193,6 +202,16 @@ class LLMCallRecorder:
                     1 if success else 0,
                     error,
                     utc_now_iso(),
+                    # 🔴 可观测性补全。取不到就是 None —— **不猜、不回填**。
+                    getattr(response, "requested_model", None),
+                    getattr(response, "model", None),
+                    getattr(response, "requested_cognitive_budget", None),
+                    getattr(response, "actual_max_tokens", None),
+                    getattr(response, "finish_reason", None),
+                    getattr(response, "output_status", None),
+                    credential_ref,
+                    credential_source,
+                    credential_env,
                 ),
             )
 

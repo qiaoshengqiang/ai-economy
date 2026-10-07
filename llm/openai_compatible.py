@@ -292,6 +292,10 @@ class OpenAICompatibleProvider(LLMProvider):
         # 改配置就行，不用改代码。
         self.chat_path = str(cfg.get("chat_path") or self.DEFAULT_CHAT_PATH)
         self.timeout = float(cfg.get("timeout_seconds") or self.DEFAULT_TIMEOUT)
+        #: 最近一次调用的认知预算状态（供 parse_response 回填到 LLMResponse）
+        self._last_requested_budget: Optional[int] = None
+        self._last_max_tokens: Optional[int] = None
+        self._last_budget_clipped: Optional[str] = None
 
         # 请求体里 max_tokens 这个字段的名字。
         # 为什么要做成可配置？
@@ -454,6 +458,47 @@ class OpenAICompatibleProvider(LLMProvider):
 
         return input_tokens, output_tokens, total_tokens, notes
 
+    #: 🔒 Cognitive Budget 的结构边界。
+    #:    Agent **不能**要求低于 MIN（那几乎必然截断）或高于 MAX
+    #:    （那会绕过部署侧的成本与超时控制）。Runtime 裁剪，不协商。
+    MIN_COGNITIVE_BUDGET = 256
+    MAX_COGNITIVE_BUDGET = 32768
+
+    @staticmethod
+    def _as_budget_int(value: Any) -> Optional[int]:
+        if value is None or isinstance(value, bool):
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    @classmethod
+    def clip_cognitive_budget(
+        cls, requested: Any, fallback: Optional[int],
+    ) -> tuple:
+        """
+        把 Agent 请求的认知预算裁剪成一个合法的 `max_tokens`。
+
+        返回 `(effective_max_tokens, clipped_reason_or_None)`。
+
+        🔒 裁剪理由是**结构**的，不是「你该省着点用」：
+            · 低于 MIN → 会几乎必然截断 → 抬到 MIN
+            · 高于 MAX / hard limit → 绕过部署侧控制 → 压到 MAX
+        """
+        want = cls._as_budget_int(requested)
+        base = cls._as_budget_int(fallback)
+
+        if want is None:
+            return base, None                      # 没请求 → 用调用方的默认
+        if want < cls.MIN_COGNITIVE_BUDGET:
+            return cls.MIN_COGNITIVE_BUDGET, "below_min"
+        if want > cls.MAX_COGNITIVE_BUDGET:
+            return cls.MAX_COGNITIVE_BUDGET, "above_max"
+        if base is not None and want > base:
+            return base, "above_caller_limit"
+        return want, None
+
     def parse_response(
         self,
         result: HTTPResult,
@@ -537,7 +582,13 @@ class OpenAICompatibleProvider(LLMProvider):
         response = LLMResponse(
             content=str(content),
             provider=self.name,
+            # 响应模型 = API 回显的那个（事实）
             model=str(data.get("model") or model),
+            # 🔴 请求模型 = 我们实际发出去的那个。二者分开记，绝不互相覆盖。
+            requested_model=str(model),
+            requested_cognitive_budget=getattr(
+                self, "_last_requested_budget", None),
+            actual_max_tokens=self._last_max_tokens,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             total_tokens=total_tokens,
@@ -736,11 +787,29 @@ class OpenAICompatibleProvider(LLMProvider):
             raise LLMRequestError(self._missing_model_message())
 
         normalized = normalize_messages(messages, system=system)
+
+        # ============================================================
+        # 🔴 Cognitive Budget V1：Agent 请求的认知预算 → max_tokens
+        # ============================================================
+        #
+        #   Agent 可以在一次认知运行里提出 `requested_cognitive_budget`。
+        #   **Runtime 负责裁剪**（最小值 / 最大值 / Provider hard limit）——
+        #   这是**结构规则**，不是 Agent 策略。
+        #
+        #   🔒 明令禁止：AIC balance → max_tokens 的自动换算。
+        #      `max_tokens` 是**上限**，不是 Agent 必须消耗的 token 数。
+        requested_budget = kwargs.pop("requested_cognitive_budget", None)
+        effective_tokens, clipped = self.clip_cognitive_budget(
+            requested_budget, max_tokens)
+        self._last_requested_budget = self._as_budget_int(requested_budget)
+        self._last_max_tokens = effective_tokens
+        self._last_budget_clipped = clipped
+
         payload = self.build_payload(
             messages=normalized,
             model=resolved_model,
             temperature=temperature,
-            max_tokens=max_tokens,
+            max_tokens=effective_tokens,
             **kwargs,
         )
         headers = self.build_headers()

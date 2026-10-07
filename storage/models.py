@@ -195,7 +195,22 @@ SCHEMA_STATEMENTS: Final[tuple[str, ...]] = (
         agent_id        TEXT NOT NULL,
 
         provider        TEXT NOT NULL,      -- mock / deepseek / doubao / grok
+
+        -- 🔴 2026-10-07 审计：`model` 一个字段同时承担了两件事，
+        --    于是「请求了 deepseek-chat，响应回显 deepseek-flash」
+        --    这种情况无法被记录、也无法被追问。
+        --
+        --    `model` 保留为**响应模型**（向后兼容的别名）。
         model           TEXT NOT NULL,
+        requested_model TEXT,               -- Runtime 实际请求的模型
+        response_model  TEXT,               -- API 返回体里的模型（事实）
+        requested_cognitive_budget INTEGER, -- Agent 请求的认知预算（max_tokens 上限）
+        actual_max_tokens          INTEGER, -- Runtime 裁剪后真正使用的上限
+        finish_reason   TEXT,               -- stop / length / ...
+        output_status   TEXT,               -- VALID_CONTENT / EMPTY_CONTENT
+        requested_credential_ref    TEXT,   -- 逻辑凭据标识
+        requested_credential_source TEXT,   -- agent_env / global_env / ...
+        requested_credential_env    TEXT,   -- 环境变量**名**（绝不是值）
 
         input_tokens    INTEGER NOT NULL DEFAULT 0,
         output_tokens   INTEGER NOT NULL DEFAULT 0,
@@ -1109,6 +1124,17 @@ COLUMN_MIGRATIONS: Final[dict] = {
         ("latency_ms", "REAL NOT NULL DEFAULT 0"),
         ("simulated", "INTEGER NOT NULL DEFAULT 0"),
         ("token_source", "TEXT NOT NULL DEFAULT 'unknown'"),
+        # 🔴 2026-10-07 可观测性补全。
+        #    老数据一律 NULL —— 「当时没记」就是不知道，**不回填猜测**。
+        ("requested_model", "TEXT"),
+        ("response_model", "TEXT"),
+        ("requested_cognitive_budget", "INTEGER"),
+        ("actual_max_tokens", "INTEGER"),
+        ("finish_reason", "TEXT"),
+        ("output_status", "TEXT"),
+        ("requested_credential_ref", "TEXT"),
+        ("requested_credential_source", "TEXT"),
+        ("requested_credential_env", "TEXT"),
     ],
     # Step 4B 给 tasks 加了「需要什么能力」。
     # 老库里的任务是 NULL（表示「没有声明能力要求」），这是合理的默认值，

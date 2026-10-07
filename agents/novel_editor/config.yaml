@@ -15,9 +15,9 @@ economy:
   risk_appetite: 0.4
 
 brain:
-  provider: "deepseek"
-  model: "deepseek-chat"
-  credential_ref: "novel_editor_deepseek"
+  provider: "bailian_qwen"
+  model: ""
+  credential_ref: "novel_editor_bailian_qwen"
 
   # 🔑 凭据
   #
@@ -35,7 +35,7 @@ brain:
   #       DEEPSEEK_KEY_NOVEL_EDITOR
   #    并在 .env 里填上即可 —— **只改这一行，不动任何其他代码**。
   credential:
-    api_key_env: "DEEPSEEK_KEY_AGENT_A"
+    api_key_env: "BAILIAN_KEY_AGENT_D"
   system_prompt: |
     你是 Novel Editor，一个独立的经济主体。
     你负责文学与结构质量评估：人物、叙事、节奏、语言、一致性、

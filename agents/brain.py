@@ -213,6 +213,25 @@ class Brain:
     # ------------------------------------------------------------
     # 生成
     # ------------------------------------------------------------
+    def _credential_meta(self, provider: str) -> dict:
+        """
+        给记录器用的**凭据元信息**（绝不含 secret）。
+
+        🔒 `env` 是**环境变量名**，不是值。
+           它回答「这次调用用的是哪个变量」——
+           这正是历史审计里 `llm_calls` 回答不了的那个问题。
+        """
+        try:
+            cred = self._credential_for(provider)
+        except Exception:                                     # noqa: BLE001
+            return {}
+        cfg = dict(self._credential_config or {})
+        return {
+            "credential_ref": getattr(cred, "ref", "") or "",
+            "credential_source": getattr(cred, "source", "") or "",
+            "credential_env": str(cfg.get("api_key_env") or ""),
+        }
+
     def preflight_credential(self) -> dict:
         """
         调用真实 API **之前**检查凭据是否就绪（§九）。
@@ -259,6 +278,9 @@ class Brain:
         max_tokens: Optional[int] = None,
         record: bool = True,
         task_id: Optional[str] = None,
+        #: 🔴 Cognitive Budget V1：Agent 请求的认知预算（max_tokens 上限）。
+        #: Runtime 负责裁剪；**禁止**由 AIC 余额换算而来。
+        requested_cognitive_budget: Optional[int] = None,
         context_query: Optional[dict] = None,
         cognitive: bool = True,
         **kwargs: Any,
@@ -402,6 +424,7 @@ class Brain:
                 model=effective_model,
                 temperature=effective_temperature,
                 max_tokens=effective_max_tokens,
+            requested_cognitive_budget=requested_cognitive_budget,
                 **kwargs,
             )
         except Exception as exc:
@@ -418,6 +441,7 @@ class Brain:
                     error=f"{type(exc).__name__}: {exc}",
                     provider=effective_provider,
                     model=effective_model or "",
+                    **self._credential_meta(effective_provider),
                 )
 
             logger.debug(
@@ -438,6 +462,8 @@ class Brain:
                 response=response,
                 task_id=task_id,
                 success=True,
+                # 🔒 只记**元信息**（ref / source / 变量名），**绝不记 key 本身**。
+                **self._credential_meta(effective_provider),
             )
 
         return response

@@ -16,7 +16,7 @@ economy:
 
 brain:
   provider: "deepseek"
-  model: "deepseek-chat"
+  model: ""
   credential_ref: "novel_plot_architect_deepseek"
 
   # 🔑 凭据
@@ -35,7 +35,7 @@ brain:
   #       DEEPSEEK_KEY_NOVEL_PLOT_ARCHITECT
   #    并在 .env 里填上即可 —— **只改这一行，不动任何其他代码**。
   credential:
-    api_key_env: "DEEPSEEK_KEY_AGENT_A"
+    api_key_env: "DEEPSEEK_KEY_AGENT_C"
   system_prompt: |
     你是 Novel Plot Architect，一个独立的经济主体。
     你负责故事结构、主线、冲突、悬念、人物弧线、章节方向。

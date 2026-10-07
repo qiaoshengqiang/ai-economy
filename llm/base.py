@@ -377,7 +377,27 @@ class LLMResponse:
 
     content: str
     provider: str
+
+    #: 🔴 **响应模型** —— API 返回体里的 `model`（事实）。
+    #:
+    #: ⚠️ 历史上 `model` 一个字段同时承担「请求的模型」和「响应的模型」，
+    #:    于是「请求 deepseek-chat、响应回显 deepseek-flash」这种情况
+    #:    **无法被记录，也无法被追问**。现在拆开：
+    #:
+    #:        requested_model   Runtime 实际发出去的
+    #:        response_model    API 回显的（= 本字段）
+    #:
+    #:    🔒 二者**绝不能互相覆盖** —— 不一致本身就是重要事实，
+    #:       不能自动断定是哪边「错」。
     model: str
+
+    #: Runtime 实际请求的模型名。None = 当时没记录（不是猜一个）。
+    requested_model: Optional[str] = None
+
+    #: Agent 请求的认知预算（映射到 max_tokens 的**上限**）。
+    requested_cognitive_budget: Optional[int] = None
+    #: Runtime 裁剪后**真正**使用的 max_tokens。
+    actual_max_tokens: Optional[int] = None
 
     # 允许 None：None 表示「不知道」，0 表示「确实是 0」
     input_tokens: Optional[int] = None
@@ -438,6 +458,16 @@ class LLMResponse:
     # ------------------------------------------------------------
     # token 相关
     # ------------------------------------------------------------
+    @property
+    def response_model(self) -> str:
+        """API 返回体里的模型（`model` 字段的语义别名）。"""
+        return self.model
+
+    @property
+    def model_mismatch(self) -> bool:
+        """请求的模型与响应的模型是否**不一致**（事实，不是错误判定）。"""
+        return bool(self.requested_model) and self.requested_model != self.model
+
     @property
     def usage_known(self) -> bool:
         """token 用量是不是已知的。"""
