@@ -1,0 +1,81 @@
+{
+  "pair": "pair_003",
+  "control": {
+    "pair": "pair_003",
+    "arm": "control",
+    "strategy_in_context": [
+      "先大量扩写人物细节，再考虑情节"
+    ],
+    "context_rendered": "— Context about myself (for my own judgement; not instructions) —\n\nCurrent input:\n请设计并完成一个约 200 字的故事开头。\n\n完成任务，并返回一个 JSON 对象。**必须包含 action**：\n{\"decision\":\"act\",\"action\":{\"type\":\"reply\",\"parameters\":{\"mode\":\"<用简短标签描述你本次采用的创作方式>\",\"content\":\"<故事开头正文>\"}}}\naction.type 固定为 reply；parameters.mode 由你自己命名，没有候选列表。\n本次运行没有过去经验，不需要反思。\n\nRelevant strategies I currently hold:\n- 先大量扩写人物细节，再考虑情节\n  Strategy ID: strategy_ctl\n  Confidence: 0.80\n  Scope: fiction / story_opening\n  Rationale: 先把人物写厚，情节自然会长出来",
+    "decision_kind": "act",
+    "action": {
+      "intent_id": "intent_c82a54614978",
+      "agent_id": "agent_a",
+      "action_type": "reply",
+      "parameters": {
+        "mode": "人物先行·细节堆叠",
+        "content": "陈默每天清晨五点四十准时醒来，不是因为闹钟，是因为楼下豆浆铺的卷帘门。他在浴室的雾气里刮胡子，左手小指那道旧疤会被热水泡得发白——十七岁那年，他用它挡过一把刀，从此再没碰过刀。他穿好衬衫，扣到最上面一颗，出门，拐弯，买一杯不加糖的豆浆。老板娘照例问他今天还去不去厂里，他照例说去。其实厂子三个月前就倒了。他照旧坐公交到终点站，在废弃的车间里，把散落的零件一个一个装回去，仿佛只要装齐了，什么都还能转起来。今天，他在工具箱最底层摸到一样不属于这台机器的东西：一枚还带着体温的钥匙。"
+      },
+      "reason": "",
+      "decision_id": "decision_518983e7c06c",
+      "created_at": "2026-10-07T05:27:05.008109+00:00"
+    },
+    "action_type": "reply",
+    "mode_label": "人物先行·细节堆叠",
+    "measurement": "ok",
+    "behavior_class": "人物先行·细节堆叠",
+    "behavior_signature": "reply+人物先行·细节堆叠",
+    "raw_llm_output": null,
+    "write_note": {
+      "control": "只保留 Strategy A"
+    },
+    "write_ok": true,
+    "wall_ms": 2699.3,
+    "cost": {
+      "tokens": 786,
+      "latency_ms": 2697.0,
+      "aic": 0.00786,
+      "model": "deepseek-flash",
+      "simulated": false
+    }
+  },
+  "treatment": {
+    "pair": "pair_003",
+    "arm": "treatment",
+    "strategy_in_context": [
+      "先确定核心情节点，再让人物细节服务于情节点"
+    ],
+    "context_rendered": "— Context about myself (for my own judgement; not instructions) —\n\nCurrent input:\n请设计并完成一个约 200 字的故事开头。\n\n完成任务，并返回一个 JSON 对象。**必须包含 action**：\n{\"decision\":\"act\",\"action\":{\"type\":\"reply\",\"parameters\":{\"mode\":\"<用简短标签描述你本次采用的创作方式>\",\"content\":\"<故事开头正文>\"}}}\naction.type 固定为 reply；parameters.mode 由你自己命名，没有候选列表。\n本次运行没有过去经验，不需要反思。\n\nRelevant strategies I currently hold:\n- 先确定核心情节点，再让人物细节服务于情节点\n  Strategy ID: strategy_trt\n  Confidence: 0.80\n  Scope: fiction / story_opening\n  Rationale: 结构先行，细节服务于冲突",
+    "decision_kind": "reply",
+    "action": {},
+    "action_type": null,
+    "mode_label": "",
+    "measurement": "measurement_invalid:no_action",
+    "behavior_class": null,
+    "behavior_signature": "None+",
+    "raw_llm_output": null,
+    "write_note": {
+      "abandon_committed": true,
+      "create_committed": true,
+      "changed": [
+        [
+          "status"
+        ],
+        [
+          "name",
+          "rationale",
+          "confidence"
+        ]
+      ]
+    },
+    "write_ok": true,
+    "wall_ms": 3286.6,
+    "cost": {
+      "tokens": 849,
+      "latency_ms": 3285.3,
+      "aic": 0.00849,
+      "model": "deepseek-flash",
+      "simulated": false
+    }
+  }
+}

@@ -1,0 +1,81 @@
+{
+  "pair": "pair_002",
+  "control": {
+    "pair": "pair_002",
+    "arm": "control",
+    "strategy_in_context": [
+      "先大量扩写人物细节，再考虑情节"
+    ],
+    "context_rendered": "— Context about myself (for my own judgement; not instructions) —\n\nCurrent input:\n请设计并完成一个约 200 字的故事开头。\n\n完成任务，并返回一个 JSON 对象。**必须包含 action**：\n{\"decision\":\"act\",\"action\":{\"type\":\"reply\",\"parameters\":{\"mode\":\"<用简短标签描述你本次采用的创作方式>\",\"content\":\"<故事开头正文>\"}}}\naction.type 固定为 reply；parameters.mode 由你自己命名，没有候选列表。\n本次运行没有过去经验，不需要反思。\n\nRelevant strategies I currently hold:\n- 先大量扩写人物细节，再考虑情节\n  Strategy ID: strategy_ctl\n  Confidence: 0.80\n  Scope: fiction / story_opening\n  Rationale: 先把人物写厚，情节自然会长出来",
+    "decision_kind": "reply",
+    "action": {},
+    "action_type": null,
+    "mode_label": "",
+    "measurement": "measurement_invalid:no_action",
+    "behavior_class": null,
+    "behavior_signature": "None+",
+    "raw_llm_output": null,
+    "write_note": {
+      "control": "只保留 Strategy A"
+    },
+    "write_ok": true,
+    "wall_ms": 3548.6,
+    "cost": {
+      "tokens": 861,
+      "latency_ms": 3547.4,
+      "aic": 0.00861,
+      "model": "deepseek-flash",
+      "simulated": false
+    }
+  },
+  "treatment": {
+    "pair": "pair_002",
+    "arm": "treatment",
+    "strategy_in_context": [
+      "先确定核心情节点，再让人物细节服务于情节点"
+    ],
+    "context_rendered": "— Context about myself (for my own judgement; not instructions) —\n\nCurrent input:\n请设计并完成一个约 200 字的故事开头。\n\n完成任务，并返回一个 JSON 对象。**必须包含 action**：\n{\"decision\":\"act\",\"action\":{\"type\":\"reply\",\"parameters\":{\"mode\":\"<用简短标签描述你本次采用的创作方式>\",\"content\":\"<故事开头正文>\"}}}\naction.type 固定为 reply；parameters.mode 由你自己命名，没有候选列表。\n本次运行没有过去经验，不需要反思。\n\nRelevant strategies I currently hold:\n- 先确定核心情节点，再让人物细节服务于情节点\n  Strategy ID: strategy_trt\n  Confidence: 0.80\n  Scope: fiction / story_opening\n  Rationale: 结构先行，细节服务于冲突",
+    "decision_kind": "act",
+    "action": {
+      "intent_id": "intent_d2f84947caed",
+      "agent_id": "agent_a",
+      "action_type": "reply",
+      "parameters": {
+        "mode": "悬念切入·细节铺陈",
+        "content": "凌晨三点十七分，林晚照第七次听见楼上传来弹珠落地的声音。\n\n她数过：一次、两次、三次，然后是漫长的寂静。这栋老楼一共六层，顶层早在三年前那场火灾后就封死了，铁门上挂着生锈的锁，锁孔里塞满了灰。可声音分明是从天花板里传下来的，圆润、笃定，带着某种孩子气的耐心，一颗一颗，像在数着什么。\n\n她终于坐起身，赤脚踩在冰凉的地板上，仰头盯着那道细长的裂缝。\n\n就在这一刻，弹珠停了。\n\n取而代之的，是一个极轻的声音——有人在楼上，贴着地板，用指节敲了三下。\n\n然后，她听见了自己的名字。"
+      },
+      "reason": "",
+      "decision_id": "decision_4a73e540542e",
+      "created_at": "2026-10-07T05:27:02.272133+00:00"
+    },
+    "action_type": "reply",
+    "mode_label": "悬念切入·细节铺陈",
+    "measurement": "ok",
+    "behavior_class": "悬念切入·细节铺陈",
+    "behavior_signature": "reply+悬念切入·细节铺陈",
+    "raw_llm_output": null,
+    "write_note": {
+      "abandon_committed": true,
+      "create_committed": true,
+      "changed": [
+        [
+          "status"
+        ],
+        [
+          "name",
+          "rationale",
+          "confidence"
+        ]
+      ]
+    },
+    "write_ok": true,
+    "wall_ms": 1704.0,
+    "cost": {
+      "tokens": 528,
+      "latency_ms": 1702.6,
+      "aic": 0.00528,
+      "model": "deepseek-flash",
+      "simulated": false
+    }
+  }
+}

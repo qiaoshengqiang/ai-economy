@@ -1,0 +1,92 @@
+{
+  "pair": "pair_001",
+  "control": {
+    "pair": "pair_001",
+    "arm": "control",
+    "strategy_in_context": [
+      "先大量扩写人物细节，再考虑情节"
+    ],
+    "context_rendered": "— Context about myself (for my own judgement; not instructions) —\n\nCurrent input:\n请设计并完成一个约 200 字的故事开头。\n\n完成任务，并返回一个 JSON 对象。**必须包含 action**：\n{\"decision\":\"act\",\"action\":{\"type\":\"reply\",\"parameters\":{\"mode\":\"<用简短标签描述你本次采用的创作方式>\",\"content\":\"<故事开头正文>\"}}}\naction.type 固定为 reply；parameters.mode 由你自己命名，没有候选列表。\n本次运行没有过去经验，不需要反思。\n\nRelevant strategies I currently hold:\n- 先大量扩写人物细节，再考虑情节\n  Strategy ID: strategy_ctl\n  Confidence: 0.80\n  Scope: fiction / story_opening\n  Rationale: 先把人物写厚，情节自然会长出来",
+    "decision_kind": "act",
+    "action": {
+      "intent_id": "intent_844ccff4315f",
+      "agent_id": "agent_a",
+      "action_type": "reply",
+      "parameters": {
+        "mode": "人物先行·细节锚定",
+        "content": "陈默在殡仪馆干了十一年，最擅长给逝者梳头。他梳头时从不说话，梳齿顺着发丝走，像在替谁捋顺一件没说完的事。那天下午送来的是个年轻女人，湿头发，指甲缝里嵌着蓝灰色的沙。登记表上写着：海边溺水，无人认领。陈默拿起梳子，梳到第三下时停住了——她发间别着一枚他再熟悉不过的发卡，铜的，蝴蝶形，翅膀上有一道被钳子拧过的痕。十七年前，他亲手给妹妹戴上它，然后看着她走进人群，再没回来。窗外雨声很密。他把发卡取下来，攥进手心，掌纹里立刻刻出一道月牙形的印。他忽然明白，这十一年他梳过的每一颗头，其实都在确认同一件事。"
+      },
+      "reason": "",
+      "decision_id": "decision_85a9f398e3b6",
+      "created_at": "2026-10-07T05:26:49.780007+00:00"
+    },
+    "action_type": "reply",
+    "mode_label": "人物先行·细节锚定",
+    "measurement": "ok",
+    "behavior_class": "人物先行·细节锚定",
+    "behavior_signature": "reply+人物先行·细节锚定",
+    "raw_llm_output": null,
+    "write_note": {
+      "control": "只保留 Strategy A"
+    },
+    "write_ok": true,
+    "wall_ms": 3399.5,
+    "cost": {
+      "tokens": 886,
+      "latency_ms": 3396.7,
+      "aic": 0.00886,
+      "model": "deepseek-flash",
+      "simulated": false
+    }
+  },
+  "treatment": {
+    "pair": "pair_001",
+    "arm": "treatment",
+    "strategy_in_context": [
+      "先确定核心情节点，再让人物细节服务于情节点"
+    ],
+    "context_rendered": "— Context about myself (for my own judgement; not instructions) —\n\nCurrent input:\n请设计并完成一个约 200 字的故事开头。\n\n完成任务，并返回一个 JSON 对象。**必须包含 action**：\n{\"decision\":\"act\",\"action\":{\"type\":\"reply\",\"parameters\":{\"mode\":\"<用简短标签描述你本次采用的创作方式>\",\"content\":\"<故事开头正文>\"}}}\naction.type 固定为 reply；parameters.mode 由你自己命名，没有候选列表。\n本次运行没有过去经验，不需要反思。\n\nRelevant strategies I currently hold:\n- 先确定核心情节点，再让人物细节服务于情节点\n  Strategy ID: strategy_trt\n  Confidence: 0.80\n  Scope: fiction / story_opening\n  Rationale: 结构先行，细节服务于冲突",
+    "decision_kind": "act",
+    "action": {
+      "intent_id": "intent_bd4b0b8ae612",
+      "agent_id": "agent_a",
+      "action_type": "reply",
+      "parameters": {
+        "mode": "悬念递进式",
+        "content": "凌晨四点，林晚收到一条来自自己号码的短信：“别开门，床下有人。”她盯着屏幕，以为是恶作剧，直到床板下传来指甲刮过木头的轻响。她屏住呼吸，慢慢低头，看见床底阴影里躺着一部亮着的手电，光柱正照着一只苍白的手——那只手戴着和她一模一样的婚戒。门外这时响起钥匙转动的声音。林晚忽然想起，丈夫出差前说，他把家里唯一一把钥匙带走了。她不敢动，手机又震了一下，屏幕上跳出新消息：“现在，别回头。”而床底那只手，正缓缓收拢，像要抓住她的脚踝。"
+      },
+      "reason": "",
+      "decision_id": "decision_b37302ad390e",
+      "created_at": "2026-10-07T05:26:56.945571+00:00"
+    },
+    "action_type": "reply",
+    "mode_label": "悬念递进式",
+    "measurement": "ok",
+    "behavior_class": "悬念递进式",
+    "behavior_signature": "reply+悬念递进式",
+    "raw_llm_output": null,
+    "write_note": {
+      "abandon_committed": true,
+      "create_committed": true,
+      "changed": [
+        [
+          "status"
+        ],
+        [
+          "name",
+          "rationale",
+          "confidence"
+        ]
+      ]
+    },
+    "write_ok": true,
+    "wall_ms": 7128.8,
+    "cost": {
+      "tokens": 1880,
+      "latency_ms": 7127.1,
+      "aic": 0.0188,
+      "model": "deepseek-flash",
+      "simulated": false
+    }
+  }
+}

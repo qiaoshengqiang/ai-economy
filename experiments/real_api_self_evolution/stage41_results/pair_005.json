@@ -1,0 +1,81 @@
+{
+  "pair": "pair_005",
+  "control": {
+    "pair": "pair_005",
+    "arm": "control",
+    "strategy_in_context": [
+      "先大量扩写人物细节，再考虑情节"
+    ],
+    "context_rendered": "— Context about myself (for my own judgement; not instructions) —\n\nCurrent input:\n请设计并完成一个约 200 字的故事开头。\n\n完成任务，并返回一个 JSON 对象。**必须包含 action**：\n{\"decision\":\"act\",\"action\":{\"type\":\"reply\",\"parameters\":{\"mode\":\"<用简短标签描述你本次采用的创作方式>\",\"content\":\"<故事开头正文>\"}}}\naction.type 固定为 reply；parameters.mode 由你自己命名，没有候选列表。\n本次运行没有过去经验，不需要反思。\n\nRelevant strategies I currently hold:\n- 先大量扩写人物细节，再考虑情节\n  Strategy ID: strategy_ctl\n  Confidence: 0.80\n  Scope: fiction / story_opening\n  Rationale: 先把人物写厚，情节自然会长出来",
+    "decision_kind": "act",
+    "action": {
+      "intent_id": "intent_bacb3d3eace8",
+      "agent_id": "agent_a",
+      "action_type": "reply",
+      "parameters": {
+        "mode": "人物先行·细节铺陈",
+        "content": "陈默在旧货市场买下那只停摆的闹钟时，摊主说，它最后一次走动，是在三十年前的一个雪夜。她不信，却还是付了钱。\n\n回家路上，她习惯性地数着自己的步子——这习惯从八岁那年开始。那时候她数着步子，就能假装母亲还在身后跟着。她今年三十四岁，在一家殡仪馆做遗体化妆师，手上从不出错，心里却总在数数。数到第七百二十步，她会拐弯；数到一千，她会停下。没人知道这些数字对她意味着什么。\n\n夜里十二点，闹钟忽然响了。不是铃声，是一种很轻的、像有人在雪地里走路的沙沙声。陈默坐起来，看见指针依旧停着，只有秒针在原地颤抖，仿佛想往前走，又不敢。"
+      },
+      "reason": "",
+      "decision_id": "decision_18ded0a4be85",
+      "created_at": "2026-10-07T05:27:18.041060+00:00"
+    },
+    "action_type": "reply",
+    "mode_label": "人物先行·细节铺陈",
+    "measurement": "ok",
+    "behavior_class": "人物先行·细节铺陈",
+    "behavior_signature": "reply+人物先行·细节铺陈",
+    "raw_llm_output": null,
+    "write_note": {
+      "control": "只保留 Strategy A"
+    },
+    "write_ok": true,
+    "wall_ms": 3039.8,
+    "cost": {
+      "tokens": 807,
+      "latency_ms": 3038.3,
+      "aic": 0.00807,
+      "model": "deepseek-flash",
+      "simulated": false
+    }
+  },
+  "treatment": {
+    "pair": "pair_005",
+    "arm": "treatment",
+    "strategy_in_context": [
+      "先确定核心情节点，再让人物细节服务于情节点"
+    ],
+    "context_rendered": "— Context about myself (for my own judgement; not instructions) —\n\nCurrent input:\n请设计并完成一个约 200 字的故事开头。\n\n完成任务，并返回一个 JSON 对象。**必须包含 action**：\n{\"decision\":\"act\",\"action\":{\"type\":\"reply\",\"parameters\":{\"mode\":\"<用简短标签描述你本次采用的创作方式>\",\"content\":\"<故事开头正文>\"}}}\naction.type 固定为 reply；parameters.mode 由你自己命名，没有候选列表。\n本次运行没有过去经验，不需要反思。\n\nRelevant strategies I currently hold:\n- 先确定核心情节点，再让人物细节服务于情节点\n  Strategy ID: strategy_trt\n  Confidence: 0.80\n  Scope: fiction / story_opening\n  Rationale: 结构先行，细节服务于冲突",
+    "decision_kind": "reply",
+    "action": {},
+    "action_type": null,
+    "mode_label": "",
+    "measurement": "measurement_invalid:no_action",
+    "behavior_class": null,
+    "behavior_signature": "None+",
+    "raw_llm_output": null,
+    "write_note": {
+      "abandon_committed": true,
+      "create_committed": true,
+      "changed": [
+        [
+          "status"
+        ],
+        [
+          "name",
+          "rationale",
+          "confidence"
+        ]
+      ]
+    },
+    "write_ok": true,
+    "wall_ms": 2831.7,
+    "cost": {
+      "tokens": 801,
+      "latency_ms": 2830.5,
+      "aic": 0.00801,
+      "model": "deepseek-flash",
+      "simulated": false
+    }
+  }
+}

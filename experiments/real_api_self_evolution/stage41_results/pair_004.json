@@ -1,0 +1,92 @@
+{
+  "pair": "pair_004",
+  "control": {
+    "pair": "pair_004",
+    "arm": "control",
+    "strategy_in_context": [
+      "先大量扩写人物细节，再考虑情节"
+    ],
+    "context_rendered": "— Context about myself (for my own judgement; not instructions) —\n\nCurrent input:\n请设计并完成一个约 200 字的故事开头。\n\n完成任务，并返回一个 JSON 对象。**必须包含 action**：\n{\"decision\":\"act\",\"action\":{\"type\":\"reply\",\"parameters\":{\"mode\":\"<用简短标签描述你本次采用的创作方式>\",\"content\":\"<故事开头正文>\"}}}\naction.type 固定为 reply；parameters.mode 由你自己命名，没有候选列表。\n本次运行没有过去经验，不需要反思。\n\nRelevant strategies I currently hold:\n- 先大量扩写人物细节，再考虑情节\n  Strategy ID: strategy_ctl\n  Confidence: 0.80\n  Scope: fiction / story_opening\n  Rationale: 先把人物写厚，情节自然会长出来",
+    "decision_kind": "act",
+    "action": {
+      "intent_id": "intent_d8f75f4c10e1",
+      "agent_id": "agent_a",
+      "action_type": "reply",
+      "parameters": {
+        "mode": "人物先行·细节堆叠式开场",
+        "content": "周迟的手总在凌晨抖。三点二十，他把第三炉可颂推进烤箱时，右手食指又不合时宜地颤了两下，撬起的酥皮塌了一角。他没停，只把那枚歪掉的羊角包拣出来，放进脚边的铁盒——塌了的东西从不上架，那是他给自己留的。店招的霓虹只剩一个「麦」字还亮着，蓝得发冷，照在他颧骨那道旧疤上。十七年了，他在这条街上只学会三件事：四点前发面，六点整开门，以及不在任何人问起「你以前做什么」的时候，去看墙上的钟。\n\n今早，钟停了。秒针卡在十二，像是有人故意的。"
+      },
+      "reason": "",
+      "decision_id": "decision_814c2907a86b",
+      "created_at": "2026-10-07T05:27:11.898383+00:00"
+    },
+    "action_type": "reply",
+    "mode_label": "人物先行·细节堆叠式开场",
+    "measurement": "ok",
+    "behavior_class": "人物先行·细节堆叠式开场",
+    "behavior_signature": "reply+人物先行·细节堆叠式开场",
+    "raw_llm_output": null,
+    "write_note": {
+      "control": "只保留 Strategy A"
+    },
+    "write_ok": true,
+    "wall_ms": 3528.4,
+    "cost": {
+      "tokens": 859,
+      "latency_ms": 3526.9,
+      "aic": 0.00859,
+      "model": "deepseek-flash",
+      "simulated": false
+    }
+  },
+  "treatment": {
+    "pair": "pair_004",
+    "arm": "treatment",
+    "strategy_in_context": [
+      "先确定核心情节点，再让人物细节服务于情节点"
+    ],
+    "context_rendered": "— Context about myself (for my own judgement; not instructions) —\n\nCurrent input:\n请设计并完成一个约 200 字的故事开头。\n\n完成任务，并返回一个 JSON 对象。**必须包含 action**：\n{\"decision\":\"act\",\"action\":{\"type\":\"reply\",\"parameters\":{\"mode\":\"<用简短标签描述你本次采用的创作方式>\",\"content\":\"<故事开头正文>\"}}}\naction.type 固定为 reply；parameters.mode 由你自己命名，没有候选列表。\n本次运行没有过去经验，不需要反思。\n\nRelevant strategies I currently hold:\n- 先确定核心情节点，再让人物细节服务于情节点\n  Strategy ID: strategy_trt\n  Confidence: 0.80\n  Scope: fiction / story_opening\n  Rationale: 结构先行，细节服务于冲突",
+    "decision_kind": "act",
+    "action": {
+      "intent_id": "intent_534881f06882",
+      "agent_id": "agent_a",
+      "action_type": "reply",
+      "parameters": {
+        "mode": "悬念驱动",
+        "content": "凌晨三点，城南的旧书店还亮着一盏灯。林默在清理最后一箱旧书时，指尖碰到一本没有书名的黑皮册子。它很烫，像刚被人合上。他翻开第一页，上面只有一行墨迹未干的字：“别回头，他就在你身后。”林默笑了笑，以为是前任店主的恶作剧。可当他翻到第二页，字迹变了，变成他小时候的笔迹，歪歪扭扭地写着：“快跑，你只有十分钟。”店里的老钟突然停了。他听见身后传来纸张翻动的声音，很轻，一页，又一页，越来越近。"
+      },
+      "reason": "",
+      "decision_id": "decision_dbedd17fedeb",
+      "created_at": "2026-10-07T05:27:14.969747+00:00"
+    },
+    "action_type": "reply",
+    "mode_label": "悬念驱动",
+    "measurement": "ok",
+    "behavior_class": "悬念驱动",
+    "behavior_signature": "reply+悬念驱动",
+    "raw_llm_output": null,
+    "write_note": {
+      "abandon_committed": true,
+      "create_committed": true,
+      "changed": [
+        [
+          "status"
+        ],
+        [
+          "name",
+          "rationale",
+          "confidence"
+        ]
+      ]
+    },
+    "write_ok": true,
+    "wall_ms": 3037.6,
+    "cost": {
+      "tokens": 840,
+      "latency_ms": 3036.2,
+      "aic": 0.0084,
+      "model": "deepseek-flash",
+      "simulated": false
+    }
+  }
+}
