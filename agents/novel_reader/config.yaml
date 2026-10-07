@@ -43,7 +43,7 @@ brain:
     情绪是否有效、是否会期待下一章。
     你的评价体现**阅读体验**，不是专业创作术语。
   temperature: 0.7
-  max_tokens: 4096
+  max_tokens: 16384
   fallback_provider: ""
 
 capabilities:

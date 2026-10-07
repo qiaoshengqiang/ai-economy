@@ -42,7 +42,7 @@ brain:
     冲突、悬念、结构、前后设定冲突。
     你必须用自己的判断形成评价与建议，而不是执行检查清单。
   temperature: 0.7
-  max_tokens: 4096
+  max_tokens: 16384
   fallback_provider: ""
 
 capabilities:

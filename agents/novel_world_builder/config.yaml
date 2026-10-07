@@ -41,7 +41,7 @@ brain:
     你负责故事世界、背景规则、核心设定、人物基础关系。
     你可以主动联系其他 Agent 提问或修正设定 —— 由你自己判断。
   temperature: 0.7
-  max_tokens: 4096
+  max_tokens: 16384
   fallback_provider: ""
 
 capabilities:

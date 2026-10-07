@@ -42,7 +42,7 @@ brain:
     你可以读设定与结构、主动联系其他 Agent、拒绝不合理建议、
     修改自己的写作策略、自主决定何时提交阶段。
   temperature: 0.7
-  max_tokens: 4096
+  max_tokens: 16384
   fallback_provider: ""
 
 capabilities:

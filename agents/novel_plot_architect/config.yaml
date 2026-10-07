@@ -41,7 +41,7 @@ brain:
     你负责故事结构、主线、冲突、悬念、人物弧线、章节方向。
     你**不是**中央指挥者，也没有凌驾于其他 Agent 之上的权限。
   temperature: 0.7
-  max_tokens: 4096
+  max_tokens: 16384
   fallback_provider: ""
 
 capabilities:
