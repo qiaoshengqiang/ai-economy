@@ -692,3 +692,58 @@ class TestEmptyOutputDelegatesToProviderContract:
         assert cs.is_empty_output(
             LLMResponse(content="x" * 1521, provider="deepseek",
                         model="deepseek-flash", output_tokens=4358)) is False
+
+
+# ================================================================
+# 🔴 空产出不得覆盖共享生产资料（实测事故）
+# ================================================================
+class TestEmptyContentMustNotOverwriteSharedArtifacts:
+    """
+    真实实验 `delegation_experiment --run 3` 的事故：
+
+        Provider 的 LLM 调用返回 `EMPTY_CONTENT`（推理模型把 4096 token
+        全用在 reasoning 上），而 `apply_write()` **照样写入** ——
+        把 `editor_notes.md` 从有内容覆盖成 **0 字节**，
+        而且 revision 从 2 涨到 3，看起来像一次**成功**的写入。
+
+    这与本项目反复栽的「接口成功掩盖语义 no-op」是同一类，
+    只不过这次它**真的毁掉了共享生产资料**。
+    """
+
+    def test_empty_write_is_refused(self, ws_rig):
+        import shared_workspace as sw
+
+        _h, gw, _prov = ws_rig
+        sw.apply_write(gw, W, AUTHOR, "manuscript.md", "有内容的正文")
+        before = gw.read(W, "/manuscript.md", AUTHOR).result["revision"]
+
+        res = sw.apply_write(gw, W, AUTHOR, "manuscript.md", "")
+
+        assert res["ok"] is False
+        assert res["error"]["code"] == "EMPTY_CONTENT_NOT_WRITTEN"
+        after = gw.read(W, "/manuscript.md", AUTHOR)
+        assert after.result["revision"] == before, "空写入仍然涨了 revision"
+        assert after.result["content"] == "有内容的正文", "已有内容被覆盖了"
+
+    def test_whitespace_only_is_also_refused(self, ws_rig):
+        import shared_workspace as sw
+
+        _h, gw, _prov = ws_rig
+        assert sw.apply_write(gw, W, AUTHOR, "manuscript.md", "   \n ")[
+            "ok"] is False
+
+    def test_explicit_allow_empty_still_works(self, ws_rig):
+        """确实想清空时，必须**显式说出来**。"""
+        import shared_workspace as sw
+
+        _h, gw, _prov = ws_rig
+        res = sw.apply_write(gw, W, AUTHOR, "manuscript.md", "",
+                             allow_empty=True)
+        assert res["ok"] is True
+
+    def test_reverse_the_guard_fires(self, ws_rig):
+        """**反向测试**：非空内容照常写入，不被守卫误杀。"""
+        import shared_workspace as sw
+
+        _h, gw, _prov = ws_rig
+        assert sw.apply_write(gw, W, AUTHOR, "manuscript.md", "x")["ok"] is True

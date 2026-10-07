@@ -161,6 +161,11 @@ class Runtime:
     # 🔒 Agent **不能**自己创建 WorkspaceStore，也**不能**直接碰 DB。
     #    它只能拿到 gateway。这条边界由「Runtime 里没有暴露 store
     #    给 Agent」+ 架构守卫共同保证。
+    #: 生产性委托（Task Delegation = commerce）。
+    #: 🔒 与 Communication **无关** —— 沟通不产生经济行为。
+    delegations: DelegationStore
+    delegation_service: DelegationService
+
     workspaces: WorkspaceStore
     workspace_gateway: WorkspaceGateway
     workspace_locks: ResourceLockRegistry
@@ -362,6 +367,32 @@ def _sum_llm_cost(db, where: str, params: tuple) -> float:
         params,
     )
     return float(row["c"]) if row is not None else 0.0
+
+
+def _pending_offer_facts(store: Any, agent_id: str) -> list:
+    """
+    §十三：把「与这个 Agent 相关的未决委托」变成**纯事实**。
+
+    🔒 只给：offer_id / 我的角色 / 对方 / 价格 / 状态。
+       **不给**「你应该接受 / 拒绝」，**不给**「这个价偏高」。
+       `delegation/` 里有守卫盯这条线。
+
+    ⚠️ 这里不 import `delegation/` 的模型 —— 只调 store 的公开方法，
+       保持组合根对领域对象的依赖尽可能薄。
+    """
+    out = []
+    for o in store.list_offers(agent_id=agent_id):
+        if not o.is_open:
+            continue
+        out.append({
+            "offer_id": o.offer_id,
+            "task_id": o.task_id,
+            "role": o.role_of(agent_id),
+            "counterparty": o.counterparty_of(agent_id),
+            "price_aic": o.price_aic,
+            "status": o.status,
+        })
+    return out
 
 
 def build_participant_checker(task_store: TaskStore):
@@ -648,6 +679,7 @@ def build_runtime(
     #    Brain **不知道** —— 它只收到一个 context_builder + 一个默认 query。
     from cognition import CognitiveContextBuilder
     from cognition.economic import EconomicContextBuilder
+    from delegation import DelegationService, DelegationStore
     from experience import ExperienceStore
     from reflection import SelfModelWriteService
     from selfmodel import SelfModelStore
@@ -659,6 +691,21 @@ def build_runtime(
         self_model, experience_store=experience_store)
 
     ctx_cfg = config.get("cognition.context", {}) or {}
+
+    # ---- 🔴 Delegation：生产性委托的经济边界 ----
+    #
+    # 【为什么单独一个 store，而不是塞进 TaskStore】
+    #
+    #     Task 表达「要做什么」（12 状态生命周期）；
+    #     Delegation 表达「谁委托谁、成不成交」。
+    #     把报价 / 结算 / 拒绝史塞进 Task 会让 Task 变成经济容器 ——
+    #     而 Task Core 已经被明确要求保持薄（ADR-0006）。
+    #
+    # 🔒 `delegation/` **不 import** `core/economy.py` ——
+    #    它只拿到注入进来的 economy（鸭子类型）。
+    #    这样它既可以脱离 Economy 单测，也不会长出第二套账本。
+    delegations = DelegationStore(economy.db)
+    delegation_service = DelegationService(delegations, economy)
 
     # ---- 🔴 Economy Awareness V1：经济事实进入 Cognitive Context ----
     #
@@ -692,6 +739,8 @@ def build_runtime(
         #:    起点由调用方（Runtime / 实验脚本）负责传。
         cost_since=lambda aid, since: _sum_llm_cost(
             economy.db, "agent_id = ? AND created_at >= ?", (aid, since)),
+        #: §十三：未决的生产性委托 —— 同样只读，同样只给事实。
+        pending_offers_of=lambda aid: _pending_offer_facts(delegations, aid),
         currency=economy.currency,
     )
 
@@ -888,6 +937,8 @@ def build_runtime(
         decision_policies=decision_policies,
         contexts=contexts,
         alignment=alignment,
+        delegations=delegations,
+        delegation_service=delegation_service,
         workspaces=workspaces,
         workspace_gateway=workspace_gateway,
         workspace_locks=workspace_locks,

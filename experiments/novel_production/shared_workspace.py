@@ -200,7 +200,8 @@ def render_index(gateway: Any, workspace_id: str, reader: str) -> str:
 
 
 def apply_write(gateway: Any, workspace_id: str, agent_id: str,
-                path: str, content: str) -> Dict[str, Any]:
+                path: str, content: str,
+                *, allow_empty: bool = False) -> Dict[str, Any]:
     """
     让 Agent 的产出**真正落进共享 Workspace**。
 
@@ -209,8 +210,27 @@ def apply_write(gateway: Any, workspace_id: str, agent_id: str,
 
     🔒 `base_revision` 每次**现读**，不缓存 ——
        缓存会让并发写入静默失败（STALE_REVISION）。
+
+    🔴 **空内容默认拒绝（实测事故）**
+
+        真实实验 `delegation_experiment --run 3`：Provider 的 LLM 调用
+        返回 `EMPTY_CONTENT`（推理模型把 4096 token 全用在 reasoning 上），
+        而这里**照样写入**，把 `editor_notes.md` 从有内容覆盖成 **0 字节**，
+        并且 revision 从 2 涨到 3 —— 一次**看起来成功**的破坏性写入。
+
+        这正是本项目反复栽的「接口成功掩盖语义 no-op」，
+        只不过这次它**真的毁掉了共享生产资料**。
+
+        所以默认拒绝空内容。要清空文件必须显式 `allow_empty=True` ——
+        让「我确实想清空」成为一个**必须说出来**的决定。
     """
     norm = str(path or "").strip().lstrip("/")
+    if not str(content or "").strip() and not allow_empty:
+        return {"ok": False, "path": norm, "stage": "guard",
+                "error": {"code": "EMPTY_CONTENT_NOT_WRITTEN",
+                          "message": ("内容为空，拒绝写入共享 Workspace —— "
+                                      "空产出不得覆盖已有的共享生产资料。"
+                                      "确实要清空请显式 allow_empty=True。")}}
     got = gateway.read(workspace_id, f"/{norm}", agent_id)
     if not got.success:
         return {"ok": False, "path": norm,

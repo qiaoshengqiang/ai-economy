@@ -103,6 +103,20 @@ class EconomicContext:
     #: 本次快照里**取不到**的字段名。§十一：如实报告，不伪造。
     unavailable: Tuple[str, ...] = ()
 
+    #: 🔴 §十三：与这个 Agent 有关、且**还在流程里**的生产性委托。
+    #:
+    #: 每项形如：
+    #:     {"offer_id": ..., "role": "requester"|"provider",
+    #:      "counterparty": ..., "price_aic": 5.0, "status": "OFFERED"}
+    #:
+    #: 🔒 **只提供事实**（§十三 / §九）：
+    #:    它绝不会写「你应该接受 / 拒绝」，也不会写「这个价偏高」。
+    #:    判断价格是不是划算，是 Agent 自己的事。
+    #:
+    #: ⚠️ 这一项是**委托**，不是 Communication —— 见 `delegation/` 的
+    #:    「Communication is not commerce」。
+    pending_offers: Tuple[Dict[str, Any], ...] = ()
+
     #: 各字段的来源（可追溯）。全部指向系统组件，不指向 Self Model / LLM。
     sources: Dict[str, str] = field(default_factory=dict)
 
@@ -120,6 +134,7 @@ class EconomicContext:
             "as_of": self.as_of,
             "unavailable": list(self.unavailable),
             "sources": dict(self.sources),
+            "pending_offers": [dict(o) for o in self.pending_offers],
         }
 
     # ------------------------------------------------------------
@@ -151,6 +166,21 @@ class EconomicContext:
         else:
             lines.append(f"Current session cost: "
                          f"{self.current_session_cost:.4f} {self.currency}")
+
+        # §十三：待处理的委托 —— 只列事实，不给建议
+        if self.pending_offers:
+            lines.append("Pending task delegations involving you:")
+            for o in self.pending_offers:
+                price = o.get("price_aic")
+                price_txt = (f"{float(price):.4f} {self.currency}"
+                             if price is not None else "no price yet")
+                lines.append(
+                    f"- {o.get('offer_id')}: your role is "
+                    f"{o.get('role')}, counterparty "
+                    f"{o.get('counterparty')}, status {o.get('status')}, "
+                    f"price {price_txt}")
+        else:
+            lines.append("Pending task delegations involving you: none")
 
         lines.append(CURRENCY_NOTE)
         if self.as_of:
@@ -185,12 +215,15 @@ class EconomicContextBuilder:
         balance_of: Optional[Callable[[str], Optional[float]]] = None,
         cost_of_task: Optional[Callable[[str], Optional[float]]] = None,
         cost_since: Optional[Callable[[str, str], Optional[float]]] = None,
+        pending_offers_of: Optional[Callable[[str], Optional[list]]] = None,
         currency: str = DEFAULT_CURRENCY,
         clock: Callable[[], str] = utc_now_iso,
     ) -> None:
         self.balance_of = balance_of
         self.cost_of_task = cost_of_task
         self.cost_since = cost_since
+        #: §十三：与某个 Agent 相关的未决委托。同样是**只读**回调。
+        self.pending_offers_of = pending_offers_of
         self.currency = currency or DEFAULT_CURRENCY
         self.clock = clock
 
@@ -239,8 +272,11 @@ class EconomicContextBuilder:
         else:
             unavailable.append("current_session_cost")
 
+        pending = self._safe_list(self.pending_offers_of, agent_id)
+
         return EconomicContext(
             currency=self.currency,
+            pending_offers=tuple(pending),
             current_balance=balance,
             current_task_cost=task_cost,
             current_session_cost=session_cost,
@@ -250,6 +286,24 @@ class EconomicContextBuilder:
         )
 
     # ------------------------------------------------------------
+    @staticmethod
+    def _safe_list(fn: Optional[Callable], *args: Any) -> list:
+        """
+        调一个只读的「列表」取值函数，**失败就是空列表**。
+
+        🔒 委托列表是**附加信息**，取不到不该让整段经济事实消失
+           —— 所以这里退化成「没有待处理委托」，而余额那一行照常。
+        """
+        if fn is None:
+            return []
+        try:
+            value = fn(*args)
+        except Exception:                                     # noqa: BLE001
+            return []
+        if not isinstance(value, (list, tuple)):
+            return []
+        return [dict(v) for v in value if isinstance(v, dict)]
+
     @staticmethod
     def _safe(fn: Optional[Callable], *args: Any) -> Optional[float]:
         """
