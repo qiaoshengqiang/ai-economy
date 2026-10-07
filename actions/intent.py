@@ -177,9 +177,36 @@ class CognitiveRunResult:
     #: 每个 proposal 的受控写入结果（含被拒绝的原因）
     write_outcomes: List[Any] = field(default_factory=list)
 
+    #: 🔴 **Provider 输出契约状态**（`VALID_CONTENT` / `EMPTY_CONTENT`）。
+    #:
+    #: 【为什么 Cognition 必须携带它】
+    #:
+    #:     没有它的时候，一次「API 成功但 content 为空」的调用在这里
+    #:     会变成 `Decision(kind="reply", reasoning="")` ——
+    #:     和「Agent 主动决定不作答」**长得一模一样**。
+    #:     真实实验里我第一遍就是这么读的，结论是错的。
+    #:
+    #: 🔒 刻意做成 **None 表示「契约未上报」**，而不是本地默认成
+    #:    `VALID_CONTENT`：
+    #:        · `actions/` 是叶子层，不 import `llm/`（保持依赖方向干净）
+    #:        · 所以这里存的是**鸭子类型**拿到的字符串原值
+    #:        · 认不出来时如实说「不知道」，不假装成功
+    output_status: Optional[str] = None
+
     @property
     def has_action(self) -> bool:
         return self.action_intent is not None
+
+    @property
+    def is_empty_output(self) -> bool:
+        """
+        这次 Cognition 有没有拿到可用的生产内容？
+
+        🔒 只有**明确**收到 `EMPTY_CONTENT` 才返回 True。
+           `None`（契约未上报）返回 False —— 本属性不许把「不知道」
+           当成「空产出」，也不许把它当成「有产出」。
+        """
+        return self.output_status == "EMPTY_CONTENT"
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -192,4 +219,5 @@ class CognitiveRunResult:
             "reflections_committed": sum(
                 1 for o in self.write_outcomes
                 if getattr(o, "committed", False)),
+            "output_status": self.output_status,
         }

@@ -65,6 +65,38 @@ from llm.base import (
     normalize_messages,
 )
 
+from core.logging_setup import get_logger  # noqa: E402
+
+logger = get_logger(__name__)
+
+
+# ============================================================
+# 输出契约辅助（§四 / §五）
+# ============================================================
+#: 各家网关给「推理内容」用的字段名。
+#:
+#: DeepSeek 用 `reasoning_content`；另一些 OpenAI-compatible 网关
+#: 用 `reasoning`。这里**只**做只读识别 —— 认识了也不代表能用它当 content。
+REASONING_FIELDS = ("reasoning_content", "reasoning")
+
+
+def _read_reasoning(message: Mapping[str, Any]) -> Optional[str]:
+    """
+    从返回体的 `message` 里读推理内容。
+
+    🔒 **它只用于诊断，永远不会变成 content。**
+       §五 明令禁止 `if not content: content = reasoning_content` ——
+       推理与最终答复语义不同，前者是过程，后者是交付物。
+       把过程写进 Workspace 会让下游 Agent 以为模型决定了什么。
+
+    返回 None 表示「这次响应里没有推理内容」，与「推理内容为空串」区分开。
+    """
+    for field_name in REASONING_FIELDS:
+        value = message.get(field_name)
+        if isinstance(value, str):
+            return value
+    return None
+
 
 # ============================================================
 # HTTP 层
@@ -463,12 +495,30 @@ class OpenAICompatibleProvider(LLMProvider):
 
         content = message.get("content")
         if content is None:
-            # 注意：content 是空字符串是合法的（模型可能什么都没说），
-            #       但字段本身缺失说明结构不对。
+            # 🔒 字段**缺失 / 为 null** 与「空字符串」是两件不同的事：
+            #
+            #      content=""    → 结构合法，但**没有产出** → EMPTY_CONTENT
+            #      content 缺失  → 结构不对 → 明确失败（不猜、不补）
+            #
+            #    §六 Case C / Case D 允许这里是一个「等价的明确失败状态」。
+            #    这样处理是刻意的：如果把它降级成一个普通的空产出，
+            #    一个坏掉的网关就会伪装成「模型今天没说话」。
+            #
+            #    ⚠️ 特别注意：这里**不看** `reasoning_content`。
+            #       有推理字段**不能**让一个缺失的 content 变成合法。
             raise InvalidResponseError(
-                "choices[0].message.content 缺失。\n"
-                f"message 里实际有的字段：{sorted(message.keys())}"
+                "choices[0].message.content 缺失（或为 null）。\n"
+                f"message 里实际有的字段：{sorted(message.keys())}\n"
+                "注意：`reasoning_content` **不能**代替 content —— "
+                "推理与最终答复语义不同。"
             )
+
+        # --- 推理内容（诊断用，**永远不是** content）---
+        #
+        # 🔒 §五：允许用于 Provider 诊断 / telemetry / 实验记录，
+        #    禁止 `if not content: content = reasoning_content` 这类修法。
+        #    所以它走**独立字段**，绝不与 content 拼接或回填。
+        reasoning = _read_reasoning(message)
 
         # --- usage ---
         input_tokens, output_tokens, total_tokens, notes = self._read_usage(
@@ -484,7 +534,7 @@ class OpenAICompatibleProvider(LLMProvider):
                 "这里【没有】用估算值顶替 —— 请以 None 为准。"
             )
 
-        return LLMResponse(
+        response = LLMResponse(
             content=str(content),
             provider=self.name,
             model=str(data.get("model") or model),
@@ -499,12 +549,48 @@ class OpenAICompatibleProvider(LLMProvider):
                 if first_choice.get("finish_reason") is not None
                 else None
             ),
+            reasoning=reasoning,
             simulated=False,
             metadata={
                 "endpoint": self.endpoint,
                 "usage_notes": notes,
             },
         )
+
+        # ============================================================
+        # 🔒 §七：「空 content」不许悄悄成功
+        # ============================================================
+        #
+        #   实测（commit 6322092）：`novel_world_builder` 连续 4 轮
+        #   content 为空、每轮仍烧掉约 4300 output token，
+        #   而日志里它看起来只是「这个 Agent 没动手」。
+        #
+        #   EMPTY_CONTENT **不是**异常 —— 调用确实成功了、钱确实花了。
+        #   所以这里不抛错，但必须发出**可见的告警**，
+        #   否则同一个 Bug 会第三次悄悄溜过去。
+        #
+        #   ⚠️ 注意：**不动成本记账**。token 已经在上面的 usage 里，
+        #      记账是 recorder / economy 的事，Provider 无权冲销。
+        if not response.has_valid_content:
+            logger.warning(
+                "LLM 空产出（EMPTY_CONTENT）：provider=%s model=%s "
+                "finish_reason=%s output_tokens=%s reasoning_chars=%d。"
+                "这次调用**消耗了真实 token，但没有可用的生产内容** ——"
+                "不要把它记成「Agent 没有生产」或「Agent 消极怠工」。",
+                self.name, response.model, response.finish_reason,
+                response.output_tokens, len(reasoning or ""),
+            )
+            response.metadata["empty_content"] = {
+                "reasoning_chars": len(reasoning or ""),
+                "finish_reason": response.finish_reason,
+                "output_tokens": response.output_tokens,
+                "hint": (
+                    "推理模型把输出预算用在 reasoning_content 上时，"
+                    "content 会是空字符串。"
+                ),
+            }
+
+        return response
 
     # ------------------------------------------------------------
     # 错误翻译

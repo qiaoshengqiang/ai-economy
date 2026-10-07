@@ -152,31 +152,31 @@ def mentions(text: str, needles: List[str]) -> bool:
     return any(n and n in (text or "") for n in needles)
 
 
-def is_empty_completion(content: str, output_tokens: Optional[int]) -> bool:
+def is_empty_output(response: Any) -> bool:
     """
-    「调用成功、花了钱、但**一个字都没拿到**」——必须与
-    「Agent 主动决定什么都不说」区分开。
+    这次 LLM 调用有没有拿到**可用的生产内容**？
 
-    【🔴 实测抓到的阻塞性 Bug（本实验 Session 1）】
+    【🔴 这个方法的历史 —— 它现在只是**转发**，判据已经上移到 Provider 契约】
 
-        `novel_world_builder` 连续 4 轮 `chars=0`，
-        但每轮 `output_tokens≈4300`，4 轮共烧掉约 25k token。
+        本实验 Session 1 里 `novel_world_builder` 连续 4 轮 `chars=0`，
+        每轮却烧掉约 4300 output token。第一版这里自己写了一个判据
+        （`空 content + output_tokens > 0`）来把它记成失败。
 
-        一开始我把它读成「这个 Agent 选择不动手」——**那是错的**。
-        真相：`deepseek-flash` 是**推理模型**，返回体里
-        `message` 同时有 `content` 和 `reasoning_content`。
-        当输出预算全被推理吃掉时，`content` 是**空字符串**，
-        而 `completion_tokens` 依然很大。
+        那个判据能救急，但**位置错了**：
+        「content 空不空」是 **Provider 输出契约**的事，
+        不该由每个调用方各自猜一遍。第二个调用方忘了写，Bug 就回来了。
 
-        于是「接口成功」掩盖了「语义 no-op」——
-        这正是本项目反复栽的那一类 Bug（见 AGENTS.md §12 与本仓历史）。
+        ✅ 现在判据的唯一来源是 `LLMResponse.output_status`
+           （见 `llm/base.py` 的「Provider 输出契约」）。
+           本函数只做转发，避免调用方直接 import llm 层。
 
-    🔒 判据刻意保守：**空 content + 真的花了 output token** 才算。
-       空 content + 0 token 仍然是合法的「模型说它没什么可说」。
+    🔒 注意语义变化：旧判据要求 `output_tokens > 0`，
+       所以「空 content + 0 token」当时被算作「主动沉默」。
+       新的契约**不看 token** —— 空就是 EMPTY_CONTENT。
+       这是对的：契约描述的是「拿到了什么」，
+       「为什么没拿到」是 `reasoning_only` / `finish_reason` 的诊断职责。
     """
-    if (content or "").strip():
-        return False
-    return bool(output_tokens)
+    return not getattr(response, "has_valid_content", True)
 
 
 # ================================================================
@@ -380,17 +380,25 @@ def _one_turn(rt: Any, bridge: Any, st: Any, stage: Any, aid: str, rnd: int,
                  "tokens": r.total_tokens,
                  "output_tokens": r.output_tokens,
                  "finish_reason": r.finish_reason,
+                 # §四：Provider 输出契约状态由 llm 层给出，本文件不自己判
+                 "output_status": getattr(r, "output_status", None),
+                 "reasoning_chars": len(getattr(r, "reasoning", "") or ""),
                  "ms": round((time.perf_counter() - t0) * 1000, 1),
                  "chars": len(content), "head": content[:400]})
 
-    # 🔴 空产出 ≠ 主动沉默 —— 必须分开记，否则报告会写成假的
-    if is_empty_completion(content, r.output_tokens):
+    # 🔴 空产出 ≠ 主动沉默 —— 必须分开记，否则报告会写成假的（§七）
+    #
+    #    ⚠️ 成本**照记**：token 已经由 recorder 入账，
+    #       本函数无权冲销，也不许为了让实验数据好看而冲销（§八）。
+    if is_empty_output(r):
         turn["ok"] = False
-        turn["empty_completion"] = True
+        turn["empty_content"] = True
         turn["error"] = (
-            f"EmptyCompletion: 模型花了 {r.output_tokens} 个 output token "
-            f"但 content 为空（推理模型把预算用在 reasoning_content 上）。"
-            f" finish_reason={r.finish_reason}")
+            f"EMPTY_CONTENT: content 为空"
+            f"（output_tokens={r.output_tokens}, "
+            f"reasoning_chars={len(getattr(r, 'reasoning', '') or '')}, "
+            f"finish_reason={r.finish_reason}）。"
+            f" 这次调用**消耗了真实 token 但没有生产内容**。")
         return turn
 
     intent = parse_intent(content)

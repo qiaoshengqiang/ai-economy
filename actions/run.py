@@ -75,6 +75,33 @@ def run_cognition(
     # 🔒 只认显式信封。没有信封 → 普通回复，不产生 Action。
     decision = decision_from_text(agent_id, content)
 
+    # ============================================================
+    # §七：EMPTY_CONTENT **不许悄悄成功**
+    # ============================================================
+    #
+    #   一次「API 成功但 content 为空」的调用，到这里会变成
+    #   `Decision(kind="reply", reasoning="")` ——
+    #   与「Agent 主动决定不作答」**长得一模一样**。
+    #
+    #   实测（commit 6322092）：`novel_world_builder` 连续 4 轮如此，
+    #   而日志里看起来只是「这个 Agent 没动手」。那是错的。
+    #
+    #   ✅ 修法**不是**新增一个 Runtime / Stage 状态（§七 明确禁止扩张），
+    #      而是让这次 Cognition 的**结果**如实带上契约状态。
+    #      调用方据此可以说出「这次没拿到内容」，
+    #      而不是猜「Agent 是不是不想干」。
+    #
+    #   🔒 鸭子类型取值，不 import `llm/` —— `actions/` 是叶子层。
+    #      取不到就是 None（「契约未上报」），**不假装成功**。
+    output_status = getattr(response, "output_status", None)
+    if output_status == "EMPTY_CONTENT":
+        logger.warning(
+            "Cognition 拿到 EMPTY_CONTENT：agent=%s —— 这次调用"
+            "没有可用的生产内容。它**不是**「Agent 决定不作答」，"
+            "两者必须分开统计。",
+            agent_id,
+        )
+
     # --- Action（可选）------------------------------------------------
     result: Optional[ActionResult] = None
     if execute and decision.is_action and dispatcher is not None:
@@ -98,6 +125,8 @@ def run_cognition(
         action_result=result,
         reflection_proposals=proposals,
         write_outcomes=outcomes,
+        # §七：把 Provider 输出契约**带出** Cognition，不留在里面被吃掉
+        output_status=output_status,
     )
 
 

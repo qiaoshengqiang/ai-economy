@@ -633,45 +633,62 @@ class TestPromptTemplateIsComplete:
 
 
 # ================================================================
-# 🔴 空产出 vs 主动沉默 —— 实测抓到的阻塞性 Bug
+# 🔴 空产出 vs 主动沉默 —— 判据已经上移到 Provider 契约
 # ================================================================
-class TestEmptyCompletionIsNotSilence:
+class TestEmptyOutputDelegatesToProviderContract:
     """
-    Session 1 里 `novel_world_builder` 连续 4 轮 `chars=0`，
-    却每轮烧掉约 4300 output token（4 轮约 25k）。
+    **本类是一次「前提过期后的迁移」，不是新增。**
 
-    一开始很容易把它读成「这个 Agent 选择不动手」—— **那是错的**。
-    真相：`deepseek-flash` 是推理模型，返回体同时有
-    `content` 与 `reasoning_content`；预算被推理吃掉时 `content` 为空。
-    「接口成功」掩盖了「语义 no-op」。
+    原先这里有一个本地判据 `is_empty_completion(content, output_tokens)`
+    （空 content **且** 花了 output token 才算失败）。
 
-    🔒 所以判据必须存在，否则实验报告会写出一个**假的**结论。
+    它救过急，但**位置错了**：「content 空不空」是 Provider 输出契约的事，
+    不该由每个调用方各自猜一遍 —— 第二个调用方忘了写，同一个 Bug 就回来了。
+    现在已经上移到 `LLMResponse.output_status`（见 `llm/base.py`）。
+
+    🔒 迁移带来的**语义变化**（刻意承认，不是偷偷改）：
+       旧判据要求 `output_tokens > 0`，所以「空 content + 0 token」
+       当时被算作「主动沉默」。
+       新契约**不看 token** —— 空就是 EMPTY_CONTENT。
+       契约描述「拿到了什么」；「为什么没拿到」是
+       `reasoning_only` / `finish_reason` 的诊断职责。
     """
 
-    def test_empty_content_with_tokens_is_a_failure(self):
+    def test_delegates_to_llm_response_contract(self):
         import collab_session as cs
+        from llm.base import (
+            OUTPUT_EMPTY_CONTENT, OUTPUT_VALID_CONTENT, LLMResponse)
 
-        assert cs.is_empty_completion("", 4300) is True
-        assert cs.is_empty_completion("   \n ", 4300) is True
+        empty = LLMResponse(content="", provider="p", model="m")
+        full = LLMResponse(content="hello", provider="p", model="m")
 
-    def test_empty_content_without_tokens_is_silence(self):
+        assert empty.output_status == OUTPUT_EMPTY_CONTENT
+        assert full.output_status == OUTPUT_VALID_CONTENT
+        assert cs.is_empty_output(empty) is True
+        assert cs.is_empty_output(full) is False
+
+    def test_blank_content_counts_as_empty(self):
         import collab_session as cs
+        from llm.base import LLMResponse
 
-        assert cs.is_empty_completion("", 0) is False
-        assert cs.is_empty_completion("", None) is False
+        assert cs.is_empty_output(
+            LLMResponse(content="   \n ", provider="p", model="m")) is True
 
-    def test_real_content_is_never_flagged(self):
+    def test_reverse_the_delegation_fires(self):
+        """
+        **反向测试**：确认 `is_empty_output` 真的在看契约，
+        而不是恒返回 False（那正是「守卫假绿」的形状）。
+        """
         import collab_session as cs
-
-        assert cs.is_empty_completion("{\"assessment\":\"x\"}", 4300) is False
-
-    def test_reverse_the_classifier_fires(self):
-        """**反向测试**：把判据反过来，确认它抓得住真实那一次的形状。"""
-        import collab_session as cs
+        from llm.base import LLMResponse
 
         # Session 1 里 world_builder 第 2 轮的真实形状
-        observed = {"chars": 0, "output_tokens": 4348}
-        assert cs.is_empty_completion("", observed["output_tokens"]) is True
+        observed = LLMResponse(content="", provider="deepseek",
+                               model="deepseek-flash", output_tokens=4348,
+                               reasoning="（很长的推理）")
+        assert cs.is_empty_output(observed) is True
 
-        # 而 editor 第 1 轮有真实内容（1521 字），不能被误判
-        assert cs.is_empty_completion("x" * 1521, 4358) is False
+        # editor 第 1 轮有真实内容，不能被误判
+        assert cs.is_empty_output(
+            LLMResponse(content="x" * 1521, provider="deepseek",
+                        model="deepseek-flash", output_tokens=4358)) is False

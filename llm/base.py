@@ -300,6 +300,56 @@ VALID_TOKEN_SOURCES = {
 
 
 # ============================================================
+# Provider 输出契约（output contract）
+# ============================================================
+#
+# 【为什么需要这两个状态】
+#
+#     真实实验（commit 6322092）里观察到 `deepseek-flash`（推理模型）返回：
+#
+#         {"content": "", "reasoning_content": "……很长的推理……"}
+#
+#     而 usage 里 completion_tokens 依然很大（推理 token 也是输出 token）。
+#
+#     当时的后果非常具体：
+#
+#         · API 调用「成功」            → success=True
+#         · token 照常计费              → 真实成本进了 LLM call 记录
+#         · 但 external content 是空的  → Agent 一个字都没拿到
+#
+#     于是实验报告里很容易把它读成
+#     「这个 Agent 选择不动手 / 消极怠工」—— **那是错的**。
+#     它首先是 **Provider 输出契约**问题。
+#
+# 🔒 三条不许破坏的语义
+#
+#     1. `EMPTY_CONTENT ≠ VALID_CONTENT`
+#        空 content 不能因为「有 reasoning 字段」就升级成有效内容。
+#
+#     2. `reasoning_content` **不是** content
+#        推理和最终答复语义不同。绝不允许
+#            if not content: content = reasoning_content
+#        这种修法（它会把模型的思考当成交付物写进 Workspace）。
+#
+#     3. `EMPTY_CONTENT` **不等于**「没有成本」
+#        token 真的花了，账就要真的记（§八）。不许为了让实验数据好看而冲销。
+OUTPUT_VALID_CONTENT = "VALID_CONTENT"
+OUTPUT_EMPTY_CONTENT = "EMPTY_CONTENT"
+
+VALID_OUTPUT_STATUSES = {
+    OUTPUT_VALID_CONTENT,
+    OUTPUT_EMPTY_CONTENT,
+}
+
+#: 第三个状态（PROVIDER_ERROR）**故意不在这里**。
+#:
+#: HTTP / 传输 / 鉴权 / 结构错误在 LLM 层是**异常**
+#: （`LLMRequestError` / `InvalidResponseError` / …），
+#: 根本走不到 LLMResponse。把它们塞成一个「状态」会让
+#: 「失败了」和「成功了但没内容」看起来一样 —— 那正是本 Bug 的成因。
+
+
+# ============================================================
 # 统一返回结构
 # ============================================================
 @dataclass
@@ -346,6 +396,13 @@ class LLMResponse:
     raw_response: Optional[Any] = None
 
     finish_reason: Optional[str] = None
+
+    #: 推理模型的「思考内容」（DeepSeek 的 `reasoning_content`、
+    #: 其它网关的 `reasoning`）。**它永远不是 content。**
+    #:
+    #: 🔒 保留它只用于 Provider 层诊断 / telemetry / 实验记录。
+    #:    绝不允许回填进 content —— 见上面「输出契约」的语义 2。
+    reasoning: Optional[str] = None
 
     # 这个 token 数是不是模拟/估算出来的。
     # 保留这个字段是为了向后兼容（Step 2 的代码和测试都在用），
@@ -413,6 +470,47 @@ class LLMResponse:
         return not self.content.strip()
 
     # ------------------------------------------------------------
+    # 输出契约（§四）
+    # ------------------------------------------------------------
+    @property
+    def output_status(self) -> str:
+        """
+        这次调用的**输出契约状态**：`VALID_CONTENT` 还是 `EMPTY_CONTENT`。
+
+        🔒 刻意做成**派生属性**而不是可写字段 ——
+           如果它是一个可以单独赋值的字段，就可能出现
+           `content=""` 而 `output_status="VALID_CONTENT"` 的自相矛盾对象。
+           那正是本 Bug 的同一类错误（状态与事实不一致）在更高一层的复现。
+
+        判据只有一条：**external content 去掉空白后是不是空的。**
+            · 与 token 数无关（花了很多 token 也可能是 EMPTY_CONTENT）
+            · 与有没有 reasoning 无关（有推理也不能升级成有效内容）
+        """
+        return (OUTPUT_EMPTY_CONTENT if not self.content.strip()
+                else OUTPUT_VALID_CONTENT)
+
+    @property
+    def has_valid_content(self) -> bool:
+        """这次调用有没有拿到**可用**的生产内容。"""
+        return self.output_status == OUTPUT_VALID_CONTENT
+
+    @property
+    def has_reasoning(self) -> bool:
+        """模型有没有给出推理内容（诊断用，**不代表有产出**）。"""
+        return bool((self.reasoning or "").strip())
+
+    @property
+    def reasoning_only(self) -> bool:
+        """
+        「只有推理、没有内容」——这正是本次实验真实遇到的那一种。
+
+        🔒 它是诊断信号，**不是**失败信号：
+           API 确实成功了，成本确实发生了。
+           调用方据此**不能**把这次调用当成一次有效生产。
+        """
+        return self.output_status == OUTPUT_EMPTY_CONTENT and self.has_reasoning
+
+    # ------------------------------------------------------------
     def to_dict(self) -> Dict[str, Any]:
         return {
             "content": self.content,
@@ -427,6 +525,11 @@ class LLMResponse:
             "simulated": self.simulated,
             "created_at": self.created_at,
             "metadata": dict(self.metadata),
+            # §四 输出契约
+            "output_status": self.output_status,
+            # 🔒 reasoning 单独一格，**不混进 content**。
+            #    放进来是为了让实验记录能解释「为什么 content 是空的」。
+            "reasoning_chars": len(self.reasoning or ""),
         }
 
     def __str__(self) -> str:
