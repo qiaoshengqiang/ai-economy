@@ -18,6 +18,24 @@ brain:
   provider: "deepseek"
   model: "deepseek-flash"
   credential_ref: "novel_reader_deepseek"
+
+  # 🔑 凭据
+  #
+  # ⚠️ **这里暂时复用了 agent_a 那把已验证可用的 key。**
+  #    原因（实测）：.env 里三把 deepseek key 的前缀完全不同，
+  #       DEEPSEEK_API_KEY          → HTTP 401（坏的/失效的）
+  #       DEEPSEEK_KEY_AGENT_A      → **可用**（agent_a 一直在用）
+  #       DEEPSEEK_KEY_AGENT_C      → 另一个 Agent 的
+  #    5 个新 Agent 原先没有 credential 块 → 回退到那把坏的 → 全部 401。
+  #
+  #    第一轮实验（§三）本来就要「减少变量、用同一个已验证的模型」，
+  #    所以共用一把 key 是**符合本轮设计**的，不是权宜之计。
+  #
+  #    将来要给每个 Agent 独立 key：把下面这行换成
+  #       DEEPSEEK_KEY_NOVEL_READER
+  #    并在 .env 里填上即可 —— **只改这一行，不动任何其他代码**。
+  credential:
+    api_key_env: "DEEPSEEK_KEY_AGENT_A"
   system_prompt: |
     你是 Novel Reader，一个独立的经济主体。
     你模拟**真实读者**，不是文学编辑。
