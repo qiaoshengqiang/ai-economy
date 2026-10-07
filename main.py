@@ -161,6 +161,10 @@ class Runtime:
     # 🔒 Agent **不能**自己创建 WorkspaceStore，也**不能**直接碰 DB。
     #    它只能拿到 gateway。这条边界由「Runtime 里没有暴露 store
     #    给 Agent」+ 架构守卫共同保证。
+    #: Task 生产预算（生产资源边界；**不是**第二个账本）。
+    task_budgets: TaskBudgetStore
+    budget_service: TaskBudgetService
+
     #: 生产性委托（Task Delegation = commerce）。
     #: 🔒 与 Communication **无关** —— 沟通不产生经济行为。
     delegations: DelegationStore
@@ -367,6 +371,57 @@ def _sum_llm_cost(db, where: str, params: tuple) -> float:
         params,
     )
     return float(row["c"]) if row is not None else 0.0
+
+
+def _sum_settled_cost(db: Any, task_id: str) -> float:
+    """
+    这个 Task 上已经**结算出去**的 Agent↔Agent 支出。
+
+    🔒 仍然只查 `ledger_transactions` —— **不新建第二套账本**。
+       与 `_sum_llm_cost` 一起构成 `spent_aic` 的两个真实来源。
+    """
+    row = db.fetchone(
+        "SELECT COALESCE(SUM(amount), 0) AS c FROM ledger_transactions "
+        "WHERE task_id = ? AND tx_type = 'TRANSFER'", (task_id,))
+    return float(row["c"]) if row is not None else 0.0
+
+
+def _count_untagged_calls(db: Any) -> int:
+    """
+    有多少次 LLM 调用**没有** task_id。
+
+    🔒 它是 `spent_aic` 的可信度指标：如果这个数不是 0，
+       「Task 消耗」就会被低估 —— 报告里必须能看见这一点。
+    """
+    row = db.fetchone(
+        "SELECT COUNT(*) AS n FROM llm_calls "
+        "WHERE task_id IS NULL OR task_id = ''")
+    return int(row["n"]) if row is not None else 0
+
+
+def _task_budget_fact(service: Any, task_id: str) -> Optional[dict]:
+    """
+    §七：把 Task 预算变成**纯事实**给 Cognitive Context。
+
+    🔒 只给 budget / spent / remaining / mode。
+       **不给**「你应该省钱」「预算不足要停止」。
+       `budget/models.py` 里的 `blocks_production` 恒为 False，
+       有测试钉住这一点。
+    """
+    if not task_id:
+        return None
+    snap = service.snapshot(task_id)
+    if snap is None:
+        return None
+    return {
+        "budget_aic": snap.budget_aic,
+        "spent_aic": snap.spent_aic,
+        "remaining_aic": snap.remaining_aic,
+        "mode": snap.mode,
+        "currency": snap.currency,
+        "is_exhausted": snap.is_exhausted,
+        "blocks_production": snap.blocks_production,
+    }
 
 
 def _pending_offer_facts(store: Any, agent_id: str) -> list:
@@ -680,6 +735,7 @@ def build_runtime(
     from cognition import CognitiveContextBuilder
     from cognition.economic import EconomicContextBuilder
     from delegation import DelegationService, DelegationStore
+    from budget import TaskBudgetService, TaskBudgetStore
     from experience import ExperienceStore
     from reflection import SelfModelWriteService
     from selfmodel import SelfModelStore
@@ -706,6 +762,26 @@ def build_runtime(
     #    这样它既可以脱离 Economy 单测，也不会长出第二套账本。
     delegations = DelegationStore(economy.db)
     delegation_service = DelegationService(delegations, economy)
+
+    # ---- 🔴 Task Production Budget V1（本轮只启用 OBSERVE_ONLY）----
+    #
+    # 【它不是第二个账本】
+    #
+    #     Ledger  → 实际发生了什么经济变化（唯一事实源）
+    #     Budget  → 这个 Task 的**资金边界/配置**
+    #     spent   → **派生**自 llm_calls + ledger_transactions，不自己累加
+    #
+    # 🔒 表里只有 4 列（task_id/budget_aic/currency/mode）——
+    #    `spent_aic` / `remaining_aic` **从不落库**，
+    #    与 `wallets` 表刻意没有 balance 列是同一条纪律。
+    task_budgets = TaskBudgetStore(economy.db)
+    budget_service = TaskBudgetService(
+        task_budgets,
+        llm_cost_of_task=lambda tid: _sum_llm_cost(
+            economy.db, "task_id = ?", (tid,)),
+        settled_cost_of_task=lambda tid: _sum_settled_cost(economy.db, tid),
+        untagged_llm_calls=lambda: _count_untagged_calls(economy.db),
+    )
 
     # ---- 🔴 Economy Awareness V1：经济事实进入 Cognitive Context ----
     #
@@ -741,6 +817,7 @@ def build_runtime(
             economy.db, "agent_id = ? AND created_at >= ?", (aid, since)),
         #: §十三：未决的生产性委托 —— 同样只读，同样只给事实。
         pending_offers_of=lambda aid: _pending_offer_facts(delegations, aid),
+        task_budget_of=lambda tid: _task_budget_fact(budget_service, tid),
         currency=economy.currency,
     )
 
@@ -939,6 +1016,8 @@ def build_runtime(
         alignment=alignment,
         delegations=delegations,
         delegation_service=delegation_service,
+        task_budgets=task_budgets,
+        budget_service=budget_service,
         workspaces=workspaces,
         workspace_gateway=workspace_gateway,
         workspace_locks=workspace_locks,

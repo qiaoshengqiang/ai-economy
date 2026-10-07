@@ -117,6 +117,21 @@ class EconomicContext:
     #:    「Communication is not commerce」。
     pending_offers: Tuple[Dict[str, Any], ...] = ()
 
+    #: 🔴 Task Production Budget V1（§七）：这个 Task 的生产资源边界。
+    #:
+    #: 形如：
+    #:     {"budget_aic": 50.0, "spent_aic": 3.2, "remaining_aic": 46.8,
+    #:      "mode": "OBSERVE_ONLY", "currency": "AIC",
+    #:      "is_exhausted": False}
+    #:
+    #: 🔒 **只提供事实**（§七 明令禁止）：
+    #:    ❌「你应该省钱」❌「必须控制成本」❌「预算不足要停止」
+    #:    ❌「尽量少调用」❌「必须外包」
+    #:
+    #: ⚠️ `mode == OBSERVE_ONLY` 时预算**不阻断**任何东西 ——
+    #:    即使超预算，Runtime 仍可继续生产。
+    task_budget: Optional[Dict[str, Any]] = None
+
     #: 各字段的来源（可追溯）。全部指向系统组件，不指向 Self Model / LLM。
     sources: Dict[str, str] = field(default_factory=dict)
 
@@ -135,6 +150,7 @@ class EconomicContext:
             "unavailable": list(self.unavailable),
             "sources": dict(self.sources),
             "pending_offers": [dict(o) for o in self.pending_offers],
+            "task_budget": dict(self.task_budget) if self.task_budget else None,
         }
 
     # ------------------------------------------------------------
@@ -182,6 +198,22 @@ class EconomicContext:
         else:
             lines.append("Pending task delegations involving you: none")
 
+        # §七：Task 生产预算 —— 同样只陈述事实
+        if self.task_budget:
+            tb = self.task_budget
+            cur = tb.get("currency") or self.currency
+
+            def _amt(key: str) -> str:
+                v = tb.get(key)
+                return ("not currently available" if v is None
+                        else f"{float(v):.4f} {cur}")
+
+            lines.append("Task production budget:")
+            lines.append(f"Budget: {_amt('budget_aic')}")
+            lines.append(f"Spent: {_amt('spent_aic')}")
+            lines.append(f"Remaining: {_amt('remaining_aic')}")
+            lines.append(f"Mode: {tb.get('mode')}")
+
         lines.append(CURRENCY_NOTE)
         if self.as_of:
             lines.append(f"(Facts read from the Ledger at {self.as_of}.)")
@@ -216,6 +248,7 @@ class EconomicContextBuilder:
         cost_of_task: Optional[Callable[[str], Optional[float]]] = None,
         cost_since: Optional[Callable[[str, str], Optional[float]]] = None,
         pending_offers_of: Optional[Callable[[str], Optional[list]]] = None,
+        task_budget_of: Optional[Callable[[str], Optional[dict]]] = None,
         currency: str = DEFAULT_CURRENCY,
         clock: Callable[[], str] = utc_now_iso,
     ) -> None:
@@ -224,6 +257,8 @@ class EconomicContextBuilder:
         self.cost_since = cost_since
         #: §十三：与某个 Agent 相关的未决委托。同样是**只读**回调。
         self.pending_offers_of = pending_offers_of
+        #: §七：Task 生产预算（按 task_id 取）。同样是**只读**回调。
+        self.task_budget_of = task_budget_of
         self.currency = currency or DEFAULT_CURRENCY
         self.clock = clock
 
@@ -273,10 +308,13 @@ class EconomicContextBuilder:
             unavailable.append("current_session_cost")
 
         pending = self._safe_list(self.pending_offers_of, agent_id)
+        budget = self._safe_dict(self.task_budget_of, task_id) \
+            if task_id else None
 
         return EconomicContext(
             currency=self.currency,
             pending_offers=tuple(pending),
+            task_budget=budget,
             current_balance=balance,
             current_task_cost=task_cost,
             current_session_cost=session_cost,
@@ -303,6 +341,17 @@ class EconomicContextBuilder:
         if not isinstance(value, (list, tuple)):
             return []
         return [dict(v) for v in value if isinstance(v, dict)]
+
+    @staticmethod
+    def _safe_dict(fn: Optional[Callable], *args: Any) -> Optional[dict]:
+        """调一个只读的「字典」取值函数，**失败就是 None**（不是空 dict）。"""
+        if fn is None:
+            return None
+        try:
+            value = fn(*args)
+        except Exception:                                     # noqa: BLE001
+            return None
+        return dict(value) if isinstance(value, dict) else None
 
     @staticmethod
     def _safe(fn: Optional[Callable], *args: Any) -> Optional[float]:
