@@ -114,7 +114,16 @@ llm:
       model_env: "DEEPSEEK_MODEL"
       base_url: "https://api.deepseek.com"
       model: "deepseek-chat"
-      timeout_seconds: 60
+      # 🔴 2026-10-07 正式生产实测：60 秒对本项目的调用形状**不够用**。
+      #
+      #    `deepseek-flash` 是推理模型，推理内容也计入输出预算。
+      #    在「长 Context（5 份共享文件 + Stage + 信箱）+ 要求输出
+      #    整份 artifact 的 JSON」这个形状下，一次调用常常要
+      #    60~120 秒。Session 3 实测：10 次调用里 5 次 60 秒超时。
+      #
+      #    与 max_tokens=4096 是同一类问题：不是 Agent 不愿生产，
+      #    而是**基础设施参数把生产截断了**。
+      timeout_seconds: 300
 
     # ============================================================
     # 阿里云百炼（DashScope）—— OpenAI 兼容模式
