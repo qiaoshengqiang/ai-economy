@@ -167,6 +167,14 @@ def run_experiment(experiment_id: str, agent_id: str, provider, model) -> dict:
 
     # ---- 分类（§七）------------------------------------------------
     refl = [p for r in runs for p in r["reflections"]]
+
+    # §十四：Evidence Validity —— 正确引用 experience_id 的 Reflection
+    all_evidence = [e for p in refl for e in (p.get("evidence") or [])]
+    evidence_valid = bool(all_evidence)
+    for eid in all_evidence:
+        if ex.get(eid) is None:
+            evidence_valid = False
+            break
     committed = [w for r in runs for w in r["write_outcomes"]
                  if w.get("committed")]
     strategy_changed = any(r["self_model_changed"] for r in runs)
@@ -202,6 +210,7 @@ def run_experiment(experiment_id: str, agent_id: str, provider, model) -> dict:
             "reflection_generated": bool(refl),
             "reflection_count": len(refl),
             "valid_reflection": bool(committed),
+            "evidence_valid": evidence_valid,
             "strategy_changed": strategy_changed,
             "decision_changed": decision_changed,
             "action_changed": action_changed,
@@ -238,7 +247,9 @@ def main() -> int:
         if "error" not in res:
             m = res["metrics"]
             print(f"  class={res['classification']} "
-                  f"refl={m['reflection_count']} valid={m['valid_reflection']} "
+                  f"refl={m['reflection_count']} "
+                  f"ev_valid={m.get('evidence_valid')} "
+                  f"valid={m['valid_reflection']} "
                   f"strat={m['strategy_changed']} "
                   f"dec={m['decision_changed']} act={m['action_changed']}")
             print(f"  AIC={res['cost']['aic']} tokens={res['cost']['total_tokens']}")
@@ -265,6 +276,13 @@ def main() -> int:
         print(f"\n  N = {n}")
         print(f"  Reflection Generation Rate : {rate('reflection_generated'):.0%}")
         print(f"  Valid Reflection Rate      : {rate('valid_reflection'):.0%}")
+        refl_ok = [r for r in ok if r["metrics"]["reflection_count"] > 0]
+        if refl_ok:
+            ev = sum(1 for r in refl_ok if r["metrics"].get("evidence_valid"))
+            print(f"  **Evidence Validity Rate** : {ev/len(refl_ok):.0%} "
+                  f"({ev}/{len(refl_ok)} 有 Reflection 的实验)")
+        else:
+            print(f"  **Evidence Validity Rate** : n/a（无实验产生 Reflection）")
         print(f"  Strategy Change Rate       : {rate('strategy_changed'):.0%}")
         print(f"  Decision Change Rate       : {rate('decision_changed'):.0%}")
         print(f"  Action Change Rate         : {rate('action_changed'):.0%}")

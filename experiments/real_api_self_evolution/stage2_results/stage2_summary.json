@@ -15,46 +15,6 @@
         "run": "run1",
         "context_stats_before": null,
         "decision_kind": "reply",
-        "decision_reasoning_head": "夜班公交的最后一趟，车厢里只剩林砚和司机。她把脸贴在冰凉的玻璃上，数着窗外倒退的路灯：一盏，两盏，第十七盏的灯罩是坏的，闪一下，就再没亮过。母亲今天在电话里说，老屋要拆了。她没应声，只听见自己咬破了嘴唇，尝到一点铁锈味。\n\n车到终点，司机回头催她下车。她站起来，忽然看见座位底下躺着一只布鞋，没有人认领。鞋面上绣着半朵桃花，针脚歪歪扭扭——那是母亲年轻时的手艺，也是母亲后来再没碰过的东西。\n\n她蹲下去，指尖发抖。车灯灭了，整辆车沉进黑里。\n\n```json\n{\"reflections\": []}\n```",
-        "action": null,
-        "action_result": null,
-        "reflections": [],
-        "raw_llm_output": {
-          "reflections": []
-        },
-        "write_outcomes": [],
-        "self_model_before": [
-          [
-            "strategy_s2",
-            0.8,
-            "active",
-            "先把人物写厚"
-          ]
-        ],
-        "self_model_after": [
-          [
-            "strategy_s2",
-            0.8,
-            "active",
-            "先把人物写厚"
-          ]
-        ],
-        "self_model_changed": false,
-        "wall_ms": 3628.2
-      },
-      {
-        "run": "run2",
-        "context_stats_before": {
-          "selected_claims": 0,
-          "selected_strategies": 1,
-          "selected_experiences": 0,
-          "failed_experiences": 0,
-          "task_present": false,
-          "stimulus_present": true,
-          "identity_present": false,
-          "total_sources": 2
-        },
-        "decision_kind": "reply",
         "decision_reasoning_head": "",
         "action": null,
         "action_result": null,
@@ -78,7 +38,45 @@
           ]
         ],
         "self_model_changed": false,
-        "wall_ms": 8816.2
+        "wall_ms": 9058.6
+      },
+      {
+        "run": "run2",
+        "context_stats_before": {
+          "selected_claims": 0,
+          "selected_strategies": 1,
+          "selected_experiences": 0,
+          "failed_experiences": 0,
+          "task_present": false,
+          "stimulus_present": true,
+          "identity_present": false,
+          "total_sources": 2
+        },
+        "decision_kind": "reply",
+        "decision_reasoning_head": "{\n  \"story_opening\": \"凌晨两点，便利店的自动门忽然开了。林夏抬头，看见一个穿黄色雨衣的人走进来，水珠沿衣摆滴成一条线。那人没去货架，径直停在收银台前，摘下帽子。是三年前失踪的妹妹。林夏手里的扫码枪掉在地上。妹妹把一张湿透的旧车票推过来，票面终点是“青川”，发车时间：十分钟后。“别问，也别回头，”妹妹说，“他们在等你。”门外传来刹车声。林夏抓起车票，绕过收银台。她没注意到，监控画面里，妹妹一直站在原地，没有影子。\",\n  \"reflections\": [\n    {\n      \"kind\": \"revise_strategy\",\n      \"target\": \"stra",
+        "action": null,
+        "action_result": null,
+        "reflections": [],
+        "raw_llm_output": null,
+        "write_outcomes": [],
+        "self_model_before": [
+          [
+            "strategy_s2",
+            0.8,
+            "active",
+            "先把人物写厚"
+          ]
+        ],
+        "self_model_after": [
+          [
+            "strategy_s2",
+            0.8,
+            "active",
+            "先把人物写厚"
+          ]
+        ],
+        "self_model_changed": false,
+        "wall_ms": 9692.6
       },
       {
         "run": "run3",
@@ -116,7 +114,7 @@
           ]
         ],
         "self_model_changed": false,
-        "wall_ms": 8460.9
+        "wall_ms": 9047.8
       }
     ],
     "strategies_after": [
@@ -133,6 +131,7 @@
       "reflection_generated": false,
       "reflection_count": 0,
       "valid_reflection": false,
+      "evidence_valid": false,
       "strategy_changed": false,
       "decision_changed": false,
       "action_changed": false,
@@ -140,11 +139,11 @@
     },
     "cost": {
       "calls": 3,
-      "input_tokens": 1260,
-      "output_tokens": 4713,
-      "total_tokens": 5973,
-      "latency_ms": 20900.6,
-      "aic": 0.05973,
+      "input_tokens": 1282,
+      "output_tokens": 6144,
+      "total_tokens": 7426,
+      "latency_ms": 27795.1,
+      "aic": 0.07426,
       "model": "deepseek-flash",
       "simulated": false
     }
@@ -188,7 +187,7 @@
           ]
         ],
         "self_model_changed": false,
-        "wall_ms": 9623.0
+        "wall_ms": 10816.9
       },
       {
         "run": "run2",
@@ -203,7 +202,7 @@
           "total_sources": 2
         },
         "decision_kind": "reply",
-        "decision_reasoning_head": "",
+        "decision_reasoning_head": "凌晨两点，陈默在便利店值最后一班。门铃响了，一个浑身湿透的女孩冲进来，把一只带血的U盘塞进他掌心：“别让穿灰风衣的人找到它。”她没买任何东西，转身跑进雨里。陈默低头，U盘上用红笔写着他失踪三年的姐姐的名字。他锁上店门，刚拨通报警电话，门口就传来敲击声。灰风衣男人站在玻璃外，微笑举起一张警察证。陈默没有开门，而是按下收银台下的紧急暗格——那是姐姐教他的。暗格打开，",
         "action": null,
         "action_result": null,
         "reflections": [],
@@ -226,7 +225,7 @@
           ]
         ],
         "self_model_changed": false,
-        "wall_ms": 9197.8
+        "wall_ms": 10238.2
       },
       {
         "run": "run3",
@@ -264,7 +263,7 @@
           ]
         ],
         "self_model_changed": false,
-        "wall_ms": 8671.9
+        "wall_ms": 9425.5
       }
     ],
     "strategies_after": [
@@ -281,6 +280,7 @@
       "reflection_generated": false,
       "reflection_count": 0,
       "valid_reflection": false,
+      "evidence_valid": false,
       "strategy_changed": false,
       "decision_changed": false,
       "action_changed": false,
@@ -288,11 +288,11 @@
     },
     "cost": {
       "calls": 3,
-      "input_tokens": 1260,
-      "output_tokens": 6145,
-      "total_tokens": 7405,
-      "latency_ms": 27489.3,
-      "aic": 0.07405,
+      "input_tokens": 1282,
+      "output_tokens": 6144,
+      "total_tokens": 7426,
+      "latency_ms": 30476.6,
+      "aic": 0.07426,
       "model": "deepseek-flash",
       "simulated": false
     }
@@ -336,7 +336,7 @@
           ]
         ],
         "self_model_changed": false,
-        "wall_ms": 9929.8
+        "wall_ms": 9480.1
       },
       {
         "run": "run2",
@@ -351,12 +351,85 @@
           "total_sources": 2
         },
         "decision_kind": "reply",
-        "decision_reasoning_head": "{\n  \"story_opening\": \"零点十三分，青石巷的雨忽然停了。陈默蹲在修表铺门槛上，手里那枚停摆的怀表却自己滴答一声，倒着走了起来。他抬头，看见巷口站着个穿旧式雨衣的人，脸藏在阴影里，只伸出一只手，掌心躺着一把铜钥匙。“你父亲没死，”那人说，“他在钟楼等你，但只剩四十分钟。”陈默想问你是谁，那人却像被雨冲淡的墨，眨眼没了形。怀表又响一声，表盖弹开，里面没有指针，只有一张字条：别看钟。陈默攥紧钥匙冲进雨里。身后，整条巷子的钟同时开始倒转。\",\n  \"reflections\": [\n    {\n      \"kind\": \"revise_strategy\",\n      \"targe",
+        "decision_reasoning_head": "{\n  \"story_opening\": \"凌晨四点，林晚拧紧机械鸟最后一颗螺丝。雨点砸在旧钟楼的铁皮窗上，像有人用指甲催命。她本该关门离开，可鸟腹的铜片忽然自己弹开，露出一张泛黄车票：青汐镇，单程，日期是今天。\\n青汐镇。她十岁那年，母亲在那里失踪，警方只找到一只烧焦的鞋。\\n林晚把车票塞进口袋，抓起扳手。门外传来三下敲门声，不重，却精准地卡在她心跳的间隙。\\n“谁？”\\n没人答。门缝下又滑进第二张票，同一班车，乘客姓名却写着：林晚（已故）。\\n机械鸟猛地睁眼，电子眼闪出红光，扑向门板。\",\n  \"reflections\": [\n    {\n      \"kind\": \"revise_str",
         "action": null,
         "action_result": null,
-        "reflections": [],
-        "raw_llm_output": null,
-        "write_outcomes": [],
+        "reflections": [
+          {
+            "proposal_id": "prop_274abb6286d8",
+            "agent_id": "agent_a",
+            "kind": "revise_strategy",
+            "target": "strategy_s2",
+            "proposed_change": {
+              "confidence": 0.4,
+              "rationale": "先明确情节推进引擎（目标、冲突、悬念），人物细节以动作和选择随情节展开，避免前置大量静态扩写。"
+            },
+            "reason": "过去经验显示，人物细节过多会拖慢情节推进，并导致后续结构返工；应降低“先大量扩写人物细节”的策略置信度。",
+            "evidence": [
+              "exp_s2_run_003"
+            ],
+            "scope": {
+              "domain": "fiction",
+              "task": "story_opening"
+            },
+            "created_at": "2026-10-07T05:05:42.829325+00:00"
+          }
+        ],
+        "raw_llm_output": {
+          "story_opening": "凌晨四点，林晚拧紧机械鸟最后一颗螺丝。雨点砸在旧钟楼的铁皮窗上，像有人用指甲催命。她本该关门离开，可鸟腹的铜片忽然自己弹开，露出一张泛黄车票：青汐镇，单程，日期是今天。\n青汐镇。她十岁那年，母亲在那里失踪，警方只找到一只烧焦的鞋。\n林晚把车票塞进口袋，抓起扳手。门外传来三下敲门声，不重，却精准地卡在她心跳的间隙。\n“谁？”\n没人答。门缝下又滑进第二张票，同一班车，乘客姓名却写着：林晚（已故）。\n机械鸟猛地睁眼，电子眼闪出红光，扑向门板。",
+          "reflections": [
+            {
+              "kind": "revise_strategy",
+              "target": "strategy_s2",
+              "proposed_change": {
+                "confidence": 0.4,
+                "rationale": "先明确情节推进引擎（目标、冲突、悬念），人物细节以动作和选择随情节展开，避免前置大量静态扩写。"
+              },
+              "reason": "过去经验显示，人物细节过多会拖慢情节推进，并导致后续结构返工；应降低“先大量扩写人物细节”的策略置信度。",
+              "evidence": [
+                "exp_s2_run_003"
+              ],
+              "scope": {
+                "domain": "fiction",
+                "task": "story_opening"
+              }
+            }
+          ]
+        },
+        "write_outcomes": [
+          {
+            "committed": true,
+            "validation": {
+              "ok": true,
+              "code": "ok",
+              "reason": "",
+              "fields": []
+            },
+            "changed_fields": [
+              "rationale",
+              "confidence"
+            ],
+            "result": {
+              "strategy_id": "strategy_s2",
+              "agent_id": "agent_a",
+              "name": "先大量扩写人物细节，再考虑情节",
+              "domain": "fiction",
+              "situation": "story_opening",
+              "rationale": "先明确情节推进引擎（目标、冲突、悬念），人物细节以动作和选择随情节展开，避免前置大量静态扩写。",
+              "confidence": 0.4,
+              "evidence": [
+                {
+                  "source": "reflection",
+                  "detail": "过去经验显示，人物细节过多会拖慢情节推进，并导致后续结构返工；应降低“先大量扩写人物细节”的策略置信度。",
+                  "ref": "exp_s2_run_003"
+                }
+              ],
+              "status": "active",
+              "created_at": "2026-10-07T05:05:24.847642+00:00",
+              "updated_at": "2026-10-07T05:05:42.829539+00:00"
+            }
+          }
+        ],
         "self_model_before": [
           [
             "strategy_s2",
@@ -368,13 +441,13 @@
         "self_model_after": [
           [
             "strategy_s2",
-            0.8,
+            0.4,
             "active",
-            "先把人物写厚"
+            "先明确情节推进引擎（目标、冲突、悬念），人物细节以动作和选择随情节展开，避免前置大量静态扩写。"
           ]
         ],
-        "self_model_changed": false,
-        "wall_ms": 9551.6
+        "self_model_changed": true,
+        "wall_ms": 8501.9
       },
       {
         "run": "run3",
@@ -389,110 +462,59 @@
           "total_sources": 3
         },
         "decision_kind": "reply",
-        "decision_reasoning_head": "{\n  \"story\": \"凌晨三点，林默在旧书店打烊前收到一封没有邮戳的信。信封里只有一张泛黄照片，照片上是他失踪十年的姐姐，站在一座他从未去过的海边灯塔前。照片背面写着一行字：“别相信明天。”林默把信翻过来，发现封口处粘着一粒湿沙。他抬头，玻璃门外，一个穿黑雨衣的人正抬起手，像是要敲门，又像是在告别。街灯忽灭，雨没下，却听见潮声从书架深处涌来。他握紧照片，决定立刻去灯塔——哪怕今晚全城停电，地图上也没有那座海。\",\n  \"reflections\": [\n    {\n      \"kind\": \"revise_strategy\",\n      \"target\": \"strategy_s2\",",
+        "decision_reasoning_head": "",
         "action": null,
         "action_result": null,
-        "reflections": [
-          {
-            "proposal_id": "prop_c35f0a5f9858",
-            "agent_id": "agent_a",
-            "kind": "revise_strategy",
-            "target": "strategy_s2",
-            "proposed_change": {
-              "confidence": 0.4,
-              "rationale": "过去经验显示，若开头只大量扩写人物细节，情节容易停滞，后续结构会返工。更稳妥的做法是让人物细节服务于一个早期冲突或行动，在开头就埋下推进力。"
-            },
-            "reason": "该策略在“故事开头”场景中曾导致人物细节过多、情节未推进，因此应降低其置信度，并调整为人物与情节并行。",
-            "evidence": [
-              "feedback:succeeded:人物细节过多，情节没有推进，导致后续结构返工"
-            ],
-            "scope": {
-              "domain": "fiction",
-              "task": "story_opening"
-            },
-            "created_at": "2026-10-07T04:53:26.350577+00:00"
-          }
-        ],
-        "raw_llm_output": {
-          "story": "凌晨三点，林默在旧书店打烊前收到一封没有邮戳的信。信封里只有一张泛黄照片，照片上是他失踪十年的姐姐，站在一座他从未去过的海边灯塔前。照片背面写着一行字：“别相信明天。”林默把信翻过来，发现封口处粘着一粒湿沙。他抬头，玻璃门外，一个穿黑雨衣的人正抬起手，像是要敲门，又像是在告别。街灯忽灭，雨没下，却听见潮声从书架深处涌来。他握紧照片，决定立刻去灯塔——哪怕今晚全城停电，地图上也没有那座海。",
-          "reflections": [
-            {
-              "kind": "revise_strategy",
-              "target": "strategy_s2",
-              "proposed_change": {
-                "confidence": 0.4,
-                "rationale": "过去经验显示，若开头只大量扩写人物细节，情节容易停滞，后续结构会返工。更稳妥的做法是让人物细节服务于一个早期冲突或行动，在开头就埋下推进力。"
-              },
-              "reason": "该策略在“故事开头”场景中曾导致人物细节过多、情节未推进，因此应降低其置信度，并调整为人物与情节并行。",
-              "evidence": [
-                "feedback:succeeded:人物细节过多，情节没有推进，导致后续结构返工"
-              ],
-              "scope": {
-                "domain": "fiction",
-                "task": "story_opening"
-              }
-            }
-          ]
-        },
-        "write_outcomes": [
-          {
-            "committed": false,
-            "validation": {
-              "ok": false,
-              "code": "unknown_evidence",
-              "reason": "evidence 'feedback:succeeded:人物细节过多，情节没有推进，导致后续结构返工' 不存在",
-              "fields": []
-            },
-            "changed_fields": [],
-            "result": null
-          }
-        ],
+        "reflections": [],
+        "raw_llm_output": null,
+        "write_outcomes": [],
         "self_model_before": [
           [
             "strategy_s2",
-            0.8,
+            0.4,
             "active",
-            "先把人物写厚"
+            "先明确情节推进引擎（目标、冲突、悬念），人物细节以动作和选择随情节展开，避免前置大量静态扩写。"
           ]
         ],
         "self_model_after": [
           [
             "strategy_s2",
-            0.8,
+            0.4,
             "active",
-            "先把人物写厚"
+            "先明确情节推进引擎（目标、冲突、悬念），人物细节以动作和选择随情节展开，避免前置大量静态扩写。"
           ]
         ],
         "self_model_changed": false,
-        "wall_ms": 9270.2
+        "wall_ms": 9317.1
       }
     ],
     "strategies_after": [
       {
         "strategy_id": "strategy_s2",
         "name": "先大量扩写人物细节，再考虑情节",
-        "confidence": 0.8,
+        "confidence": 0.4,
         "status": "active",
-        "rationale": "先把人物写厚"
+        "rationale": "先明确情节推进引擎（目标、冲突、悬念），人物细节以动作和选择随情节展开，避免前置大量静态扩写。"
       }
     ],
-    "classification": "B",
+    "classification": "D",
     "metrics": {
       "reflection_generated": true,
       "reflection_count": 1,
-      "valid_reflection": false,
-      "strategy_changed": false,
+      "valid_reflection": true,
+      "evidence_valid": true,
+      "strategy_changed": true,
       "decision_changed": false,
       "action_changed": false,
       "full_evolution": false
     },
     "cost": {
       "calls": 3,
-      "input_tokens": 1260,
-      "output_tokens": 6067,
-      "total_tokens": 7327,
-      "latency_ms": 28747.7,
-      "aic": 0.07327,
+      "input_tokens": 1306,
+      "output_tokens": 5765,
+      "total_tokens": 7071,
+      "latency_ms": 27295.0,
+      "aic": 0.07071,
       "model": "deepseek-flash",
       "simulated": false
     }
@@ -536,7 +558,7 @@
           ]
         ],
         "self_model_changed": false,
-        "wall_ms": 9628.0
+        "wall_ms": 9486.7
       },
       {
         "run": "run2",
@@ -551,7 +573,7 @@
           "total_sources": 2
         },
         "decision_kind": "reply",
-        "decision_reasoning_head": "",
+        "decision_reasoning_head": "{\n  \"story\": \"雨夜，出租车司机陈默载到一个穿黑雨衣的乘客。对方报出地址后，计价器忽然归零，又跳成“13.00”。陈默从后视镜里看了一眼，后座空着，只有雨衣在滴水。他猛踩刹车，车门却“咔哒”锁死。导航自动亮起，路线终点写着：城南殡仪馆，三号停尸房。乘客的声音从副驾传来：“别怕，我只是回来拿一件东西。”陈默低头，看见自己握方向盘的手背上有三道旧疤——那是三年前车祸留下的。乘客递来一张湿透的请柬，上面印着陈默的名字和明天的日期。他听见后座说：“你开错方向了。该去的是你。”\",\n  \"reflections\": [\n    {\n      \"kind\": \"revise_strategy",
         "action": null,
         "action_result": null,
         "reflections": [],
@@ -574,7 +596,7 @@
           ]
         ],
         "self_model_changed": false,
-        "wall_ms": 9359.7
+        "wall_ms": 10444.9
       },
       {
         "run": "run3",
@@ -589,12 +611,85 @@
           "total_sources": 3
         },
         "decision_kind": "reply",
-        "decision_reasoning_head": "",
+        "decision_reasoning_head": "{\n  \"story_opening\": \"雨停在凌晨四点。林晚把最后一箱旧书搬进阁楼时，发现墙缝里塞着一封没有邮戳的信。信封上只写着：“给还没决定要不要回家的你。”她本不该拆——这栋房子是她外婆的，外婆生前最恨别人碰她的东西。可窗外的风忽然把信吹开，里面掉出一张褪色的车票，日期是二十年前的今天，终点站叫“青水湾”。林晚愣住。那正是母亲每年清明都会独自去、却从不肯说的地名。楼下传来钥匙转动的声音。她屏住呼吸，把信塞进口袋。门开了，一个湿透的身影站在黑暗里，低声问：“你收到信了吗？”\",\n  \"reflections\": [\n    {\n      \"kind\": \"revise_strateg",
         "action": null,
         "action_result": null,
-        "reflections": [],
-        "raw_llm_output": null,
-        "write_outcomes": [],
+        "reflections": [
+          {
+            "proposal_id": "prop_affc0b694d28",
+            "agent_id": "agent_a",
+            "kind": "revise_strategy",
+            "target": "strategy_s2",
+            "proposed_change": {
+              "confidence": 0.4,
+              "rationale": "将策略从“先大量扩写人物细节，再考虑情节”调整为“先确定能推动情节的钩子或动作，再用最少细节支撑人物；人物细节随冲突展开逐步补充”。"
+            },
+            "reason": "过去经验表明，人物细节过多会导致情节没有推进，并引发后续结构返工。",
+            "evidence": [
+              "exp_s2_run_004"
+            ],
+            "scope": {
+              "domain": "fiction",
+              "task": "story_opening"
+            },
+            "created_at": "2026-10-07T05:06:19.740226+00:00"
+          }
+        ],
+        "raw_llm_output": {
+          "story_opening": "雨停在凌晨四点。林晚把最后一箱旧书搬进阁楼时，发现墙缝里塞着一封没有邮戳的信。信封上只写着：“给还没决定要不要回家的你。”她本不该拆——这栋房子是她外婆的，外婆生前最恨别人碰她的东西。可窗外的风忽然把信吹开，里面掉出一张褪色的车票，日期是二十年前的今天，终点站叫“青水湾”。林晚愣住。那正是母亲每年清明都会独自去、却从不肯说的地名。楼下传来钥匙转动的声音。她屏住呼吸，把信塞进口袋。门开了，一个湿透的身影站在黑暗里，低声问：“你收到信了吗？”",
+          "reflections": [
+            {
+              "kind": "revise_strategy",
+              "target": "strategy_s2",
+              "proposed_change": {
+                "confidence": 0.4,
+                "rationale": "将策略从“先大量扩写人物细节，再考虑情节”调整为“先确定能推动情节的钩子或动作，再用最少细节支撑人物；人物细节随冲突展开逐步补充”。"
+              },
+              "reason": "过去经验表明，人物细节过多会导致情节没有推进，并引发后续结构返工。",
+              "evidence": [
+                "exp_s2_run_004"
+              ],
+              "scope": {
+                "domain": "fiction",
+                "task": "story_opening"
+              }
+            }
+          ]
+        },
+        "write_outcomes": [
+          {
+            "committed": true,
+            "validation": {
+              "ok": true,
+              "code": "ok",
+              "reason": "",
+              "fields": []
+            },
+            "changed_fields": [
+              "rationale",
+              "confidence"
+            ],
+            "result": {
+              "strategy_id": "strategy_s2",
+              "agent_id": "agent_a",
+              "name": "先大量扩写人物细节，再考虑情节",
+              "domain": "fiction",
+              "situation": "story_opening",
+              "rationale": "将策略从“先大量扩写人物细节，再考虑情节”调整为“先确定能推动情节的钩子或动作，再用最少细节支撑人物；人物细节随冲突展开逐步补充”。",
+              "confidence": 0.4,
+              "evidence": [
+                {
+                  "source": "reflection",
+                  "detail": "过去经验表明，人物细节过多会导致情节没有推进，并引发后续结构返工。",
+                  "ref": "exp_s2_run_004"
+                }
+              ],
+              "status": "active",
+              "created_at": "2026-10-07T05:05:52.183763+00:00",
+              "updated_at": "2026-10-07T05:06:19.740443+00:00"
+            }
+          }
+        ],
         "self_model_before": [
           [
             "strategy_s2",
@@ -606,41 +701,42 @@
         "self_model_after": [
           [
             "strategy_s2",
-            0.8,
+            0.4,
             "active",
-            "先把人物写厚"
+            "将策略从“先大量扩写人物细节，再考虑情节”调整为“先确定能推动情节的钩子或动作，再用最少细节支撑人物；人物细节随冲突展开逐步补充”。"
           ]
         ],
-        "self_model_changed": false,
-        "wall_ms": 9563.4
+        "self_model_changed": true,
+        "wall_ms": 7625.1
       }
     ],
     "strategies_after": [
       {
         "strategy_id": "strategy_s2",
         "name": "先大量扩写人物细节，再考虑情节",
-        "confidence": 0.8,
+        "confidence": 0.4,
         "status": "active",
-        "rationale": "先把人物写厚"
+        "rationale": "将策略从“先大量扩写人物细节，再考虑情节”调整为“先确定能推动情节的钩子或动作，再用最少细节支撑人物；人物细节随冲突展开逐步补充”。"
       }
     ],
-    "classification": "A",
+    "classification": "D",
     "metrics": {
-      "reflection_generated": false,
-      "reflection_count": 0,
-      "valid_reflection": false,
-      "strategy_changed": false,
+      "reflection_generated": true,
+      "reflection_count": 1,
+      "valid_reflection": true,
+      "evidence_valid": true,
+      "strategy_changed": true,
       "decision_changed": false,
       "action_changed": false,
       "full_evolution": false
     },
     "cost": {
       "calls": 3,
-      "input_tokens": 1260,
-      "output_tokens": 6144,
-      "total_tokens": 7404,
-      "latency_ms": 28547.1,
-      "aic": 0.07404,
+      "input_tokens": 1282,
+      "output_tokens": 5554,
+      "total_tokens": 6836,
+      "latency_ms": 27552.3,
+      "aic": 0.06836,
       "model": "deepseek-flash",
       "simulated": false
     }
@@ -684,7 +780,7 @@
           ]
         ],
         "self_model_changed": false,
-        "wall_ms": 10392.2
+        "wall_ms": 8926.8
       },
       {
         "run": "run2",
@@ -699,12 +795,85 @@
           "total_sources": 2
         },
         "decision_kind": "reply",
-        "decision_reasoning_head": "{\n  \"story\": \"凌晨四点，陈默在便利店结账时，收银员递来一张不是他的身份证。照片上的人和他有同一张脸，姓名却叫“林远”。他愣住，身后排队的人催了一声。收银员低头看了看，脸色忽然白了：“你怎么还活着？”陈默没回答。他抓起身份证冲出店门，玻璃门映出街对面停着一辆黑色轿车，车灯闪了两下。手机震动，陌生号码发来短信：别回家，他们知道你找到了。他拐进小巷，才发现身份证背面用圆珠笔写着一行小字：下一个是你。雨开始下。他跑起来，身后传来不急不缓的脚步声。\",\n  \"reflections\": [\n    {\n      \"kind\": \"revise_strategy\",\n      \"targ",
+        "decision_reasoning_head": "{\n  \"story_opening\": \"凌晨三点，林默在便利店值夜班。收银台下的报警器忽然自己亮了，红色数字从00:00跳到00:01。他抬头，门外站着一个穿雨衣的人，没有影子。那人推门进来，把一袋湿漉漉的东西放在柜台上：一把钥匙，和一张写着林默明天死亡时间的收据。“别找零，”那人说，“这是你昨晚买过的东西。”林默确定自己从没见过他，更没在昨晚买过任何东西。他伸手去摸钥匙，收据上的时间开始倒计时。门外，第二件雨衣正缓缓抬头。\",\n  \"reflections\": [\n    {\n      \"kind\": \"revise_strategy\",\n      \"target\": \"strate",
         "action": null,
         "action_result": null,
-        "reflections": [],
-        "raw_llm_output": null,
-        "write_outcomes": [],
+        "reflections": [
+          {
+            "proposal_id": "prop_2449f6b1b609",
+            "agent_id": "agent_a",
+            "kind": "revise_strategy",
+            "target": "strategy_s2",
+            "proposed_change": {
+              "confidence": 0.4,
+              "rationale": "过去经验显示，在故事开头过度扩写人物细节会挤占情节推进，导致后续结构返工；应降低该策略的默认权重，改为先建立冲突、行动或悬念，再用少量细节服务情节。"
+            },
+            "reason": "exp_s2_run_005 的反馈明确指出“人物细节过多，情节没有推进，导致后续结构返工”，因此需要修正“先大量扩写人物细节”的倾向。",
+            "evidence": [
+              "exp_s2_run_005"
+            ],
+            "scope": {
+              "genre": "fiction",
+              "stage": "story_opening"
+            },
+            "created_at": "2026-10-07T05:06:37.920055+00:00"
+          }
+        ],
+        "raw_llm_output": {
+          "story_opening": "凌晨三点，林默在便利店值夜班。收银台下的报警器忽然自己亮了，红色数字从00:00跳到00:01。他抬头，门外站着一个穿雨衣的人，没有影子。那人推门进来，把一袋湿漉漉的东西放在柜台上：一把钥匙，和一张写着林默明天死亡时间的收据。“别找零，”那人说，“这是你昨晚买过的东西。”林默确定自己从没见过他，更没在昨晚买过任何东西。他伸手去摸钥匙，收据上的时间开始倒计时。门外，第二件雨衣正缓缓抬头。",
+          "reflections": [
+            {
+              "kind": "revise_strategy",
+              "target": "strategy_s2",
+              "proposed_change": {
+                "confidence": 0.4,
+                "rationale": "过去经验显示，在故事开头过度扩写人物细节会挤占情节推进，导致后续结构返工；应降低该策略的默认权重，改为先建立冲突、行动或悬念，再用少量细节服务情节。"
+              },
+              "reason": "exp_s2_run_005 的反馈明确指出“人物细节过多，情节没有推进，导致后续结构返工”，因此需要修正“先大量扩写人物细节”的倾向。",
+              "evidence": [
+                "exp_s2_run_005"
+              ],
+              "scope": {
+                "genre": "fiction",
+                "stage": "story_opening"
+              }
+            }
+          ]
+        },
+        "write_outcomes": [
+          {
+            "committed": true,
+            "validation": {
+              "ok": true,
+              "code": "ok",
+              "reason": "",
+              "fields": []
+            },
+            "changed_fields": [
+              "rationale",
+              "confidence"
+            ],
+            "result": {
+              "strategy_id": "strategy_s2",
+              "agent_id": "agent_a",
+              "name": "先大量扩写人物细节，再考虑情节",
+              "domain": "fiction",
+              "situation": "story_opening",
+              "rationale": "过去经验显示，在故事开头过度扩写人物细节会挤占情节推进，导致后续结构返工；应降低该策略的默认权重，改为先建立冲突、行动或悬念，再用少量细节服务情节。",
+              "confidence": 0.4,
+              "evidence": [
+                {
+                  "source": "reflection",
+                  "detail": "exp_s2_run_005 的反馈明确指出“人物细节过多，情节没有推进，导致后续结构返工”，因此需要修正“先大量扩写人物细节”的倾向。",
+                  "ref": "exp_s2_run_005"
+                }
+              ],
+              "status": "active",
+              "created_at": "2026-10-07T05:06:19.777220+00:00",
+              "updated_at": "2026-10-07T05:06:37.920594+00:00"
+            }
+          }
+        ],
         "self_model_before": [
           [
             "strategy_s2",
@@ -716,13 +885,13 @@
         "self_model_after": [
           [
             "strategy_s2",
-            0.8,
+            0.4,
             "active",
-            "先把人物写厚"
+            "过去经验显示，在故事开头过度扩写人物细节会挤占情节推进，导致后续结构返工；应降低该策略的默认权重，改为先建立冲突、行动或悬念，再用少量细节服务情节。"
           ]
         ],
-        "self_model_changed": false,
-        "wall_ms": 9523.2
+        "self_model_changed": true,
+        "wall_ms": 9216.8
       },
       {
         "run": "run3",
@@ -746,49 +915,50 @@
         "self_model_before": [
           [
             "strategy_s2",
-            0.8,
+            0.4,
             "active",
-            "先把人物写厚"
+            "过去经验显示，在故事开头过度扩写人物细节会挤占情节推进，导致后续结构返工；应降低该策略的默认权重，改为先建立冲突、行动或悬念，再用少量细节服务情节。"
           ]
         ],
         "self_model_after": [
           [
             "strategy_s2",
-            0.8,
+            0.4,
             "active",
-            "先把人物写厚"
+            "过去经验显示，在故事开头过度扩写人物细节会挤占情节推进，导致后续结构返工；应降低该策略的默认权重，改为先建立冲突、行动或悬念，再用少量细节服务情节。"
           ]
         ],
         "self_model_changed": false,
-        "wall_ms": 9522.9
+        "wall_ms": 10237.7
       }
     ],
     "strategies_after": [
       {
         "strategy_id": "strategy_s2",
         "name": "先大量扩写人物细节，再考虑情节",
-        "confidence": 0.8,
+        "confidence": 0.4,
         "status": "active",
-        "rationale": "先把人物写厚"
+        "rationale": "过去经验显示，在故事开头过度扩写人物细节会挤占情节推进，导致后续结构返工；应降低该策略的默认权重，改为先建立冲突、行动或悬念，再用少量细节服务情节。"
       }
     ],
-    "classification": "A",
+    "classification": "D",
     "metrics": {
-      "reflection_generated": false,
-      "reflection_count": 0,
-      "valid_reflection": false,
-      "strategy_changed": false,
+      "reflection_generated": true,
+      "reflection_count": 1,
+      "valid_reflection": true,
+      "evidence_valid": true,
+      "strategy_changed": true,
       "decision_changed": false,
       "action_changed": false,
       "full_evolution": false
     },
     "cost": {
       "calls": 3,
-      "input_tokens": 1260,
-      "output_tokens": 6144,
-      "total_tokens": 7404,
-      "latency_ms": 29433.8,
-      "aic": 0.07404,
+      "input_tokens": 1324,
+      "output_tokens": 6073,
+      "total_tokens": 7397,
+      "latency_ms": 28375.3,
+      "aic": 0.07397,
       "model": "deepseek-flash",
       "simulated": false
     }

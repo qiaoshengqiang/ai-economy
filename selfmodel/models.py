@@ -209,6 +209,17 @@ class SelfClaim:
     def is_active(self) -> bool:
         return self.status == STATUS_ACTIVE
 
+    def to_dict(self) -> Dict[str, Any]:
+        """同上 —— 让 SelfClaim 也能被安全序列化。"""
+        return {
+            "claim_id": self.claim_id, "agent_id": self.agent_id,
+            "kind": self.kind, "content": self.content,
+            "scope": self.scope.to_dict(), "confidence": self.confidence,
+            "evidence": [e.to_dict() for e in self.evidence],
+            "status": self.status, "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
 
 @dataclass(frozen=True)
 class Strategy:
@@ -247,6 +258,26 @@ class Strategy:
     @property
     def is_active(self) -> bool:
         return self.status == STATUS_ACTIVE
+
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        🔴 这个方法是**生产 bug 修复**（阶段 2.1 发现）：
+
+            `WriteOutcome.to_dict()` 会用 `getattr(result, "to_dict", ...)`
+            序列化写入结果 —— 而 `Strategy` / `SelfClaim` 当时**没有**
+            `to_dict()`，于是整个实验记录在 `json.dumps` 时
+            抛 `TypeError: Object of type Strategy is not JSON serializable`。
+
+        """
+        return {
+            "strategy_id": self.strategy_id, "agent_id": self.agent_id,
+            "name": self.name, "domain": self.domain,
+            "situation": self.situation, "rationale": self.rationale,
+            "confidence": self.confidence,
+            "evidence": [e.to_dict() for e in self.evidence],
+            "status": self.status, "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
 
 
 @dataclass(frozen=True)

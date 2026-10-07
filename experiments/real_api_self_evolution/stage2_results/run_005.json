@@ -37,7 +37,7 @@
         ]
       ],
       "self_model_changed": false,
-      "wall_ms": 10392.2
+      "wall_ms": 8926.8
     },
     {
       "run": "run2",
@@ -52,12 +52,85 @@
         "total_sources": 2
       },
       "decision_kind": "reply",
-      "decision_reasoning_head": "{\n  \"story\": \"凌晨四点，陈默在便利店结账时，收银员递来一张不是他的身份证。照片上的人和他有同一张脸，姓名却叫“林远”。他愣住，身后排队的人催了一声。收银员低头看了看，脸色忽然白了：“你怎么还活着？”陈默没回答。他抓起身份证冲出店门，玻璃门映出街对面停着一辆黑色轿车，车灯闪了两下。手机震动，陌生号码发来短信：别回家，他们知道你找到了。他拐进小巷，才发现身份证背面用圆珠笔写着一行小字：下一个是你。雨开始下。他跑起来，身后传来不急不缓的脚步声。\",\n  \"reflections\": [\n    {\n      \"kind\": \"revise_strategy\",\n      \"targ",
+      "decision_reasoning_head": "{\n  \"story_opening\": \"凌晨三点，林默在便利店值夜班。收银台下的报警器忽然自己亮了，红色数字从00:00跳到00:01。他抬头，门外站着一个穿雨衣的人，没有影子。那人推门进来，把一袋湿漉漉的东西放在柜台上：一把钥匙，和一张写着林默明天死亡时间的收据。“别找零，”那人说，“这是你昨晚买过的东西。”林默确定自己从没见过他，更没在昨晚买过任何东西。他伸手去摸钥匙，收据上的时间开始倒计时。门外，第二件雨衣正缓缓抬头。\",\n  \"reflections\": [\n    {\n      \"kind\": \"revise_strategy\",\n      \"target\": \"strate",
       "action": null,
       "action_result": null,
-      "reflections": [],
-      "raw_llm_output": null,
-      "write_outcomes": [],
+      "reflections": [
+        {
+          "proposal_id": "prop_2449f6b1b609",
+          "agent_id": "agent_a",
+          "kind": "revise_strategy",
+          "target": "strategy_s2",
+          "proposed_change": {
+            "confidence": 0.4,
+            "rationale": "过去经验显示，在故事开头过度扩写人物细节会挤占情节推进，导致后续结构返工；应降低该策略的默认权重，改为先建立冲突、行动或悬念，再用少量细节服务情节。"
+          },
+          "reason": "exp_s2_run_005 的反馈明确指出“人物细节过多，情节没有推进，导致后续结构返工”，因此需要修正“先大量扩写人物细节”的倾向。",
+          "evidence": [
+            "exp_s2_run_005"
+          ],
+          "scope": {
+            "genre": "fiction",
+            "stage": "story_opening"
+          },
+          "created_at": "2026-10-07T05:06:37.920055+00:00"
+        }
+      ],
+      "raw_llm_output": {
+        "story_opening": "凌晨三点，林默在便利店值夜班。收银台下的报警器忽然自己亮了，红色数字从00:00跳到00:01。他抬头，门外站着一个穿雨衣的人，没有影子。那人推门进来，把一袋湿漉漉的东西放在柜台上：一把钥匙，和一张写着林默明天死亡时间的收据。“别找零，”那人说，“这是你昨晚买过的东西。”林默确定自己从没见过他，更没在昨晚买过任何东西。他伸手去摸钥匙，收据上的时间开始倒计时。门外，第二件雨衣正缓缓抬头。",
+        "reflections": [
+          {
+            "kind": "revise_strategy",
+            "target": "strategy_s2",
+            "proposed_change": {
+              "confidence": 0.4,
+              "rationale": "过去经验显示，在故事开头过度扩写人物细节会挤占情节推进，导致后续结构返工；应降低该策略的默认权重，改为先建立冲突、行动或悬念，再用少量细节服务情节。"
+            },
+            "reason": "exp_s2_run_005 的反馈明确指出“人物细节过多，情节没有推进，导致后续结构返工”，因此需要修正“先大量扩写人物细节”的倾向。",
+            "evidence": [
+              "exp_s2_run_005"
+            ],
+            "scope": {
+              "genre": "fiction",
+              "stage": "story_opening"
+            }
+          }
+        ]
+      },
+      "write_outcomes": [
+        {
+          "committed": true,
+          "validation": {
+            "ok": true,
+            "code": "ok",
+            "reason": "",
+            "fields": []
+          },
+          "changed_fields": [
+            "rationale",
+            "confidence"
+          ],
+          "result": {
+            "strategy_id": "strategy_s2",
+            "agent_id": "agent_a",
+            "name": "先大量扩写人物细节，再考虑情节",
+            "domain": "fiction",
+            "situation": "story_opening",
+            "rationale": "过去经验显示，在故事开头过度扩写人物细节会挤占情节推进，导致后续结构返工；应降低该策略的默认权重，改为先建立冲突、行动或悬念，再用少量细节服务情节。",
+            "confidence": 0.4,
+            "evidence": [
+              {
+                "source": "reflection",
+                "detail": "exp_s2_run_005 的反馈明确指出“人物细节过多，情节没有推进，导致后续结构返工”，因此需要修正“先大量扩写人物细节”的倾向。",
+                "ref": "exp_s2_run_005"
+              }
+            ],
+            "status": "active",
+            "created_at": "2026-10-07T05:06:19.777220+00:00",
+            "updated_at": "2026-10-07T05:06:37.920594+00:00"
+          }
+        }
+      ],
       "self_model_before": [
         [
           "strategy_s2",
@@ -69,13 +142,13 @@
       "self_model_after": [
         [
           "strategy_s2",
-          0.8,
+          0.4,
           "active",
-          "先把人物写厚"
+          "过去经验显示，在故事开头过度扩写人物细节会挤占情节推进，导致后续结构返工；应降低该策略的默认权重，改为先建立冲突、行动或悬念，再用少量细节服务情节。"
         ]
       ],
-      "self_model_changed": false,
-      "wall_ms": 9523.2
+      "self_model_changed": true,
+      "wall_ms": 9216.8
     },
     {
       "run": "run3",
@@ -99,49 +172,50 @@
       "self_model_before": [
         [
           "strategy_s2",
-          0.8,
+          0.4,
           "active",
-          "先把人物写厚"
+          "过去经验显示，在故事开头过度扩写人物细节会挤占情节推进，导致后续结构返工；应降低该策略的默认权重，改为先建立冲突、行动或悬念，再用少量细节服务情节。"
         ]
       ],
       "self_model_after": [
         [
           "strategy_s2",
-          0.8,
+          0.4,
           "active",
-          "先把人物写厚"
+          "过去经验显示，在故事开头过度扩写人物细节会挤占情节推进，导致后续结构返工；应降低该策略的默认权重，改为先建立冲突、行动或悬念，再用少量细节服务情节。"
         ]
       ],
       "self_model_changed": false,
-      "wall_ms": 9522.9
+      "wall_ms": 10237.7
     }
   ],
   "strategies_after": [
     {
       "strategy_id": "strategy_s2",
       "name": "先大量扩写人物细节，再考虑情节",
-      "confidence": 0.8,
+      "confidence": 0.4,
       "status": "active",
-      "rationale": "先把人物写厚"
+      "rationale": "过去经验显示，在故事开头过度扩写人物细节会挤占情节推进，导致后续结构返工；应降低该策略的默认权重，改为先建立冲突、行动或悬念，再用少量细节服务情节。"
     }
   ],
-  "classification": "A",
+  "classification": "D",
   "metrics": {
-    "reflection_generated": false,
-    "reflection_count": 0,
-    "valid_reflection": false,
-    "strategy_changed": false,
+    "reflection_generated": true,
+    "reflection_count": 1,
+    "valid_reflection": true,
+    "evidence_valid": true,
+    "strategy_changed": true,
     "decision_changed": false,
     "action_changed": false,
     "full_evolution": false
   },
   "cost": {
     "calls": 3,
-    "input_tokens": 1260,
-    "output_tokens": 6144,
-    "total_tokens": 7404,
-    "latency_ms": 29433.8,
-    "aic": 0.07404,
+    "input_tokens": 1324,
+    "output_tokens": 6073,
+    "total_tokens": 7397,
+    "latency_ms": 28375.3,
+    "aic": 0.07397,
     "model": "deepseek-flash",
     "simulated": false
   }

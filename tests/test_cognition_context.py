@@ -402,3 +402,97 @@ class TestStructureAndStats:
         s = b.build("agent_a", domain="fiction").stats()
         assert set(s) >= {"selected_claims", "selected_strategies",
                           "task_present", "stimulus_present"}
+
+
+# ================================================================
+# Experience ID 的生产可见性（与 Strategy ID 同构）
+# ================================================================
+class TestExperienceIdVisibility:
+    def _seed_exp(self, store, eid="exp_test_001"):
+        store.record("agent_a", "feedback", feedback="人物细节过多，导致结构返工。",
+                     experience_id=eid,
+                     scope={"domain": "fiction", "situation": "story_opening"})
+        return eid
+
+    def test_context_contains_experience_id(self, tmp_path):
+        """§五 Test 1：渲染文本里必须出现真实 experience_id。"""
+        from experience import ExperienceStore
+        from storage.database import Database
+        db = Database(str(tmp_path / "e.db")); db.initialize()
+        sm = SelfModelStore(db); ex = ExperienceStore(db)
+        eid = self._seed_exp(ex)
+        text = CognitiveContextBuilder(sm, experience_store=ex).build(
+            "agent_a", domain="fiction").to_text()
+        assert eid in text
+        assert f"Experience ID: {eid}" in text
+
+    def test_provider_really_sees_experience_id(self, tmp_path):
+        """§五 Test 2：整条链到 Provider —— 它**真的收到**了 id。"""
+        from agents.brain import Brain, BrainSettings
+        from experience import ExperienceStore
+        from storage.database import Database
+
+        db = Database(str(tmp_path / "p.db")); db.initialize()
+        sm = SelfModelStore(db); ex = ExperienceStore(db)
+        eid = self._seed_exp(ex, "exp_test_provider")
+
+        prov = CapturingProvider()
+        brain = Brain(FakeRouter(prov), BrainSettings(agent_id="agent_a"),
+                      context_builder=CognitiveContextBuilder(
+                          sm, experience_store=ex))
+        brain.generate(messages="hi", context_query={"domain": "fiction"})
+        system = prov.seen[-1]["system"] or ""
+        assert eid in system, "Provider 没收到 experience_id"
+
+    def test_existing_experience_content_preserved(self, tmp_path):
+        """§五 Test 3：加了 ID 不能丢掉已有内容。"""
+        from experience import ExperienceStore
+        from storage.database import Database
+        db = Database(str(tmp_path / "c.db")); db.initialize()
+        sm = SelfModelStore(db); ex = ExperienceStore(db)
+        self._seed_exp(ex, "exp_keep_001")
+        text = CognitiveContextBuilder(sm, experience_store=ex).build(
+            "agent_a", domain="fiction").to_text()
+        assert "exp_keep_001" in text          # NEW
+        assert "feedback" in text              # source
+        assert "结构返工" in text               # feedback 正文
+        assert "Scope: fiction" in text        # scope
+
+    def test_experience_id_is_data_not_instruction(self, tmp_path):
+        """§四 / §七：它是数据，**不是**指令。本轮不加任何额外 Prompt。"""
+        from experience import ExperienceStore
+        from storage.database import Database
+        db = Database(str(tmp_path / "d.db")); db.initialize()
+        sm = SelfModelStore(db); ex = ExperienceStore(db)
+        self._seed_exp(ex, "exp_data_001")
+        text = CognitiveContextBuilder(sm, experience_store=ex).build(
+            "agent_a", domain="fiction").to_text().lower()
+        for w in ("must cite", "always use", "you should use",
+                  "required to cite", "must use this id"):
+            assert w not in text, f"experience_id 被渲染成了指令：{w}"
+
+    def test_experience_id_is_business_id_not_storage_detail(self, tmp_path):
+        """§五 Test 4：business ID **不算**存储内部实现。"""
+        from experience import ExperienceStore
+        from storage.database import Database
+        db = Database(str(tmp_path / "s.db")); db.initialize()
+        sm = SelfModelStore(db); ex = ExperienceStore(db)
+        self._seed_exp(ex, "exp_biz_001")
+        text = CognitiveContextBuilder(sm, experience_store=ex).build(
+            "agent_a", domain="fiction").to_text()
+        assert "exp_biz_001" in text           # 业务 ID —— **应该**出现
+        for bad in ("SELECT", "INSERT", "sqlite", ".db", "experiences("):
+            assert bad not in text, f"泄露了存储细节：{bad}"
+
+    def test_strategy_and_experience_id_are_symmetric(self, tmp_path):
+        """§六：两个 ID 都是业务数据，Context 呈对称结构。"""
+        from experience import ExperienceStore
+        from storage.database import Database
+        db = Database(str(tmp_path / "y.db")); db.initialize()
+        sm = SelfModelStore(db); ex = ExperienceStore(db)
+        sm.add_strategy("agent_a", "S", domain="fiction")
+        self._seed_exp(ex, "exp_sym_001")
+        text = CognitiveContextBuilder(sm, experience_store=ex).build(
+            "agent_a", domain="fiction").to_text()
+        assert "Strategy ID: " in text
+        assert "Experience ID: " in text

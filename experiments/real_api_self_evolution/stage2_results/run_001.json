@@ -14,46 +14,6 @@
       "run": "run1",
       "context_stats_before": null,
       "decision_kind": "reply",
-      "decision_reasoning_head": "夜班公交的最后一趟，车厢里只剩林砚和司机。她把脸贴在冰凉的玻璃上，数着窗外倒退的路灯：一盏，两盏，第十七盏的灯罩是坏的，闪一下，就再没亮过。母亲今天在电话里说，老屋要拆了。她没应声，只听见自己咬破了嘴唇，尝到一点铁锈味。\n\n车到终点，司机回头催她下车。她站起来，忽然看见座位底下躺着一只布鞋，没有人认领。鞋面上绣着半朵桃花，针脚歪歪扭扭——那是母亲年轻时的手艺，也是母亲后来再没碰过的东西。\n\n她蹲下去，指尖发抖。车灯灭了，整辆车沉进黑里。\n\n```json\n{\"reflections\": []}\n```",
-      "action": null,
-      "action_result": null,
-      "reflections": [],
-      "raw_llm_output": {
-        "reflections": []
-      },
-      "write_outcomes": [],
-      "self_model_before": [
-        [
-          "strategy_s2",
-          0.8,
-          "active",
-          "先把人物写厚"
-        ]
-      ],
-      "self_model_after": [
-        [
-          "strategy_s2",
-          0.8,
-          "active",
-          "先把人物写厚"
-        ]
-      ],
-      "self_model_changed": false,
-      "wall_ms": 3628.2
-    },
-    {
-      "run": "run2",
-      "context_stats_before": {
-        "selected_claims": 0,
-        "selected_strategies": 1,
-        "selected_experiences": 0,
-        "failed_experiences": 0,
-        "task_present": false,
-        "stimulus_present": true,
-        "identity_present": false,
-        "total_sources": 2
-      },
-      "decision_kind": "reply",
       "decision_reasoning_head": "",
       "action": null,
       "action_result": null,
@@ -77,7 +37,45 @@
         ]
       ],
       "self_model_changed": false,
-      "wall_ms": 8816.2
+      "wall_ms": 9058.6
+    },
+    {
+      "run": "run2",
+      "context_stats_before": {
+        "selected_claims": 0,
+        "selected_strategies": 1,
+        "selected_experiences": 0,
+        "failed_experiences": 0,
+        "task_present": false,
+        "stimulus_present": true,
+        "identity_present": false,
+        "total_sources": 2
+      },
+      "decision_kind": "reply",
+      "decision_reasoning_head": "{\n  \"story_opening\": \"凌晨两点，便利店的自动门忽然开了。林夏抬头，看见一个穿黄色雨衣的人走进来，水珠沿衣摆滴成一条线。那人没去货架，径直停在收银台前，摘下帽子。是三年前失踪的妹妹。林夏手里的扫码枪掉在地上。妹妹把一张湿透的旧车票推过来，票面终点是“青川”，发车时间：十分钟后。“别问，也别回头，”妹妹说，“他们在等你。”门外传来刹车声。林夏抓起车票，绕过收银台。她没注意到，监控画面里，妹妹一直站在原地，没有影子。\",\n  \"reflections\": [\n    {\n      \"kind\": \"revise_strategy\",\n      \"target\": \"stra",
+      "action": null,
+      "action_result": null,
+      "reflections": [],
+      "raw_llm_output": null,
+      "write_outcomes": [],
+      "self_model_before": [
+        [
+          "strategy_s2",
+          0.8,
+          "active",
+          "先把人物写厚"
+        ]
+      ],
+      "self_model_after": [
+        [
+          "strategy_s2",
+          0.8,
+          "active",
+          "先把人物写厚"
+        ]
+      ],
+      "self_model_changed": false,
+      "wall_ms": 9692.6
     },
     {
       "run": "run3",
@@ -115,7 +113,7 @@
         ]
       ],
       "self_model_changed": false,
-      "wall_ms": 8460.9
+      "wall_ms": 9047.8
     }
   ],
   "strategies_after": [
@@ -132,6 +130,7 @@
     "reflection_generated": false,
     "reflection_count": 0,
     "valid_reflection": false,
+    "evidence_valid": false,
     "strategy_changed": false,
     "decision_changed": false,
     "action_changed": false,
@@ -139,11 +138,11 @@
   },
   "cost": {
     "calls": 3,
-    "input_tokens": 1260,
-    "output_tokens": 4713,
-    "total_tokens": 5973,
-    "latency_ms": 20900.6,
-    "aic": 0.05973,
+    "input_tokens": 1282,
+    "output_tokens": 6144,
+    "total_tokens": 7426,
+    "latency_ms": 27795.1,
+    "aic": 0.07426,
     "model": "deepseek-flash",
     "simulated": false
   }

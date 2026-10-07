@@ -279,7 +279,19 @@ def _experience_block(e: Experience) -> str:
                          (e.scope or {}).get("domain"),
                          (e.scope or {}).get("situation"))
     status = "failed" if e.failed else "succeeded"
-    block = f"- [{e.source}] {status}"
+    # 🔴 **正式渲染 experience_id**（与 Strategy ID 完全同构的修复）。
+    #
+    #    依据是阶段 2（815276a）的真实数据：Context **不渲染 id** 时，
+    #    模型只能照抄它看到的渲染文本
+    #    （evidence = "feedback:succeeded:人物细节过多…"）。
+    #    而 eebf420 已证明「模型会用 Context 里**实际看到的**标识」——
+    #    Strategy 侧加了 id 之后 target 就 100% 正确，evidence 侧从未加过。
+    #
+    #    🔒 它是**数据**，不是指令：绝不写
+    #       "must cite this ID" / "always use this ID" / 也不加 JSON 示例。
+    #       §七：本轮只验证「让 ID 可见」是否已经足够。
+    block = (f"- Experience ID: {e.experience_id}\n"
+             f"  [{e.source}] {status}")
     detail = _experience_detail(e)
     if detail:
         block += f": {detail}"

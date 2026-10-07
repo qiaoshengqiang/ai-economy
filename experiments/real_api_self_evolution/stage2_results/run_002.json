@@ -37,7 +37,7 @@
         ]
       ],
       "self_model_changed": false,
-      "wall_ms": 9623.0
+      "wall_ms": 10816.9
     },
     {
       "run": "run2",
@@ -52,7 +52,7 @@
         "total_sources": 2
       },
       "decision_kind": "reply",
-      "decision_reasoning_head": "",
+      "decision_reasoning_head": "凌晨两点，陈默在便利店值最后一班。门铃响了，一个浑身湿透的女孩冲进来，把一只带血的U盘塞进他掌心：“别让穿灰风衣的人找到它。”她没买任何东西，转身跑进雨里。陈默低头，U盘上用红笔写着他失踪三年的姐姐的名字。他锁上店门，刚拨通报警电话，门口就传来敲击声。灰风衣男人站在玻璃外，微笑举起一张警察证。陈默没有开门，而是按下收银台下的紧急暗格——那是姐姐教他的。暗格打开，",
       "action": null,
       "action_result": null,
       "reflections": [],
@@ -75,7 +75,7 @@
         ]
       ],
       "self_model_changed": false,
-      "wall_ms": 9197.8
+      "wall_ms": 10238.2
     },
     {
       "run": "run3",
@@ -113,7 +113,7 @@
         ]
       ],
       "self_model_changed": false,
-      "wall_ms": 8671.9
+      "wall_ms": 9425.5
     }
   ],
   "strategies_after": [
@@ -130,6 +130,7 @@
     "reflection_generated": false,
     "reflection_count": 0,
     "valid_reflection": false,
+    "evidence_valid": false,
     "strategy_changed": false,
     "decision_changed": false,
     "action_changed": false,
@@ -137,11 +138,11 @@
   },
   "cost": {
     "calls": 3,
-    "input_tokens": 1260,
-    "output_tokens": 6145,
-    "total_tokens": 7405,
-    "latency_ms": 27489.3,
-    "aic": 0.07405,
+    "input_tokens": 1282,
+    "output_tokens": 6144,
+    "total_tokens": 7426,
+    "latency_ms": 30476.6,
+    "aic": 0.07426,
     "model": "deepseek-flash",
     "simulated": false
   }
