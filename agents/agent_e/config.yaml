@@ -21,6 +21,18 @@ brain:
 
   credential_ref: "agent_e_bailian"
 
+  # 🔑 **这个 Agent 自己的 API Key**（与 Agent D 的那把可以不同）
+  #
+  #   优先级（llm/credential.py）：
+  #     ① 这里写的 api_key_env        ← 你填的那个变量
+  #     ② 这里的 api_key（直接写 key，本地测试用）
+  #     ③ provider 的 BAILIAN_API_KEY  ← 只是**回退**
+  #
+  #   🔒 只写**变量名**，key 本身放 .env（gitignored）。
+  #   ⚠️ 绝对不要把 key 写在这个文件里 —— 它是 git 跟踪的。
+  credential:
+    api_key_env: "BAILIAN_KEY_AGENT_E"
+
   system_prompt: |
     你是 Agent E，一个独立的经济主体。
     你通过承接任务、交付成果来赚取 AI 币。
