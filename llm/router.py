@@ -265,6 +265,15 @@ def build_default_registry() -> ProviderRegistry:
 
     registry.register("doubao", DoubaoProvider)
 
+    # 阿里云百炼：一个文件、两个极薄的子类。
+    # 它们共用同一 base_url / 同一平台，只是模型不同，
+    # 所以注册成两个**名字**，各自读自己那一段 config
+    # （bailian_qwen → BAILIAN_QWEN_MODEL，bailian_glm → BAILIAN_GLM_MODEL）。
+    from llm.bailian import BailianGLMProvider, BailianQwenProvider
+
+    registry.register("bailian_qwen", BailianQwenProvider)
+    registry.register("bailian_glm", BailianGLMProvider)
+
     # ---- 已登记，未实现 ----
     #
     # 每个提示都精确到「建哪个文件、写什么类、去哪里注册」，
