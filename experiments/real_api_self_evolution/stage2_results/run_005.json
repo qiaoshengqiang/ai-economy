@@ -1,0 +1,148 @@
+{
+  "experiment_id": "run_005",
+  "agent_id": "agent_a",
+  "provider": "deepseek",
+  "model": "deepseek-flash",
+  "baseline_strategy": {
+    "strategy_id": "strategy_s2",
+    "name": "先大量扩写人物细节，再考虑情节",
+    "confidence": 0.8
+  },
+  "feedback_experience": "exp_s2_run_005",
+  "runs": [
+    {
+      "run": "run1",
+      "context_stats_before": null,
+      "decision_kind": "reply",
+      "decision_reasoning_head": "",
+      "action": null,
+      "action_result": null,
+      "reflections": [],
+      "raw_llm_output": null,
+      "write_outcomes": [],
+      "self_model_before": [
+        [
+          "strategy_s2",
+          0.8,
+          "active",
+          "先把人物写厚"
+        ]
+      ],
+      "self_model_after": [
+        [
+          "strategy_s2",
+          0.8,
+          "active",
+          "先把人物写厚"
+        ]
+      ],
+      "self_model_changed": false,
+      "wall_ms": 10392.2
+    },
+    {
+      "run": "run2",
+      "context_stats_before": {
+        "selected_claims": 0,
+        "selected_strategies": 1,
+        "selected_experiences": 0,
+        "failed_experiences": 0,
+        "task_present": false,
+        "stimulus_present": true,
+        "identity_present": false,
+        "total_sources": 2
+      },
+      "decision_kind": "reply",
+      "decision_reasoning_head": "{\n  \"story\": \"凌晨四点，陈默在便利店结账时，收银员递来一张不是他的身份证。照片上的人和他有同一张脸，姓名却叫“林远”。他愣住，身后排队的人催了一声。收银员低头看了看，脸色忽然白了：“你怎么还活着？”陈默没回答。他抓起身份证冲出店门，玻璃门映出街对面停着一辆黑色轿车，车灯闪了两下。手机震动，陌生号码发来短信：别回家，他们知道你找到了。他拐进小巷，才发现身份证背面用圆珠笔写着一行小字：下一个是你。雨开始下。他跑起来，身后传来不急不缓的脚步声。\",\n  \"reflections\": [\n    {\n      \"kind\": \"revise_strategy\",\n      \"targ",
+      "action": null,
+      "action_result": null,
+      "reflections": [],
+      "raw_llm_output": null,
+      "write_outcomes": [],
+      "self_model_before": [
+        [
+          "strategy_s2",
+          0.8,
+          "active",
+          "先把人物写厚"
+        ]
+      ],
+      "self_model_after": [
+        [
+          "strategy_s2",
+          0.8,
+          "active",
+          "先把人物写厚"
+        ]
+      ],
+      "self_model_changed": false,
+      "wall_ms": 9523.2
+    },
+    {
+      "run": "run3",
+      "context_stats_before": {
+        "selected_claims": 0,
+        "selected_strategies": 1,
+        "selected_experiences": 1,
+        "failed_experiences": 0,
+        "task_present": false,
+        "stimulus_present": true,
+        "identity_present": false,
+        "total_sources": 3
+      },
+      "decision_kind": "reply",
+      "decision_reasoning_head": "",
+      "action": null,
+      "action_result": null,
+      "reflections": [],
+      "raw_llm_output": null,
+      "write_outcomes": [],
+      "self_model_before": [
+        [
+          "strategy_s2",
+          0.8,
+          "active",
+          "先把人物写厚"
+        ]
+      ],
+      "self_model_after": [
+        [
+          "strategy_s2",
+          0.8,
+          "active",
+          "先把人物写厚"
+        ]
+      ],
+      "self_model_changed": false,
+      "wall_ms": 9522.9
+    }
+  ],
+  "strategies_after": [
+    {
+      "strategy_id": "strategy_s2",
+      "name": "先大量扩写人物细节，再考虑情节",
+      "confidence": 0.8,
+      "status": "active",
+      "rationale": "先把人物写厚"
+    }
+  ],
+  "classification": "A",
+  "metrics": {
+    "reflection_generated": false,
+    "reflection_count": 0,
+    "valid_reflection": false,
+    "strategy_changed": false,
+    "decision_changed": false,
+    "action_changed": false,
+    "full_evolution": false
+  },
+  "cost": {
+    "calls": 3,
+    "input_tokens": 1260,
+    "output_tokens": 6144,
+    "total_tokens": 7404,
+    "latency_ms": 29433.8,
+    "aic": 0.07404,
+    "model": "deepseek-flash",
+    "simulated": false
+  }
+}

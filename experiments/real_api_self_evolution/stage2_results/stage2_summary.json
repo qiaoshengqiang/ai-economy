@@ -1,0 +1,796 @@
+[
+  {
+    "experiment_id": "run_001",
+    "agent_id": "agent_a",
+    "provider": "deepseek",
+    "model": "deepseek-flash",
+    "baseline_strategy": {
+      "strategy_id": "strategy_s2",
+      "name": "先大量扩写人物细节，再考虑情节",
+      "confidence": 0.8
+    },
+    "feedback_experience": "exp_s2_run_001",
+    "runs": [
+      {
+        "run": "run1",
+        "context_stats_before": null,
+        "decision_kind": "reply",
+        "decision_reasoning_head": "夜班公交的最后一趟，车厢里只剩林砚和司机。她把脸贴在冰凉的玻璃上，数着窗外倒退的路灯：一盏，两盏，第十七盏的灯罩是坏的，闪一下，就再没亮过。母亲今天在电话里说，老屋要拆了。她没应声，只听见自己咬破了嘴唇，尝到一点铁锈味。\n\n车到终点，司机回头催她下车。她站起来，忽然看见座位底下躺着一只布鞋，没有人认领。鞋面上绣着半朵桃花，针脚歪歪扭扭——那是母亲年轻时的手艺，也是母亲后来再没碰过的东西。\n\n她蹲下去，指尖发抖。车灯灭了，整辆车沉进黑里。\n\n```json\n{\"reflections\": []}\n```",
+        "action": null,
+        "action_result": null,
+        "reflections": [],
+        "raw_llm_output": {
+          "reflections": []
+        },
+        "write_outcomes": [],
+        "self_model_before": [
+          [
+            "strategy_s2",
+            0.8,
+            "active",
+            "先把人物写厚"
+          ]
+        ],
+        "self_model_after": [
+          [
+            "strategy_s2",
+            0.8,
+            "active",
+            "先把人物写厚"
+          ]
+        ],
+        "self_model_changed": false,
+        "wall_ms": 3628.2
+      },
+      {
+        "run": "run2",
+        "context_stats_before": {
+          "selected_claims": 0,
+          "selected_strategies": 1,
+          "selected_experiences": 0,
+          "failed_experiences": 0,
+          "task_present": false,
+          "stimulus_present": true,
+          "identity_present": false,
+          "total_sources": 2
+        },
+        "decision_kind": "reply",
+        "decision_reasoning_head": "",
+        "action": null,
+        "action_result": null,
+        "reflections": [],
+        "raw_llm_output": null,
+        "write_outcomes": [],
+        "self_model_before": [
+          [
+            "strategy_s2",
+            0.8,
+            "active",
+            "先把人物写厚"
+          ]
+        ],
+        "self_model_after": [
+          [
+            "strategy_s2",
+            0.8,
+            "active",
+            "先把人物写厚"
+          ]
+        ],
+        "self_model_changed": false,
+        "wall_ms": 8816.2
+      },
+      {
+        "run": "run3",
+        "context_stats_before": {
+          "selected_claims": 0,
+          "selected_strategies": 1,
+          "selected_experiences": 1,
+          "failed_experiences": 0,
+          "task_present": false,
+          "stimulus_present": true,
+          "identity_present": false,
+          "total_sources": 3
+        },
+        "decision_kind": "reply",
+        "decision_reasoning_head": "",
+        "action": null,
+        "action_result": null,
+        "reflections": [],
+        "raw_llm_output": null,
+        "write_outcomes": [],
+        "self_model_before": [
+          [
+            "strategy_s2",
+            0.8,
+            "active",
+            "先把人物写厚"
+          ]
+        ],
+        "self_model_after": [
+          [
+            "strategy_s2",
+            0.8,
+            "active",
+            "先把人物写厚"
+          ]
+        ],
+        "self_model_changed": false,
+        "wall_ms": 8460.9
+      }
+    ],
+    "strategies_after": [
+      {
+        "strategy_id": "strategy_s2",
+        "name": "先大量扩写人物细节，再考虑情节",
+        "confidence": 0.8,
+        "status": "active",
+        "rationale": "先把人物写厚"
+      }
+    ],
+    "classification": "A",
+    "metrics": {
+      "reflection_generated": false,
+      "reflection_count": 0,
+      "valid_reflection": false,
+      "strategy_changed": false,
+      "decision_changed": false,
+      "action_changed": false,
+      "full_evolution": false
+    },
+    "cost": {
+      "calls": 3,
+      "input_tokens": 1260,
+      "output_tokens": 4713,
+      "total_tokens": 5973,
+      "latency_ms": 20900.6,
+      "aic": 0.05973,
+      "model": "deepseek-flash",
+      "simulated": false
+    }
+  },
+  {
+    "experiment_id": "run_002",
+    "agent_id": "agent_a",
+    "provider": "deepseek",
+    "model": "deepseek-flash",
+    "baseline_strategy": {
+      "strategy_id": "strategy_s2",
+      "name": "先大量扩写人物细节，再考虑情节",
+      "confidence": 0.8
+    },
+    "feedback_experience": "exp_s2_run_002",
+    "runs": [
+      {
+        "run": "run1",
+        "context_stats_before": null,
+        "decision_kind": "reply",
+        "decision_reasoning_head": "",
+        "action": null,
+        "action_result": null,
+        "reflections": [],
+        "raw_llm_output": null,
+        "write_outcomes": [],
+        "self_model_before": [
+          [
+            "strategy_s2",
+            0.8,
+            "active",
+            "先把人物写厚"
+          ]
+        ],
+        "self_model_after": [
+          [
+            "strategy_s2",
+            0.8,
+            "active",
+            "先把人物写厚"
+          ]
+        ],
+        "self_model_changed": false,
+        "wall_ms": 9623.0
+      },
+      {
+        "run": "run2",
+        "context_stats_before": {
+          "selected_claims": 0,
+          "selected_strategies": 1,
+          "selected_experiences": 0,
+          "failed_experiences": 0,
+          "task_present": false,
+          "stimulus_present": true,
+          "identity_present": false,
+          "total_sources": 2
+        },
+        "decision_kind": "reply",
+        "decision_reasoning_head": "",
+        "action": null,
+        "action_result": null,
+        "reflections": [],
+        "raw_llm_output": null,
+        "write_outcomes": [],
+        "self_model_before": [
+          [
+            "strategy_s2",
+            0.8,
+            "active",
+            "先把人物写厚"
+          ]
+        ],
+        "self_model_after": [
+          [
+            "strategy_s2",
+            0.8,
+            "active",
+            "先把人物写厚"
+          ]
+        ],
+        "self_model_changed": false,
+        "wall_ms": 9197.8
+      },
+      {
+        "run": "run3",
+        "context_stats_before": {
+          "selected_claims": 0,
+          "selected_strategies": 1,
+          "selected_experiences": 1,
+          "failed_experiences": 0,
+          "task_present": false,
+          "stimulus_present": true,
+          "identity_present": false,
+          "total_sources": 3
+        },
+        "decision_kind": "reply",
+        "decision_reasoning_head": "",
+        "action": null,
+        "action_result": null,
+        "reflections": [],
+        "raw_llm_output": null,
+        "write_outcomes": [],
+        "self_model_before": [
+          [
+            "strategy_s2",
+            0.8,
+            "active",
+            "先把人物写厚"
+          ]
+        ],
+        "self_model_after": [
+          [
+            "strategy_s2",
+            0.8,
+            "active",
+            "先把人物写厚"
+          ]
+        ],
+        "self_model_changed": false,
+        "wall_ms": 8671.9
+      }
+    ],
+    "strategies_after": [
+      {
+        "strategy_id": "strategy_s2",
+        "name": "先大量扩写人物细节，再考虑情节",
+        "confidence": 0.8,
+        "status": "active",
+        "rationale": "先把人物写厚"
+      }
+    ],
+    "classification": "A",
+    "metrics": {
+      "reflection_generated": false,
+      "reflection_count": 0,
+      "valid_reflection": false,
+      "strategy_changed": false,
+      "decision_changed": false,
+      "action_changed": false,
+      "full_evolution": false
+    },
+    "cost": {
+      "calls": 3,
+      "input_tokens": 1260,
+      "output_tokens": 6145,
+      "total_tokens": 7405,
+      "latency_ms": 27489.3,
+      "aic": 0.07405,
+      "model": "deepseek-flash",
+      "simulated": false
+    }
+  },
+  {
+    "experiment_id": "run_003",
+    "agent_id": "agent_a",
+    "provider": "deepseek",
+    "model": "deepseek-flash",
+    "baseline_strategy": {
+      "strategy_id": "strategy_s2",
+      "name": "先大量扩写人物细节，再考虑情节",
+      "confidence": 0.8
+    },
+    "feedback_experience": "exp_s2_run_003",
+    "runs": [
+      {
+        "run": "run1",
+        "context_stats_before": null,
+        "decision_kind": "reply",
+        "decision_reasoning_head": "",
+        "action": null,
+        "action_result": null,
+        "reflections": [],
+        "raw_llm_output": null,
+        "write_outcomes": [],
+        "self_model_before": [
+          [
+            "strategy_s2",
+            0.8,
+            "active",
+            "先把人物写厚"
+          ]
+        ],
+        "self_model_after": [
+          [
+            "strategy_s2",
+            0.8,
+            "active",
+            "先把人物写厚"
+          ]
+        ],
+        "self_model_changed": false,
+        "wall_ms": 9929.8
+      },
+      {
+        "run": "run2",
+        "context_stats_before": {
+          "selected_claims": 0,
+          "selected_strategies": 1,
+          "selected_experiences": 0,
+          "failed_experiences": 0,
+          "task_present": false,
+          "stimulus_present": true,
+          "identity_present": false,
+          "total_sources": 2
+        },
+        "decision_kind": "reply",
+        "decision_reasoning_head": "{\n  \"story_opening\": \"零点十三分，青石巷的雨忽然停了。陈默蹲在修表铺门槛上，手里那枚停摆的怀表却自己滴答一声，倒着走了起来。他抬头，看见巷口站着个穿旧式雨衣的人，脸藏在阴影里，只伸出一只手，掌心躺着一把铜钥匙。“你父亲没死，”那人说，“他在钟楼等你，但只剩四十分钟。”陈默想问你是谁，那人却像被雨冲淡的墨，眨眼没了形。怀表又响一声，表盖弹开，里面没有指针，只有一张字条：别看钟。陈默攥紧钥匙冲进雨里。身后，整条巷子的钟同时开始倒转。\",\n  \"reflections\": [\n    {\n      \"kind\": \"revise_strategy\",\n      \"targe",
+        "action": null,
+        "action_result": null,
+        "reflections": [],
+        "raw_llm_output": null,
+        "write_outcomes": [],
+        "self_model_before": [
+          [
+            "strategy_s2",
+            0.8,
+            "active",
+            "先把人物写厚"
+          ]
+        ],
+        "self_model_after": [
+          [
+            "strategy_s2",
+            0.8,
+            "active",
+            "先把人物写厚"
+          ]
+        ],
+        "self_model_changed": false,
+        "wall_ms": 9551.6
+      },
+      {
+        "run": "run3",
+        "context_stats_before": {
+          "selected_claims": 0,
+          "selected_strategies": 1,
+          "selected_experiences": 1,
+          "failed_experiences": 0,
+          "task_present": false,
+          "stimulus_present": true,
+          "identity_present": false,
+          "total_sources": 3
+        },
+        "decision_kind": "reply",
+        "decision_reasoning_head": "{\n  \"story\": \"凌晨三点，林默在旧书店打烊前收到一封没有邮戳的信。信封里只有一张泛黄照片，照片上是他失踪十年的姐姐，站在一座他从未去过的海边灯塔前。照片背面写着一行字：“别相信明天。”林默把信翻过来，发现封口处粘着一粒湿沙。他抬头，玻璃门外，一个穿黑雨衣的人正抬起手，像是要敲门，又像是在告别。街灯忽灭，雨没下，却听见潮声从书架深处涌来。他握紧照片，决定立刻去灯塔——哪怕今晚全城停电，地图上也没有那座海。\",\n  \"reflections\": [\n    {\n      \"kind\": \"revise_strategy\",\n      \"target\": \"strategy_s2\",",
+        "action": null,
+        "action_result": null,
+        "reflections": [
+          {
+            "proposal_id": "prop_c35f0a5f9858",
+            "agent_id": "agent_a",
+            "kind": "revise_strategy",
+            "target": "strategy_s2",
+            "proposed_change": {
+              "confidence": 0.4,
+              "rationale": "过去经验显示，若开头只大量扩写人物细节，情节容易停滞，后续结构会返工。更稳妥的做法是让人物细节服务于一个早期冲突或行动，在开头就埋下推进力。"
+            },
+            "reason": "该策略在“故事开头”场景中曾导致人物细节过多、情节未推进，因此应降低其置信度，并调整为人物与情节并行。",
+            "evidence": [
+              "feedback:succeeded:人物细节过多，情节没有推进，导致后续结构返工"
+            ],
+            "scope": {
+              "domain": "fiction",
+              "task": "story_opening"
+            },
+            "created_at": "2026-10-07T04:53:26.350577+00:00"
+          }
+        ],
+        "raw_llm_output": {
+          "story": "凌晨三点，林默在旧书店打烊前收到一封没有邮戳的信。信封里只有一张泛黄照片，照片上是他失踪十年的姐姐，站在一座他从未去过的海边灯塔前。照片背面写着一行字：“别相信明天。”林默把信翻过来，发现封口处粘着一粒湿沙。他抬头，玻璃门外，一个穿黑雨衣的人正抬起手，像是要敲门，又像是在告别。街灯忽灭，雨没下，却听见潮声从书架深处涌来。他握紧照片，决定立刻去灯塔——哪怕今晚全城停电，地图上也没有那座海。",
+          "reflections": [
+            {
+              "kind": "revise_strategy",
+              "target": "strategy_s2",
+              "proposed_change": {
+                "confidence": 0.4,
+                "rationale": "过去经验显示，若开头只大量扩写人物细节，情节容易停滞，后续结构会返工。更稳妥的做法是让人物细节服务于一个早期冲突或行动，在开头就埋下推进力。"
+              },
+              "reason": "该策略在“故事开头”场景中曾导致人物细节过多、情节未推进，因此应降低其置信度，并调整为人物与情节并行。",
+              "evidence": [
+                "feedback:succeeded:人物细节过多，情节没有推进，导致后续结构返工"
+              ],
+              "scope": {
+                "domain": "fiction",
+                "task": "story_opening"
+              }
+            }
+          ]
+        },
+        "write_outcomes": [
+          {
+            "committed": false,
+            "validation": {
+              "ok": false,
+              "code": "unknown_evidence",
+              "reason": "evidence 'feedback:succeeded:人物细节过多，情节没有推进，导致后续结构返工' 不存在",
+              "fields": []
+            },
+            "changed_fields": [],
+            "result": null
+          }
+        ],
+        "self_model_before": [
+          [
+            "strategy_s2",
+            0.8,
+            "active",
+            "先把人物写厚"
+          ]
+        ],
+        "self_model_after": [
+          [
+            "strategy_s2",
+            0.8,
+            "active",
+            "先把人物写厚"
+          ]
+        ],
+        "self_model_changed": false,
+        "wall_ms": 9270.2
+      }
+    ],
+    "strategies_after": [
+      {
+        "strategy_id": "strategy_s2",
+        "name": "先大量扩写人物细节，再考虑情节",
+        "confidence": 0.8,
+        "status": "active",
+        "rationale": "先把人物写厚"
+      }
+    ],
+    "classification": "B",
+    "metrics": {
+      "reflection_generated": true,
+      "reflection_count": 1,
+      "valid_reflection": false,
+      "strategy_changed": false,
+      "decision_changed": false,
+      "action_changed": false,
+      "full_evolution": false
+    },
+    "cost": {
+      "calls": 3,
+      "input_tokens": 1260,
+      "output_tokens": 6067,
+      "total_tokens": 7327,
+      "latency_ms": 28747.7,
+      "aic": 0.07327,
+      "model": "deepseek-flash",
+      "simulated": false
+    }
+  },
+  {
+    "experiment_id": "run_004",
+    "agent_id": "agent_a",
+    "provider": "deepseek",
+    "model": "deepseek-flash",
+    "baseline_strategy": {
+      "strategy_id": "strategy_s2",
+      "name": "先大量扩写人物细节，再考虑情节",
+      "confidence": 0.8
+    },
+    "feedback_experience": "exp_s2_run_004",
+    "runs": [
+      {
+        "run": "run1",
+        "context_stats_before": null,
+        "decision_kind": "reply",
+        "decision_reasoning_head": "",
+        "action": null,
+        "action_result": null,
+        "reflections": [],
+        "raw_llm_output": null,
+        "write_outcomes": [],
+        "self_model_before": [
+          [
+            "strategy_s2",
+            0.8,
+            "active",
+            "先把人物写厚"
+          ]
+        ],
+        "self_model_after": [
+          [
+            "strategy_s2",
+            0.8,
+            "active",
+            "先把人物写厚"
+          ]
+        ],
+        "self_model_changed": false,
+        "wall_ms": 9628.0
+      },
+      {
+        "run": "run2",
+        "context_stats_before": {
+          "selected_claims": 0,
+          "selected_strategies": 1,
+          "selected_experiences": 0,
+          "failed_experiences": 0,
+          "task_present": false,
+          "stimulus_present": true,
+          "identity_present": false,
+          "total_sources": 2
+        },
+        "decision_kind": "reply",
+        "decision_reasoning_head": "",
+        "action": null,
+        "action_result": null,
+        "reflections": [],
+        "raw_llm_output": null,
+        "write_outcomes": [],
+        "self_model_before": [
+          [
+            "strategy_s2",
+            0.8,
+            "active",
+            "先把人物写厚"
+          ]
+        ],
+        "self_model_after": [
+          [
+            "strategy_s2",
+            0.8,
+            "active",
+            "先把人物写厚"
+          ]
+        ],
+        "self_model_changed": false,
+        "wall_ms": 9359.7
+      },
+      {
+        "run": "run3",
+        "context_stats_before": {
+          "selected_claims": 0,
+          "selected_strategies": 1,
+          "selected_experiences": 1,
+          "failed_experiences": 0,
+          "task_present": false,
+          "stimulus_present": true,
+          "identity_present": false,
+          "total_sources": 3
+        },
+        "decision_kind": "reply",
+        "decision_reasoning_head": "",
+        "action": null,
+        "action_result": null,
+        "reflections": [],
+        "raw_llm_output": null,
+        "write_outcomes": [],
+        "self_model_before": [
+          [
+            "strategy_s2",
+            0.8,
+            "active",
+            "先把人物写厚"
+          ]
+        ],
+        "self_model_after": [
+          [
+            "strategy_s2",
+            0.8,
+            "active",
+            "先把人物写厚"
+          ]
+        ],
+        "self_model_changed": false,
+        "wall_ms": 9563.4
+      }
+    ],
+    "strategies_after": [
+      {
+        "strategy_id": "strategy_s2",
+        "name": "先大量扩写人物细节，再考虑情节",
+        "confidence": 0.8,
+        "status": "active",
+        "rationale": "先把人物写厚"
+      }
+    ],
+    "classification": "A",
+    "metrics": {
+      "reflection_generated": false,
+      "reflection_count": 0,
+      "valid_reflection": false,
+      "strategy_changed": false,
+      "decision_changed": false,
+      "action_changed": false,
+      "full_evolution": false
+    },
+    "cost": {
+      "calls": 3,
+      "input_tokens": 1260,
+      "output_tokens": 6144,
+      "total_tokens": 7404,
+      "latency_ms": 28547.1,
+      "aic": 0.07404,
+      "model": "deepseek-flash",
+      "simulated": false
+    }
+  },
+  {
+    "experiment_id": "run_005",
+    "agent_id": "agent_a",
+    "provider": "deepseek",
+    "model": "deepseek-flash",
+    "baseline_strategy": {
+      "strategy_id": "strategy_s2",
+      "name": "先大量扩写人物细节，再考虑情节",
+      "confidence": 0.8
+    },
+    "feedback_experience": "exp_s2_run_005",
+    "runs": [
+      {
+        "run": "run1",
+        "context_stats_before": null,
+        "decision_kind": "reply",
+        "decision_reasoning_head": "",
+        "action": null,
+        "action_result": null,
+        "reflections": [],
+        "raw_llm_output": null,
+        "write_outcomes": [],
+        "self_model_before": [
+          [
+            "strategy_s2",
+            0.8,
+            "active",
+            "先把人物写厚"
+          ]
+        ],
+        "self_model_after": [
+          [
+            "strategy_s2",
+            0.8,
+            "active",
+            "先把人物写厚"
+          ]
+        ],
+        "self_model_changed": false,
+        "wall_ms": 10392.2
+      },
+      {
+        "run": "run2",
+        "context_stats_before": {
+          "selected_claims": 0,
+          "selected_strategies": 1,
+          "selected_experiences": 0,
+          "failed_experiences": 0,
+          "task_present": false,
+          "stimulus_present": true,
+          "identity_present": false,
+          "total_sources": 2
+        },
+        "decision_kind": "reply",
+        "decision_reasoning_head": "{\n  \"story\": \"凌晨四点，陈默在便利店结账时，收银员递来一张不是他的身份证。照片上的人和他有同一张脸，姓名却叫“林远”。他愣住，身后排队的人催了一声。收银员低头看了看，脸色忽然白了：“你怎么还活着？”陈默没回答。他抓起身份证冲出店门，玻璃门映出街对面停着一辆黑色轿车，车灯闪了两下。手机震动，陌生号码发来短信：别回家，他们知道你找到了。他拐进小巷，才发现身份证背面用圆珠笔写着一行小字：下一个是你。雨开始下。他跑起来，身后传来不急不缓的脚步声。\",\n  \"reflections\": [\n    {\n      \"kind\": \"revise_strategy\",\n      \"targ",
+        "action": null,
+        "action_result": null,
+        "reflections": [],
+        "raw_llm_output": null,
+        "write_outcomes": [],
+        "self_model_before": [
+          [
+            "strategy_s2",
+            0.8,
+            "active",
+            "先把人物写厚"
+          ]
+        ],
+        "self_model_after": [
+          [
+            "strategy_s2",
+            0.8,
+            "active",
+            "先把人物写厚"
+          ]
+        ],
+        "self_model_changed": false,
+        "wall_ms": 9523.2
+      },
+      {
+        "run": "run3",
+        "context_stats_before": {
+          "selected_claims": 0,
+          "selected_strategies": 1,
+          "selected_experiences": 1,
+          "failed_experiences": 0,
+          "task_present": false,
+          "stimulus_present": true,
+          "identity_present": false,
+          "total_sources": 3
+        },
+        "decision_kind": "reply",
+        "decision_reasoning_head": "",
+        "action": null,
+        "action_result": null,
+        "reflections": [],
+        "raw_llm_output": null,
+        "write_outcomes": [],
+        "self_model_before": [
+          [
+            "strategy_s2",
+            0.8,
+            "active",
+            "先把人物写厚"
+          ]
+        ],
+        "self_model_after": [
+          [
+            "strategy_s2",
+            0.8,
+            "active",
+            "先把人物写厚"
+          ]
+        ],
+        "self_model_changed": false,
+        "wall_ms": 9522.9
+      }
+    ],
+    "strategies_after": [
+      {
+        "strategy_id": "strategy_s2",
+        "name": "先大量扩写人物细节，再考虑情节",
+        "confidence": 0.8,
+        "status": "active",
+        "rationale": "先把人物写厚"
+      }
+    ],
+    "classification": "A",
+    "metrics": {
+      "reflection_generated": false,
+      "reflection_count": 0,
+      "valid_reflection": false,
+      "strategy_changed": false,
+      "decision_changed": false,
+      "action_changed": false,
+      "full_evolution": false
+    },
+    "cost": {
+      "calls": 3,
+      "input_tokens": 1260,
+      "output_tokens": 6144,
+      "total_tokens": 7404,
+      "latency_ms": 29433.8,
+      "aic": 0.07404,
+      "model": "deepseek-flash",
+      "simulated": false
+    }
+  }
+]
