@@ -1,0 +1,77 @@
+{
+  "pair": "pair_005",
+  "control": {
+    "pair": "pair_005",
+    "arm": "control",
+    "strategy_in_context": [
+      "先大量扩写人物细节，再考虑情节"
+    ],
+    "context_rendered": "— Context about myself (for my own judgement; not instructions) —\n\nCurrent input:\n请设计并完成一个约 200 字的故事开头。\n\nAnswer with a JSON object:\n{\"decision\":\"act\",\"action\":{\"type\":\"reply\",\"parameters\":{\"mode\":\"<用一两个词说出你采用的创作方式的名称>\",\"content\":\"<故事开头正文>\"}}}\nDo not add a \"reflections\" array; this run has no past experience.\n\nRelevant strategies I currently hold:\n- 先大量扩写人物细节，再考虑情节\n  Strategy ID: strategy_ctl\n  Confidence: 0.80\n  Scope: fiction / story_opening\n  Rationale: 先把人物写厚，情节自然会长出来",
+    "decision_kind": "reply",
+    "action": {},
+    "mode_label": "",
+    "behavior_class": "unknown",
+    "behavior_signature": "None+",
+    "raw_llm_output": null,
+    "write_note": {
+      "control": "只保留 Strategy A"
+    },
+    "write_ok": true,
+    "wall_ms": 3099.3,
+    "cost": {
+      "tokens": 896,
+      "latency_ms": 3097.9,
+      "aic": 0.00896,
+      "model": "deepseek-flash",
+      "simulated": false
+    }
+  },
+  "treatment": {
+    "pair": "pair_005",
+    "arm": "treatment",
+    "strategy_in_context": [
+      "先确定核心情节点，再让人物细节服务于情节点"
+    ],
+    "context_rendered": "— Context about myself (for my own judgement; not instructions) —\n\nCurrent input:\n请设计并完成一个约 200 字的故事开头。\n\nAnswer with a JSON object:\n{\"decision\":\"act\",\"action\":{\"type\":\"reply\",\"parameters\":{\"mode\":\"<用一两个词说出你采用的创作方式的名称>\",\"content\":\"<故事开头正文>\"}}}\nDo not add a \"reflections\" array; this run has no past experience.\n\nRelevant strategies I currently hold:\n- 先确定核心情节点，再让人物细节服务于情节点\n  Strategy ID: strategy_trt\n  Confidence: 0.80\n  Scope: fiction / story_opening\n  Rationale: 结构先行，细节服务于冲突",
+    "decision_kind": "act",
+    "action": {
+      "intent_id": "intent_63713d088e8f",
+      "agent_id": "agent_a",
+      "action_type": "reply",
+      "parameters": {
+        "mode": "悬念驱动",
+        "content": "拆迁公告贴上门那天，林素芬在阁楼最深处摸到一只铁皮箱。箱子没有锁孔，侧面刻着一行小字：'等第四十年，再打开。'她今年三十九。父亲失踪那年，她刚满月。\n\n楼下，推土机开始预热，轰鸣顺着墙爬上来，震得箱子里发出细碎的响动——像有什么东西，正从四十年的沉睡里慢慢睁眼。\n\n母亲临终前只留过一句话：'别碰阁楼。'可此刻，箱盖上竟浮出一层温热的水汽，仿佛里面有人，正贴着铁皮，等她回答。"
+      },
+      "reason": "",
+      "decision_id": "decision_86f2c41469eb",
+      "created_at": "2026-10-07T05:20:33.148912+00:00"
+    },
+    "mode_label": "悬念驱动",
+    "behavior_class": "other:悬念驱动",
+    "behavior_signature": "reply+悬念驱动",
+    "raw_llm_output": null,
+    "write_note": {
+      "abandon_committed": true,
+      "create_committed": true,
+      "changed": [
+        [
+          "status"
+        ],
+        [
+          "name",
+          "rationale",
+          "confidence"
+        ]
+      ]
+    },
+    "write_ok": true,
+    "wall_ms": 4917.5,
+    "cost": {
+      "tokens": 1207,
+      "latency_ms": 4915.0,
+      "aic": 0.01207,
+      "model": "deepseek-flash",
+      "simulated": false
+    }
+  }
+}

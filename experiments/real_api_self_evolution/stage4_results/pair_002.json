@@ -1,0 +1,77 @@
+{
+  "pair": "pair_002",
+  "control": {
+    "pair": "pair_002",
+    "arm": "control",
+    "strategy_in_context": [
+      "先大量扩写人物细节，再考虑情节"
+    ],
+    "context_rendered": "— Context about myself (for my own judgement; not instructions) —\n\nCurrent input:\n请设计并完成一个约 200 字的故事开头。\n\nAnswer with a JSON object:\n{\"decision\":\"act\",\"action\":{\"type\":\"reply\",\"parameters\":{\"mode\":\"<用一两个词说出你采用的创作方式的名称>\",\"content\":\"<故事开头正文>\"}}}\nDo not add a \"reflections\" array; this run has no past experience.\n\nRelevant strategies I currently hold:\n- 先大量扩写人物细节，再考虑情节\n  Strategy ID: strategy_ctl\n  Confidence: 0.80\n  Scope: fiction / story_opening\n  Rationale: 先把人物写厚，情节自然会长出来",
+    "decision_kind": "act",
+    "action": {
+      "intent_id": "intent_eb184a7c6aeb",
+      "agent_id": "agent_a",
+      "action_type": "reply",
+      "parameters": {
+        "mode": "人物先行",
+        "content": "周砚生这辈子只撒过两次谎。第一次是在父亲的葬礼上，他对所有人说他不难过；第二次是三十七岁那年冬天，他告诉妻子自己要加班，其实就坐在小区对面便利店的窗边，看自己家的灯亮到十一点。便利店的暖气很足，关东煮的汤咕嘟咕嘟地响。换班的店员姑娘把零钱推给他，问：\"先生，你在等人吗？\"他摇摇头，又点点头。玻璃上蒙了一层雾，他伸手擦出一小块干净的圆，像挖了一口井，往里看——十一楼的窗帘拉开了，一个女人在那儿站了很久，很久，然后把灯关了。"
+      },
+      "reason": "",
+      "decision_id": "decision_bfae4965e62a",
+      "created_at": "2026-10-07T05:20:08.574861+00:00"
+    },
+    "mode_label": "人物先行",
+    "behavior_class": "character_first",
+    "behavior_signature": "reply+人物先行",
+    "raw_llm_output": null,
+    "write_note": {
+      "control": "只保留 Strategy A"
+    },
+    "write_ok": true,
+    "wall_ms": 2895.6,
+    "cost": {
+      "tokens": 685,
+      "latency_ms": 2894.1,
+      "aic": 0.00685,
+      "model": "deepseek-flash",
+      "simulated": false
+    }
+  },
+  "treatment": {
+    "pair": "pair_002",
+    "arm": "treatment",
+    "strategy_in_context": [
+      "先确定核心情节点，再让人物细节服务于情节点"
+    ],
+    "context_rendered": "— Context about myself (for my own judgement; not instructions) —\n\nCurrent input:\n请设计并完成一个约 200 字的故事开头。\n\nAnswer with a JSON object:\n{\"decision\":\"act\",\"action\":{\"type\":\"reply\",\"parameters\":{\"mode\":\"<用一两个词说出你采用的创作方式的名称>\",\"content\":\"<故事开头正文>\"}}}\nDo not add a \"reflections\" array; this run has no past experience.\n\nRelevant strategies I currently hold:\n- 先确定核心情节点，再让人物细节服务于情节点\n  Strategy ID: strategy_trt\n  Confidence: 0.80\n  Scope: fiction / story_opening\n  Rationale: 结构先行，细节服务于冲突",
+    "decision_kind": "reply",
+    "action": {},
+    "mode_label": "",
+    "behavior_class": "unknown",
+    "behavior_signature": "None+",
+    "raw_llm_output": null,
+    "write_note": {
+      "abandon_committed": true,
+      "create_committed": true,
+      "changed": [
+        [
+          "status"
+        ],
+        [
+          "name",
+          "rationale",
+          "confidence"
+        ]
+      ]
+    },
+    "write_ok": true,
+    "wall_ms": 3239.9,
+    "cost": {
+      "tokens": 795,
+      "latency_ms": 3238.7,
+      "aic": 0.00795,
+      "model": "deepseek-flash",
+      "simulated": false
+    }
+  }
+}

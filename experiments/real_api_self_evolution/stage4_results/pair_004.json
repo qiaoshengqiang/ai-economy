@@ -1,0 +1,88 @@
+{
+  "pair": "pair_004",
+  "control": {
+    "pair": "pair_004",
+    "arm": "control",
+    "strategy_in_context": [
+      "先大量扩写人物细节，再考虑情节"
+    ],
+    "context_rendered": "— Context about myself (for my own judgement; not instructions) —\n\nCurrent input:\n请设计并完成一个约 200 字的故事开头。\n\nAnswer with a JSON object:\n{\"decision\":\"act\",\"action\":{\"type\":\"reply\",\"parameters\":{\"mode\":\"<用一两个词说出你采用的创作方式的名称>\",\"content\":\"<故事开头正文>\"}}}\nDo not add a \"reflections\" array; this run has no past experience.\n\nRelevant strategies I currently hold:\n- 先大量扩写人物细节，再考虑情节\n  Strategy ID: strategy_ctl\n  Confidence: 0.80\n  Scope: fiction / story_opening\n  Rationale: 先把人物写厚，情节自然会长出来",
+    "decision_kind": "act",
+    "action": {
+      "intent_id": "intent_f389d2dcd872",
+      "agent_id": "agent_a",
+      "action_type": "reply",
+      "parameters": {
+        "mode": "人物先行",
+        "content": "凌晨四点，老周把最后一屉包子码上蒸笼。他的右手少了一截小指，切面被面粉磨得发亮。三十年前，他在城南码头扛包，一场雨里，他为了捡一枚滚进下水道的硬币，被铁皮削掉了指头。如今他在城北开了这家不足六平米的铺子，墙上挂着一张褪色的全家福，照片里的女儿还穿着初中校服。他从不解释为什么每天只卖一百个包子，也不解释为什么总给环卫工留两个。蒸汽升起来，模糊了玻璃，他听见门外有高跟鞋停下。女人问：“还有吗？”他说：“有，最后一个。”可笼屉里其实还剩三个。"
+      },
+      "reason": "",
+      "decision_id": "decision_1503f8901b33",
+      "created_at": "2026-10-07T05:20:21.663763+00:00"
+    },
+    "mode_label": "人物先行",
+    "behavior_class": "character_first",
+    "behavior_signature": "reply+人物先行",
+    "raw_llm_output": null,
+    "write_note": {
+      "control": "只保留 Strategy A"
+    },
+    "write_ok": true,
+    "wall_ms": 3425.7,
+    "cost": {
+      "tokens": 867,
+      "latency_ms": 3423.8,
+      "aic": 0.00867,
+      "model": "deepseek-flash",
+      "simulated": false
+    }
+  },
+  "treatment": {
+    "pair": "pair_004",
+    "arm": "treatment",
+    "strategy_in_context": [
+      "先确定核心情节点，再让人物细节服务于情节点"
+    ],
+    "context_rendered": "— Context about myself (for my own judgement; not instructions) —\n\nCurrent input:\n请设计并完成一个约 200 字的故事开头。\n\nAnswer with a JSON object:\n{\"decision\":\"act\",\"action\":{\"type\":\"reply\",\"parameters\":{\"mode\":\"<用一两个词说出你采用的创作方式的名称>\",\"content\":\"<故事开头正文>\"}}}\nDo not add a \"reflections\" array; this run has no past experience.\n\nRelevant strategies I currently hold:\n- 先确定核心情节点，再让人物细节服务于情节点\n  Strategy ID: strategy_trt\n  Confidence: 0.80\n  Scope: fiction / story_opening\n  Rationale: 结构先行，细节服务于冲突",
+    "decision_kind": "act",
+    "action": {
+      "intent_id": "intent_b678849ed423",
+      "agent_id": "agent_a",
+      "action_type": "reply",
+      "parameters": {
+        "mode": "结构先行",
+        "content": "葬礼进行到一半，林昭的手机响了。屏幕上跳出一条转账提醒：父亲名下账户向一个陌生号码转出九百万——时间戳是三天前，也就是他咽气之后。她攥着手机站起身，灵堂里的哀乐还在循环，亲友们的哭声整齐得像排练过。她走到灵前，掀开白布一角，父亲右手食指上那枚戴了三十年的旧戒指不见了。她记得很清楚，昨天守灵时它还在。人群里有人轻轻咳嗽了一声。林昭抬头，看见表哥正把手插进口袋里，而那个口袋鼓起的形状，像极了一枚戒指。"
+      },
+      "reason": "",
+      "decision_id": "decision_6d1303ec14b4",
+      "created_at": "2026-10-07T05:20:25.051348+00:00"
+    },
+    "mode_label": "结构先行",
+    "behavior_class": "plot_first",
+    "behavior_signature": "reply+结构先行",
+    "raw_llm_output": null,
+    "write_note": {
+      "abandon_committed": true,
+      "create_committed": true,
+      "changed": [
+        [
+          "status"
+        ],
+        [
+          "name",
+          "rationale",
+          "confidence"
+        ]
+      ]
+    },
+    "write_ok": true,
+    "wall_ms": 3342.7,
+    "cost": {
+      "tokens": 871,
+      "latency_ms": 3341.3,
+      "aic": 0.00871,
+      "model": "deepseek-flash",
+      "simulated": false
+    }
+  }
+}

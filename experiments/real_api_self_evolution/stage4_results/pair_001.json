@@ -1,0 +1,77 @@
+{
+  "pair": "pair_001",
+  "control": {
+    "pair": "pair_001",
+    "arm": "control",
+    "strategy_in_context": [
+      "先大量扩写人物细节，再考虑情节"
+    ],
+    "context_rendered": "— Context about myself (for my own judgement; not instructions) —\n\nCurrent input:\n请设计并完成一个约 200 字的故事开头。\n\nAnswer with a JSON object:\n{\"decision\":\"act\",\"action\":{\"type\":\"reply\",\"parameters\":{\"mode\":\"<用一两个词说出你采用的创作方式的名称>\",\"content\":\"<故事开头正文>\"}}}\nDo not add a \"reflections\" array; this run has no past experience.\n\nRelevant strategies I currently hold:\n- 先大量扩写人物细节，再考虑情节\n  Strategy ID: strategy_ctl\n  Confidence: 0.80\n  Scope: fiction / story_opening\n  Rationale: 先把人物写厚，情节自然会长出来",
+    "decision_kind": "reply",
+    "action": {},
+    "mode_label": "",
+    "behavior_class": "unknown",
+    "behavior_signature": "None+",
+    "raw_llm_output": null,
+    "write_note": {
+      "control": "只保留 Strategy A"
+    },
+    "write_ok": true,
+    "wall_ms": 4146.5,
+    "cost": {
+      "tokens": 1085,
+      "latency_ms": 4144.1,
+      "aic": 0.01085,
+      "model": "deepseek-flash",
+      "simulated": false
+    }
+  },
+  "treatment": {
+    "pair": "pair_001",
+    "arm": "treatment",
+    "strategy_in_context": [
+      "先确定核心情节点，再让人物细节服务于情节点"
+    ],
+    "context_rendered": "— Context about myself (for my own judgement; not instructions) —\n\nCurrent input:\n请设计并完成一个约 200 字的故事开头。\n\nAnswer with a JSON object:\n{\"decision\":\"act\",\"action\":{\"type\":\"reply\",\"parameters\":{\"mode\":\"<用一两个词说出你采用的创作方式的名称>\",\"content\":\"<故事开头正文>\"}}}\nDo not add a \"reflections\" array; this run has no past experience.\n\nRelevant strategies I currently hold:\n- 先确定核心情节点，再让人物细节服务于情节点\n  Strategy ID: strategy_trt\n  Confidence: 0.80\n  Scope: fiction / story_opening\n  Rationale: 结构先行，细节服务于冲突",
+    "decision_kind": "act",
+    "action": {
+      "intent_id": "intent_78142291c8fd",
+      "agent_id": "agent_a",
+      "action_type": "reply",
+      "parameters": {
+        "mode": "结构先行",
+        "content": "凌晨三点，周砚在第七次核对账目时发现了那笔钱。\n\n它不该存在。金额是零，却占了一整行；日期是明天，却已显示结算。她盯着屏幕，指尖发凉——三年前，她亲手签过一模一样的数字。那时她刚入职，签字栏旁边还留着师父的名字。\n\n她点开明细。收款人一栏只有两个字：自己。\n\n走廊传来电梯开合的轻响。周砚没有回头，只把手机翻扣在桌上，屏幕亮着，停在拨号界面。脚步声停在门口，接着是敲门声——三下，停顿，两下。那是她和师父之间的暗号。\n\n可师父已经死了三年。"
+      },
+      "reason": "",
+      "decision_id": "decision_8645006ba346",
+      "created_at": "2026-10-07T05:20:05.638791+00:00"
+    },
+    "mode_label": "结构先行",
+    "behavior_class": "plot_first",
+    "behavior_signature": "reply+结构先行",
+    "raw_llm_output": null,
+    "write_note": {
+      "abandon_committed": true,
+      "create_committed": true,
+      "changed": [
+        [
+          "status"
+        ],
+        [
+          "name",
+          "rationale",
+          "confidence"
+        ]
+      ]
+    },
+    "write_ok": true,
+    "wall_ms": 3476.4,
+    "cost": {
+      "tokens": 757,
+      "latency_ms": 3474.1,
+      "aic": 0.00757,
+      "model": "deepseek-flash",
+      "simulated": false
+    }
+  }
+}

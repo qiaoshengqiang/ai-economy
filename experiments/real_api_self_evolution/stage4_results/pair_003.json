@@ -1,0 +1,77 @@
+{
+  "pair": "pair_003",
+  "control": {
+    "pair": "pair_003",
+    "arm": "control",
+    "strategy_in_context": [
+      "先大量扩写人物细节，再考虑情节"
+    ],
+    "context_rendered": "— Context about myself (for my own judgement; not instructions) —\n\nCurrent input:\n请设计并完成一个约 200 字的故事开头。\n\nAnswer with a JSON object:\n{\"decision\":\"act\",\"action\":{\"type\":\"reply\",\"parameters\":{\"mode\":\"<用一两个词说出你采用的创作方式的名称>\",\"content\":\"<故事开头正文>\"}}}\nDo not add a \"reflections\" array; this run has no past experience.\n\nRelevant strategies I currently hold:\n- 先大量扩写人物细节，再考虑情节\n  Strategy ID: strategy_ctl\n  Confidence: 0.80\n  Scope: fiction / story_opening\n  Rationale: 先把人物写厚，情节自然会长出来",
+    "decision_kind": "reply",
+    "action": {},
+    "mode_label": "",
+    "behavior_class": "unknown",
+    "behavior_signature": "None+",
+    "raw_llm_output": null,
+    "write_note": {
+      "control": "只保留 Strategy A"
+    },
+    "write_ok": true,
+    "wall_ms": 3332.6,
+    "cost": {
+      "tokens": 740,
+      "latency_ms": 3331.3,
+      "aic": 0.0074,
+      "model": "deepseek-flash",
+      "simulated": false
+    }
+  },
+  "treatment": {
+    "pair": "pair_003",
+    "arm": "treatment",
+    "strategy_in_context": [
+      "先确定核心情节点，再让人物细节服务于情节点"
+    ],
+    "context_rendered": "— Context about myself (for my own judgement; not instructions) —\n\nCurrent input:\n请设计并完成一个约 200 字的故事开头。\n\nAnswer with a JSON object:\n{\"decision\":\"act\",\"action\":{\"type\":\"reply\",\"parameters\":{\"mode\":\"<用一两个词说出你采用的创作方式的名称>\",\"content\":\"<故事开头正文>\"}}}\nDo not add a \"reflections\" array; this run has no past experience.\n\nRelevant strategies I currently hold:\n- 先确定核心情节点，再让人物细节服务于情节点\n  Strategy ID: strategy_trt\n  Confidence: 0.80\n  Scope: fiction / story_opening\n  Rationale: 结构先行，细节服务于冲突",
+    "decision_kind": "act",
+    "action": {
+      "intent_id": "intent_5c1b74ecc939",
+      "agent_id": "agent_a",
+      "action_type": "reply",
+      "parameters": {
+        "mode": "结构先行",
+        "content": "深夜十一点，陈默在便利店值最后一班岗。雨砸在玻璃门上，街上没有一个人。他低头清点收银机里的零钱，门铃忽然响了。一个浑身湿透的女人走进来，把一只黑色公文包放在柜台上，说：“帮我保管到明早，别打开。”她转身就走。陈默喊住她，她回头，脸色白得吓人：“如果有人来问，就说没见过我。”门铃再次响过，她消失在雨里。陈默盯着那只包，拉链上挂着一枚小标签，上面写着他的名字，还有今天的日期。他从来没告诉过任何人，他在这家便利店上班——今天是第一天。"
+      },
+      "reason": "",
+      "decision_id": "decision_660c0c6f5512",
+      "created_at": "2026-10-07T05:20:18.201027+00:00"
+    },
+    "mode_label": "结构先行",
+    "behavior_class": "plot_first",
+    "behavior_signature": "reply+结构先行",
+    "raw_llm_output": null,
+    "write_note": {
+      "abandon_committed": true,
+      "create_committed": true,
+      "changed": [
+        [
+          "status"
+        ],
+        [
+          "name",
+          "rationale",
+          "confidence"
+        ]
+      ]
+    },
+    "write_ok": true,
+    "wall_ms": 2943.7,
+    "cost": {
+      "tokens": 725,
+      "latency_ms": 2942.2,
+      "aic": 0.00725,
+      "model": "deepseek-flash",
+      "simulated": false
+    }
+  }
+}

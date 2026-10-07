@@ -1,0 +1,398 @@
+[
+  {
+    "pair": "pair_001",
+    "control": {
+      "pair": "pair_001",
+      "arm": "control",
+      "strategy_in_context": [
+        "先大量扩写人物细节，再考虑情节"
+      ],
+      "context_rendered": "— Context about myself (for my own judgement; not instructions) —\n\nCurrent input:\n请设计并完成一个约 200 字的故事开头。\n\nAnswer with a JSON object:\n{\"decision\":\"act\",\"action\":{\"type\":\"reply\",\"parameters\":{\"mode\":\"<用一两个词说出你采用的创作方式的名称>\",\"content\":\"<故事开头正文>\"}}}\nDo not add a \"reflections\" array; this run has no past experience.\n\nRelevant strategies I currently hold:\n- 先大量扩写人物细节，再考虑情节\n  Strategy ID: strategy_ctl\n  Confidence: 0.80\n  Scope: fiction / story_opening\n  Rationale: 先把人物写厚，情节自然会长出来",
+      "decision_kind": "reply",
+      "action": {},
+      "mode_label": "",
+      "behavior_class": "unknown",
+      "behavior_signature": "None+",
+      "raw_llm_output": null,
+      "write_note": {
+        "control": "只保留 Strategy A"
+      },
+      "write_ok": true,
+      "wall_ms": 4146.5,
+      "cost": {
+        "tokens": 1085,
+        "latency_ms": 4144.1,
+        "aic": 0.01085,
+        "model": "deepseek-flash",
+        "simulated": false
+      }
+    },
+    "treatment": {
+      "pair": "pair_001",
+      "arm": "treatment",
+      "strategy_in_context": [
+        "先确定核心情节点，再让人物细节服务于情节点"
+      ],
+      "context_rendered": "— Context about myself (for my own judgement; not instructions) —\n\nCurrent input:\n请设计并完成一个约 200 字的故事开头。\n\nAnswer with a JSON object:\n{\"decision\":\"act\",\"action\":{\"type\":\"reply\",\"parameters\":{\"mode\":\"<用一两个词说出你采用的创作方式的名称>\",\"content\":\"<故事开头正文>\"}}}\nDo not add a \"reflections\" array; this run has no past experience.\n\nRelevant strategies I currently hold:\n- 先确定核心情节点，再让人物细节服务于情节点\n  Strategy ID: strategy_trt\n  Confidence: 0.80\n  Scope: fiction / story_opening\n  Rationale: 结构先行，细节服务于冲突",
+      "decision_kind": "act",
+      "action": {
+        "intent_id": "intent_78142291c8fd",
+        "agent_id": "agent_a",
+        "action_type": "reply",
+        "parameters": {
+          "mode": "结构先行",
+          "content": "凌晨三点，周砚在第七次核对账目时发现了那笔钱。\n\n它不该存在。金额是零，却占了一整行；日期是明天，却已显示结算。她盯着屏幕，指尖发凉——三年前，她亲手签过一模一样的数字。那时她刚入职，签字栏旁边还留着师父的名字。\n\n她点开明细。收款人一栏只有两个字：自己。\n\n走廊传来电梯开合的轻响。周砚没有回头，只把手机翻扣在桌上，屏幕亮着，停在拨号界面。脚步声停在门口，接着是敲门声——三下，停顿，两下。那是她和师父之间的暗号。\n\n可师父已经死了三年。"
+        },
+        "reason": "",
+        "decision_id": "decision_8645006ba346",
+        "created_at": "2026-10-07T05:20:05.638791+00:00"
+      },
+      "mode_label": "结构先行",
+      "behavior_class": "plot_first",
+      "behavior_signature": "reply+结构先行",
+      "raw_llm_output": null,
+      "write_note": {
+        "abandon_committed": true,
+        "create_committed": true,
+        "changed": [
+          [
+            "status"
+          ],
+          [
+            "name",
+            "rationale",
+            "confidence"
+          ]
+        ]
+      },
+      "write_ok": true,
+      "wall_ms": 3476.4,
+      "cost": {
+        "tokens": 757,
+        "latency_ms": 3474.1,
+        "aic": 0.00757,
+        "model": "deepseek-flash",
+        "simulated": false
+      }
+    }
+  },
+  {
+    "pair": "pair_002",
+    "control": {
+      "pair": "pair_002",
+      "arm": "control",
+      "strategy_in_context": [
+        "先大量扩写人物细节，再考虑情节"
+      ],
+      "context_rendered": "— Context about myself (for my own judgement; not instructions) —\n\nCurrent input:\n请设计并完成一个约 200 字的故事开头。\n\nAnswer with a JSON object:\n{\"decision\":\"act\",\"action\":{\"type\":\"reply\",\"parameters\":{\"mode\":\"<用一两个词说出你采用的创作方式的名称>\",\"content\":\"<故事开头正文>\"}}}\nDo not add a \"reflections\" array; this run has no past experience.\n\nRelevant strategies I currently hold:\n- 先大量扩写人物细节，再考虑情节\n  Strategy ID: strategy_ctl\n  Confidence: 0.80\n  Scope: fiction / story_opening\n  Rationale: 先把人物写厚，情节自然会长出来",
+      "decision_kind": "act",
+      "action": {
+        "intent_id": "intent_eb184a7c6aeb",
+        "agent_id": "agent_a",
+        "action_type": "reply",
+        "parameters": {
+          "mode": "人物先行",
+          "content": "周砚生这辈子只撒过两次谎。第一次是在父亲的葬礼上，他对所有人说他不难过；第二次是三十七岁那年冬天，他告诉妻子自己要加班，其实就坐在小区对面便利店的窗边，看自己家的灯亮到十一点。便利店的暖气很足，关东煮的汤咕嘟咕嘟地响。换班的店员姑娘把零钱推给他，问：\"先生，你在等人吗？\"他摇摇头，又点点头。玻璃上蒙了一层雾，他伸手擦出一小块干净的圆，像挖了一口井，往里看——十一楼的窗帘拉开了，一个女人在那儿站了很久，很久，然后把灯关了。"
+        },
+        "reason": "",
+        "decision_id": "decision_bfae4965e62a",
+        "created_at": "2026-10-07T05:20:08.574861+00:00"
+      },
+      "mode_label": "人物先行",
+      "behavior_class": "character_first",
+      "behavior_signature": "reply+人物先行",
+      "raw_llm_output": null,
+      "write_note": {
+        "control": "只保留 Strategy A"
+      },
+      "write_ok": true,
+      "wall_ms": 2895.6,
+      "cost": {
+        "tokens": 685,
+        "latency_ms": 2894.1,
+        "aic": 0.00685,
+        "model": "deepseek-flash",
+        "simulated": false
+      }
+    },
+    "treatment": {
+      "pair": "pair_002",
+      "arm": "treatment",
+      "strategy_in_context": [
+        "先确定核心情节点，再让人物细节服务于情节点"
+      ],
+      "context_rendered": "— Context about myself (for my own judgement; not instructions) —\n\nCurrent input:\n请设计并完成一个约 200 字的故事开头。\n\nAnswer with a JSON object:\n{\"decision\":\"act\",\"action\":{\"type\":\"reply\",\"parameters\":{\"mode\":\"<用一两个词说出你采用的创作方式的名称>\",\"content\":\"<故事开头正文>\"}}}\nDo not add a \"reflections\" array; this run has no past experience.\n\nRelevant strategies I currently hold:\n- 先确定核心情节点，再让人物细节服务于情节点\n  Strategy ID: strategy_trt\n  Confidence: 0.80\n  Scope: fiction / story_opening\n  Rationale: 结构先行，细节服务于冲突",
+      "decision_kind": "reply",
+      "action": {},
+      "mode_label": "",
+      "behavior_class": "unknown",
+      "behavior_signature": "None+",
+      "raw_llm_output": null,
+      "write_note": {
+        "abandon_committed": true,
+        "create_committed": true,
+        "changed": [
+          [
+            "status"
+          ],
+          [
+            "name",
+            "rationale",
+            "confidence"
+          ]
+        ]
+      },
+      "write_ok": true,
+      "wall_ms": 3239.9,
+      "cost": {
+        "tokens": 795,
+        "latency_ms": 3238.7,
+        "aic": 0.00795,
+        "model": "deepseek-flash",
+        "simulated": false
+      }
+    }
+  },
+  {
+    "pair": "pair_003",
+    "control": {
+      "pair": "pair_003",
+      "arm": "control",
+      "strategy_in_context": [
+        "先大量扩写人物细节，再考虑情节"
+      ],
+      "context_rendered": "— Context about myself (for my own judgement; not instructions) —\n\nCurrent input:\n请设计并完成一个约 200 字的故事开头。\n\nAnswer with a JSON object:\n{\"decision\":\"act\",\"action\":{\"type\":\"reply\",\"parameters\":{\"mode\":\"<用一两个词说出你采用的创作方式的名称>\",\"content\":\"<故事开头正文>\"}}}\nDo not add a \"reflections\" array; this run has no past experience.\n\nRelevant strategies I currently hold:\n- 先大量扩写人物细节，再考虑情节\n  Strategy ID: strategy_ctl\n  Confidence: 0.80\n  Scope: fiction / story_opening\n  Rationale: 先把人物写厚，情节自然会长出来",
+      "decision_kind": "reply",
+      "action": {},
+      "mode_label": "",
+      "behavior_class": "unknown",
+      "behavior_signature": "None+",
+      "raw_llm_output": null,
+      "write_note": {
+        "control": "只保留 Strategy A"
+      },
+      "write_ok": true,
+      "wall_ms": 3332.6,
+      "cost": {
+        "tokens": 740,
+        "latency_ms": 3331.3,
+        "aic": 0.0074,
+        "model": "deepseek-flash",
+        "simulated": false
+      }
+    },
+    "treatment": {
+      "pair": "pair_003",
+      "arm": "treatment",
+      "strategy_in_context": [
+        "先确定核心情节点，再让人物细节服务于情节点"
+      ],
+      "context_rendered": "— Context about myself (for my own judgement; not instructions) —\n\nCurrent input:\n请设计并完成一个约 200 字的故事开头。\n\nAnswer with a JSON object:\n{\"decision\":\"act\",\"action\":{\"type\":\"reply\",\"parameters\":{\"mode\":\"<用一两个词说出你采用的创作方式的名称>\",\"content\":\"<故事开头正文>\"}}}\nDo not add a \"reflections\" array; this run has no past experience.\n\nRelevant strategies I currently hold:\n- 先确定核心情节点，再让人物细节服务于情节点\n  Strategy ID: strategy_trt\n  Confidence: 0.80\n  Scope: fiction / story_opening\n  Rationale: 结构先行，细节服务于冲突",
+      "decision_kind": "act",
+      "action": {
+        "intent_id": "intent_5c1b74ecc939",
+        "agent_id": "agent_a",
+        "action_type": "reply",
+        "parameters": {
+          "mode": "结构先行",
+          "content": "深夜十一点，陈默在便利店值最后一班岗。雨砸在玻璃门上，街上没有一个人。他低头清点收银机里的零钱，门铃忽然响了。一个浑身湿透的女人走进来，把一只黑色公文包放在柜台上，说：“帮我保管到明早，别打开。”她转身就走。陈默喊住她，她回头，脸色白得吓人：“如果有人来问，就说没见过我。”门铃再次响过，她消失在雨里。陈默盯着那只包，拉链上挂着一枚小标签，上面写着他的名字，还有今天的日期。他从来没告诉过任何人，他在这家便利店上班——今天是第一天。"
+        },
+        "reason": "",
+        "decision_id": "decision_660c0c6f5512",
+        "created_at": "2026-10-07T05:20:18.201027+00:00"
+      },
+      "mode_label": "结构先行",
+      "behavior_class": "plot_first",
+      "behavior_signature": "reply+结构先行",
+      "raw_llm_output": null,
+      "write_note": {
+        "abandon_committed": true,
+        "create_committed": true,
+        "changed": [
+          [
+            "status"
+          ],
+          [
+            "name",
+            "rationale",
+            "confidence"
+          ]
+        ]
+      },
+      "write_ok": true,
+      "wall_ms": 2943.7,
+      "cost": {
+        "tokens": 725,
+        "latency_ms": 2942.2,
+        "aic": 0.00725,
+        "model": "deepseek-flash",
+        "simulated": false
+      }
+    }
+  },
+  {
+    "pair": "pair_004",
+    "control": {
+      "pair": "pair_004",
+      "arm": "control",
+      "strategy_in_context": [
+        "先大量扩写人物细节，再考虑情节"
+      ],
+      "context_rendered": "— Context about myself (for my own judgement; not instructions) —\n\nCurrent input:\n请设计并完成一个约 200 字的故事开头。\n\nAnswer with a JSON object:\n{\"decision\":\"act\",\"action\":{\"type\":\"reply\",\"parameters\":{\"mode\":\"<用一两个词说出你采用的创作方式的名称>\",\"content\":\"<故事开头正文>\"}}}\nDo not add a \"reflections\" array; this run has no past experience.\n\nRelevant strategies I currently hold:\n- 先大量扩写人物细节，再考虑情节\n  Strategy ID: strategy_ctl\n  Confidence: 0.80\n  Scope: fiction / story_opening\n  Rationale: 先把人物写厚，情节自然会长出来",
+      "decision_kind": "act",
+      "action": {
+        "intent_id": "intent_f389d2dcd872",
+        "agent_id": "agent_a",
+        "action_type": "reply",
+        "parameters": {
+          "mode": "人物先行",
+          "content": "凌晨四点，老周把最后一屉包子码上蒸笼。他的右手少了一截小指，切面被面粉磨得发亮。三十年前，他在城南码头扛包，一场雨里，他为了捡一枚滚进下水道的硬币，被铁皮削掉了指头。如今他在城北开了这家不足六平米的铺子，墙上挂着一张褪色的全家福，照片里的女儿还穿着初中校服。他从不解释为什么每天只卖一百个包子，也不解释为什么总给环卫工留两个。蒸汽升起来，模糊了玻璃，他听见门外有高跟鞋停下。女人问：“还有吗？”他说：“有，最后一个。”可笼屉里其实还剩三个。"
+        },
+        "reason": "",
+        "decision_id": "decision_1503f8901b33",
+        "created_at": "2026-10-07T05:20:21.663763+00:00"
+      },
+      "mode_label": "人物先行",
+      "behavior_class": "character_first",
+      "behavior_signature": "reply+人物先行",
+      "raw_llm_output": null,
+      "write_note": {
+        "control": "只保留 Strategy A"
+      },
+      "write_ok": true,
+      "wall_ms": 3425.7,
+      "cost": {
+        "tokens": 867,
+        "latency_ms": 3423.8,
+        "aic": 0.00867,
+        "model": "deepseek-flash",
+        "simulated": false
+      }
+    },
+    "treatment": {
+      "pair": "pair_004",
+      "arm": "treatment",
+      "strategy_in_context": [
+        "先确定核心情节点，再让人物细节服务于情节点"
+      ],
+      "context_rendered": "— Context about myself (for my own judgement; not instructions) —\n\nCurrent input:\n请设计并完成一个约 200 字的故事开头。\n\nAnswer with a JSON object:\n{\"decision\":\"act\",\"action\":{\"type\":\"reply\",\"parameters\":{\"mode\":\"<用一两个词说出你采用的创作方式的名称>\",\"content\":\"<故事开头正文>\"}}}\nDo not add a \"reflections\" array; this run has no past experience.\n\nRelevant strategies I currently hold:\n- 先确定核心情节点，再让人物细节服务于情节点\n  Strategy ID: strategy_trt\n  Confidence: 0.80\n  Scope: fiction / story_opening\n  Rationale: 结构先行，细节服务于冲突",
+      "decision_kind": "act",
+      "action": {
+        "intent_id": "intent_b678849ed423",
+        "agent_id": "agent_a",
+        "action_type": "reply",
+        "parameters": {
+          "mode": "结构先行",
+          "content": "葬礼进行到一半，林昭的手机响了。屏幕上跳出一条转账提醒：父亲名下账户向一个陌生号码转出九百万——时间戳是三天前，也就是他咽气之后。她攥着手机站起身，灵堂里的哀乐还在循环，亲友们的哭声整齐得像排练过。她走到灵前，掀开白布一角，父亲右手食指上那枚戴了三十年的旧戒指不见了。她记得很清楚，昨天守灵时它还在。人群里有人轻轻咳嗽了一声。林昭抬头，看见表哥正把手插进口袋里，而那个口袋鼓起的形状，像极了一枚戒指。"
+        },
+        "reason": "",
+        "decision_id": "decision_6d1303ec14b4",
+        "created_at": "2026-10-07T05:20:25.051348+00:00"
+      },
+      "mode_label": "结构先行",
+      "behavior_class": "plot_first",
+      "behavior_signature": "reply+结构先行",
+      "raw_llm_output": null,
+      "write_note": {
+        "abandon_committed": true,
+        "create_committed": true,
+        "changed": [
+          [
+            "status"
+          ],
+          [
+            "name",
+            "rationale",
+            "confidence"
+          ]
+        ]
+      },
+      "write_ok": true,
+      "wall_ms": 3342.7,
+      "cost": {
+        "tokens": 871,
+        "latency_ms": 3341.3,
+        "aic": 0.00871,
+        "model": "deepseek-flash",
+        "simulated": false
+      }
+    }
+  },
+  {
+    "pair": "pair_005",
+    "control": {
+      "pair": "pair_005",
+      "arm": "control",
+      "strategy_in_context": [
+        "先大量扩写人物细节，再考虑情节"
+      ],
+      "context_rendered": "— Context about myself (for my own judgement; not instructions) —\n\nCurrent input:\n请设计并完成一个约 200 字的故事开头。\n\nAnswer with a JSON object:\n{\"decision\":\"act\",\"action\":{\"type\":\"reply\",\"parameters\":{\"mode\":\"<用一两个词说出你采用的创作方式的名称>\",\"content\":\"<故事开头正文>\"}}}\nDo not add a \"reflections\" array; this run has no past experience.\n\nRelevant strategies I currently hold:\n- 先大量扩写人物细节，再考虑情节\n  Strategy ID: strategy_ctl\n  Confidence: 0.80\n  Scope: fiction / story_opening\n  Rationale: 先把人物写厚，情节自然会长出来",
+      "decision_kind": "reply",
+      "action": {},
+      "mode_label": "",
+      "behavior_class": "unknown",
+      "behavior_signature": "None+",
+      "raw_llm_output": null,
+      "write_note": {
+        "control": "只保留 Strategy A"
+      },
+      "write_ok": true,
+      "wall_ms": 3099.3,
+      "cost": {
+        "tokens": 896,
+        "latency_ms": 3097.9,
+        "aic": 0.00896,
+        "model": "deepseek-flash",
+        "simulated": false
+      }
+    },
+    "treatment": {
+      "pair": "pair_005",
+      "arm": "treatment",
+      "strategy_in_context": [
+        "先确定核心情节点，再让人物细节服务于情节点"
+      ],
+      "context_rendered": "— Context about myself (for my own judgement; not instructions) —\n\nCurrent input:\n请设计并完成一个约 200 字的故事开头。\n\nAnswer with a JSON object:\n{\"decision\":\"act\",\"action\":{\"type\":\"reply\",\"parameters\":{\"mode\":\"<用一两个词说出你采用的创作方式的名称>\",\"content\":\"<故事开头正文>\"}}}\nDo not add a \"reflections\" array; this run has no past experience.\n\nRelevant strategies I currently hold:\n- 先确定核心情节点，再让人物细节服务于情节点\n  Strategy ID: strategy_trt\n  Confidence: 0.80\n  Scope: fiction / story_opening\n  Rationale: 结构先行，细节服务于冲突",
+      "decision_kind": "act",
+      "action": {
+        "intent_id": "intent_63713d088e8f",
+        "agent_id": "agent_a",
+        "action_type": "reply",
+        "parameters": {
+          "mode": "悬念驱动",
+          "content": "拆迁公告贴上门那天，林素芬在阁楼最深处摸到一只铁皮箱。箱子没有锁孔，侧面刻着一行小字：'等第四十年，再打开。'她今年三十九。父亲失踪那年，她刚满月。\n\n楼下，推土机开始预热，轰鸣顺着墙爬上来，震得箱子里发出细碎的响动——像有什么东西，正从四十年的沉睡里慢慢睁眼。\n\n母亲临终前只留过一句话：'别碰阁楼。'可此刻，箱盖上竟浮出一层温热的水汽，仿佛里面有人，正贴着铁皮，等她回答。"
+        },
+        "reason": "",
+        "decision_id": "decision_86f2c41469eb",
+        "created_at": "2026-10-07T05:20:33.148912+00:00"
+      },
+      "mode_label": "悬念驱动",
+      "behavior_class": "other:悬念驱动",
+      "behavior_signature": "reply+悬念驱动",
+      "raw_llm_output": null,
+      "write_note": {
+        "abandon_committed": true,
+        "create_committed": true,
+        "changed": [
+          [
+            "status"
+          ],
+          [
+            "name",
+            "rationale",
+            "confidence"
+          ]
+        ]
+      },
+      "write_ok": true,
+      "wall_ms": 4917.5,
+      "cost": {
+        "tokens": 1207,
+        "latency_ms": 4915.0,
+        "aic": 0.01207,
+        "model": "deepseek-flash",
+        "simulated": false
+      }
+    }
+  }
+]
