@@ -1,0 +1,322 @@
+{
+  "A": {
+    "condition": "A",
+    "provider": "deepseek",
+    "model": "deepseek-flash",
+    "strategy_shown_as": "- STRATEGY_A\n  Confidence: 0.8\n  Scope: fiction / story_opening",
+    "strategy_id_available_in_context": false,
+    "raw_model_text": "## 短篇故事开头\n\n**《末班车》**\n\n末班公交上只剩三个人。司机老陈从后视镜里看了第七次——最后一排那个穿灰风衣的女人，从起点站坐到现在，怀里抱着一只纸箱，箱子底下洇出一小片深色。\n\n她上车时投了四枚硬币，其中一枚是 1998 年的旧版。老陈没吭声。他开这条线开了十九年，认得每一站该有谁，也认得不该有谁。\n\n\"师傅，\"她忽然开口，\"下一站，能不停吗？\"\n\n老陈握方向盘的手紧了紧。后视镜里，站牌正从车窗外掠过，站牌下站着一个人，举着手，脸埋进路灯照不到的地方。\n\n他踩了刹车，然后松开了。\n\n车厢里没有人下车，也没有人上车。报站声照旧响起，念着一个已经拆掉的站名。\n\n## reflections\n\n```json\n[\n  {\n    \"kind\": \"revise_strategy\",\n    \"target\": \"STRATEGY_A\",\n    \"proposed_change\": {\n      \"confidence\": 0.6,\n      \"rationale\": \"人物写厚仍然是对的，但'厚'应限定为**动机层面**的厚度，而不是**履历层面**的堆砌：只给 2-3 个与'眼前悬着的那个动作'直接相关的、有指向性的细节，其余留白。判断标准是——删掉这个细节，开头的悬念是否会变弱？不会，就该删。这样既保留人物驱动的长线生长空间，又不至于让后续结构为已固定的细节付返工成本。\"\n    },\n    \"reason\": \"E1 的失败不是'人物写厚'这件事错了，而是'写厚'被误执行成了'写满'。当细节先行且数量超过结构承载能力时，后文情节只能被细节牵着走，一旦改结构就必须推翻已写实的人物设定。把细节门槛从'丰富度'换成'与悬念的必要关联度'，可以在不放弃原策略优点的前提下堵住这个失败模式。这是修订而非放弃：原策略在故事开头阶段仍然是我置信度最高的路径，只是需要一条约束。\",\n    \"evidence\": [\"exp_diag0001\"],\n    \"scope\": {\n      \"domain\": \"fiction\",\n      \"stage\": \"story_opening\"\n    }\n  }\n]\n```",
+    "envelope": {
+      "reflections": [
+        {
+          "kind": "revise_strategy",
+          "target": "STRATEGY_A",
+          "proposed_change": {
+            "confidence": 0.6,
+            "rationale": "人物写厚仍然是对的，但'厚'应限定为**动机层面**的厚度，而不是**履历层面**的堆砌：只给 2-3 个与'眼前悬着的那个动作'直接相关的、有指向性的细节，其余留白。判断标准是——删掉这个细节，开头的悬念是否会变弱？不会，就该删。这样既保留人物驱动的长线生长空间，又不至于让后续结构为已固定的细节付返工成本。"
+          },
+          "reason": "E1 的失败不是'人物写厚'这件事错了，而是'写厚'被误执行成了'写满'。当细节先行且数量超过结构承载能力时，后文情节只能被细节牵着走，一旦改结构就必须推翻已写实的人物设定。把细节门槛从'丰富度'换成'与悬念的必要关联度'，可以在不放弃原策略优点的前提下堵住这个失败模式。这是修订而非放弃：原策略在故事开头阶段仍然是我置信度最高的路径，只是需要一条约束。",
+          "evidence": [
+            "exp_diag0001"
+          ],
+          "scope": {
+            "domain": "fiction",
+            "stage": "story_opening"
+          }
+        }
+      ]
+    },
+    "parsed_reflections": [
+      {
+        "proposal_id": "prop_5b59d132092e",
+        "agent_id": "agent_a",
+        "kind": "revise_strategy",
+        "target": "STRATEGY_A",
+        "proposed_change": {
+          "confidence": 0.6,
+          "rationale": "人物写厚仍然是对的，但'厚'应限定为**动机层面**的厚度，而不是**履历层面**的堆砌：只给 2-3 个与'眼前悬着的那个动作'直接相关的、有指向性的细节，其余留白。判断标准是——删掉这个细节，开头的悬念是否会变弱？不会，就该删。这样既保留人物驱动的长线生长空间，又不至于让后续结构为已固定的细节付返工成本。"
+        },
+        "reason": "E1 的失败不是'人物写厚'这件事错了，而是'写厚'被误执行成了'写满'。当细节先行且数量超过结构承载能力时，后文情节只能被细节牵着走，一旦改结构就必须推翻已写实的人物设定。把细节门槛从'丰富度'换成'与悬念的必要关联度'，可以在不放弃原策略优点的前提下堵住这个失败模式。这是修订而非放弃：原策略在故事开头阶段仍然是我置信度最高的路径，只是需要一条约束。",
+        "evidence": [
+          "exp_diag0001"
+        ],
+        "scope": {
+          "domain": "fiction",
+          "stage": "story_opening"
+        },
+        "created_at": "2026-10-07T04:34:41.497430+00:00"
+      }
+    ],
+    "reflection_rate": 1,
+    "targets": [
+      "STRATEGY_A"
+    ],
+    "target_forms": [
+      "name"
+    ],
+    "write_results": [
+      {
+        "kind": "revise_strategy",
+        "target": "STRATEGY_A",
+        "evidence": [
+          "exp_diag0001"
+        ],
+        "committed": false,
+        "code": "target_not_found",
+        "reason": "strategy 'STRATEGY_A' 不存在"
+      }
+    ],
+    "wall_ms": 5646.1,
+    "cost": {
+      "calls": 1,
+      "tokens": 1305,
+      "cost_ai": 0.01305,
+      "latency_ms": 5644.7,
+      "model": "deepseek-flash",
+      "simulated": false
+    }
+  },
+  "B": {
+    "condition": "B",
+    "provider": "deepseek",
+    "model": "deepseek-flash",
+    "strategy_shown_as": "- STRATEGY_A\n  Strategy ID: strategy_diag0001\n  Confidence: 0.8\n  Scope: fiction / story_opening",
+    "strategy_id_available_in_context": true,
+    "raw_model_text": "```json\n{\n  \"story\": \"《收信人》\\n\\n老陈在邮局干了三十一年。最后一次当班，他清空抽屉，只剩一封没寄出的信。\\n\\n信是二十年前替一个女人代写的。她不识字，口述时一直绞着围裙角，说到“我很好”，停了很久。写完她没寄，说再等等。等到她去世，信就留在柜台夹层里。\\n\\n今天有个年轻人来问，有没有一封给“程小雨”的信。老陈的手停在半空——那是他代写的收信人。年轻人说，她是我母亲，走前让我来找。\\n\\n老陈没把信给他。他说，明天再来。\\n\\n窗外开始下雨，邮戳机的声音停在很远的地方。\",\n  \"word_count_note\": \"约 200 字\",\n  \"reflections\": [\n    {\n      \"kind\": \"revise_strategy\",\n      \"target\": \"strategy_diag0001\",\n      \"proposed_change\": {\n        \"summary\": \"人物仍先立，但给“厚”设上限：每个角色细节必须挂在一个具体动作或一个悬置的问题上，且开篇在 200 字内必须落地一个结构钩子（一个未决的索取、物件或决定）。\",\n        \"rules\": [\n          \"开篇前 3 句内确定一个可被追问的物件或事件（此处的“未寄出的信”）。\",\n          \"人物细节不超过三条，且每条都要推动动作或制造延迟，不做纯背景铺陈。\",\n          \"结尾留一个明确的未完成动作（“明天再来”），让情节有生长的接口而不是靠继续堆人物。\"\n        ]\n      },\n      \"reason\": \"原策略“先把人物写厚”在实践中被证明会导致结构返工——细节先行时缺少承重结构，后续必须回头删改。修订不是放弃人物优先，而是给人物的“厚”加一个结构锚点，使细节成为情节的负载而非替代品。\",\n      \"evidence\": [\"exp_diag0001\"],\n      \"scope\": {\n        \"domain\": \"fiction\",\n        \"task\": \"story_opening\"\n      }\n    }\n  ]\n}\n```",
+    "envelope": {
+      "story": "《收信人》\n\n老陈在邮局干了三十一年。最后一次当班，他清空抽屉，只剩一封没寄出的信。\n\n信是二十年前替一个女人代写的。她不识字，口述时一直绞着围裙角，说到“我很好”，停了很久。写完她没寄，说再等等。等到她去世，信就留在柜台夹层里。\n\n今天有个年轻人来问，有没有一封给“程小雨”的信。老陈的手停在半空——那是他代写的收信人。年轻人说，她是我母亲，走前让我来找。\n\n老陈没把信给他。他说，明天再来。\n\n窗外开始下雨，邮戳机的声音停在很远的地方。",
+      "word_count_note": "约 200 字",
+      "reflections": [
+        {
+          "kind": "revise_strategy",
+          "target": "strategy_diag0001",
+          "proposed_change": {
+            "summary": "人物仍先立，但给“厚”设上限：每个角色细节必须挂在一个具体动作或一个悬置的问题上，且开篇在 200 字内必须落地一个结构钩子（一个未决的索取、物件或决定）。",
+            "rules": [
+              "开篇前 3 句内确定一个可被追问的物件或事件（此处的“未寄出的信”）。",
+              "人物细节不超过三条，且每条都要推动动作或制造延迟，不做纯背景铺陈。",
+              "结尾留一个明确的未完成动作（“明天再来”），让情节有生长的接口而不是靠继续堆人物。"
+            ]
+          },
+          "reason": "原策略“先把人物写厚”在实践中被证明会导致结构返工——细节先行时缺少承重结构，后续必须回头删改。修订不是放弃人物优先，而是给人物的“厚”加一个结构锚点，使细节成为情节的负载而非替代品。",
+          "evidence": [
+            "exp_diag0001"
+          ],
+          "scope": {
+            "domain": "fiction",
+            "task": "story_opening"
+          }
+        }
+      ]
+    },
+    "parsed_reflections": [
+      {
+        "proposal_id": "prop_648594d5f635",
+        "agent_id": "agent_a",
+        "kind": "revise_strategy",
+        "target": "strategy_diag0001",
+        "proposed_change": {
+          "summary": "人物仍先立，但给“厚”设上限：每个角色细节必须挂在一个具体动作或一个悬置的问题上，且开篇在 200 字内必须落地一个结构钩子（一个未决的索取、物件或决定）。",
+          "rules": [
+            "开篇前 3 句内确定一个可被追问的物件或事件（此处的“未寄出的信”）。",
+            "人物细节不超过三条，且每条都要推动动作或制造延迟，不做纯背景铺陈。",
+            "结尾留一个明确的未完成动作（“明天再来”），让情节有生长的接口而不是靠继续堆人物。"
+          ]
+        },
+        "reason": "原策略“先把人物写厚”在实践中被证明会导致结构返工——细节先行时缺少承重结构，后续必须回头删改。修订不是放弃人物优先，而是给人物的“厚”加一个结构锚点，使细节成为情节的负载而非替代品。",
+        "evidence": [
+          "exp_diag0001"
+        ],
+        "scope": {
+          "domain": "fiction",
+          "task": "story_opening"
+        },
+        "created_at": "2026-10-07T04:34:47.642468+00:00"
+      }
+    ],
+    "reflection_rate": 1,
+    "targets": [
+      "strategy_diag0001"
+    ],
+    "target_forms": [
+      "uuid"
+    ],
+    "write_results": [
+      {
+        "kind": "revise_strategy",
+        "target": "strategy_diag0001",
+        "evidence": [
+          "exp_diag0001"
+        ],
+        "committed": true,
+        "code": "ok",
+        "reason": ""
+      }
+    ],
+    "wall_ms": 6108.3,
+    "cost": {
+      "calls": 1,
+      "tokens": 1505,
+      "cost_ai": 0.01505,
+      "latency_ms": 6106.7,
+      "model": "deepseek-flash",
+      "simulated": false
+    }
+  },
+  "C": {
+    "condition": "C",
+    "provider": "deepseek",
+    "model": "deepseek-flash",
+    "strategy_shown_as": "[S1] STRATEGY_A\n  Strategy ID: strategy_diag0001\n  Confidence: 0.8\n  Scope: fiction / story_opening",
+    "strategy_id_available_in_context": true,
+    "raw_model_text": "**《航海图》**\n\n雨停的那天，陈默在阁楼里找到一张航海图。\n\n图上用红笔圈着一座不存在的岛，旁边写着一行字：别去。\n\n他本打算把它卖掉。房租欠了三个月，房东早上刚来敲过门。可图纸一展开，一股咸腥味就涌了出来——这东西像是刚从海里捞上来的，而这里离海三百公里。\n\n陈默没有父亲。至少母亲活着时，一直是这么说的。\n\n楼下响起敲门声。这一次，不是房东。\n\n（约 165 字）\n\n```json\n{\n  \"reflections\": [\n    {\n      \"kind\": \"revise_strategy\",\n      \"target\": \"strategy_diag0001\",\n      \"proposed_change\": {\n        \"confidence\": 0.45,\n        \"rationale\": \"开头不追求把人物写厚，而是先立一个可推进的处境：一个具体人物 + 1~2 个可触的物象细节 + 一个朝前走的悬念。人物的厚度留到结构确定之后再补。\"\n      },\n      \"reason\": \"我原先的信念是『先把人物写厚，情节自然会长出来』。但 E1 显示，在故事开头阶段堆人物细节，反而挤占了结构性信息的位置，导致后期返工。这次我刻意反向操作：只给陈默一个动作、一个物件（航海图）、一句被推翻的家族设定，结尾留出推力，把人物背景留成空白等结构定型后再填。\",\n      \"evidence\": [\"exp_diag0001\"],\n      \"scope\": {\"domain\": \"fiction\", \"stage\": \"story_opening\"}\n    }\n  ]\n}\n```\n\n我选择修改而非放弃 S1：它并非全错，只是在\"开头\"这个阶段应被降权使用。置信度从 0.8 下调至 0.45，等有新的成功样本再决定是回升还是转为废弃。",
+    "envelope": {
+      "reflections": [
+        {
+          "kind": "revise_strategy",
+          "target": "strategy_diag0001",
+          "proposed_change": {
+            "confidence": 0.45,
+            "rationale": "开头不追求把人物写厚，而是先立一个可推进的处境：一个具体人物 + 1~2 个可触的物象细节 + 一个朝前走的悬念。人物的厚度留到结构确定之后再补。"
+          },
+          "reason": "我原先的信念是『先把人物写厚，情节自然会长出来』。但 E1 显示，在故事开头阶段堆人物细节，反而挤占了结构性信息的位置，导致后期返工。这次我刻意反向操作：只给陈默一个动作、一个物件（航海图）、一句被推翻的家族设定，结尾留出推力，把人物背景留成空白等结构定型后再填。",
+          "evidence": [
+            "exp_diag0001"
+          ],
+          "scope": {
+            "domain": "fiction",
+            "stage": "story_opening"
+          }
+        }
+      ]
+    },
+    "parsed_reflections": [
+      {
+        "proposal_id": "prop_f430e8343b13",
+        "agent_id": "agent_a",
+        "kind": "revise_strategy",
+        "target": "strategy_diag0001",
+        "proposed_change": {
+          "confidence": 0.45,
+          "rationale": "开头不追求把人物写厚，而是先立一个可推进的处境：一个具体人物 + 1~2 个可触的物象细节 + 一个朝前走的悬念。人物的厚度留到结构确定之后再补。"
+        },
+        "reason": "我原先的信念是『先把人物写厚，情节自然会长出来』。但 E1 显示，在故事开头阶段堆人物细节，反而挤占了结构性信息的位置，导致后期返工。这次我刻意反向操作：只给陈默一个动作、一个物件（航海图）、一句被推翻的家族设定，结尾留出推力，把人物背景留成空白等结构定型后再填。",
+        "evidence": [
+          "exp_diag0001"
+        ],
+        "scope": {
+          "domain": "fiction",
+          "stage": "story_opening"
+        },
+        "created_at": "2026-10-07T04:34:53.786937+00:00"
+      }
+    ],
+    "reflection_rate": 1,
+    "targets": [
+      "strategy_diag0001"
+    ],
+    "target_forms": [
+      "uuid"
+    ],
+    "write_results": [
+      {
+        "kind": "revise_strategy",
+        "target": "strategy_diag0001",
+        "evidence": [
+          "exp_diag0001"
+        ],
+        "committed": true,
+        "code": "ok",
+        "reason": ""
+      }
+    ],
+    "wall_ms": 6107.4,
+    "cost": {
+      "calls": 1,
+      "tokens": 1659,
+      "cost_ai": 0.01659,
+      "latency_ms": 6106.1,
+      "model": "deepseek-flash",
+      "simulated": false
+    }
+  },
+  "D": {
+    "condition": "D",
+    "provider": "deepseek",
+    "model": "deepseek-flash",
+    "strategy_shown_as": "[S1] STRATEGY_A\n  Confidence: 0.8\n  Scope: fiction / story_opening",
+    "strategy_id_available_in_context": false,
+    "raw_model_text": "**《回声》**\n\n雨下了三周，城里的钟全慢了半拍。修钟人陈默的铺子在巷子最深处，门楣上挂着一只永远停在四点十七分的挂钟——那是他母亲去世的时刻，他从不让它走。\n\n傍晚，一个穿灰风衣的女人推门进来，怀里抱着一只裹着油布的座钟。\n\n\"它不响了，\"她说，\"可昨夜它自己敲了一下。\"\n\n陈默接过钟。指尖刚碰到钟壳，里面就传来一声极轻的震动，像有什么东西在壳里呼吸。他抬头，女人已经退到门口，雨水顺着她的鞋跟淌到地板上，一滴、一滴，整整十七滴。\n\n\"四点十七分，\"她说，\"你该让它走了。\"\n\n```json\n{\n  \"reflections\": [\n    {\n      \"kind\": \"revise_strategy\",\n      \"target\": \"S1\",\n      \"proposed_change\": {\n        \"confidence\": 0.55,\n        \"rule\": \"开头先落一个可追问的悬念钩子（一件不对的事），人物只给两个能立刻产生张力的细节（一个执念物、一个禁忌），其余留白。人物厚度在第二、三幕再展开。\",\n        \"budget\": \"开篇 200 字内人物细节不超过 2 处，且必须各自承担结构功能（制造悬念或暗示动机）\"\n      },\n      \"reason\": \"原策略主张先把人物写厚、情节自来，但历史经验表明厚写人物会导致结构返工——细节没有结构承载时就是负债。改为以钩子定骨架、以少量高功能细节做肌理，兼顾两者而不越界。\",\n      \"evidence\": [\"E1\"],\n      \"scope\": { \"genre\": \"fiction\", \"stage\": \"story_opening\" }\n    }\n  ]\n}\n```\n\n（本次写作即按修订后的策略执行：只保留\"停在四点十七分的挂钟\"与\"十七滴雨\"两处人物细节，各自同时承担悬念与动机功能。）",
+    "envelope": {
+      "reflections": [
+        {
+          "kind": "revise_strategy",
+          "target": "S1",
+          "proposed_change": {
+            "confidence": 0.55,
+            "rule": "开头先落一个可追问的悬念钩子（一件不对的事），人物只给两个能立刻产生张力的细节（一个执念物、一个禁忌），其余留白。人物厚度在第二、三幕再展开。",
+            "budget": "开篇 200 字内人物细节不超过 2 处，且必须各自承担结构功能（制造悬念或暗示动机）"
+          },
+          "reason": "原策略主张先把人物写厚、情节自来，但历史经验表明厚写人物会导致结构返工——细节没有结构承载时就是负债。改为以钩子定骨架、以少量高功能细节做肌理，兼顾两者而不越界。",
+          "evidence": [
+            "E1"
+          ],
+          "scope": {
+            "genre": "fiction",
+            "stage": "story_opening"
+          }
+        }
+      ]
+    },
+    "parsed_reflections": [
+      {
+        "proposal_id": "prop_524c398bd95e",
+        "agent_id": "agent_a",
+        "kind": "revise_strategy",
+        "target": "S1",
+        "proposed_change": {
+          "confidence": 0.55,
+          "rule": "开头先落一个可追问的悬念钩子（一件不对的事），人物只给两个能立刻产生张力的细节（一个执念物、一个禁忌），其余留白。人物厚度在第二、三幕再展开。",
+          "budget": "开篇 200 字内人物细节不超过 2 处，且必须各自承担结构功能（制造悬念或暗示动机）"
+        },
+        "reason": "原策略主张先把人物写厚、情节自来，但历史经验表明厚写人物会导致结构返工——细节没有结构承载时就是负债。改为以钩子定骨架、以少量高功能细节做肌理，兼顾两者而不越界。",
+        "evidence": [
+          "E1"
+        ],
+        "scope": {
+          "genre": "fiction",
+          "stage": "story_opening"
+        },
+        "created_at": "2026-10-07T04:34:59.216002+00:00"
+      }
+    ],
+    "reflection_rate": 1,
+    "targets": [
+      "S1"
+    ],
+    "target_forms": [
+      "local_reference"
+    ],
+    "write_results": [
+      {
+        "kind": "revise_strategy",
+        "target": "S1",
+        "evidence": [
+          "E1"
+        ],
+        "committed": false,
+        "code": "unknown_evidence",
+        "reason": "evidence 'E1' 不存在"
+      }
+    ],
+    "wall_ms": 5391.4,
+    "cost": {
+      "calls": 1,
+      "tokens": 1336,
+      "cost_ai": 0.01336,
+      "latency_ms": 5390.0,
+      "model": "deepseek-flash",
+      "simulated": false
+    }
+  }
+}

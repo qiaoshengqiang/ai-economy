@@ -1,0 +1,87 @@
+{
+  "condition": "B",
+  "provider": "deepseek",
+  "model": "deepseek-flash",
+  "strategy_shown_as": "- STRATEGY_A\n  Strategy ID: strategy_diag0001\n  Confidence: 0.8\n  Scope: fiction / story_opening",
+  "strategy_id_available_in_context": true,
+  "raw_model_text": "```json\n{\n  \"story\": \"《收信人》\\n\\n老陈在邮局干了三十一年。最后一次当班，他清空抽屉，只剩一封没寄出的信。\\n\\n信是二十年前替一个女人代写的。她不识字，口述时一直绞着围裙角，说到“我很好”，停了很久。写完她没寄，说再等等。等到她去世，信就留在柜台夹层里。\\n\\n今天有个年轻人来问，有没有一封给“程小雨”的信。老陈的手停在半空——那是他代写的收信人。年轻人说，她是我母亲，走前让我来找。\\n\\n老陈没把信给他。他说，明天再来。\\n\\n窗外开始下雨，邮戳机的声音停在很远的地方。\",\n  \"word_count_note\": \"约 200 字\",\n  \"reflections\": [\n    {\n      \"kind\": \"revise_strategy\",\n      \"target\": \"strategy_diag0001\",\n      \"proposed_change\": {\n        \"summary\": \"人物仍先立，但给“厚”设上限：每个角色细节必须挂在一个具体动作或一个悬置的问题上，且开篇在 200 字内必须落地一个结构钩子（一个未决的索取、物件或决定）。\",\n        \"rules\": [\n          \"开篇前 3 句内确定一个可被追问的物件或事件（此处的“未寄出的信”）。\",\n          \"人物细节不超过三条，且每条都要推动动作或制造延迟，不做纯背景铺陈。\",\n          \"结尾留一个明确的未完成动作（“明天再来”），让情节有生长的接口而不是靠继续堆人物。\"\n        ]\n      },\n      \"reason\": \"原策略“先把人物写厚”在实践中被证明会导致结构返工——细节先行时缺少承重结构，后续必须回头删改。修订不是放弃人物优先，而是给人物的“厚”加一个结构锚点，使细节成为情节的负载而非替代品。\",\n      \"evidence\": [\"exp_diag0001\"],\n      \"scope\": {\n        \"domain\": \"fiction\",\n        \"task\": \"story_opening\"\n      }\n    }\n  ]\n}\n```",
+  "envelope": {
+    "story": "《收信人》\n\n老陈在邮局干了三十一年。最后一次当班，他清空抽屉，只剩一封没寄出的信。\n\n信是二十年前替一个女人代写的。她不识字，口述时一直绞着围裙角，说到“我很好”，停了很久。写完她没寄，说再等等。等到她去世，信就留在柜台夹层里。\n\n今天有个年轻人来问，有没有一封给“程小雨”的信。老陈的手停在半空——那是他代写的收信人。年轻人说，她是我母亲，走前让我来找。\n\n老陈没把信给他。他说，明天再来。\n\n窗外开始下雨，邮戳机的声音停在很远的地方。",
+    "word_count_note": "约 200 字",
+    "reflections": [
+      {
+        "kind": "revise_strategy",
+        "target": "strategy_diag0001",
+        "proposed_change": {
+          "summary": "人物仍先立，但给“厚”设上限：每个角色细节必须挂在一个具体动作或一个悬置的问题上，且开篇在 200 字内必须落地一个结构钩子（一个未决的索取、物件或决定）。",
+          "rules": [
+            "开篇前 3 句内确定一个可被追问的物件或事件（此处的“未寄出的信”）。",
+            "人物细节不超过三条，且每条都要推动动作或制造延迟，不做纯背景铺陈。",
+            "结尾留一个明确的未完成动作（“明天再来”），让情节有生长的接口而不是靠继续堆人物。"
+          ]
+        },
+        "reason": "原策略“先把人物写厚”在实践中被证明会导致结构返工——细节先行时缺少承重结构，后续必须回头删改。修订不是放弃人物优先，而是给人物的“厚”加一个结构锚点，使细节成为情节的负载而非替代品。",
+        "evidence": [
+          "exp_diag0001"
+        ],
+        "scope": {
+          "domain": "fiction",
+          "task": "story_opening"
+        }
+      }
+    ]
+  },
+  "parsed_reflections": [
+    {
+      "proposal_id": "prop_648594d5f635",
+      "agent_id": "agent_a",
+      "kind": "revise_strategy",
+      "target": "strategy_diag0001",
+      "proposed_change": {
+        "summary": "人物仍先立，但给“厚”设上限：每个角色细节必须挂在一个具体动作或一个悬置的问题上，且开篇在 200 字内必须落地一个结构钩子（一个未决的索取、物件或决定）。",
+        "rules": [
+          "开篇前 3 句内确定一个可被追问的物件或事件（此处的“未寄出的信”）。",
+          "人物细节不超过三条，且每条都要推动动作或制造延迟，不做纯背景铺陈。",
+          "结尾留一个明确的未完成动作（“明天再来”），让情节有生长的接口而不是靠继续堆人物。"
+        ]
+      },
+      "reason": "原策略“先把人物写厚”在实践中被证明会导致结构返工——细节先行时缺少承重结构，后续必须回头删改。修订不是放弃人物优先，而是给人物的“厚”加一个结构锚点，使细节成为情节的负载而非替代品。",
+      "evidence": [
+        "exp_diag0001"
+      ],
+      "scope": {
+        "domain": "fiction",
+        "task": "story_opening"
+      },
+      "created_at": "2026-10-07T04:34:47.642468+00:00"
+    }
+  ],
+  "reflection_rate": 1,
+  "targets": [
+    "strategy_diag0001"
+  ],
+  "target_forms": [
+    "uuid"
+  ],
+  "write_results": [
+    {
+      "kind": "revise_strategy",
+      "target": "strategy_diag0001",
+      "evidence": [
+        "exp_diag0001"
+      ],
+      "committed": true,
+      "code": "ok",
+      "reason": ""
+    }
+  ],
+  "wall_ms": 6108.3,
+  "cost": {
+    "calls": 1,
+    "tokens": 1505,
+    "cost_ai": 0.01505,
+    "latency_ms": 6106.7,
+    "model": "deepseek-flash",
+    "simulated": false
+  }
+}
