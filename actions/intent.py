@@ -171,6 +171,11 @@ class CognitiveRunResult:
     decision: Optional[Decision] = None
     action_intent: Optional[ActionIntent] = None
     action_result: Optional[ActionResult] = None
+    #: §九 / §十：Agent 本次 Cognition 产生的 **0..N** 个 Reflection Proposal。
+    #: 🔒 **可选** —— 空列表是合法且常见的（Agent 决定「不值得反思」）。
+    reflection_proposals: List[Any] = field(default_factory=list)
+    #: 每个 proposal 的受控写入结果（含被拒绝的原因）
+    write_outcomes: List[Any] = field(default_factory=list)
 
     @property
     def has_action(self) -> bool:
@@ -183,4 +188,8 @@ class CognitiveRunResult:
                               if self.action_intent else None),
             "action_result": (self.action_result.to_dict()
                               if self.action_result else None),
+            "reflection_count": len(self.reflection_proposals),
+            "reflections_committed": sum(
+                1 for o in self.write_outcomes
+                if getattr(o, "committed", False)),
         }

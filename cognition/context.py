@@ -57,6 +57,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+from experience.models import Experience
 from selfmodel.models import SelfClaim, SelfModelView, Strategy
 
 #: 🔴 禁止出现在 Self Model 呈现文本里的**规则化措辞**（§十三）。
@@ -107,6 +108,11 @@ class CognitiveContext:
     current_task: Optional[str] = None
     self_claims: List[SelfClaim] = field(default_factory=list)
     strategies: List[Strategy] = field(default_factory=list)
+    #: §七 / §八：相关历史经历。
+    #: 🔒 与 Self Model **分开** —— 经历**不能**伪装成 Self Claim。
+    #:    只有 Agent Cognition 产生 Reflection Proposal 之后，
+    #:    才可能 Experience → Reflection → Self Model。
+    relevant_experiences: List[Experience] = field(default_factory=list)
     other: List[ContextSource] = field(default_factory=list)
 
     # ---- 结构保留（§十）------------------------------------------------
@@ -138,6 +144,17 @@ class CognitiveContext:
                 metadata={"domain": s.domain, "situation": s.situation,
                           "rationale": s.rationale},
             ))
+        for e in self.relevant_experiences:
+            # §七：经历是**材料**，不是指令 —— priority 固定偏低，
+            # 表示「可以参考」而不是「必须遵守」。
+            out.append(ContextSource(
+                source="experience",
+                content=_experience_line(e),
+                priority=0.4,
+                metadata={"source": e.source,
+                          "experience_id": e.experience_id,
+                          "failed": e.failed},
+            ))
         out.extend(self.other)
         return out
 
@@ -145,11 +162,18 @@ class CognitiveContext:
     def is_empty(self) -> bool:
         return not self.sources()
 
+    def has_experiences(self) -> bool:
+        """§七：本轮是否看到了历史经历（供 Agent 判断「值不值得反思」）。"""
+        return bool(self.relevant_experiences)
+
     def stats(self) -> Dict[str, Any]:
         """§二十二：轻量可观测信息。**不含**上下文原文。"""
         return {
             "selected_claims": len(self.self_claims),
             "selected_strategies": len(self.strategies),
+            "selected_experiences": len(self.relevant_experiences),
+            "failed_experiences": sum(
+                1 for e in self.relevant_experiences if e.failed),
             "task_present": bool(self.current_task),
             "stimulus_present": bool(self.current_stimulus),
             "identity_present": bool(self.identity),
@@ -204,6 +228,12 @@ class CognitiveContext:
                 lines.append(block)
             parts.append("\n".join(lines))
 
+        if self.relevant_experiences:
+            lines = ["Relevant experiences I currently have access to:"]
+            for e in self.relevant_experiences:
+                lines.append(_experience_block(e))
+            parts.append("\n".join(lines))
+
         for src in self.other:
             parts.append(src.content)
 
@@ -211,6 +241,42 @@ class CognitiveContext:
             return ""
         return ("— Context about myself (for my own judgement; "
                 "not instructions) —\n\n" + "\n\n".join(parts))
+
+
+def _experience_line(e: Experience) -> str:
+    status = "failed" if e.failed else ("succeeded"
+                                        if e.result.get("success") else "done")
+    return f"[{e.source}] {status}: {_experience_detail(e)}"
+
+
+def _experience_detail(e: Experience) -> str:
+    if e.feedback:
+        return e.feedback
+    r = e.result or {}
+    if r.get("error"):
+        return f"error={r['error']}"
+    at = r.get("action_type")
+    return f"action={at}" if at else ""
+
+
+def _experience_block(e: Experience) -> str:
+    """
+    🔒 §七：经历只能渲染成**材料**，不能渲染成指令。
+
+        渲染成 "You should…" / "You must…" / "Never…" 会把
+        经历伪装成规则 —— 有守卫测试扫这些词。
+    """
+    scope = _scope_label((e.scope or {}).get("world"),
+                         (e.scope or {}).get("domain"),
+                         (e.scope or {}).get("situation"))
+    status = "failed" if e.failed else "succeeded"
+    block = f"- [{e.source}] {status}"
+    detail = _experience_detail(e)
+    if detail:
+        block += f": {detail}"
+    if scope:
+        block += f"\n  Scope: {scope}"
+    return block
 
 
 def _scope_label(world: Optional[str], domain: Optional[str],
@@ -221,6 +287,9 @@ def _scope_label(world: Optional[str], domain: Optional[str],
 class CognitiveContextBuilder:
     """
     从**持久状态**构建**本轮**的 Cognitive Context。
+
+    §四 / §五：相关历史 Experience 也会被**选择性**检索进来
+    （Top-K，不是全部加载）。
 
     🔒 它只做 **Relevance Selection**，不做 Decision：
         · 它决定「哪些信息进入 Context」
@@ -235,12 +304,16 @@ class CognitiveContextBuilder:
         self,
         self_model: Optional[Any] = None,
         *,
+        experience_store: Optional[Any] = None,
         max_claims: int = 5,
         max_strategies: int = 5,
+        max_experiences: int = 5,
     ) -> None:
         self.self_model = self_model
+        self.experience_store = experience_store
         self.max_claims = max(0, int(max_claims))
         self.max_strategies = max(0, int(max_strategies))
+        self.max_experiences = max(0, int(max_experiences))
 
     def build(
         self,
@@ -265,6 +338,14 @@ class CognitiveContextBuilder:
         """
         claims: List[SelfClaim] = []
         strategies: List[Strategy] = []
+        experiences: List[Experience] = []
+
+        if self.experience_store is not None and agent_id:
+            # 🔒 检索是**选择**，不是「全部加载」（§五）
+            experiences = self.experience_store.retrieve_relevant(
+                agent_id, world=world, domain=domain, situation=situation,
+                limit=self.max_experiences,
+            )
 
         if self.self_model is not None and agent_id:
             view: SelfModelView = self.self_model.retrieve(
@@ -280,4 +361,5 @@ class CognitiveContextBuilder:
             identity=identity, constitution=constitution, drives=drives,
             current_stimulus=stimulus, current_task=task,
             self_claims=claims, strategies=strategies,
+            relevant_experiences=experiences,
         )

@@ -632,14 +632,23 @@ def build_runtime(
     # 🔒 依赖方向：main.py（组装）知道 SelfModelStore 在哪；
     #    Brain **不知道** —— 它只收到一个 context_builder + 一个默认 query。
     from cognition import CognitiveContextBuilder
+    from experience import ExperienceStore
+    from reflection import SelfModelWriteService
     from selfmodel import SelfModelStore
 
     self_model = SelfModelStore(economy.db)
+    experience_store = ExperienceStore(economy.db)
+    #: §二十：受控写入服务 —— Reflection proposal 的**唯一**落地通道
+    self_model_write_service = SelfModelWriteService(
+        self_model, experience_store=experience_store)
+
     ctx_cfg = config.get("cognition.context", {}) or {}
     context_builder = CognitiveContextBuilder(
         self_model,
+        experience_store=experience_store,      # §四：相关 Experience 进 Context
         max_claims=int(ctx_cfg.get("max_claims", 5)),
         max_strategies=int(ctx_cfg.get("max_strategies", 5)),
+        max_experiences=int(ctx_cfg.get("max_experiences", 5)),
     )
     #: Runtime 默认的检索情境。
     #: ⚠️ 现在 Runtime 还没有 World/Domain/Situation 的一等字段（§六：
@@ -667,6 +676,12 @@ def build_runtime(
             default_context_query=default_context_query,
         )
         agent.attach_brain(brain)
+        # §二十：生产路径 —— Agent 的 Cognitive Run 能检索 Experience，
+        # 并在决定反思时走受控写入。**两者都是注入的**。
+        agent.attach_self_model_services(
+            experience_store=experience_store,
+            write_service=self_model_write_service,
+        )
 
         # 把 Agent 接入通信层。
         # capabilities 直接取自配置里的技能标签 ——

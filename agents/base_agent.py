@@ -354,7 +354,7 @@ class BaseAgent:
         return response
 
     def act(self, messages=None, *, dispatcher=None, execute: bool = True,
-            **kwargs):
+            write_service=None, **kwargs):
         """
         跑一次 Cognition，**并在 Agent 决定时执行它的 Action**（Action Seam）。
 
@@ -366,8 +366,42 @@ class BaseAgent:
                         decision.kind == "reply"。
         """
         from actions.run import run_cognition
-        return run_cognition(self, messages, dispatcher=dispatcher,
-                             execute=execute, **kwargs)
+
+        if dispatcher is None:
+            dispatcher = getattr(self, "action_dispatcher", None)
+        if write_service is None:
+            write_service = getattr(self, "self_model_write_service", None)
+
+        run = run_cognition(self, messages, dispatcher=dispatcher,
+                            execute=execute, write_service=write_service,
+                            **kwargs)
+
+        # §五 / §二十三：ActionResult → Experience（**只记录，不解读**）
+        store = getattr(self, "experience_store", None)
+        if (store is not None and run.action_intent is not None
+                and run.action_result is not None):
+            try:
+                run_experience = store.record_action_result(
+                    self.agent_id if hasattr(self, "agent_id") else self.name,
+                    run.action_intent, run.action_result)
+                object.__setattr__(run, "experience", run_experience) \
+                    if hasattr(run, "__dataclass_fields__") else None
+            except Exception as exc:                      # noqa: BLE001
+                logger.warning("Experience 记录失败：%s", exc)
+
+        return run
+
+    def attach_self_model_services(self, *, experience_store=None,
+                                   write_service=None):
+        """
+        注入 Self Model 相关的生产服务（§二十）。
+
+        🔒 Agent 只拿到**两个已经组装好的服务**，
+           它不知道 SelfModelStore 在哪，也不直接碰数据库。
+        """
+        self.experience_store = experience_store
+        self.self_model_write_service = write_service
+        return self
 
     def think(self, prompt: str, **kwargs: Any) -> str:
         """

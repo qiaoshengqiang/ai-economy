@@ -41,6 +41,29 @@ CREATE INDEX IF NOT EXISTS idx_exp_agent
 """
 
 
+def _experience_compatible(scope: Any, ctx: Dict[str, Any]) -> bool:
+    """
+    硬兼容：**只**把 world / domain 的不一致当作排除理由。
+
+    🔒 与 selfmodel 的 Scope 同一条原则：「优先看到」不是「只看到」。
+       situation 不一致的经历仍然可被检索（只是排序靠后）。
+    """
+    scope = scope or {}
+    for key in ("world", "domain"):
+        want = ctx.get(key)
+        got = scope.get(key)
+        if want is None or got is None:
+            continue
+        if str(got).strip().lower() != str(want).strip().lower():
+            return False
+    return True
+
+
+def _neg(value: Any) -> str:
+    """时间倒序用的反转字符串。"""
+    return "".join(chr(0x10FFFF - ord(c)) for c in str(value or ""))
+
+
 class ExperienceError(Exception):
     """Experience 层面的错误。"""
 
@@ -143,6 +166,58 @@ class ExperienceStore:
             scope=scope,
             metadata={"intent_id": getattr(intent, "intent_id", "")},
         )
+
+    def retrieve_relevant(
+        self,
+        agent_id: str,
+        *,
+        world: Optional[str] = None,
+        domain: Optional[str] = None,
+        situation: Optional[str] = None,
+        source: Optional[str] = None,
+        limit: int = 5,
+    ) -> List[Experience]:
+        """
+        **选择**相关的历史经历（§四 / §五）。
+
+        🔒 它只负责：「哪些历史经历值得被 Agent 看到」。
+           它**不**负责：「这个经历是否应该导致 Strategy 修改」（§六）。
+
+           例如这里**没有**、也**不许有**：
+               if failure_count > 3: 触发 abandon_strategy
+           —— 那就是 Rule。
+
+        §二十五：**跨 Agent 隔离** —— 只返回 `agent_id` 自己的经历。
+        §二十六：Top-K 有限选择，**不**做 embedding / 摘要引擎。
+
+        排序：情境匹配度 → 时间倒序（近期优先）。
+        情境字段为空时不筛该维度（`world/domain/situation` 都可为 None）。
+        """
+        sql = f"SELECT * FROM {TABLE_EXPERIENCES} WHERE agent_id=?"
+        params: List[Any] = [agent_id]
+        if source:
+            sql += " AND source=?"
+            params.append(source)
+        rows = self.db.fetchall(sql, tuple(params))
+        items = [_row_to_experience(r) for r in rows]
+
+        ctx = {"world": world, "domain": domain, "situation": situation}
+        if any(v is not None for v in ctx.values()):
+            items = [e for e in items
+                     if _experience_compatible(e.scope, ctx)]
+
+        def relevance(e: Experience) -> int:
+            score = 0
+            for key, want in ctx.items():
+                got = (e.scope or {}).get(key)
+                if want is None or got is None:
+                    continue
+                if str(got).strip().lower() == str(want).strip().lower():
+                    score += 1
+            return score
+
+        items.sort(key=lambda e: (-relevance(e), _neg(e.created_at)))
+        return items[:max(0, int(limit))]
 
     def get(self, experience_id: str) -> Optional[Experience]:
         row = self.db.fetchone(

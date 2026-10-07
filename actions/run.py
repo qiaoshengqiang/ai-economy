@@ -38,6 +38,9 @@ from actions.intent import (
     new_decision_id,
 )
 from actions.parse import decision_from_text
+from core.logging_setup import get_logger
+
+logger = get_logger(__name__)
 
 
 def run_cognition(
@@ -46,6 +49,7 @@ def run_cognition(
     *,
     dispatcher: Optional[ActionDispatcher] = None,
     execute: bool = True,
+    write_service: Optional[Any] = None,
     **generate_kwargs: Any,
 ) -> CognitiveRunResult:
     """
@@ -57,6 +61,9 @@ def run_cognition(
         dispatcher    执行器路由。**不传就只产生 Intent 不执行** ——
                       这样调用方可以只观察 Agent 想做什么。
         execute       False 表示「只形成 Decision，不执行」
+        write_service SelfModelWriteService。传了才会把 Agent 提出的
+                      Reflection Proposal 走**受控写入**。
+                      🔒 不传 = 只观察 Agent 想改什么，不落库。
 
     返回：CognitiveRunResult（含 decision / intent / result）
     """
@@ -68,19 +75,46 @@ def run_cognition(
     # 🔒 只认显式信封。没有信封 → 普通回复，不产生 Action。
     decision = decision_from_text(agent_id, content)
 
-    if not (execute and decision.is_action and dispatcher is not None):
-        return CognitiveRunResult(
-            decision=decision,
-            action_intent=decision.intent,
-            action_result=None,
-        )
+    # --- Action（可选）------------------------------------------------
+    result: Optional[ActionResult] = None
+    if execute and decision.is_action and dispatcher is not None:
+        result = dispatcher.dispatch(decision.intent)
 
-    result: ActionResult = dispatcher.dispatch(decision.intent)
+    # --- Reflection（§十：**可选**，0..N 个）---------------------------
+    proposals = _reflections_of(agent_id, response)
+    outcomes = []
+    if proposals and write_service is not None:
+        for p in proposals:
+            try:
+                outcomes.append(write_service.apply(p))
+            except Exception as exc:                      # noqa: BLE001
+                # §十七：Reflection 写入失败**不能**破坏主要 Cognition
+                logger.error("Reflection 写入异常 %s: %s", p.kind, exc)
+                outcomes.append(None)
+
     return CognitiveRunResult(
         decision=decision,
         action_intent=decision.intent,
         action_result=result,
+        reflection_proposals=proposals,
+        write_outcomes=outcomes,
     )
+
+
+def _reflections_of(agent_id: str, response: Any) -> list:
+    """
+    §十：**0..N** 个 Proposal。没有就是空列表 —— **绝不自动补**。
+
+    🔒 这里只解析 LLM 的输出结构；「要不要反思」由 Agent 决定。
+    """
+    from actions.parse import extract_envelope
+    from reflection.parse import parse_reflections
+
+    content = getattr(response, "content", None)
+    envelope = extract_envelope(content)
+    if envelope is None:
+        return []
+    return parse_reflections(agent_id, envelope)
 
 
 def reply_decision(agent_id: str, text: str) -> Decision:
