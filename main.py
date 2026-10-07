@@ -349,6 +349,21 @@ def _wire_task_handlers(
     )
 
 
+def _sum_llm_cost(db, where: str, params: tuple) -> float:
+    """
+    只在 `llm_calls` 上求和 —— **不新增第二套账本**（§十一）。
+
+    🔒 `llm_calls` 是 LLMCallRecorder 的真实记录，`cost_ai` 是
+       CostCalculator 算出来的。这里只是把它按不同维度聚合一次，
+       没有重新计算任何价格、没有另开一张表。
+    """
+    row = db.fetchone(
+        f"SELECT COALESCE(SUM(cost_ai), 0) AS c FROM llm_calls WHERE {where}",
+        params,
+    )
+    return float(row["c"]) if row is not None else 0.0
+
+
 def build_participant_checker(task_store: TaskStore):
     """
     造一个 `is_participant(workspace_id, agent_id) -> bool` 回调。
@@ -632,6 +647,7 @@ def build_runtime(
     # 🔒 依赖方向：main.py（组装）知道 SelfModelStore 在哪；
     #    Brain **不知道** —— 它只收到一个 context_builder + 一个默认 query。
     from cognition import CognitiveContextBuilder
+    from cognition.economic import EconomicContextBuilder
     from experience import ExperienceStore
     from reflection import SelfModelWriteService
     from selfmodel import SelfModelStore
@@ -643,9 +659,46 @@ def build_runtime(
         self_model, experience_store=experience_store)
 
     ctx_cfg = config.get("cognition.context", {}) or {}
+
+    # ---- 🔴 Economy Awareness V1：经济事实进入 Cognitive Context ----
+    #
+    # 【依赖方向：这里注入的是「取值函数」，不是 Ledger 对象】
+    #
+    #     Ledger / Economy
+    #           ↓  三个**只读**回调
+    #     cognition.EconomicContextBuilder
+    #           ↓
+    #     CognitiveContext.economic_context
+    #           ↓
+    #     LLM
+    #
+    # 🔒 `cognition/` 因此**不 import** `core/ledger.py` /
+    #    `core/economy.py` —— 认知层结构上拿不到账本，只能拿到值。
+    #    这与 WorkspaceGateway 收注入的 `is_participant` 是同一种手法。
+    #
+    # 🔒 **每次 build 都重新问 Ledger**（§十）——
+    #    绝不在 Agent 初始化时把余额写死成 100。
+    economic_builder = EconomicContextBuilder(
+        balance_of=lambda aid: economy.ledger.balance_of(aid, economy.currency),
+        #: §十一：任务维度成本**当前不可靠** ——
+        #:    `llm_calls.task_id` 这一列存在，但真实生产路径
+        #:    （`Brain.generate`）从来没有把 task_id 传进来，
+        #:    所以实际数据里它恒为 NULL。这里如实实现「查得到就给，
+        #:    查不到就 None」，**不伪造一个 0**。
+        cost_of_task=lambda tid: _sum_llm_cost(economy.db, "task_id = ?", (tid,)),
+        #: §十一：会话维度成本由「起点时刻」派生 ——
+        #:    「会话」这个概念住在 Runtime（`stage/limit.py`），
+        #:    core 不知道它。所以这里只提供「某个时刻之后花了多少」，
+        #:    起点由调用方（Runtime / 实验脚本）负责传。
+        cost_since=lambda aid, since: _sum_llm_cost(
+            economy.db, "agent_id = ? AND created_at >= ?", (aid, since)),
+        currency=economy.currency,
+    )
+
     context_builder = CognitiveContextBuilder(
         self_model,
         experience_store=experience_store,      # §四：相关 Experience 进 Context
+        economic_builder=economic_builder,      # §七：经济事实（只读）
         max_claims=int(ctx_cfg.get("max_claims", 5)),
         max_strategies=int(ctx_cfg.get("max_strategies", 5)),
         max_experiences=int(ctx_cfg.get("max_experiences", 5)),

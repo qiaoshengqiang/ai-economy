@@ -132,13 +132,35 @@ class TestDefaultRuntimeWiring:
         assert "FICTION_ONLY" not in (prov.seen[-1]["system"] or "")
 
     def test_no_self_model_still_works(self, runtime):
-        """§十一 场景 C：没有任何 Self Model 也必须正常调用。"""
+        """
+        §十一 场景 C：没有任何 Self Model 也必须正常调用。
+
+        🔴 **前提迁移（Economy Awareness V1）**：本测试原断言
+           「空上下文 → 不注入任何东西」(`"Context about myself" not in system`)。
+
+        那个前提**过期了** —— Context 不再为空：**经济事实**现在总是在里面
+        （余额来自 Ledger，与有没有 Self Model 无关）。
+
+        所以迁移为断言**原本真正想保证的事**：
+            没有 Self Model → 没有任何 Self Model 内容被注入，调用照常发生。
+        另外钉住新行为：经济事实**确实**出现了 ——
+        它不该因为「没有 Self Model」而消失。
+        """
         ag, prov = _capture(runtime)
         resp = ag.generate(messages="hi")
         assert resp is not None
         assert prov.seen, "没有 Self Model 时 LLM 调用没发出去"
-        # 空上下文 → 不注入任何东西
-        assert "Context about myself" not in (prov.seen[-1]["system"] or "")
+
+        system = prov.seen[-1]["system"] or ""
+
+        # ① 没有 Self Model 内容（原意）
+        assert "Relevant beliefs I currently hold about myself" not in system
+        assert "Relevant strategies I currently hold" not in system
+
+        # ② 经济事实仍然在（新行为）
+        stats = ag.brain.last_context_stats or {}
+        assert stats.get("economic_context_present") is True
+        assert "Economic context:" in system
 
     def test_cognitive_false_skips_context(self, runtime):
         """§十五：内部 LLM utility 可以显式关闭认知上下文。"""

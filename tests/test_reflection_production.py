@@ -222,7 +222,8 @@ class TestReflectionIsOptional:
     def test_zero_to_n_supported(self):
         env = {"reflections": [
             {"kind": KIND_ABANDON_STRATEGY, "target": "s1", "evidence": ["e1"]},
-            {"kind": KIND_CREATE_STRATEGY, "proposed_change": {"name": "B"},
+            {"kind": KIND_CREATE_STRATEGY,
+             "proposed_change": {"name": "B", "fact_domain": "self"},
              "evidence": ["e1"]},
         ]}
         assert len(parse_reflections("agent_a", env)) == 2
@@ -328,7 +329,7 @@ class TestEndToEndProduction:
                  "reason": "两次返工", "evidence": [exp_id],
                  "scope": {"domain": "fiction"}},
                 {"kind": KIND_CREATE_STRATEGY,
-                 "proposed_change": {"name": "ACTION_B",
+                 "proposed_change": {"name": "ACTION_B", "fact_domain": "self",
                                      "rationale": "先定核心冲突",
                                      "confidence": 0.7},
                  "reason": "返工教训", "evidence": [exp_id],
@@ -372,7 +373,7 @@ class TestEndToEndProduction:
         env_json = json.dumps({
             "decision": "act", "action": {"type": "draft", "parameters": {}},
             "reflections": [{"kind": KIND_CREATE_STRATEGY,
-                             "proposed_change": {"name": "新策略"},
+                             "proposed_change": {"name": "新策略", "fact_domain": "self"},
                              "evidence": [e.experience_id]}]})
         agent, _ = _agent([env_json], sm, ex, svc)
         ex_exec = RecordingExecutor()
@@ -389,7 +390,7 @@ class TestEndToEndProduction:
         env_json = json.dumps({
             "decision": "reply",
             "reflections": [{"kind": KIND_CREATE_STRATEGY,
-                             "proposed_change": {"name": "只有反思"},
+                             "proposed_change": {"name": "只有反思", "fact_domain": "self"},
                              "evidence": [e.experience_id]}]})
         agent, _ = _agent([env_json], sm, ex, svc)
         run = agent.act(messages="x", dispatcher=ActionDispatcher([]))
@@ -402,7 +403,7 @@ class TestEndToEndProduction:
         env_json = json.dumps({
             "decision": "act", "action": {"type": "draft", "parameters": {}},
             "reflections": [{"kind": KIND_CREATE_STRATEGY,
-                             "proposed_change": {"name": "X"},
+                             "proposed_change": {"name": "X", "fact_domain": "self"},
                              "evidence": ["exp_does_not_exist"]}]})
         agent, _ = _agent([env_json], sm, ex, svc)
         ex_exec = RecordingExecutor()

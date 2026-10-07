@@ -111,6 +111,24 @@ class CognitiveContext:
     #:    内容如：Stage Goal · Status · Deliverables · 当前 Checkpoint ·
     #:    Hard runtime limit · 本次 Session 已用时间。
     current_stage: Optional[str] = None
+    #: 🔴 Economy Awareness V1：**当前可观察到的经济事实**。
+    #:
+    #: 【它与 Self Model 的关系 —— 这是本轮最重要的一条边界】
+    #:
+    #:     Ledger / Economy  →  经济**事实**        →  EconomicContext
+    #:     Self Model        →  Agent 对自己的**信念** →  self_claims / strategies
+    #:
+    #:     ❌ Self Model **不许**成为余额、Ledger、Capability、
+    #:        Authorization、Identity 的第二来源
+    #:        （由 selfmodel/fact_domains.py + SelfModelWriteService 强制）
+    #:
+    #:     ✅ 但 Self Model **可以**有经济内容 —— 只要它是关于
+    #:        「我自己过去怎么花钱 / 我倾向怎么做」的判断，
+    #:        而不是「我的余额是 43」这种系统事实的副本。
+    #:
+    #: 🔒 它是**快照**：每次 build 重新从 Ledger 取值（§十），
+    #:    绝不在 Agent 初始化时写死。
+    economic_context: Optional[Any] = None
     self_claims: List[SelfClaim] = field(default_factory=list)
     strategies: List[Strategy] = field(default_factory=list)
     #: §七 / §八：相关历史经历。
@@ -136,6 +154,20 @@ class CognitiveContext:
         add("stimulus", self.current_stimulus, 1.0)
         add("task", self.current_task, 0.95)
         add("stage", self.current_stage, 0.95)
+
+        # §七 / §九：经济事实作为一个**独立来源块**。
+        # 🔒 priority 高 —— 它是当前状态，不是历史回忆。
+        if self.economic_context is not None:
+            lines = self.economic_context.to_lines()
+            if lines:
+                out.append(ContextSource(
+                    source="economic_context",
+                    content="\n".join(lines),
+                    priority=0.9,
+                    metadata={"as_of": getattr(self.economic_context,
+                                               "as_of", ""),
+                              "source": "Ledger"},
+                ))
 
         for c in self.self_claims:
             out.append(ContextSource(
@@ -184,6 +216,12 @@ class CognitiveContext:
             "stimulus_present": bool(self.current_stimulus),
             "identity_present": bool(self.identity),
             "stage_present": bool(self.current_stage),
+            # 🔴 Economy Awareness：本轮 Context 里**有没有**经济事实。
+            #    这是「Agent 看到了经济事实」这一层的可观测证据 ——
+            #    与「它理解了」/「它因此改变了行为」是两件不同的事。
+            "economic_context_present": self.economic_context is not None,
+            "economic_fields_unavailable": list(getattr(
+                self.economic_context, "unavailable", ()) or ()),
             "total_sources": len(self.sources()),
         }
 
@@ -214,6 +252,17 @@ class CognitiveContext:
             parts.append(f"Current task:\n{self.current_task}")
         if self.current_stage:
             parts.append(f"Current stage:\n{self.current_stage}")
+
+        # 🔴 Economy Awareness V1（§九）：
+        #    经济事实作为**独立一段**渲染，语气与其它段一致 ——
+        #    只陈述事实，不给指令。
+        #    渲染内容由 `EconomicContext.to_lines()` 负责，
+        #    本函数不参与措辞 —— 所以「不许写指令」这条纪律
+        #    只需要在一个地方守住。
+        if self.economic_context is not None:
+            eco = self.economic_context.to_lines()
+            if eco:
+                parts.append("\n".join(eco))
 
         if self.self_claims:
             lines = ["Relevant beliefs I currently hold about myself:"]
@@ -335,12 +384,19 @@ class CognitiveContextBuilder:
         self_model: Optional[Any] = None,
         *,
         experience_store: Optional[Any] = None,
+        economic_builder: Optional[Any] = None,
         max_claims: int = 5,
         max_strategies: int = 5,
         max_experiences: int = 5,
     ) -> None:
         self.self_model = self_model
         self.experience_store = experience_store
+        #: 🔴 Economy Awareness V1：经济事实的**只读**取值器。
+        #:
+        #: 🔒 依赖方向：它由**组合根**注入，`cognition/` 因此
+        #:    **不 import** `core/ledger.py` / `core/economy.py` ——
+        #:    认知层结构上拿不到账本，只能拿到值。
+        self.economic_builder = economic_builder
         self.max_claims = max(0, int(max_claims))
         self.max_strategies = max(0, int(max_strategies))
         self.max_experiences = max(0, int(max_experiences))
@@ -358,6 +414,8 @@ class CognitiveContextBuilder:
         constitution: Optional[str] = None,
         drives: Optional[str] = None,
         min_confidence: Optional[float] = None,
+        task_id: Optional[str] = None,
+        session_started_at: Optional[str] = None,
     ) -> CognitiveContext:
         """
         构建本轮的上下文。
@@ -365,6 +423,11 @@ class CognitiveContextBuilder:
         §十四：**没有相关 Self Model 时也必须正常返回**
               （只是 `self_claims` / `strategies` 为空）——
               Cognitive Context 是**增量增强**，不是绝对依赖。
+
+        🔴 Economy Awareness V1（§十）：`task_id` / `session_started_at`
+           只影响**经济快照的粒度**，都是可选参数 ——
+           不传时余额仍然照常取（那是最重要的那个事实）。
+           向后兼容：老调用方一个参数都不用改。
         """
         claims: List[SelfClaim] = []
         strategies: List[Strategy] = []
@@ -387,9 +450,22 @@ class CognitiveContextBuilder:
             claims = list(view.claims)
             strategies = list(view.strategies)
 
+        # 🔴 经济事实**每次重新取**（§十：动态事实，绝不写死）
+        economic = None
+        if self.economic_builder is not None and agent_id:
+            try:
+                economic = self.economic_builder.build(
+                    agent_id, task_id=task_id,
+                    session_started_at=session_started_at)
+            except Exception:                                 # noqa: BLE001
+                # 🔒 经济事实取不到**不能**让整次 Cognition 崩掉 ——
+                #    但也不许伪造一个余额。所以就是 None（缺这一段）。
+                economic = None
+
         return CognitiveContext(
             identity=identity, constitution=constitution, drives=drives,
             current_stimulus=stimulus, current_task=task,
+            economic_context=economic,
             self_claims=claims, strategies=strategies,
             relevant_experiences=experiences,
         )

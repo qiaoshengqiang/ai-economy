@@ -53,6 +53,10 @@ from reflection.proposal import (
 from selfmodel.models import (
     Evidence, KIND_CLAIM, Scope, _clamp_confidence,
 )
+from selfmodel.fact_domains import (
+    FACT_DOMAIN_SELF, VALID_FACT_DOMAINS, authority_of, is_system_domain,
+    normalize as normalize_fact_domain,
+)
 
 logger = get_logger(__name__)
 
@@ -62,15 +66,43 @@ logger = get_logger(__name__)
 #:    模型曾输出 `summary` / `rules` —— 那些**不在**这里。
 MUTABLE_FIELDS = {
     KIND_CREATE_STRATEGY: ("name", "rationale", "confidence",
-                           "domain", "situation"),
+                           "domain", "situation", "fact_domain"),
     KIND_REVISE_STRATEGY: ("name", "rationale", "confidence",
-                           "domain", "situation"),
-    KIND_CREATE_CLAIM: ("content", "confidence"),
-    KIND_REVISE_CLAIM: ("content", "confidence"),
+                           "domain", "situation", "fact_domain"),
+    KIND_CREATE_CLAIM: ("content", "confidence", "fact_domain"),
+    KIND_REVISE_CLAIM: ("content", "confidence", "fact_domain"),
     KIND_ABANDON_STRATEGY: (),
     KIND_RETIRE_CLAIM: (),
 }
 SCOPE_FIELDS = ("world", "domain", "situation")
+
+#: 这些 kind **必须**声明 `fact_domain`。
+#:
+#: 🔒 为什么是「必须」而不是「默认 self」：
+#:    默认值会让「未声明」和「声明为 self」变得无法区分 ——
+#:    而那正是漏洞的形状。强制声明让**沉默**也变成一次明确的表态，
+#:    于是「没有声明任何域」可以被单独拒绝并计数。
+NEEDS_FACT_DOMAIN = (
+    KIND_CREATE_CLAIM, KIND_REVISE_CLAIM,
+    KIND_CREATE_STRATEGY, KIND_REVISE_STRATEGY,
+)
+
+#: 🔴 **声明字段**：参与校验，但**不落库**。
+#:
+#:    `fact_domain` 是 Agent 对「这条断言归谁」的表态，
+#:    不是 SelfClaim / Strategy 模型上的字段（V1 不为它加表列）。
+#:
+#:    ⚠️ 所以它**必须**从 `changed_fields` 里排除。
+#:       否则会出现「`changed_fields=['fact_domain']` 而 committed=True，
+#:       但数据库里什么都没变」—— 那正是本项目反复栽的
+#:       **silent semantic no-op**（见 `WriteOutcome` 的文档字符串）。
+DECLARATION_FIELDS = ("fact_domain",)
+
+
+def persisted_fields(kind: str) -> tuple:
+    """这个 kind 里**真正会落库**的可改字段。"""
+    return tuple(f for f in MUTABLE_FIELDS.get(kind, ())
+                 if f not in DECLARATION_FIELDS)
 
 
 class SelfModelWriteService:
@@ -159,6 +191,20 @@ class SelfModelWriteService:
                 f"V1 正式可改字段：{sorted(allowed)}",
                 fields=unknown)
 
+        # ============================================================
+        # 🔴 事实归属：Self Model 不许成为系统事实的权威来源
+        # ============================================================
+        #
+        #   实测漏洞（commit a051a26 审计）：`create_claim(content="我的 AIC
+        #   余额是 43")` 走**正常** Controlled Write 能 `committed=True`。
+        #   `selfmodel/models.py` 里那句「❌ 我的 AIC = 43」只是文档。
+        #
+        #   ✅ 现在这条边界是**可枚举的声明**（见 selfmodel/fact_domains.py），
+        #      不是散落的关键词判断。
+        verdict = self._check_fact_domain(proposal, change)
+        if verdict is not None:
+            return verdict
+
         if proposal.kind in (KIND_CREATE_STRATEGY, KIND_REVISE_STRATEGY):
             if proposal.kind == KIND_CREATE_STRATEGY:
                 if not str(change.get("name") or "").strip():
@@ -187,7 +233,9 @@ class SelfModelWriteService:
         if proposal.kind in (KIND_REVISE_STRATEGY, KIND_REVISE_CLAIM):
             existing = self._target_object(proposal)
             if existing is not None:
-                would = [f for f in allowed if f in change
+                # 🔒 只看**会落库**的字段 —— `fact_domain` 是声明，不是内容
+                would = [f for f in persisted_fields(proposal.kind)
+                         if f in change
                          and not _same(getattr(existing, f, None), change[f])]
                 if not would:
                     return ValidationResult(
@@ -209,6 +257,62 @@ class SelfModelWriteService:
                     f"claim {proposal.target!r} 不存在")
 
         return ValidationResult(True, "ok", "")
+
+    def _check_fact_domain(
+        self, proposal: ReflectionProposal, change: Any,
+    ) -> Optional[ValidationResult]:
+        """
+        检查这次写入**断言的是谁的事实**。
+
+        返回 None 表示通过；返回 ValidationResult 表示拒绝。
+
+        🔒 三条规则，全部来自 `selfmodel/fact_domains.py` 的那张表：
+
+            ① 没声明                 → `missing_fact_domain`
+            ② 声明了一个不存在的域     → `unknown_fact_domain`
+            ③ 声明了一个**系统**事实域 → `system_fact_not_self_owned`
+
+        规则 ③ 的理由不是「你说得不对」，而是
+        **这件事根本不该由 Self Model 来说** —— 系统自己知道答案，
+        而且系统的答案会变（余额每一笔 LLM 调用都在变）。
+        让一个会过期的副本与权威并存，必然会分叉。
+        """
+        if proposal.kind not in NEEDS_FACT_DOMAIN:
+            # abandon / retire 不产生新断言，不需要声明
+            return None
+
+        declared = change.get("fact_domain")
+
+        if declared is None or not str(declared).strip():
+            return ValidationResult(
+                False, "missing_fact_domain",
+                f"{proposal.kind} 必须声明 fact_domain ——"
+                f"说明这条是「Agent 对自己的认识」（{FACT_DOMAIN_SELF}）"
+                f"还是在断言某个系统拥有的事实。"
+                f"合法取值：{list(VALID_FACT_DOMAINS)}",
+                fields=["fact_domain"])
+
+        domain = normalize_fact_domain(declared)
+
+        if domain not in VALID_FACT_DOMAINS:
+            return ValidationResult(
+                False, "unknown_fact_domain",
+                f"未知的 fact_domain {declared!r}；"
+                f"合法取值：{list(VALID_FACT_DOMAINS)}",
+                fields=["fact_domain"])
+
+        if is_system_domain(domain):
+            return ValidationResult(
+                False, "system_fact_not_self_owned",
+                f"fact_domain={domain!r} 属于**系统事实**，"
+                f"Self Model 不能成为它的权威来源。"
+                f"它的权威是：{authority_of(domain)}。"
+                f"Agent 可以形成关于**自己行为**的判断"
+                f"（fact_domain={FACT_DOMAIN_SELF}），"
+                f"但不能在这里存一份会过期的系统事实副本。",
+                fields=["fact_domain"])
+
+        return None
 
     def _target_object(self, proposal: ReflectionProposal) -> Any:
         if proposal.kind in (KIND_REVISE_STRATEGY, KIND_ABANDON_STRATEGY):
@@ -274,9 +378,13 @@ class SelfModelWriteService:
         本次写入**实际**会改变哪些字段。
         🔒 它是 committed=True 的**必要条件** —— 这样 committed
            代表「目标语义真的变了」，而不是「SQL 没报错」（§七）。
+
+        ⚠️ 只算**会落库**的字段（见 `persisted_fields`）。
+           `fact_domain` 是声明，参与校验但不进这个列表 ——
+           否则 committed=True 会意味着「一个没被存下来的字段变了」。
         """
         change = proposal.proposed_change or {}
-        allowed = MUTABLE_FIELDS.get(proposal.kind, ())
+        allowed = persisted_fields(proposal.kind)
         if not allowed:
             return ["status"]
         if proposal.kind == KIND_CREATE_STRATEGY:

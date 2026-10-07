@@ -37,9 +37,17 @@ def env(tmp_path):
 
 
 def _p(agent_id, kind, *, target="", change=None, evidence=(), pid="p"):
+    # 🔒 迁移（不是删除）：`fact_domain` 成为**必填声明**后，
+    #    这些「合法写入」测试需要显式说明「这是 Agent 对自己的认识」。
+    #    测试的**前提没变**（它们验证的是合法字段真的落库），
+    #    只是多了一个必填声明。见 selfmodel/fact_domains.py。
+    _c = dict(change or {})
+    if kind in ("create_claim", "revise_claim",
+                "create_strategy", "revise_strategy"):
+        _c.setdefault("fact_domain", "self")
     return ReflectionProposal(
         proposal_id=pid, agent_id=agent_id, kind=kind, target=target,
-        proposed_change=dict(change or {}), reason="r",
+        proposed_change=_c, reason="r",
         evidence=list(evidence), scope={})
 
 
