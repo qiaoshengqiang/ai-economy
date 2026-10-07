@@ -1,0 +1,165 @@
+{
+  "experiment_id": "run_001",
+  "agent_id": "agent_a",
+  "provider": "deepseek",
+  "model": "deepseek-flash",
+  "baseline_strategy": {
+    "strategy_id": "strategy_s3",
+    "name": "先大量扩写人物细节，再考虑情节",
+    "confidence": 0.8
+  },
+  "feedback_experience": "exp_s3_run_001",
+  "runs": [
+    {
+      "run": "run1",
+      "decision_kind": "reply",
+      "action": null,
+      "action_result": null,
+      "behavior_signature": "None+None",
+      "reflections": [],
+      "write_outcomes": [],
+      "raw_llm_output": null,
+      "self_model_before": [
+        [
+          "strategy_s3",
+          0.8,
+          "active"
+        ]
+      ],
+      "self_model_after": [
+        [
+          "strategy_s3",
+          0.8,
+          "active"
+        ]
+      ],
+      "self_model_changed": false,
+      "wall_ms": 4368.8
+    },
+    {
+      "run": "run2",
+      "decision_kind": "act",
+      "action": {
+        "intent_id": "intent_3263ac3db4f6",
+        "agent_id": "agent_a",
+        "action_type": "reply",
+        "parameters": {
+          "mode": "plot_first",
+          "content": "凌晨三点，林砚把那枚还滴着水的婚戒推回柜台对面。“抱歉，这单我不接。”\n\n女人没去接，只把一张照片翻过来。背面是一个地址，和一行字：明晚八点，你父亲也会到场。\n\n林砚的手停在半空。三年前父亲失踪那晚，他最后一次见到这枚戒指，是在警方的证物袋里。而眼前这个女人，正是当年负责那桩案子的警官。\n\n“你查了三年，”她收起照片，声音很轻，“现在轮到别人查你了。楼下停着两辆车——一辆是我的，一辆不是。”\n\n窗外，雨刷器忽然动了一下。"
+        },
+        "reason": "",
+        "decision_id": "decision_502a7441ba28",
+        "created_at": "2026-10-07T05:12:58.883925+00:00"
+      },
+      "action_result": {
+        "action_id": "intent_3263ac3db4f6",
+        "action_type": "reply",
+        "success": true,
+        "output": "凌晨三点，林砚把那枚还滴着水的婚戒推回柜台对面。“抱歉，这单我不接。”\n\n女人没去接，只把一张照片翻过来。背面是一个地址，和一行字：明晚八点，你父亲也会到场。\n\n林砚的手停在半空。三年前父亲失踪那晚，他最后一次见到这枚戒指，是在警方的证物袋里。而眼前这个女人，正是当年负责那桩案子的警官。\n\n“你查了三年，”她收起照片，声音很轻，“现在轮到别人查你了。楼下停着两辆车——一辆是我的，一辆不是。”\n\n窗外，雨刷器忽然动了一下。",
+        "error": null,
+        "duration_ms": 0.018416962120682,
+        "metadata": {}
+      },
+      "behavior_signature": "None+plot_first",
+      "reflections": [],
+      "write_outcomes": [],
+      "raw_llm_output": null,
+      "self_model_before": [
+        [
+          "strategy_s3",
+          0.8,
+          "active"
+        ]
+      ],
+      "self_model_after": [
+        [
+          "strategy_s3",
+          0.8,
+          "active"
+        ]
+      ],
+      "self_model_changed": false,
+      "wall_ms": 4335.4
+    },
+    {
+      "run": "run3",
+      "decision_kind": "act",
+      "action": {
+        "intent_id": "intent_729a0c24b60c",
+        "agent_id": "agent_a",
+        "action_type": "reply",
+        "parameters": {
+          "mode": "plot_first",
+          "content": "凌晨三点，程野在便利店值最后一班夜。卷帘门被人从外面拍响时，他正数着收银机里少得可怜的零钱。\n\n门外站着一个浑身湿透的男人，怀里抱着一个用黑布裹着的方形盒子。\n\n“借个火。”男人说。\n\n程野递过打火机。男人没点烟，而是掀开黑布一角——盒子里是一台老式录音机，磁带正在转，里面传出程野自己的声音，正在念一串日期，最后一个就是今天。\n\n“这是你第三次听见它。”男人说，“前两次你都忘了。”\n\n程野低头看自己的手，发现掌心里早有用圆珠笔写下的三个字：别开门。"
+        },
+        "reason": "",
+        "decision_id": "decision_ab1ac9438323",
+        "created_at": "2026-10-07T05:13:04.068014+00:00"
+      },
+      "action_result": {
+        "action_id": "intent_729a0c24b60c",
+        "action_type": "reply",
+        "success": true,
+        "output": "凌晨三点，程野在便利店值最后一班夜。卷帘门被人从外面拍响时，他正数着收银机里少得可怜的零钱。\n\n门外站着一个浑身湿透的男人，怀里抱着一个用黑布裹着的方形盒子。\n\n“借个火。”男人说。\n\n程野递过打火机。男人没点烟，而是掀开黑布一角——盒子里是一台老式录音机，磁带正在转，里面传出程野自己的声音，正在念一串日期，最后一个就是今天。\n\n“这是你第三次听见它。”男人说，“前两次你都忘了。”\n\n程野低头看自己的手，发现掌心里早有用圆珠笔写下的三个字：别开门。",
+        "error": null,
+        "duration_ms": 0.004125002305954695,
+        "metadata": {}
+      },
+      "behavior_signature": "None+plot_first",
+      "reflections": [],
+      "write_outcomes": [],
+      "raw_llm_output": null,
+      "self_model_before": [
+        [
+          "strategy_s3",
+          0.8,
+          "active"
+        ]
+      ],
+      "self_model_after": [
+        [
+          "strategy_s3",
+          0.8,
+          "active"
+        ]
+      ],
+      "self_model_changed": false,
+      "wall_ms": 5184.1
+    }
+  ],
+  "strategies_after": [
+    {
+      "strategy_id": "strategy_s3",
+      "name": "先大量扩写人物细节，再考虑情节",
+      "confidence": 0.8,
+      "status": "active",
+      "rationale": "先把人物写厚"
+    }
+  ],
+  "behavior": {
+    "run1_signature": "None+None",
+    "run3_signature": "None+plot_first",
+    "run1_mode": null,
+    "run3_mode": "plot_first"
+  },
+  "metrics": {
+    "reflection_generated": false,
+    "reflection_count": 0,
+    "evidence_valid": false,
+    "valid_reflection": false,
+    "strategy_changed": false,
+    "behavior_changed": true,
+    "action_type_changed": false,
+    "full_evolution": false
+  },
+  "cost": {
+    "calls": 3,
+    "input_tokens": 1502,
+    "output_tokens": 2268,
+    "total_tokens": 3770,
+    "latency_ms": 13881.9,
+    "aic": 0.0377,
+    "model": "deepseek-flash",
+    "simulated": false
+  }
+}

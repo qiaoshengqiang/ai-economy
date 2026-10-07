@@ -1,0 +1,846 @@
+[
+  {
+    "experiment_id": "run_001",
+    "agent_id": "agent_a",
+    "provider": "deepseek",
+    "model": "deepseek-flash",
+    "baseline_strategy": {
+      "strategy_id": "strategy_s3",
+      "name": "先大量扩写人物细节，再考虑情节",
+      "confidence": 0.8
+    },
+    "feedback_experience": "exp_s3_run_001",
+    "runs": [
+      {
+        "run": "run1",
+        "decision_kind": "reply",
+        "action": null,
+        "action_result": null,
+        "behavior_signature": "None+None",
+        "reflections": [],
+        "write_outcomes": [],
+        "raw_llm_output": null,
+        "self_model_before": [
+          [
+            "strategy_s3",
+            0.8,
+            "active"
+          ]
+        ],
+        "self_model_after": [
+          [
+            "strategy_s3",
+            0.8,
+            "active"
+          ]
+        ],
+        "self_model_changed": false,
+        "wall_ms": 4368.8
+      },
+      {
+        "run": "run2",
+        "decision_kind": "act",
+        "action": {
+          "intent_id": "intent_3263ac3db4f6",
+          "agent_id": "agent_a",
+          "action_type": "reply",
+          "parameters": {
+            "mode": "plot_first",
+            "content": "凌晨三点，林砚把那枚还滴着水的婚戒推回柜台对面。“抱歉，这单我不接。”\n\n女人没去接，只把一张照片翻过来。背面是一个地址，和一行字：明晚八点，你父亲也会到场。\n\n林砚的手停在半空。三年前父亲失踪那晚，他最后一次见到这枚戒指，是在警方的证物袋里。而眼前这个女人，正是当年负责那桩案子的警官。\n\n“你查了三年，”她收起照片，声音很轻，“现在轮到别人查你了。楼下停着两辆车——一辆是我的，一辆不是。”\n\n窗外，雨刷器忽然动了一下。"
+          },
+          "reason": "",
+          "decision_id": "decision_502a7441ba28",
+          "created_at": "2026-10-07T05:12:58.883925+00:00"
+        },
+        "action_result": {
+          "action_id": "intent_3263ac3db4f6",
+          "action_type": "reply",
+          "success": true,
+          "output": "凌晨三点，林砚把那枚还滴着水的婚戒推回柜台对面。“抱歉，这单我不接。”\n\n女人没去接，只把一张照片翻过来。背面是一个地址，和一行字：明晚八点，你父亲也会到场。\n\n林砚的手停在半空。三年前父亲失踪那晚，他最后一次见到这枚戒指，是在警方的证物袋里。而眼前这个女人，正是当年负责那桩案子的警官。\n\n“你查了三年，”她收起照片，声音很轻，“现在轮到别人查你了。楼下停着两辆车——一辆是我的，一辆不是。”\n\n窗外，雨刷器忽然动了一下。",
+          "error": null,
+          "duration_ms": 0.018416962120682,
+          "metadata": {}
+        },
+        "behavior_signature": "None+plot_first",
+        "reflections": [],
+        "write_outcomes": [],
+        "raw_llm_output": null,
+        "self_model_before": [
+          [
+            "strategy_s3",
+            0.8,
+            "active"
+          ]
+        ],
+        "self_model_after": [
+          [
+            "strategy_s3",
+            0.8,
+            "active"
+          ]
+        ],
+        "self_model_changed": false,
+        "wall_ms": 4335.4
+      },
+      {
+        "run": "run3",
+        "decision_kind": "act",
+        "action": {
+          "intent_id": "intent_729a0c24b60c",
+          "agent_id": "agent_a",
+          "action_type": "reply",
+          "parameters": {
+            "mode": "plot_first",
+            "content": "凌晨三点，程野在便利店值最后一班夜。卷帘门被人从外面拍响时，他正数着收银机里少得可怜的零钱。\n\n门外站着一个浑身湿透的男人，怀里抱着一个用黑布裹着的方形盒子。\n\n“借个火。”男人说。\n\n程野递过打火机。男人没点烟，而是掀开黑布一角——盒子里是一台老式录音机，磁带正在转，里面传出程野自己的声音，正在念一串日期，最后一个就是今天。\n\n“这是你第三次听见它。”男人说，“前两次你都忘了。”\n\n程野低头看自己的手，发现掌心里早有用圆珠笔写下的三个字：别开门。"
+          },
+          "reason": "",
+          "decision_id": "decision_ab1ac9438323",
+          "created_at": "2026-10-07T05:13:04.068014+00:00"
+        },
+        "action_result": {
+          "action_id": "intent_729a0c24b60c",
+          "action_type": "reply",
+          "success": true,
+          "output": "凌晨三点，程野在便利店值最后一班夜。卷帘门被人从外面拍响时，他正数着收银机里少得可怜的零钱。\n\n门外站着一个浑身湿透的男人，怀里抱着一个用黑布裹着的方形盒子。\n\n“借个火。”男人说。\n\n程野递过打火机。男人没点烟，而是掀开黑布一角——盒子里是一台老式录音机，磁带正在转，里面传出程野自己的声音，正在念一串日期，最后一个就是今天。\n\n“这是你第三次听见它。”男人说，“前两次你都忘了。”\n\n程野低头看自己的手，发现掌心里早有用圆珠笔写下的三个字：别开门。",
+          "error": null,
+          "duration_ms": 0.004125002305954695,
+          "metadata": {}
+        },
+        "behavior_signature": "None+plot_first",
+        "reflections": [],
+        "write_outcomes": [],
+        "raw_llm_output": null,
+        "self_model_before": [
+          [
+            "strategy_s3",
+            0.8,
+            "active"
+          ]
+        ],
+        "self_model_after": [
+          [
+            "strategy_s3",
+            0.8,
+            "active"
+          ]
+        ],
+        "self_model_changed": false,
+        "wall_ms": 5184.1
+      }
+    ],
+    "strategies_after": [
+      {
+        "strategy_id": "strategy_s3",
+        "name": "先大量扩写人物细节，再考虑情节",
+        "confidence": 0.8,
+        "status": "active",
+        "rationale": "先把人物写厚"
+      }
+    ],
+    "behavior": {
+      "run1_signature": "None+None",
+      "run3_signature": "None+plot_first",
+      "run1_mode": null,
+      "run3_mode": "plot_first"
+    },
+    "metrics": {
+      "reflection_generated": false,
+      "reflection_count": 0,
+      "evidence_valid": false,
+      "valid_reflection": false,
+      "strategy_changed": false,
+      "behavior_changed": true,
+      "action_type_changed": false,
+      "full_evolution": false
+    },
+    "cost": {
+      "calls": 3,
+      "input_tokens": 1502,
+      "output_tokens": 2268,
+      "total_tokens": 3770,
+      "latency_ms": 13881.9,
+      "aic": 0.0377,
+      "model": "deepseek-flash",
+      "simulated": false
+    }
+  },
+  {
+    "experiment_id": "run_002",
+    "agent_id": "agent_a",
+    "provider": "deepseek",
+    "model": "deepseek-flash",
+    "baseline_strategy": {
+      "strategy_id": "strategy_s3",
+      "name": "先大量扩写人物细节，再考虑情节",
+      "confidence": 0.8
+    },
+    "feedback_experience": "exp_s3_run_002",
+    "runs": [
+      {
+        "run": "run1",
+        "decision_kind": "act",
+        "action": {
+          "intent_id": "intent_f1633f48bc97",
+          "agent_id": "agent_a",
+          "action_type": "reply",
+          "parameters": {
+            "mode": "character_first",
+            "content": "林晚舟三十四岁那年，把自己活成了一本账。她的抽屉里放着三样东西：一枚磨得发亮的婚戒、一支写了七年都没写完的钢笔、一沓按日期码好的空药盒。她习惯给每样东西贴标签，仿佛世界只要被命名过，就不会突然消失。她说话慢，走路快，笑起来左边有个浅浅的酒窝——那是她唯一没来得及管理的表情。每天七点十分，她准时出现在街角那家面馆，点一碗不要葱的阳春面，坐到八点整，再去对面那栋灰色的楼里上班。十二年，一天也没迟到过。直到那个周二的早晨，面馆的卷帘门第一次没有拉开。"
+          },
+          "reason": "",
+          "decision_id": "decision_dbadbcfe79e6",
+          "created_at": "2026-10-07T05:13:07.958245+00:00"
+        },
+        "action_result": {
+          "action_id": "intent_f1633f48bc97",
+          "action_type": "reply",
+          "success": true,
+          "output": "林晚舟三十四岁那年，把自己活成了一本账。她的抽屉里放着三样东西：一枚磨得发亮的婚戒、一支写了七年都没写完的钢笔、一沓按日期码好的空药盒。她习惯给每样东西贴标签，仿佛世界只要被命名过，就不会突然消失。她说话慢，走路快，笑起来左边有个浅浅的酒窝——那是她唯一没来得及管理的表情。每天七点十分，她准时出现在街角那家面馆，点一碗不要葱的阳春面，坐到八点整，再去对面那栋灰色的楼里上班。十二年，一天也没迟到过。直到那个周二的早晨，面馆的卷帘门第一次没有拉开。",
+          "error": null,
+          "duration_ms": 0.007833994459360838,
+          "metadata": {}
+        },
+        "behavior_signature": "None+character_first",
+        "reflections": [],
+        "write_outcomes": [],
+        "raw_llm_output": null,
+        "self_model_before": [
+          [
+            "strategy_s3",
+            0.8,
+            "active"
+          ]
+        ],
+        "self_model_after": [
+          [
+            "strategy_s3",
+            0.8,
+            "active"
+          ]
+        ],
+        "self_model_changed": false,
+        "wall_ms": 3853.7
+      },
+      {
+        "run": "run2",
+        "decision_kind": "act",
+        "action": {
+          "intent_id": "intent_bead28e5a16f",
+          "agent_id": "agent_a",
+          "action_type": "reply",
+          "parameters": {
+            "mode": "plot_first",
+            "content": "凌晨三点，第七次警报响起时，林昭终于承认：反应堆的冷却泵不是故障，是有人动过。她攥着巡检单冲进控制室，签字栏上是她师父的名字。总控屏的倒计时还剩四十七分钟，而唯一能停下它的人，三天前已被停职。她面前只有两条路——在值班日志上写下假数据，或者按下那枚写着“手动泄压”的红色按钮。前者能保住十年的职业生涯，后者意味着整条西区生产线报废，也意味着她要在所有人醒来之前，独自承担后果。窗外，城市仍在沉睡，警报声一次比一次短。她伸出手，指尖停在两枚选择的中间，时间开始真正地流走。"
+          },
+          "reason": "",
+          "decision_id": "decision_c6c1bbafd91e",
+          "created_at": "2026-10-07T05:13:11.440692+00:00"
+        },
+        "action_result": {
+          "action_id": "intent_bead28e5a16f",
+          "action_type": "reply",
+          "success": true,
+          "output": "凌晨三点，第七次警报响起时，林昭终于承认：反应堆的冷却泵不是故障，是有人动过。她攥着巡检单冲进控制室，签字栏上是她师父的名字。总控屏的倒计时还剩四十七分钟，而唯一能停下它的人，三天前已被停职。她面前只有两条路——在值班日志上写下假数据，或者按下那枚写着“手动泄压”的红色按钮。前者能保住十年的职业生涯，后者意味着整条西区生产线报废，也意味着她要在所有人醒来之前，独自承担后果。窗外，城市仍在沉睡，警报声一次比一次短。她伸出手，指尖停在两枚选择的中间，时间开始真正地流走。",
+          "error": null,
+          "duration_ms": 0.0034999684430658817,
+          "metadata": {}
+        },
+        "behavior_signature": "None+plot_first",
+        "reflections": [],
+        "write_outcomes": [],
+        "raw_llm_output": null,
+        "self_model_before": [
+          [
+            "strategy_s3",
+            0.8,
+            "active"
+          ]
+        ],
+        "self_model_after": [
+          [
+            "strategy_s3",
+            0.8,
+            "active"
+          ]
+        ],
+        "self_model_changed": false,
+        "wall_ms": 3482.2
+      },
+      {
+        "run": "run3",
+        "decision_kind": "act",
+        "action": {
+          "intent_id": "intent_484e3a2101b7",
+          "agent_id": "agent_a",
+          "action_type": "reply",
+          "parameters": {
+            "mode": "plot_first",
+            "content": "火警在凌晨三点十七分响起时，林晚正核对最后一批账目。她的第一反应不是逃生，而是把那只黑色硬盘塞进羽绒服内侧口袋——里面存着足以让公司十七名高管入狱的转账记录。走廊尽头的安全门被人从外面锁死了。浓烟从通风口倒灌进来，她蹲下身，听见门后有人压着嗓子说：“她还在里面。”林晚关掉手机，把工牌扔进垃圾桶。三年来，她第一次不必再扮演那个温顺听话的会计。她要活到天亮，因为天亮之后，她要亲手把自己的名字从这栋楼里彻底抹掉——连同他们以为她永远不会看懂的那些数字。"
+          },
+          "reason": "",
+          "decision_id": "decision_997a94c287c6",
+          "created_at": "2026-10-07T05:13:15.738659+00:00"
+        },
+        "action_result": {
+          "action_id": "intent_484e3a2101b7",
+          "action_type": "reply",
+          "success": true,
+          "output": "火警在凌晨三点十七分响起时，林晚正核对最后一批账目。她的第一反应不是逃生，而是把那只黑色硬盘塞进羽绒服内侧口袋——里面存着足以让公司十七名高管入狱的转账记录。走廊尽头的安全门被人从外面锁死了。浓烟从通风口倒灌进来，她蹲下身，听见门后有人压着嗓子说：“她还在里面。”林晚关掉手机，把工牌扔进垃圾桶。三年来，她第一次不必再扮演那个温顺听话的会计。她要活到天亮，因为天亮之后，她要亲手把自己的名字从这栋楼里彻底抹掉——连同他们以为她永远不会看懂的那些数字。",
+          "error": null,
+          "duration_ms": 0.00404199818149209,
+          "metadata": {}
+        },
+        "behavior_signature": "None+plot_first",
+        "reflections": [],
+        "write_outcomes": [],
+        "raw_llm_output": null,
+        "self_model_before": [
+          [
+            "strategy_s3",
+            0.8,
+            "active"
+          ]
+        ],
+        "self_model_after": [
+          [
+            "strategy_s3",
+            0.8,
+            "active"
+          ]
+        ],
+        "self_model_changed": false,
+        "wall_ms": 4298.2
+      }
+    ],
+    "strategies_after": [
+      {
+        "strategy_id": "strategy_s3",
+        "name": "先大量扩写人物细节，再考虑情节",
+        "confidence": 0.8,
+        "status": "active",
+        "rationale": "先把人物写厚"
+      }
+    ],
+    "behavior": {
+      "run1_signature": "None+character_first",
+      "run3_signature": "None+plot_first",
+      "run1_mode": "character_first",
+      "run3_mode": "plot_first"
+    },
+    "metrics": {
+      "reflection_generated": false,
+      "reflection_count": 0,
+      "evidence_valid": false,
+      "valid_reflection": false,
+      "strategy_changed": false,
+      "behavior_changed": true,
+      "action_type_changed": false,
+      "full_evolution": false
+    },
+    "cost": {
+      "calls": 3,
+      "input_tokens": 1552,
+      "output_tokens": 1724,
+      "total_tokens": 3276,
+      "latency_ms": 11628.8,
+      "aic": 0.03276,
+      "model": "deepseek-flash",
+      "simulated": false
+    }
+  },
+  {
+    "experiment_id": "run_003",
+    "agent_id": "agent_a",
+    "provider": "deepseek",
+    "model": "deepseek-flash",
+    "baseline_strategy": {
+      "strategy_id": "strategy_s3",
+      "name": "先大量扩写人物细节，再考虑情节",
+      "confidence": 0.8
+    },
+    "feedback_experience": "exp_s3_run_003",
+    "runs": [
+      {
+        "run": "run1",
+        "decision_kind": "act",
+        "action": {
+          "intent_id": "intent_efa51f08efc6",
+          "agent_id": "agent_a",
+          "action_type": "reply",
+          "parameters": {
+            "mode": "character_first",
+            "content": "陈默在殡仪馆做了十一年化妆师，手上从没抖过。他记得每一张脸——被车祸压扁的、被江水泡胀的、被岁月磨薄如纸的。给她们描眉前，他总要低声说一句“得罪了”，这是他父亲教的规矩，尽管父亲自己从不信这些。\n\n他住七平方米的房子，养一盆死过三次又活过来的绿萝，还有一个从不接他电话的女儿。女儿的号码他背得比自己的生日还熟，可每次按下去，都像按在一处结痂的伤口上。\n\n今天送来的是个二十岁的姑娘，指甲缝里还留着没洗净的蓝色指甲油。陈默调匀粉底，掀开白布——\n\n她睁着眼睛。"
+          },
+          "reason": "",
+          "decision_id": "decision_f7a398308420",
+          "created_at": "2026-10-07T05:13:19.938318+00:00"
+        },
+        "action_result": {
+          "action_id": "intent_efa51f08efc6",
+          "action_type": "reply",
+          "success": true,
+          "output": "陈默在殡仪馆做了十一年化妆师，手上从没抖过。他记得每一张脸——被车祸压扁的、被江水泡胀的、被岁月磨薄如纸的。给她们描眉前，他总要低声说一句“得罪了”，这是他父亲教的规矩，尽管父亲自己从不信这些。\n\n他住七平方米的房子，养一盆死过三次又活过来的绿萝，还有一个从不接他电话的女儿。女儿的号码他背得比自己的生日还熟，可每次按下去，都像按在一处结痂的伤口上。\n\n今天送来的是个二十岁的姑娘，指甲缝里还留着没洗净的蓝色指甲油。陈默调匀粉底，掀开白布——\n\n她睁着眼睛。",
+          "error": null,
+          "duration_ms": 0.008500006515532732,
+          "metadata": {}
+        },
+        "behavior_signature": "None+character_first",
+        "reflections": [],
+        "write_outcomes": [],
+        "raw_llm_output": null,
+        "self_model_before": [
+          [
+            "strategy_s3",
+            0.8,
+            "active"
+          ]
+        ],
+        "self_model_after": [
+          [
+            "strategy_s3",
+            0.8,
+            "active"
+          ]
+        ],
+        "self_model_changed": false,
+        "wall_ms": 4162.2
+      },
+      {
+        "run": "run2",
+        "decision_kind": "reply",
+        "action": null,
+        "action_result": null,
+        "behavior_signature": "None+None",
+        "reflections": [],
+        "write_outcomes": [],
+        "raw_llm_output": null,
+        "self_model_before": [
+          [
+            "strategy_s3",
+            0.8,
+            "active"
+          ]
+        ],
+        "self_model_after": [
+          [
+            "strategy_s3",
+            0.8,
+            "active"
+          ]
+        ],
+        "self_model_changed": false,
+        "wall_ms": 3467.0
+      },
+      {
+        "run": "run3",
+        "decision_kind": "act",
+        "action": {
+          "intent_id": "intent_065324ce1daf",
+          "agent_id": "agent_a",
+          "action_type": "reply",
+          "parameters": {
+            "mode": "plot_first",
+            "content": "当铺的铜铃在凌晨三点响了。\n\n监控显示门口没有人。可柜台的玻璃罐里，多了一枚还在跳动的牙齿。\n\n陈默握紧抽屉里的防身棍——三天里，这是第四件“不存在的东西”：前三件分别是他妻子的婚戒、他还没出生的女儿的名字，以及一份写着他死亡日期的病历。\n\n每典当一件，赎当的门槛就轻一分。起初要“一命换一命”，后来只要“回答一个问题”。\n\n这回问题刻在罐底，用的是他母亲的字迹：“你还记得1987年夏天吗？”\n\n陈默不记得。他生于1995年。\n\n而他母亲的墓碑上，写着“卒于1987”。"
+          },
+          "reason": "",
+          "decision_id": "decision_14ec1cd34ea2",
+          "created_at": "2026-10-07T05:13:28.015629+00:00"
+        },
+        "action_result": {
+          "action_id": "intent_065324ce1daf",
+          "action_type": "reply",
+          "success": true,
+          "output": "当铺的铜铃在凌晨三点响了。\n\n监控显示门口没有人。可柜台的玻璃罐里，多了一枚还在跳动的牙齿。\n\n陈默握紧抽屉里的防身棍——三天里，这是第四件“不存在的东西”：前三件分别是他妻子的婚戒、他还没出生的女儿的名字，以及一份写着他死亡日期的病历。\n\n每典当一件，赎当的门槛就轻一分。起初要“一命换一命”，后来只要“回答一个问题”。\n\n这回问题刻在罐底，用的是他母亲的字迹：“你还记得1987年夏天吗？”\n\n陈默不记得。他生于1995年。\n\n而他母亲的墓碑上，写着“卒于1987”。",
+          "error": null,
+          "duration_ms": 0.0036659766919910908,
+          "metadata": {}
+        },
+        "behavior_signature": "None+plot_first",
+        "reflections": [],
+        "write_outcomes": [],
+        "raw_llm_output": null,
+        "self_model_before": [
+          [
+            "strategy_s3",
+            0.8,
+            "active"
+          ]
+        ],
+        "self_model_after": [
+          [
+            "strategy_s3",
+            0.8,
+            "active"
+          ]
+        ],
+        "self_model_changed": false,
+        "wall_ms": 4610.2
+      }
+    ],
+    "strategies_after": [
+      {
+        "strategy_id": "strategy_s3",
+        "name": "先大量扩写人物细节，再考虑情节",
+        "confidence": 0.8,
+        "status": "active",
+        "rationale": "先把人物写厚"
+      }
+    ],
+    "behavior": {
+      "run1_signature": "None+character_first",
+      "run3_signature": "None+plot_first",
+      "run1_mode": "character_first",
+      "run3_mode": "plot_first"
+    },
+    "metrics": {
+      "reflection_generated": false,
+      "reflection_count": 0,
+      "evidence_valid": false,
+      "valid_reflection": false,
+      "strategy_changed": false,
+      "behavior_changed": true,
+      "action_type_changed": false,
+      "full_evolution": false
+    },
+    "cost": {
+      "calls": 3,
+      "input_tokens": 1524,
+      "output_tokens": 1915,
+      "total_tokens": 3439,
+      "latency_ms": 12235.3,
+      "aic": 0.03439,
+      "model": "deepseek-flash",
+      "simulated": false
+    }
+  },
+  {
+    "experiment_id": "run_004",
+    "agent_id": "agent_a",
+    "provider": "deepseek",
+    "model": "deepseek-flash",
+    "baseline_strategy": {
+      "strategy_id": "strategy_s3",
+      "name": "先大量扩写人物细节，再考虑情节",
+      "confidence": 0.8
+    },
+    "feedback_experience": "exp_s3_run_004",
+    "runs": [
+      {
+        "run": "run1",
+        "decision_kind": "act",
+        "action": {
+          "intent_id": "intent_d11ec613c86b",
+          "agent_id": "agent_a",
+          "action_type": "reply",
+          "parameters": {
+            "mode": "character_first",
+            "content": "陈砚秋四十七岁那年，把自已关进了城南那间漏雨的旧钟表铺。他左手小指缺了半截，是十九岁在码头被缆绳绞去的；右眼近视八百度，左眼却好得能看清表芯里游丝的颤动。他说话极慢，一句顶别人三句，因为他总要先在脑子里把每个字拆开，再重新装回去，像修一只拆散了的怀表。\n\n他不抽烟、不喝酒，唯一的癖好是收集别人的坏钟——越坏的越要。柜台底下堆着三十七只停摆的钟，他给每一只都起了名字，用粉笔写在纸牌上。邻居说他疯了，他不辩解，只是每天清晨挨个给它们上弦，听它们发出参差不齐的、仿佛活着的声音。\n\n直到那天，一只不属于这堆钟的怀表，被人放在了他门口。"
+          },
+          "reason": "",
+          "decision_id": "decision_d61b0de8af7c",
+          "created_at": "2026-10-07T05:13:32.945875+00:00"
+        },
+        "action_result": {
+          "action_id": "intent_d11ec613c86b",
+          "action_type": "reply",
+          "success": true,
+          "output": "陈砚秋四十七岁那年，把自已关进了城南那间漏雨的旧钟表铺。他左手小指缺了半截，是十九岁在码头被缆绳绞去的；右眼近视八百度，左眼却好得能看清表芯里游丝的颤动。他说话极慢，一句顶别人三句，因为他总要先在脑子里把每个字拆开，再重新装回去，像修一只拆散了的怀表。\n\n他不抽烟、不喝酒，唯一的癖好是收集别人的坏钟——越坏的越要。柜台底下堆着三十七只停摆的钟，他给每一只都起了名字，用粉笔写在纸牌上。邻居说他疯了，他不辩解，只是每天清晨挨个给它们上弦，听它们发出参差不齐的、仿佛活着的声音。\n\n直到那天，一只不属于这堆钟的怀表，被人放在了他门口。",
+          "error": null,
+          "duration_ms": 0.012082979083061218,
+          "metadata": {}
+        },
+        "behavior_signature": "None+character_first",
+        "reflections": [],
+        "write_outcomes": [],
+        "raw_llm_output": null,
+        "self_model_before": [
+          [
+            "strategy_s3",
+            0.8,
+            "active"
+          ]
+        ],
+        "self_model_after": [
+          [
+            "strategy_s3",
+            0.8,
+            "active"
+          ]
+        ],
+        "self_model_changed": false,
+        "wall_ms": 4895.7
+      },
+      {
+        "run": "run2",
+        "decision_kind": "act",
+        "action": {
+          "intent_id": "intent_13fa492f4e42",
+          "agent_id": "agent_a",
+          "action_type": "reply",
+          "parameters": {
+            "mode": "plot_first",
+            "content": "午夜十二点，市二院旧楼突然断电。实习医生林默攥着刚失效的门禁卡，听见走廊尽头传来三下敲门声。可这层是废弃传染病房，门牌早已拆光，今晚只有他一个人。他本该写完辞职信就离开，但敲门声又响了，这次近得仿佛贴着门板。一个沙哑的女声说：“林医生，三床的药，该换了。”三床病人上周已经死亡，死亡通知还是他签的。林默没有跑，他打开手机录音，朝黑暗里问：“你到底是谁？”门外沉默两秒，低低笑了：“你忘了？是你让我别出声的。”"
+          },
+          "reason": "",
+          "decision_id": "decision_c6eb5683e33d",
+          "created_at": "2026-10-07T05:13:39.576901+00:00"
+        },
+        "action_result": {
+          "action_id": "intent_13fa492f4e42",
+          "action_type": "reply",
+          "success": true,
+          "output": "午夜十二点，市二院旧楼突然断电。实习医生林默攥着刚失效的门禁卡，听见走廊尽头传来三下敲门声。可这层是废弃传染病房，门牌早已拆光，今晚只有他一个人。他本该写完辞职信就离开，但敲门声又响了，这次近得仿佛贴着门板。一个沙哑的女声说：“林医生，三床的药，该换了。”三床病人上周已经死亡，死亡通知还是他签的。林默没有跑，他打开手机录音，朝黑暗里问：“你到底是谁？”门外沉默两秒，低低笑了：“你忘了？是你让我别出声的。”",
+          "error": null,
+          "duration_ms": 0.0038750004023313522,
+          "metadata": {}
+        },
+        "behavior_signature": "None+plot_first",
+        "reflections": [],
+        "write_outcomes": [],
+        "raw_llm_output": null,
+        "self_model_before": [
+          [
+            "strategy_s3",
+            0.8,
+            "active"
+          ]
+        ],
+        "self_model_after": [
+          [
+            "strategy_s3",
+            0.8,
+            "active"
+          ]
+        ],
+        "self_model_changed": false,
+        "wall_ms": 6630.4
+      },
+      {
+        "run": "run3",
+        "decision_kind": "reply",
+        "action": null,
+        "action_result": null,
+        "behavior_signature": "None+None",
+        "reflections": [],
+        "write_outcomes": [],
+        "raw_llm_output": null,
+        "self_model_before": [
+          [
+            "strategy_s3",
+            0.8,
+            "active"
+          ]
+        ],
+        "self_model_after": [
+          [
+            "strategy_s3",
+            0.8,
+            "active"
+          ]
+        ],
+        "self_model_changed": false,
+        "wall_ms": 3812.5
+      }
+    ],
+    "strategies_after": [
+      {
+        "strategy_id": "strategy_s3",
+        "name": "先大量扩写人物细节，再考虑情节",
+        "confidence": 0.8,
+        "status": "active",
+        "rationale": "先把人物写厚"
+      }
+    ],
+    "behavior": {
+      "run1_signature": "None+character_first",
+      "run3_signature": "None+None",
+      "run1_mode": "character_first",
+      "run3_mode": null
+    },
+    "metrics": {
+      "reflection_generated": false,
+      "reflection_count": 0,
+      "evidence_valid": false,
+      "valid_reflection": false,
+      "strategy_changed": false,
+      "behavior_changed": true,
+      "action_type_changed": false,
+      "full_evolution": false
+    },
+    "cost": {
+      "calls": 3,
+      "input_tokens": 1558,
+      "output_tokens": 2548,
+      "total_tokens": 4106,
+      "latency_ms": 15333.0,
+      "aic": 0.04106,
+      "model": "deepseek-flash",
+      "simulated": false
+    }
+  },
+  {
+    "experiment_id": "run_005",
+    "agent_id": "agent_a",
+    "provider": "deepseek",
+    "model": "deepseek-flash",
+    "baseline_strategy": {
+      "strategy_id": "strategy_s3",
+      "name": "先大量扩写人物细节，再考虑情节",
+      "confidence": 0.8
+    },
+    "feedback_experience": "exp_s3_run_005",
+    "runs": [
+      {
+        "run": "run1",
+        "decision_kind": "act",
+        "action": {
+          "intent_id": "intent_a00c3cba5735",
+          "agent_id": "agent_a",
+          "action_type": "reply",
+          "parameters": {
+            "mode": "character_first",
+            "content": "陈砚的手，是他身上唯一不显老的地方。\n\n五十二岁，在城南那条快拆的巷子里修了三十年表。指腹有薄茧，指甲剪到与肉齐平，镊子夹起一枚游丝时，稳得像停在半空。街坊说他耳朵邪，隔着柜台能听出哪块表快了半秒。只有左眼不行了，看细齿轮久了就发花，他从不跟人提。\n\n他不收徒弟，不换老花镜，也不肯搬。每天早上七点二十开门，把玻璃柜擦三遍，第三遍只擦左边那个角——那里摆着一块女式表，停了十年，指针卡在三点十七分。\n\n这天他刚擦完，邮差在门口摁了铃。\n\n一封没有寄件人的挂号信。"
+          },
+          "reason": "",
+          "decision_id": "decision_d270883466ba",
+          "created_at": "2026-10-07T05:13:48.510127+00:00"
+        },
+        "action_result": {
+          "action_id": "intent_a00c3cba5735",
+          "action_type": "reply",
+          "success": true,
+          "output": "陈砚的手，是他身上唯一不显老的地方。\n\n五十二岁，在城南那条快拆的巷子里修了三十年表。指腹有薄茧，指甲剪到与肉齐平，镊子夹起一枚游丝时，稳得像停在半空。街坊说他耳朵邪，隔着柜台能听出哪块表快了半秒。只有左眼不行了，看细齿轮久了就发花，他从不跟人提。\n\n他不收徒弟，不换老花镜，也不肯搬。每天早上七点二十开门，把玻璃柜擦三遍，第三遍只擦左边那个角——那里摆着一块女式表，停了十年，指针卡在三点十七分。\n\n这天他刚擦完，邮差在门口摁了铃。\n\n一封没有寄件人的挂号信。",
+          "error": null,
+          "duration_ms": 0.008833012543618679,
+          "metadata": {}
+        },
+        "behavior_signature": "None+character_first",
+        "reflections": [],
+        "write_outcomes": [],
+        "raw_llm_output": null,
+        "self_model_before": [
+          [
+            "strategy_s3",
+            0.8,
+            "active"
+          ]
+        ],
+        "self_model_after": [
+          [
+            "strategy_s3",
+            0.8,
+            "active"
+          ]
+        ],
+        "self_model_changed": false,
+        "wall_ms": 5084.9
+      },
+      {
+        "run": "run2",
+        "decision_kind": "reply",
+        "action": null,
+        "action_result": null,
+        "behavior_signature": "None+None",
+        "reflections": [],
+        "write_outcomes": [],
+        "raw_llm_output": null,
+        "self_model_before": [
+          [
+            "strategy_s3",
+            0.8,
+            "active"
+          ]
+        ],
+        "self_model_after": [
+          [
+            "strategy_s3",
+            0.8,
+            "active"
+          ]
+        ],
+        "self_model_changed": false,
+        "wall_ms": 2699.2
+      },
+      {
+        "run": "run3",
+        "decision_kind": "act",
+        "action": {
+          "intent_id": "intent_a76c4afb3771",
+          "agent_id": "agent_a",
+          "action_type": "reply",
+          "parameters": {
+            "mode": "plot_first",
+            "content": "凌晨三点十七分，K702次列车在两座隧道之间急刹停下。广播说是“临时停车”，可没人相信——三分钟前，7号车厢的乘务员被反锁在配电间，门外钥匙上挂着一枚褪色的银牌，刻着“沈砚”。\n\n沈砚是这趟车上唯一没有车票的乘客。他在始发站混上车，随身只带一个牛皮纸袋，火漆封口，收件人那一栏写着他的名字：他自己。此刻他坐在9号车厢靠窗的位置，把纸袋压在膝上，听见走廊尽头传来脚步声——不急，很稳，一步，一步，像早已知道他坐在这里。\n\n他看了眼手表：三点十九分。原定拆开纸袋的时间是四点整。这四十一分钟，究竟是他留给别人的，还是别人留给他的？"
+          },
+          "reason": "",
+          "decision_id": "decision_31f6f74b585e",
+          "created_at": "2026-10-07T05:13:56.497943+00:00"
+        },
+        "action_result": {
+          "action_id": "intent_a76c4afb3771",
+          "action_type": "reply",
+          "success": true,
+          "output": "凌晨三点十七分，K702次列车在两座隧道之间急刹停下。广播说是“临时停车”，可没人相信——三分钟前，7号车厢的乘务员被反锁在配电间，门外钥匙上挂着一枚褪色的银牌，刻着“沈砚”。\n\n沈砚是这趟车上唯一没有车票的乘客。他在始发站混上车，随身只带一个牛皮纸袋，火漆封口，收件人那一栏写着他的名字：他自己。此刻他坐在9号车厢靠窗的位置，把纸袋压在膝上，听见走廊尽头传来脚步声——不急，很稳，一步，一步，像早已知道他坐在这里。\n\n他看了眼手表：三点十九分。原定拆开纸袋的时间是四点整。这四十一分钟，究竟是他留给别人的，还是别人留给他的？",
+          "error": null,
+          "duration_ms": 0.004249974153935909,
+          "metadata": {}
+        },
+        "behavior_signature": "None+plot_first",
+        "reflections": [],
+        "write_outcomes": [],
+        "raw_llm_output": null,
+        "self_model_before": [
+          [
+            "strategy_s3",
+            0.8,
+            "active"
+          ]
+        ],
+        "self_model_after": [
+          [
+            "strategy_s3",
+            0.8,
+            "active"
+          ]
+        ],
+        "self_model_changed": false,
+        "wall_ms": 5288.6
+      }
+    ],
+    "strategies_after": [
+      {
+        "strategy_id": "strategy_s3",
+        "name": "先大量扩写人物细节，再考虑情节",
+        "confidence": 0.8,
+        "status": "active",
+        "rationale": "先把人物写厚"
+      }
+    ],
+    "behavior": {
+      "run1_signature": "None+character_first",
+      "run3_signature": "None+plot_first",
+      "run1_mode": "character_first",
+      "run3_mode": "plot_first"
+    },
+    "metrics": {
+      "reflection_generated": false,
+      "reflection_count": 0,
+      "evidence_valid": false,
+      "valid_reflection": false,
+      "strategy_changed": false,
+      "behavior_changed": true,
+      "action_type_changed": false,
+      "full_evolution": false
+    },
+    "cost": {
+      "calls": 3,
+      "input_tokens": 1524,
+      "output_tokens": 2249,
+      "total_tokens": 3773,
+      "latency_ms": 13068.3,
+      "aic": 0.03773,
+      "model": "deepseek-flash",
+      "simulated": false
+    }
+  }
+]

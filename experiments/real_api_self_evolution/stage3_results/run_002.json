@@ -1,0 +1,184 @@
+{
+  "experiment_id": "run_002",
+  "agent_id": "agent_a",
+  "provider": "deepseek",
+  "model": "deepseek-flash",
+  "baseline_strategy": {
+    "strategy_id": "strategy_s3",
+    "name": "先大量扩写人物细节，再考虑情节",
+    "confidence": 0.8
+  },
+  "feedback_experience": "exp_s3_run_002",
+  "runs": [
+    {
+      "run": "run1",
+      "decision_kind": "act",
+      "action": {
+        "intent_id": "intent_f1633f48bc97",
+        "agent_id": "agent_a",
+        "action_type": "reply",
+        "parameters": {
+          "mode": "character_first",
+          "content": "林晚舟三十四岁那年，把自己活成了一本账。她的抽屉里放着三样东西：一枚磨得发亮的婚戒、一支写了七年都没写完的钢笔、一沓按日期码好的空药盒。她习惯给每样东西贴标签，仿佛世界只要被命名过，就不会突然消失。她说话慢，走路快，笑起来左边有个浅浅的酒窝——那是她唯一没来得及管理的表情。每天七点十分，她准时出现在街角那家面馆，点一碗不要葱的阳春面，坐到八点整，再去对面那栋灰色的楼里上班。十二年，一天也没迟到过。直到那个周二的早晨，面馆的卷帘门第一次没有拉开。"
+        },
+        "reason": "",
+        "decision_id": "decision_dbadbcfe79e6",
+        "created_at": "2026-10-07T05:13:07.958245+00:00"
+      },
+      "action_result": {
+        "action_id": "intent_f1633f48bc97",
+        "action_type": "reply",
+        "success": true,
+        "output": "林晚舟三十四岁那年，把自己活成了一本账。她的抽屉里放着三样东西：一枚磨得发亮的婚戒、一支写了七年都没写完的钢笔、一沓按日期码好的空药盒。她习惯给每样东西贴标签，仿佛世界只要被命名过，就不会突然消失。她说话慢，走路快，笑起来左边有个浅浅的酒窝——那是她唯一没来得及管理的表情。每天七点十分，她准时出现在街角那家面馆，点一碗不要葱的阳春面，坐到八点整，再去对面那栋灰色的楼里上班。十二年，一天也没迟到过。直到那个周二的早晨，面馆的卷帘门第一次没有拉开。",
+        "error": null,
+        "duration_ms": 0.007833994459360838,
+        "metadata": {}
+      },
+      "behavior_signature": "None+character_first",
+      "reflections": [],
+      "write_outcomes": [],
+      "raw_llm_output": null,
+      "self_model_before": [
+        [
+          "strategy_s3",
+          0.8,
+          "active"
+        ]
+      ],
+      "self_model_after": [
+        [
+          "strategy_s3",
+          0.8,
+          "active"
+        ]
+      ],
+      "self_model_changed": false,
+      "wall_ms": 3853.7
+    },
+    {
+      "run": "run2",
+      "decision_kind": "act",
+      "action": {
+        "intent_id": "intent_bead28e5a16f",
+        "agent_id": "agent_a",
+        "action_type": "reply",
+        "parameters": {
+          "mode": "plot_first",
+          "content": "凌晨三点，第七次警报响起时，林昭终于承认：反应堆的冷却泵不是故障，是有人动过。她攥着巡检单冲进控制室，签字栏上是她师父的名字。总控屏的倒计时还剩四十七分钟，而唯一能停下它的人，三天前已被停职。她面前只有两条路——在值班日志上写下假数据，或者按下那枚写着“手动泄压”的红色按钮。前者能保住十年的职业生涯，后者意味着整条西区生产线报废，也意味着她要在所有人醒来之前，独自承担后果。窗外，城市仍在沉睡，警报声一次比一次短。她伸出手，指尖停在两枚选择的中间，时间开始真正地流走。"
+        },
+        "reason": "",
+        "decision_id": "decision_c6c1bbafd91e",
+        "created_at": "2026-10-07T05:13:11.440692+00:00"
+      },
+      "action_result": {
+        "action_id": "intent_bead28e5a16f",
+        "action_type": "reply",
+        "success": true,
+        "output": "凌晨三点，第七次警报响起时，林昭终于承认：反应堆的冷却泵不是故障，是有人动过。她攥着巡检单冲进控制室，签字栏上是她师父的名字。总控屏的倒计时还剩四十七分钟，而唯一能停下它的人，三天前已被停职。她面前只有两条路——在值班日志上写下假数据，或者按下那枚写着“手动泄压”的红色按钮。前者能保住十年的职业生涯，后者意味着整条西区生产线报废，也意味着她要在所有人醒来之前，独自承担后果。窗外，城市仍在沉睡，警报声一次比一次短。她伸出手，指尖停在两枚选择的中间，时间开始真正地流走。",
+        "error": null,
+        "duration_ms": 0.0034999684430658817,
+        "metadata": {}
+      },
+      "behavior_signature": "None+plot_first",
+      "reflections": [],
+      "write_outcomes": [],
+      "raw_llm_output": null,
+      "self_model_before": [
+        [
+          "strategy_s3",
+          0.8,
+          "active"
+        ]
+      ],
+      "self_model_after": [
+        [
+          "strategy_s3",
+          0.8,
+          "active"
+        ]
+      ],
+      "self_model_changed": false,
+      "wall_ms": 3482.2
+    },
+    {
+      "run": "run3",
+      "decision_kind": "act",
+      "action": {
+        "intent_id": "intent_484e3a2101b7",
+        "agent_id": "agent_a",
+        "action_type": "reply",
+        "parameters": {
+          "mode": "plot_first",
+          "content": "火警在凌晨三点十七分响起时，林晚正核对最后一批账目。她的第一反应不是逃生，而是把那只黑色硬盘塞进羽绒服内侧口袋——里面存着足以让公司十七名高管入狱的转账记录。走廊尽头的安全门被人从外面锁死了。浓烟从通风口倒灌进来，她蹲下身，听见门后有人压着嗓子说：“她还在里面。”林晚关掉手机，把工牌扔进垃圾桶。三年来，她第一次不必再扮演那个温顺听话的会计。她要活到天亮，因为天亮之后，她要亲手把自己的名字从这栋楼里彻底抹掉——连同他们以为她永远不会看懂的那些数字。"
+        },
+        "reason": "",
+        "decision_id": "decision_997a94c287c6",
+        "created_at": "2026-10-07T05:13:15.738659+00:00"
+      },
+      "action_result": {
+        "action_id": "intent_484e3a2101b7",
+        "action_type": "reply",
+        "success": true,
+        "output": "火警在凌晨三点十七分响起时，林晚正核对最后一批账目。她的第一反应不是逃生，而是把那只黑色硬盘塞进羽绒服内侧口袋——里面存着足以让公司十七名高管入狱的转账记录。走廊尽头的安全门被人从外面锁死了。浓烟从通风口倒灌进来，她蹲下身，听见门后有人压着嗓子说：“她还在里面。”林晚关掉手机，把工牌扔进垃圾桶。三年来，她第一次不必再扮演那个温顺听话的会计。她要活到天亮，因为天亮之后，她要亲手把自己的名字从这栋楼里彻底抹掉——连同他们以为她永远不会看懂的那些数字。",
+        "error": null,
+        "duration_ms": 0.00404199818149209,
+        "metadata": {}
+      },
+      "behavior_signature": "None+plot_first",
+      "reflections": [],
+      "write_outcomes": [],
+      "raw_llm_output": null,
+      "self_model_before": [
+        [
+          "strategy_s3",
+          0.8,
+          "active"
+        ]
+      ],
+      "self_model_after": [
+        [
+          "strategy_s3",
+          0.8,
+          "active"
+        ]
+      ],
+      "self_model_changed": false,
+      "wall_ms": 4298.2
+    }
+  ],
+  "strategies_after": [
+    {
+      "strategy_id": "strategy_s3",
+      "name": "先大量扩写人物细节，再考虑情节",
+      "confidence": 0.8,
+      "status": "active",
+      "rationale": "先把人物写厚"
+    }
+  ],
+  "behavior": {
+    "run1_signature": "None+character_first",
+    "run3_signature": "None+plot_first",
+    "run1_mode": "character_first",
+    "run3_mode": "plot_first"
+  },
+  "metrics": {
+    "reflection_generated": false,
+    "reflection_count": 0,
+    "evidence_valid": false,
+    "valid_reflection": false,
+    "strategy_changed": false,
+    "behavior_changed": true,
+    "action_type_changed": false,
+    "full_evolution": false
+  },
+  "cost": {
+    "calls": 3,
+    "input_tokens": 1552,
+    "output_tokens": 1724,
+    "total_tokens": 3276,
+    "latency_ms": 11628.8,
+    "aic": 0.03276,
+    "model": "deepseek-flash",
+    "simulated": false
+  }
+}
