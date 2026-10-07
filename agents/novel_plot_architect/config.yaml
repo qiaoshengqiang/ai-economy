@@ -16,7 +16,7 @@ economy:
 
 brain:
   provider: "deepseek"
-  model: "deepseek-flash"
+  model: "deepseek-chat"
   credential_ref: "novel_plot_architect_deepseek"
 
   # 🔑 凭据
