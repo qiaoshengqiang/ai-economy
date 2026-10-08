@@ -389,6 +389,47 @@ class BaseAgent:
             except Exception as exc:                      # noqa: BLE001
                 logger.warning("Experience 记录失败：%s", exc)
 
+        # 🔴 认知输出被截断 → 记成一条 **Observation Experience**（§7/§8）。
+        #
+        #   为什么走 Experience：
+        #     这是已有的「事实 → 下一轮可见」通道。不为一个状态新建
+        #     CognitiveTurnStore，也不新建表。
+        #   下一轮的 `CognitiveContext.relevant_experiences` 会带上它，
+        #     Agent 因此能观察到「上一轮输出被截断了」。
+        #
+        #   🔒 **只记事实，不写策略。**
+        #     不写「你必须重试」——那属于 Agent 自己的决定。
+        #     这符合「规则限制结构，策略决定行为」。
+        if store is not None and run.is_truncated:
+            try:
+                store.record(
+                    self.agent_id if hasattr(self, "agent_id") else self.name,
+                    "observation",
+                    result={
+                        # 结构化事实：下一轮可以机械读出
+                        "observed_state": "cognitive_output_truncated",
+                        "cognitive_output": "TRUNCATED",
+                        "finish_reason": run.finish_reason,
+                        "output_status": run.output_status,
+                        "cognitive_status": run.cognitive_status,
+                        # 截断时 Action 被跳过了 —— 这也是事实
+                        "action_skipped": (run.action_intent is not None
+                                           and run.action_result is None),
+                        "action_kind": (
+                            getattr(run.action_intent, "kind", None)
+                            if run.action_intent is not None else None),
+                    },
+                    feedback=(
+                        "上一轮认知输出未完整完成：模型输出达到 token 上限"
+                        f"（finish_reason={run.finish_reason}）。"
+                        "这一轮认知被标记为 TRUNCATED。"
+                    ),
+                    metadata={"finish_reason": run.finish_reason},
+                )
+            except Exception as exc:                      # noqa: BLE001
+                # 🔒 记录失败**不能**破坏主要 Cognition
+                logger.warning("截断观察记录失败：%s", exc)
+
         return run
 
     def attach_self_model_services(self, *, experience_store=None,

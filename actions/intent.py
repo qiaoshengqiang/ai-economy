@@ -193,9 +193,38 @@ class CognitiveRunResult:
     #:        · 认不出来时如实说「不知道」，不假装成功
     output_status: Optional[str] = None
 
+    #: 🔴 **认知输出语义状态**（`COMPLETE` / `TRUNCATED` / `INCOMPLETE` /
+    #: `UNKNOWN`）—— 与 `output_status` **正交**。
+    #:
+    #:     output_status    = 语法契约（能不能解析出结构）
+    #:     cognitive_status = 语义完成度（这一轮认知想完了没有）
+    #:
+    #: 🔒 `None` 表示「契约未上报」—— 鸭子类型取不到就如实说不知道，
+    #:    不本地默认成 `COMPLETE`（那正是这个 Bug 的成因）。
+    cognitive_status: Optional[str] = None
+
+    #: provider 报的原始 `finish_reason`（诊断用，保留原值不改写）。
+    finish_reason: Optional[str] = None
+
     @property
     def has_action(self) -> bool:
         return self.action_intent is not None
+
+    @property
+    def is_truncated(self) -> bool:
+        """
+        这一轮认知输出被**截断**了吗？
+
+        🔒 只有**明确**收到 `TRUNCATED` 才返回 True。
+           `None`（契约未上报）返回 False —— 不许把「不知道」
+           当成「截断了」，也不许当成「完整」。
+        """
+        return self.cognitive_status == "TRUNCATED"
+
+    @property
+    def is_cognitive_complete(self) -> bool:
+        """这一轮认知**明确**被 provider 报为正常结束。"""
+        return self.cognitive_status == "COMPLETE"
 
     @property
     def is_empty_output(self) -> bool:
@@ -220,4 +249,7 @@ class CognitiveRunResult:
                 1 for o in self.write_outcomes
                 if getattr(o, "committed", False)),
             "output_status": self.output_status,
+            "cognitive_status": self.cognitive_status,
+            "finish_reason": self.finish_reason,
+            "is_truncated": self.is_truncated,
         }

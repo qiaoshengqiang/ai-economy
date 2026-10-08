@@ -336,6 +336,54 @@ VALID_TOKEN_SOURCES = {
 OUTPUT_VALID_CONTENT = "VALID_CONTENT"
 OUTPUT_EMPTY_CONTENT = "EMPTY_CONTENT"
 
+# ============================================================
+# 认知输出语义状态（Cognitive Output Status）
+# ============================================================
+#
+# 🔴 **这是与 `output_status` 正交的第二个维度，不是它的替代品。**
+#
+#     output_status  : **语法契约** —— 解析器能不能拿到结构？
+#                      （VALID_CONTENT / EMPTY_CONTENT）
+#     cognitive_status: **语义完成度** —— 这一轮认知**跑完了**吗？
+#                      （COMPLETE / TRUNCATED / INCOMPLETE / UNKNOWN）
+#
+#     `VALID_CONTENT + finish_reason=length`
+#         = 语法上合法，**但认知没有跑完**。
+#     两者绝不能互相推导 —— 有守卫禁止。
+#
+# 【为什么必须独立】
+#     实测（Run 2）：11 turns 的 `finish_reason="length"` 被记成
+#     `output_status=VALID_CONTENT`，于是看起来是「一次成功的认知」。
+#     真实语义是：**模型输出撞到 token 上限被截断，本轮认知不完整。**
+COGNITIVE_COMPLETE = "COMPLETE"
+COGNITIVE_TRUNCATED = "TRUNCATED"
+COGNITIVE_INCOMPLETE = "INCOMPLETE"
+COGNITIVE_UNKNOWN = "UNKNOWN"
+
+VALID_COGNITIVE_STATUSES = frozenset({
+    COGNITIVE_COMPLETE, COGNITIVE_TRUNCATED,
+    COGNITIVE_INCOMPLETE, COGNITIVE_UNKNOWN,
+})
+
+#: provider 的 `finish_reason` → 认知输出状态。
+#:
+#: 🔒 **只映射有确定语义的值**，不机械地把所有非-stop 都当成截断：
+#:     · `stop`           — 模型自然结束          → COMPLETE
+#:     · `length`         — 撞到 token 上限被截断 → TRUNCATED
+#:     · `content_filter` — 内容被过滤，输出不完整 → TRUNCATED
+#:     · `tool_calls` /
+#:       `function_call`  — 模型转去调工具，正文没写完 → INCOMPLETE
+#:     · 其它非空值        — 认不出来，如实说 INCOMPLETE
+#:     · 缺失 / 空         — provider **没有上报** → UNKNOWN
+#:                          （UNKNOWN **不**阻断 Action；TRUNCATED 才阻断。)
+COGNITIVE_FINISH_REASON_MAP = {
+    "stop": COGNITIVE_COMPLETE,
+    "length": COGNITIVE_TRUNCATED,
+    "content_filter": COGNITIVE_TRUNCATED,
+    "tool_calls": COGNITIVE_INCOMPLETE,
+    "function_call": COGNITIVE_INCOMPLETE,
+}
+
 VALID_OUTPUT_STATUSES = {
     OUTPUT_VALID_CONTENT,
     OUTPUT_EMPTY_CONTENT,
@@ -520,6 +568,33 @@ class LLMResponse:
                 else OUTPUT_VALID_CONTENT)
 
     @property
+    def cognitive_status(self) -> str:
+        """
+        这一轮**认知输出**的语义完成度。
+
+        🔒 与 `output_status` **正交**：
+             `output_status` 回答「能不能解析出结构」，
+             本属性回答「模型是不是把这一轮想完了」。
+
+        🔒 它**不是** Provider Error：
+             provider 正常完成了 API 请求，只是模型输出撞到了上限。
+             所以写成「Provider call = SUCCESS，Cognitive output = TRUNCATED」，
+             绝不允许包装成 `ProviderError`。
+
+        🔒 取不到 `finish_reason`（未上报）→ `UNKNOWN`，
+           **不假装 COMPLETE，也不假装 TRUNCATED**。
+        """
+        reason = str(self.finish_reason or "").strip().lower()
+        if not reason:
+            return COGNITIVE_UNKNOWN
+        return COGNITIVE_FINISH_REASON_MAP.get(reason, COGNITIVE_INCOMPLETE)
+
+    @property
+    def is_truncated(self) -> bool:
+        """这一轮认知输出被截断了吗？"""
+        return self.cognitive_status == COGNITIVE_TRUNCATED
+
+    @property
     def has_valid_content(self) -> bool:
         """这次调用有没有拿到**可用**的生产内容。"""
         return self.output_status == OUTPUT_VALID_CONTENT
@@ -557,6 +632,8 @@ class LLMResponse:
             "metadata": dict(self.metadata),
             # §四 输出契约
             "output_status": self.output_status,
+            "cognitive_status": self.cognitive_status,
+            "finish_reason": self.finish_reason,
             # 🔒 reasoning 单独一格，**不混进 content**。
             #    放进来是为了让实验记录能解释「为什么 content 是空的」。
             "reasoning_chars": len(self.reasoning or ""),

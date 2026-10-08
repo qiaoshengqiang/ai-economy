@@ -102,10 +102,56 @@ def run_cognition(
             agent_id,
         )
 
+    # --- 认知输出语义状态（截断检测）----------------------------------
+    #
+    #   🔴 **「模型返回了内容」不等于「模型完成了认知」。**
+    #
+    #   实测（Run 2）：11 turns 的 `finish_reason="length"` 被记成
+    #   `VALID_CONTENT`，看起来是一次成功认知。真实语义是：
+    #   **模型输出撞到 token 上限被截断，本轮认知不完整。**
+    #
+    #   🔒 鸭子类型取值，不 import `llm/` —— `actions/` 是叶子层。
+    #      取不到就是 None（「契约未上报」），**不假装 COMPLETE**。
+    #
+    #   🔒 它**不是** Provider Error：
+    #      provider 正常完成了 API 请求，只是模型输出到了上限。
+    #      所以这里既不抛异常、也不记成失败 —— 只是如实标注。
+    cognitive_status = getattr(response, "cognitive_status", None)
+    finish_reason = getattr(response, "finish_reason", None)
+    truncated = (cognitive_status == "TRUNCATED")
+
+    if truncated:
+        logger.warning(
+            "Cognition 输出被**截断**：agent=%s finish_reason=%s "
+            "output_status=%s。模型输出达到 token 上限，本轮认知不完整 —— "
+            "即使解析出了合法 Action，也**不执行**（完整认知可能还在后面）。"
+            "这不是 provider 失败，provider 调用本身是成功的。",
+            agent_id, finish_reason, output_status,
+        )
+
     # --- Action（可选）------------------------------------------------
+    #
+    #   🔴 **TRUNCATED 时默认不执行 Action。**
+    #
+    #      理由：`finish_reason=length` 说明模型**还没输出完**。
+    #      截断点之后可能还有内容 —— 比如一个本该跟着的
+    #      `"reflections"` 段，或者一个更完整的 action 参数。
+    #      「JSON 恰好能解析」**不能**证明「模型已经完成了这一轮认知」。
+    #
+    #   🔒 但**不发明新的「失败行动」**（§6）：
+    #      ActionIntent 仍然**保留**在结果里（那是真实发生的事实），
+    #      只是 `action_result` 为 None。
+    #      没有 ActionFailure / RETRY / ABORT / RECOVER。
     result: Optional[ActionResult] = None
     if execute and decision.is_action and dispatcher is not None:
-        result = dispatcher.dispatch(decision.intent)
+        if truncated:
+            logger.warning(
+                "跳过 Action 执行（认知输出被截断）：agent=%s action=%s —— "
+                "「JSON 能解析」不等于「这一轮认知已经完成」。",
+                agent_id, getattr(decision.intent, "kind", "?"),
+            )
+        else:
+            result = dispatcher.dispatch(decision.intent)
 
     # --- Reflection（§十：**可选**，0..N 个）---------------------------
     proposals = _reflections_of(agent_id, response)
@@ -127,6 +173,10 @@ def run_cognition(
         write_outcomes=outcomes,
         # §七：把 Provider 输出契约**带出** Cognition，不留在里面被吃掉
         output_status=output_status,
+        # 🔴 认知输出语义状态也必须带出去 —— 否则「被截断」这个事实
+        #    会在 Cognition 内部被吃掉，下一轮 Agent 看不到。
+        cognitive_status=cognitive_status,
+        finish_reason=finish_reason,
     )
 
 
