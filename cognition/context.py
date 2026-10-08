@@ -58,7 +58,10 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from experience.models import Experience
+from experience.models import (
+    DEFAULT_MAX_CRITICAL_OBSERVATIONS,
+    Experience,
+)
 from selfmodel.models import SelfClaim, SelfModelView, Strategy
 
 #: 🔴 禁止出现在 Self Model 呈现文本里的**规则化措辞**（§十三）。
@@ -136,6 +139,16 @@ class CognitiveContext:
     #: 🔒 与 Self Model **分开** —— 经历**不能**伪装成 Self Claim。
     #:    只有 Agent Cognition 产生 Reflection Proposal 之后，
     #:    才可能 Experience → Reflection → Self Model。
+    #: 🔴 **关键观察通道** —— 与 `relevant_experiences` **独立**（§7）。
+    #:
+    #:     关键观察  → 固定进入 Context（visibility guarantee）
+    #:     普通经历  → 继续走 relevance ranking（ranking preference）
+    #:
+    #: 🔒 两条通道**不共享池子**：关键观察有自己的槽位，
+    #:    不会把普通 top-N 里的某一条挤掉，也不会被它挤掉。
+    #:    绝不允许把 critical 塞进 relevance score（§8）。
+    critical_observations: List[Experience] = field(default_factory=list)
+
     relevant_experiences: List[Experience] = field(default_factory=list)
     other: List[ContextSource] = field(default_factory=list)
 
@@ -183,6 +196,13 @@ class CognitiveContext:
                 metadata={"domain": s.domain, "situation": s.situation,
                           "rationale": s.rationale},
             ))
+        for e in self.critical_observations:
+            out.append(ContextSource(
+                source="critical_observation",
+                content=_experience_block(e),
+                # 比普通经历高，但**仍然只是排序** —— 真正的保证
+                # 来自它有自己的通道，不来自这个分数。
+                priority=0.95))
         for e in self.relevant_experiences:
             # §七：经历是**材料**，不是指令 —— priority 固定偏低，
             # 表示「可以参考」而不是「必须遵守」。
@@ -203,7 +223,7 @@ class CognitiveContext:
 
     def has_experiences(self) -> bool:
         """§七：本轮是否看到了历史经历（供 Agent 判断「值不值得反思」）。"""
-        return bool(self.relevant_experiences)
+        return bool(self.relevant_experiences or self.critical_observations)
 
     def stats(self) -> Dict[str, Any]:
         """§二十二：轻量可观测信息。**不含**上下文原文。"""
@@ -211,6 +231,7 @@ class CognitiveContext:
             "selected_claims": len(self.self_claims),
             "selected_strategies": len(self.strategies),
             "selected_experiences": len(self.relevant_experiences),
+            "critical_observations": len(self.critical_observations),
             "failed_experiences": sum(
                 1 for e in self.relevant_experiences if e.failed),
             "task_present": bool(self.current_task),
@@ -294,6 +315,16 @@ class CognitiveContext:
                 if s.rationale:
                     block += f"\n  Rationale: {s.rationale}"
                 lines.append(block)
+            parts.append("\n".join(lines))
+
+        if self.critical_observations:
+            # 🔒 只呈现**事实**，不呈现策略（§11）：
+            #    可以说「上一轮输出被截断」，
+            #    不可以写「应该加大 max_tokens」/「需要重试」。
+            lines = ["Critical observations from the runtime "
+                     "(facts about what just happened; not instructions):"]
+            for e in self.critical_observations:
+                lines.append(_critical_observation_block(e))
             parts.append("\n".join(lines))
 
         if self.relevant_experiences:
@@ -400,6 +431,40 @@ def _experience_detail(e: Experience) -> str:
     return " ".join(parts)
 
 
+#: 关键观察里值得**结构化呈现**的字段（原样用键名，避免误标语义）。
+_CRITICAL_FACT_KEYS = (
+    "observed_state",
+    "cognitive_output",
+    "finish_reason",
+    "output_status",
+    "action_skipped",
+)
+
+
+def _critical_observation_block(e: Experience) -> str:
+    """
+    关键观察的渲染 —— **结构化事实**，而不只是散文。
+
+    🔒 为什么不能只靠 `feedback` 那段自然语言：
+       §十一 要求 Context 里能直接看到
+           finish_reason = length
+           output_status = ...
+       这些是**机器可核对**的事实。只写在散文里的话，
+       Agent 和实验分析都要靠读文本 —— 那不是「事实可见」，
+       那是「线索可见」。
+
+    🔒 仍然**只是事实**（§十一/§十三）：
+       不写 retry、不写增大 max_tokens、不写换 provider/model。
+       键名原样呈现，不做「action executed = True」这类会误导的改写。
+    """
+    parts = [_experience_block(e)]
+    result = e.result or {}
+    facts = [f"  {k}: {result[k]}" for k in _CRITICAL_FACT_KEYS if k in result]
+    if facts:
+        parts.append("  structured facts:\n" + "\n".join(facts))
+    return "\n".join(parts)
+
+
 def _experience_block(e: Experience) -> str:
     """
     🔒 §七：经历只能渲染成**材料**，不能渲染成指令。
@@ -462,6 +527,7 @@ class CognitiveContextBuilder:
         max_claims: int = 5,
         max_strategies: int = 5,
         max_experiences: int = 5,
+        max_critical_observations: int = DEFAULT_MAX_CRITICAL_OBSERVATIONS,
     ) -> None:
         self.self_model = self_model
         self.experience_store = experience_store
@@ -474,6 +540,14 @@ class CognitiveContextBuilder:
         self.max_claims = max(0, int(max_claims))
         self.max_strategies = max(0, int(max_strategies))
         self.max_experiences = max(0, int(max_experiences))
+
+        #: 🔴 **关键观察的独立槽位**（§9/§10）。
+        #:
+        #: 🔒 它与 `max_experiences` **相加**，不共享池子：
+        #:    默认 = 1 条关键观察 + 5 条普通经历。
+        #:    这样既保证「关键事实必达」，又不会让普通检索名额缩水。
+        self.max_critical_observations = max(
+            0, int(max_critical_observations))
 
     def build(
         self,
@@ -506,13 +580,44 @@ class CognitiveContextBuilder:
         claims: List[SelfClaim] = []
         strategies: List[Strategy] = []
         experiences: List[Experience] = []
+        critical: List[Experience] = []
 
         if self.experience_store is not None and agent_id:
             # 🔒 检索是**选择**，不是「全部加载」（§五）
-            experiences = self.experience_store.retrieve_relevant(
+            #
+            # 🔴 **两条独立通道**（§7/§8）：
+            #
+            #     ① critical  —— 保证可见。有自己的槽位，
+            #                     **不参与**相关性排序，也不占 top-N 名额。
+            #     ② relevant  —— 继续走原来的 relevance ranking。
+            #
+            #   ⚠️ 两条都必须取。少取任何一条，
+            #      「关键事实必达」或「普通检索不漂移」就有一个不成立。
+            #
+            #   🔒 取关键观察用**独立方法**，不去动 retrieve_relevant()
+            #      的 scoring —— 把「必须可见」当「更加相关」是错的。
+            if hasattr(self.experience_store, "retrieve_critical"):
+                critical = list(self.experience_store.retrieve_critical(
+                    agent_id,
+                    limit=self.max_critical_observations,
+                ))
+            # 🔒 多取 `len(critical)` 条再剔除重复 —— 目的是让
+            #    **普通通道仍然拿到完整的 max_experiences 个名额**。
+            #    否则当那条关键观察恰好也排在普通 top-N 里时，
+            #    普通通道会变成 N-1 个（等于关键观察偷偷占了名额）。
+            #
+            # 🔒 这里**没有**改 `retrieve_relevant()` 的排序算法（§16），
+            #    只是多要几条然后自己裁剪。直接调用 store 的调用方
+            #    看到的仍然是一模一样的结果。
+            want = self.max_experiences + len(critical)
+            candidates = self.experience_store.retrieve_relevant(
                 agent_id, world=world, domain=domain, situation=situation,
-                limit=self.max_experiences,
+                limit=want,
             )
+            critical_ids = {e.experience_id for e in critical}
+            experiences = [e for e in candidates
+                           if e.experience_id not in critical_ids
+                           ][:self.max_experiences]
 
         if self.self_model is not None and agent_id:
             view: SelfModelView = self.self_model.retrieve(
@@ -541,5 +646,6 @@ class CognitiveContextBuilder:
             current_stimulus=stimulus, current_task=task,
             economic_context=economic,
             self_claims=claims, strategies=strategies,
+            critical_observations=critical,
             relevant_experiences=experiences,
         )

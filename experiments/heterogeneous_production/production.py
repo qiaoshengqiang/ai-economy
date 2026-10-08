@@ -74,7 +74,19 @@ AGENTS = ["novel_world_builder", "novel_plot_architect", "novel_author",
 OWNER = AGENTS[0]
 
 #: §二十：整个实验最多 120 分钟墙钟。
-TOTAL_WALL_LIMIT = float(os.environ.get("HETERO_TOTAL_LIMIT", "7200"))
+#: 🔴 **总墙钟上限：60 分钟**（原为 120 分钟）。
+#:
+#:    规格「Observation闭环与验证实验」§17 固定了这个数字：
+#:        TOTAL_WALL_LIMIT = 3600
+#:        SESSION_LIMIT    = 1800
+#:    即最多 2 个 session × 每个最多 30 分钟。
+#:
+#:    🔒 本轮的验证目标是「关键观察在真实 cognitive turn 里
+#:       能否持续可见」—— 那不是统计显著性实验（§18），
+#:       不需要更长的墙钟。跑满不会让证据更强，只会多花调用。
+#:
+#:    ⚠️ 这是**默认值**；仍可用 HETERO_TOTAL_LIMIT 覆盖。
+TOTAL_WALL_LIMIT = float(os.environ.get("HETERO_TOTAL_LIMIT", "3600"))
 #: §十九：单 Session 30 分钟。
 SESSION_LIMIT = float(os.environ.get("HETERO_SESSION_LIMIT", "1800"))
 #: 单 Session 最多多少轮（防止轮询无限打转）。

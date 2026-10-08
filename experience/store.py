@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional
 
 from core.identity import utc_now_iso
 from experience.models import (
+    DEFAULT_MAX_CRITICAL_OBSERVATIONS,
     SOURCE_ACTION_RESULT, VALID_SOURCES, Experience, new_experience_id,
 )
 
@@ -231,6 +232,36 @@ class ExperienceStore:
 
         items.sort(key=lambda e: (-relevance(e), _neg(e.created_at)))
         return items[:max(0, int(limit))]
+
+    def retrieve_critical(
+        self,
+        agent_id: str,
+        *,
+        limit: int = DEFAULT_MAX_CRITICAL_OBSERVATIONS,
+    ) -> List[Experience]:
+        """
+        **关键观察通道** —— 保证可见，**不参与相关性排序**（§8）。
+
+        🔒 为什么不去改 `retrieve_relevant()` 的 scoring：
+           把「**必须可见**」建模成「**更加相关**」是错的 ——
+           那只是把 critical 的排名推到最高，仍然共享同一个 top-N 池，
+           数量多起来照样会被挤掉。
+           正确语义是：
+               Critical   → visibility guarantee（自己的槽位）
+               Relevant   → ranking preference（共享的池子）
+
+        🔒 `retrieve_relevant()` **一行都没有改动**（§16）——
+           普通检索行为零漂移。
+
+        排序：只按时间倒序（近期优先），**不**做相关性打分 ——
+        关键事实的可见性不该取决于它跟当前情境像不像。
+        """
+        rows = self.db.fetchall(
+            f"SELECT * FROM {TABLE_EXPERIENCES} WHERE agent_id=? "
+            "ORDER BY created_at DESC", (agent_id,))
+        critical = [e for e in (_row_to_experience(r) for r in rows)
+                    if e.is_critical_observation]
+        return critical[:max(0, int(limit))]
 
     def get(self, experience_id: str) -> Optional[Experience]:
         row = self.db.fetchone(

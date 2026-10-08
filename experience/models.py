@@ -35,6 +35,27 @@ SOURCE_FEEDBACK = "feedback"
 SOURCE_OBSERVATION = "observation"
 VALID_SOURCES = {SOURCE_ACTION_RESULT, SOURCE_FEEDBACK, SOURCE_OBSERVATION}
 
+#: `Experience.result` 里的关键观察标记。
+#:
+#: 🔴 **Critical Observation ≠ Important Experience。**
+#:
+#:     普通 Experience  → 参与 relevance ranking（可能被 top-N 淘汰）
+#:     Critical Observation → Runtime 已确认的关键事实，**保证进入 Context**
+#:
+#: 🔒 **不是新增数据库列** —— 它写在既有的 `result` JSON 里。
+#:    只有一个布尔语义（§5：不引入 CRITICAL/HIGH/MEDIUM/LOW 分级，
+#:    也不引入 importance_score / salience_score / retrieval_weight）。
+CRITICAL_OBSERVATION_KEY = "critical_observation"
+
+#: 关键观察的**保留条数上限**（§10）。
+#:
+#: 🔒 取 1 是有意的（"latest critical observation"）：
+#:     本轮要解决的最小核心问题是「**上一轮刚刚发生的关键事实不能消失**」。
+#:     这个值直接决定 Context 的额外 token 开销 ——
+#:     每多留一条，就多一段必然进入 Context 的文本。
+#:     不设成大数，是因为关键观察必须**稀缺**（§22：不是垃圾桶）。
+DEFAULT_MAX_CRITICAL_OBSERVATIONS = 1
+
 
 def new_experience_id() -> str:
     return f"exp_{uuid.uuid4().hex[:12]}"
@@ -67,6 +88,17 @@ class Experience:
     def failed(self) -> bool:
         """这次经历是不是一次失败。**仅供上层判断，不触发任何自动行为。**"""
         return self.result.get("success") is False
+
+    @property
+    def is_critical_observation(self) -> bool:
+        """
+        这条经历是不是**关键观察**？
+
+        🔒 判据只有一个：`result["critical_observation"]` 是真值。
+           **不**看 source、**不**看 feedback、**不**看失败与否 ——
+           "重要" 不等于 "关键"，不许拿别的信号来猜。
+        """
+        return bool((self.result or {}).get(CRITICAL_OBSERVATION_KEY))
 
     def to_dict(self) -> Dict[str, Any]:
         return {

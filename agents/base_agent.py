@@ -406,6 +406,15 @@ class BaseAgent:
                     self.agent_id if hasattr(self, "agent_id") else self.name,
                     "observation",
                     result={
+                        # 🔴 **标记成关键观察** —— 保证进入下一轮 Context。
+                        #
+                        #    依据：截断这件事如果丢了，Agent 会以为
+                        #    上一轮"正常结束了"，于是基于一个不完整的
+                        #    认知继续往下走。那是行为错误，不只是信息缺失。
+                        #
+                        #    🔒 它写进既有的 `result` JSON 列，
+                        #       **没有新增数据库列**。
+                        "critical_observation": True,
                         # 结构化事实：下一轮可以机械读出
                         "observed_state": "cognitive_output_truncated",
                         "cognitive_output": "TRUNCATED",
