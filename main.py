@@ -663,7 +663,9 @@ def build_runtime(
     ensure_runtime_dirs()
 
     config = load_global_config()
-    setup_logging(level=str(config.get("system.log_level", "INFO")))
+    # 🔒 canonical 位置是 `runtime.log_level`。
+    #    `system.log_level` 已删除 —— 那曾经是同一事实的第二份定义。
+    setup_logging(level=str(config.get("runtime.log_level", "INFO")))
 
     economy = Economy.bootstrap(db_path=db_path, config=config)
 
@@ -707,16 +709,16 @@ def build_runtime(
     #     认领租约时长和 SQLite 忙等超时都不是业务规则，
     #     而是「这个部署面对并发时怎么表现」——
     #     所以它们来自 config.yaml，不写死在代码里。
-    reliability_config = config.get("system.reliability", {}) or {}
+    #
+    # 🔒 canonical 位置是 `runtime.message_claim_lease_seconds`。
+    #    `system.reliability.*` 已删除 —— 那曾经是同一事实的第二份定义。
     journal = CommunicationRecorder(
         db=economy.db,
         store_payload=True,
         strict=False,
         claim_lease_seconds=int(
-            reliability_config.get(
-                "message_claim_lease_seconds",
-                DEFAULT_CLAIM_LEASE_SECONDS,
-            )
+            config.get("runtime.message_claim_lease_seconds",
+                       DEFAULT_CLAIM_LEASE_SECONDS)
         ),
     )
     communication = CommunicationManager(
@@ -6785,7 +6787,7 @@ def build_parser() -> argparse.ArgumentParser:
     shared.add_argument(
         "--db",
         default=argparse.SUPPRESS,
-        help="数据库文件路径（默认读 config/config.yaml 里的 storage.database_path）",
+        help="数据库文件路径（默认读 config/config.yaml 里的 runtime.database_path）",
     )
     shared.add_argument(
         "--quiet",

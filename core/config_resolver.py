@@ -38,7 +38,7 @@ Canonical Configuration —— Loader · Validator · Resolver · ResolvedConfig
 ① **一个事实只有一个权威来源**
 
     迁移期新旧配置并存时，**值不同就必须报错**（`ConfigurationError`），
-    **绝不静默选一个**。见 `ConfigValidator.check_no_conflicting_definition`。
+    **绝不静默选一个**。见 `ConfigValidator.check_no_retired_duplicate_keys`。
 
 ② **失败必须 loud**
 
@@ -344,8 +344,25 @@ CANONICAL_SECTIONS: Tuple[str, ...] = (
 #: canonical 的**标量**键（不是映射，不能当段处理）。
 CANONICAL_SCALARS: Tuple[str, ...] = ("version",)
 
-#: 迁移期仍需读取的**旧段**（只为 Guard 1 的冲突检测与兼容读取）。
-LEGACY_SECTIONS: Tuple[str, ...] = ("llm", "storage", "system")
+#: 已被**合并进别处**的旧键。它们**不许再出现** ——
+#: 否则同一事实又会多出一份定义。
+#:
+#:    旧键                            现在的唯一权威位置
+#:    -----------------------------   ----------------------------------
+#:    system.log_level                runtime.log_level
+#:    system.reliability              runtime.message_claim_lease_seconds
+#:    storage.database_path           runtime.database_path
+#:
+#: 🔒 这张表是 **Guard 1 的替代品**。
+#:    迁移期 Guard 1 比的是「canonical 与旧 `llm` / `storage` / `system`
+#:    段是否冲突」；旧段全部删除之后那个比较已经没有对象了。
+#:    但它的**保护作用仍然需要** —— 防止有人日后又把旧键加回来。
+#:    所以这里把它改成「禁止已废弃键回归」。
+RETIRED_KEYS: Tuple[Tuple[str, str], ...] = (
+    ("system.log_level", "runtime.log_level"),
+    ("system.reliability", "runtime.message_claim_lease_seconds"),
+    ("storage", "runtime.database_path"),
+)
 
 
 class ConfigLoader:
@@ -391,10 +408,6 @@ class ConfigLoader:
             out[key] = self.raw.get(key)
         return out
 
-    @property
-    def legacy(self) -> Dict[str, Any]:
-        return {k: self.section(k) for k in LEGACY_SECTIONS}
-
     def source_of(self, dotted: str) -> str:
         """这个值来自哪里（给 GUI / 排障）。"""
         return f"{self.source_file} :: {dotted}"
@@ -419,87 +432,57 @@ class ConfigValidator:
         #: 所以由 `llm/` 提供 —— `core/` 里**没有**任何 adapter 名字的硬编码。
         self._adapter_specs = adapter_specs
 
-    # ---- Guard 1：同一事实多处定义，值不同 → 报错 ----
+    # ---- Guard 1：已废弃的重复键不许回归 ----
     @staticmethod
-    def check_no_conflicting_definition(
-            canonical: Mapping[str, Any],
-            legacy: Mapping[str, Any]) -> List[str]:
+    def check_no_retired_duplicate_keys(raw: Mapping[str, Any]) -> List[str]:
         """
-        迁移期新旧配置并存时，**同一个事实**的值必须一致。
+        **同一个事实只能有一个权威来源。**
 
-        🔒 「同一事实」的定义很关键 —— 只比较**语义相同**的键：
+        这条守卫守的是「**已经被合并掉的旧键不许回来**」：
 
-            providers.<p>.base_url      ≡  llm.providers.<p>.base_url
-            providers.<p>.timeout_seconds ≡ llm.providers.<p>.timeout_seconds
-            runtime.log_level           ≡  system.log_level
-            runtime.database_path       ≡  storage.database_path
+            旧键                          现在的唯一权威位置
+            ---------------------------   ----------------------------------
+            system.log_level              runtime.log_level
+            system.reliability            runtime.message_claim_lease_seconds
+            storage.database_path         runtime.database_path
 
-        ⚠️ **`models.<profile>.model_id` 与旧 `llm.providers.<p>.model`
-           不是同一个事实** —— 旧结构是「一个 provider 一个 model」，
-           新结构允许「一个 provider 多个 model profile」。
-           所以这里只检查**包含关系**：旧值必须仍是新结构里
-           该 provider 的某个 model_id；否则说明旧配置会静默产出
-           一个现在不存在的模型。
+        【为什么是这一条，而不是别的】
+
+            迁移期这里比的是「canonical 段与旧 `llm` / `storage` / `system`
+            段的值是否一致」—— 那在旧段还存在时才有意义。
+            旧段全部删除之后，那个比较**没有对象**了。
+
+            但保护作用不能跟着消失：如果哪天有人把 `system.log_level`
+            或 `storage:` 加回来，同一事实就又有了两份定义，
+            而这次**不会**有任何东西报错 —— 因为读取路径已经全改到
+            `runtime.*`，旧键会被静默忽略。那正是最危险的状态：
+            「看起来改了，其实没生效」。
+
+            所以这条守卫改成**禁止回归**：旧键一旦出现就报错，
+            并明确告诉你它现在应该写在哪儿。
+
+        🔒 它**只看原始配置**（`raw`），不看 canonical —— 因为
+           `storage` 这种段根本不在 canonical 段列表里，
+           从 canonical 视角是看不见的。
         """
         problems: List[str] = []
-        legacy_providers = dict((legacy.get("llm") or {}).get("providers") or {})
-        canonical_providers = dict(canonical.get("providers") or {})
-
-        # ---- provider 级：base_url / timeout ----
-        for name, prov in canonical_providers.items():
-            old = legacy_providers.get(name)
-            if not isinstance(old, Mapping):
-                continue
-            prov = prov or {}
-            for field_name in ("base_url",):
-                new_v = str(prov.get(field_name) or "").rstrip("/")
-                old_v = str(old.get(field_name) or "").rstrip("/")
-                if new_v and old_v and new_v != old_v:
-                    problems.append(
-                        f"providers.{name}.{field_name} = {new_v!r}，但旧段 "
-                        f"llm.providers.{name}.{field_name} = {old_v!r}。"
-                        f"同一事实有两个不同值 —— 必须删掉其中一个，"
-                        f"**不允许**靠覆盖顺序决定。")
-            new_t = prov.get("timeout_seconds")
-            old_t = old.get("timeout_seconds")
-            if new_t is not None and old_t is not None and float(new_t) != float(old_t):
+        for retired, canonical_home in RETIRED_KEYS:
+            node: Any = raw
+            found = True
+            for part in retired.split("."):
+                if isinstance(node, Mapping) and part in node:
+                    node = node[part]
+                else:
+                    found = False
+                    break
+            if found:
                 problems.append(
-                    f"providers.{name}.timeout_seconds = {new_t}，但旧段 "
-                    f"llm.providers.{name}.timeout_seconds = {old_t}。")
-
-        # ---- runtime 级 ----
-        runtime = dict(canonical.get("runtime") or {})
-        for new_key, old_dotted in (("log_level", ("system", "log_level")),
-                                    ("database_path", ("storage", "database_path"))):
-            new_v = runtime.get(new_key)
-            old_v = (legacy.get(old_dotted[0]) or {}).get(old_dotted[1])
-            if new_v is not None and old_v is not None and str(new_v) != str(old_v):
-                problems.append(
-                    f"runtime.{new_key} = {new_v!r}，但旧段 "
-                    f"{'.'.join(old_dotted)} = {old_v!r}。")
-
-        # ---- model：只检查「旧值必须仍然是某个 canonical model_id」----
-        by_provider: Dict[str, set] = {}
-        for profile, model in (canonical.get("models") or {}).items():
-            model = model or {}
-            by_provider.setdefault(str(model.get("provider") or ""), set()).add(
-                str(model.get("model_id") or ""))
-
-        # 旧 provider 名 → canonical provider 名（迁移期别名，bailian_qwen/glm → bailian）
-        alias = {"bailian_qwen": "bailian", "bailian_glm": "bailian"}
-        for old_name, old in legacy_providers.items():
-            if not isinstance(old, Mapping):
-                continue
-            old_model = str(old.get("model") or "")
-            if not old_model:
-                continue
-            target = alias.get(old_name, old_name)
-            known = by_provider.get(target) or set()
-            if known and old_model not in known:
-                problems.append(
-                    f"旧段 llm.providers.{old_name}.model = {old_model!r}，"
-                    f"但 canonical models 里 provider={target!r} 只有 {sorted(known)}。"
-                    f"迁移后这个旧值会**消失** —— 请显式为它建一个 model profile。")
+                    f"{retired} 仍然存在，但它已经合并进 "
+                    f"{canonical_home}。\n"
+                    f"  同一事实只能有一个权威来源 —— "
+                    f"请删掉 {retired}，只保留 {canonical_home}。\n"
+                    f"  （否则它会被静默忽略：读取路径已经全读 "
+                    f"{canonical_home}。）")
         return problems
 
     # ---- Guard 2：引用完整性 + 失败必须 loud ----
@@ -678,8 +661,7 @@ class ConfigValidator:
         canonical = loader.canonical
         problems: List[str] = []
         problems += self.check_no_silent_mock_fallback(canonical)
-        problems += self.check_no_conflicting_definition(canonical,
-                                                         loader.legacy)
+        problems += self.check_no_retired_duplicate_keys(loader.raw)
         problems += self.check_reference_integrity(canonical)
         problems += self.check_no_secret_in_config(canonical)
         if problems:

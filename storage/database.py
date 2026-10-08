@@ -810,13 +810,15 @@ def create_database(db_path: Optional[Union[str, Path]] = None) -> Database:
     """
     按配置创建数据库。
 
-    db_path 为 None 时读取全局配置里的 storage.database_path。
+    db_path 为 None 时读取全局配置里的 runtime.database_path。
     """
     if db_path is None:
         from core.config import load_global_config
 
         config = load_global_config()
-        db_path = config.get("storage.database_path", "data/economy.db")
+        # 🔒 canonical 位置是 `runtime.database_path`。
+        #    `storage.database_path` 已删除 —— 那曾经是同一事实的第二份定义。
+        db_path = config.get("runtime.database_path", "data/economy.db")
 
     db = Database(db_path)
     db.connect()

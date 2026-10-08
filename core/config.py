@@ -223,16 +223,14 @@ def deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]
 #:     只有这里列出的键允许被进程环境变量临时覆盖 ——
 #:     用途是「不改文件就能换日志级别 / 换测试库」。
 #:
-#: ⚠️ 注意 `runtime.*` 与旧的 `system.*` / `storage.*` 成对出现：
-#:    重构后 canonical 的位置是 `runtime.log_level` /
-#:    `runtime.database_path`，而组合根（`main.py`）与
-#:    `storage/database.py` 目前仍读旧键。两条路径都要覆盖到，
-#:    否则「用 env 换测试库」会失效。
+#: ⚠️ 清单现在只有 **2 项**。以前它还成对地列出 `system.log_level` /
+#:    `storage.database_path` —— 那两份定义已经删除（**所有**读取路径都改读
+#:    `runtime.*`），所以这里也不再需要它们。
+#:    有测试（`TestRuntimeOverridesAreAnAllowlist`）锁住这个规模，
+#:    防止清单悄悄变大。
 RUNTIME_OVERRIDES: Dict[str, str] = {
     "runtime.log_level": "AI_ECONOMY_LOG_LEVEL",
     "runtime.database_path": "AI_ECONOMY_DB_PATH",
-    "system.log_level": "AI_ECONOMY_LOG_LEVEL",
-    "storage.database_path": "AI_ECONOMY_DB_PATH",
 }
 
 

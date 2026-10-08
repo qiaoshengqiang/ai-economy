@@ -3,62 +3,78 @@
 # ------------------------------------------------------------
 # 原则：所有「经常变化的参数」都放在这里，不许硬编码进 Python。
 # 改这个文件不需要动任何代码。
+#
+# 🔒 Canonical Configuration V1：**一个事实只有一个权威来源**。
+#
+#     system     ← 只放**系统元信息**（name / version）
+#     runtime    ← 运行期参数的唯一权威
+#     economy    ← 经济领域配置（独立领域，**不**塞进 runtime）
+#     task       ← 任务领域配置（独立领域）
+#     future     ← 未启用的扩展开关
+#     providers / models / credentials / cost / agents
+#                ← 见本文件下半部分（Configuration System Refactor）
+#
+# ⚠️ 以前 `system.log_level` / `system.reliability` /
+#    `storage.database_path` 与 `runtime.*` 是**同一事实的两份定义**，
+#    现已全部合并进 `runtime`。
+#    有守卫（`ConfigValidator.check_no_retired_duplicate_keys`）禁止它们回来。
 # ============================================================
 
 system:
   name: "AI Economy OS"
   version: "0.1"
+
+# ------------------------------------------------------------
+# 运行期参数 —— log_level / database_path / message_claim_lease_seconds /
+# default_provider 的**唯一权威来源**
+# ------------------------------------------------------------
+runtime:
   # 日志等级：DEBUG / INFO / WARNING / ERROR
-  # 环境变量 AI_ECONOMY_LOG_LEVEL 可以覆盖它
+  # 环境变量 AI_ECONOMY_LOG_LEVEL 可以**临时**覆盖它 ——
+  # 那是 core/config.py 里 RUNTIME_OVERRIDES 的**显式清单**，不是通用机制。
   log_level: "INFO"
 
-  # ------------------------------------------------------------
-  # 可靠性 / 并发参数（Workspace Phase 0）
-  # ------------------------------------------------------------
-  #
-  # 【为什么这些参数放在这里，而不是写在代码里】
+  # 数据库文件路径。路径相对于项目根目录。
+  database_path: "data/economy.db"
+
+  # 【为什么这些参数放在配置里，而不是写在代码里】
   #     它们描述的是「这个部署面对并发时怎么表现」，
   #     不是业务规则。不同环境需要不同的值：
   #         本机开发   → 短租约，出问题恢复快
   #         慢任务部署 → 长租约，别把正常处理中的消息抢走
   #     写进代码就变成「改一个部署参数要动业务代码」。
-  reliability:
-    # 消息认领租约（秒）。
-    #
-    # 【它是什么】
-    #     worker 认领一条消息后，这个认领有效多久。
-    #     超时之后别的 worker 可以接手 ——
-    #     这解决「worker 崩了、认领永久卡住」的问题。
-    #
-    # 【它不是什么】
-    #     ❌ 不是处理超时      ❌ 不是重试调度
-    #     ❌ 不会把消息标记成失败或完成
-    #     它只管「谁现在有权处理」。
-    #
-    # 【怎么选这个值】
-    #     必须 > 最慢的 handler 所需的正常处理时间。
-    #     太短 → 正常处理中的消息被抢走 → 重复处理
-    #     太长 → 崩溃后要等很久才恢复
-    message_claim_lease_seconds: 300
 
-    # 【注意：SQLite 的 busy_timeout 不在这里】
-    #
-    #     它更低层，默认值 DEFAULT_BUSY_TIMEOUT_MS 定义在
-    #     storage/database.py，可按需覆盖：
-    #         Database(path, busy_timeout_ms=...)
-    #
-    #     为什么不放进这个文件：
-    #         Database 是 Economy.bootstrap 内部创建的，
-    #         要读这个配置就得把「可靠性参数」穿过经济层 ——
-    #         而它和 Economy 没关系。
-    #     写进 yaml 却没人读，比不写更糟。
+  # 消息认领租约（秒）。
+  #
+  # 【它是什么】
+  #     worker 认领一条消息后，这个认领有效多久。
+  #     超时之后别的 worker 可以接手 ——
+  #     这解决「worker 崩了、认领永久卡住」的问题。
+  #
+  # 【它不是什么】
+  #     ❌ 不是处理超时      ❌ 不是重试调度
+  #     ❌ 不会把消息标记成失败或完成
+  #     它只管「谁现在有权处理」。
+  #
+  # 【怎么选这个值】
+  #     必须 > 最慢的 handler 所需的正常处理时间。
+  #     太短 → 正常处理中的消息被抢走 → 重复处理
+  #     太长 → 崩溃后要等很久才恢复
+  message_claim_lease_seconds: 300
 
-# ------------------------------------------------------------
-# 存储
-# ------------------------------------------------------------
-storage:
-  # 路径相对于项目根目录
-  database_path: "data/economy.db"
+  # 「没有显式指定 provider」时用哪个。
+  # 🔒 它**必须显式写出来** —— 不允许「找不到就用 mock」。
+  #    （默认值 mock 是**声明**，不是兜底。）
+  default_provider: mock
+
+# 【注意：SQLite 的 busy_timeout 不在这里】
+#
+#     它更低层，默认值 DEFAULT_BUSY_TIMEOUT_MS 定义在 storage/database.py，
+#     可按需覆盖：Database(path, busy_timeout_ms=...)
+#
+#     为什么不放进这个文件：Database 是 Economy.bootstrap 内部创建的，
+#     要读这个配置就得把「可靠性参数」穿过经济层 —— 而它和 Economy 没关系。
+#     写进 yaml 却没人读，比不写更糟。
 
 # ------------------------------------------------------------
 # 经济系统参数
@@ -120,13 +136,6 @@ future:
 # 新代码只读下面这几段。
 # ============================================================
 version: 1
-runtime:
-  log_level: INFO
-  database_path: data/economy.db
-  # 「没有显式指定 provider」时用哪个。
-  # 🔒 它**必须显式写出来** —— 不允许「找不到就用 mock」。
-  #    （默认值 mock 是**声明**，不是兜底。）
-  default_provider: mock
 providers:
   mock:
     adapter: mock

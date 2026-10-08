@@ -497,10 +497,12 @@ class TestLeaseConfiguration:
         from core.config import load_global_config
 
         config = load_global_config()
-        value = config.get("system.reliability.message_claim_lease_seconds")
+        # 🔒 canonical 位置是 `runtime.message_claim_lease_seconds`。
+        #    `system.reliability.*` 已删除 —— 那曾经是同一事实的第二份定义。
+        value = config.get("runtime.message_claim_lease_seconds")
 
         assert value is not None, (
-            "config.yaml 里缺少 system.reliability.message_claim_lease_seconds"
+            "config.yaml 里缺少 runtime.message_claim_lease_seconds"
         )
         assert int(value) > 0
 
@@ -516,7 +518,7 @@ class TestLeaseConfiguration:
 
             expected = int(
                 load_global_config().get(
-                    "system.reliability.message_claim_lease_seconds"
+                    "runtime.message_claim_lease_seconds"
                 )
             )
             assert runtime.journal.claim_lease_seconds == expected

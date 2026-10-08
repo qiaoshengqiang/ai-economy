@@ -518,7 +518,7 @@ class TestRequiredConfig:
         broken = Config(
             {
                 "system": {"name": "test", "version": "0.1"},
-                "storage": {"database_path": ":memory:"},
+                "runtime": {"database_path": ":memory:"},
                 "economy": {"currency": "AIC", "initial_balance": 100},
             }
         )

@@ -53,28 +53,32 @@ def _validator() -> ConfigValidator:
     return ConfigValidator(adapter_specs=adapter_specs)
 
 
-def _problems(canonical: dict, *, legacy: dict | None = None) -> list:
-    """跑四条守卫，返回**全部**问题（不抛异常，方便断言具体文案）。"""
+def _problems(canonical: dict, *, extra: dict | None = None) -> list:
+    """
+    跑四条守卫，返回**全部**问题（不抛异常，方便断言具体文案）。
+
+    `extra`：额外合并进**原始配置**的段
+    （用来注入「已废弃键回归」这类违规）。
+    """
     v = _validator()
-    loader = ConfigLoader(canonical)
+    raw = dict(canonical)
+    raw.update(extra or {})
     out = list(v.check_no_silent_mock_fallback(canonical))
-    out += list(v.check_no_conflicting_definition(
-        canonical, legacy if legacy is not None else {}))
+    out += list(v.check_no_retired_duplicate_keys(raw))
     out += list(v.check_reference_integrity(canonical))
     out += list(v.check_no_secret_in_config(canonical))
     return out
 
 
-def _must_fail(canonical: dict, *, legacy: dict | None = None) -> str:
+def _must_fail(canonical: dict, *, extra: dict | None = None) -> str:
     """确认这份配置**校验失败**，并返回合并后的错误文案。"""
-    problems = _problems(canonical, legacy=legacy)
+    problems = _problems(canonical, extra=extra)
     assert problems, "❌ 守卫没有发现这个违规 —— 守卫是假绿的"
     # 🔒 走**完整**的 validate() 路径（不是只调 check_*）——
     #    否则「守卫函数发现了问题、但 validate() 忘了调用它」这种
-    #    假绿就抓不到。legacy 段合并进同一份 dict，
-    #    因为 ConfigLoader 就是从同一份 dict 里分 canonical / legacy 的。
+    #    假绿就抓不到。
     raw = dict(canonical)
-    raw.update(legacy or {})
+    raw.update(extra or {})
     with pytest.raises(ConfigurationError) as excinfo:
         ConfigValidator(adapter_specs=adapter_specs).validate(ConfigLoader(raw))
     return str(excinfo.value)
@@ -602,49 +606,117 @@ class TestResolvedConfigBehaviour:
 # ============================================================
 # 第 4 组：迁移冲突检测（Guard 1）
 # ============================================================
-class TestMigrationConflictDetection:
+class TestNoDuplicateFacts:
     """
-    🔒 迁移期新旧配置并存时，**值不同必须报错**，绝不静默选一个。
+    🔒 **一个事实只能有一个权威来源。**
+
+    这条守卫守的是「**已废弃键不许回归**」：
+
+        system.log_level       → runtime.log_level
+        system.reliability     → runtime.message_claim_lease_seconds
+        storage.database_path  → runtime.database_path
+
+    【为什么必须守它】
+        这三个键合并进 `runtime.*` 之后，**所有**读取路径都改读
+        canonical 位置。如果哪天有人把旧键加回来，
+        它会被**静默忽略** —— 变成最危险的状态：
+        「看起来改了，其实没生效」。
+
+    【为什么不是「值不同才报错」】
+        迁移期这里比的是「canonical 与旧段的值是否一致」。
+        旧段已经全部删除，那个比较没有对象了。
+        所以改成**禁止回归**：旧键一旦出现就报错，并指出该写在哪。
     """
 
-    def test_same_fact_two_values_is_an_error(self):
-        legacy = {"llm": {"providers": {
-            "alpha": {"base_url": "https://DIFFERENT.example.com"}}}}
-        msg = _must_fail(base_canonical(), legacy=legacy)
-        assert "base_url" in msg
-        assert "同一事实" in msg
+    RETIRED = (
+        ("system.log_level", "runtime.log_level",
+         {"log_level": "DEBUG"}),
+        ("system.reliability", "runtime.message_claim_lease_seconds",
+         {"reliability": {"message_claim_lease_seconds": 1}}),
+        ("storage", "runtime.database_path",
+         {"database_path": "data/other.db"}),
+    )
 
-    def test_equal_values_pass(self):
-        legacy = {"llm": {"providers": {
-            "alpha": {"base_url": "https://alpha.example.com/v1"}}}}
-        assert _problems(base_canonical(), legacy=legacy) == []
+    @pytest.mark.parametrize("retired,home,value",
+                             [(r, h, v) for r, h, v in RETIRED])
+    def test_retired_key_is_an_error(self, retired, home, value):
+        """反向：把已废弃键加回来 → 必须变红，并指出它现在该写在哪。"""
+        head = retired.split(".")[0]
+        msg = _must_fail(base_canonical(), extra={head: value})
+        assert home in msg, f"报错里应该指出 canonical 位置 {home}"
+        assert "权威来源" in msg
 
-    def test_log_level_and_db_path_conflicts_are_caught(self):
-        legacy = {"system": {"log_level": "DEBUG"},
-                  "storage": {"database_path": "data/other.db"}}
-        problems = _problems(base_canonical(), legacy=legacy)
-        joined = "\n".join(problems)
-        assert "log_level" in joined
-        assert "database_path" in joined
+    def test_adding_none_of_them_passes(self):
+        """正向的反面：不加这些键 → 通过（证明上面红的是这一处）。"""
+        assert _problems(base_canonical()) == []
 
-    def test_legacy_model_disappearing_is_an_error(self):
-        """
-        旧 provider 的 `model` 在新结构里必须仍然**存在**
-        （作为某个 model profile），否则迁移会让那个模型**静默消失**。
-        """
-        legacy = {"llm": {"providers": {
-            "alpha": {"model": "alpha-GONE"}}}}
-        msg = _must_fail(base_canonical(), legacy=legacy)
-        assert "alpha-GONE" in msg
+    # ---- 真实配置必须干净 ----
+    def test_real_config_has_no_retired_keys(self):
+        """🔴 仓库里的 `config/config.yaml` 不许有任何已废弃键。"""
+        loader = ConfigLoader.from_file(GLOBAL_CONFIG_FILE)
+        assert ConfigValidator.check_no_retired_duplicate_keys(loader.raw) == []
 
-    def test_one_provider_many_models_is_allowed(self):
+    def test_real_config_storage_section_is_gone(self):
+        raw = ConfigLoader.from_file(GLOBAL_CONFIG_FILE).raw
+        assert "storage" not in raw, "storage 段应该已经删除"
+
+    def test_real_config_system_is_metadata_only(self):
+        """`system` 只放系统元信息（name / version）。"""
+        raw = ConfigLoader.from_file(GLOBAL_CONFIG_FILE).raw
+        assert set(raw["system"]) == {"name", "version"}, raw["system"]
+
+    def test_real_config_runtime_is_the_single_authority(self):
+        """`runtime` 是 log_level / database_path / reliability / default_provider 的唯一权威。"""
+        raw = ConfigLoader.from_file(GLOBAL_CONFIG_FILE).raw
+        assert set(raw["runtime"]) == {
+            "log_level", "database_path",
+            "message_claim_lease_seconds", "default_provider"}, raw["runtime"]
+
+    def test_no_duplicate_top_level_keys(self):
         """
-        🔒 反向：旧结构是「一个 provider 一个 model」，
-        新结构**允许**一个 provider 多个 model profile —— 这不该报冲突。
+        🔒 YAML 允许重复顶层键（后者静默覆盖前者）——
+           那会让「同一事实两份定义」重新出现，而且**不报错**。
+           所以这里显式检查一遍。
         """
-        legacy = {"llm": {"providers": {
-            "alpha": {"model": "alpha-1"}}}}      # alpha_one 的 model_id
-        assert _problems(base_canonical(), legacy=legacy) == []
+        from pathlib import Path as _P
+        text = _P(GLOBAL_CONFIG_FILE).read_text(encoding="utf-8")
+        tops = [l.split(":", 1)[0].strip() for l in text.splitlines()
+                if l[:1].isalpha() and ":" in l]
+        dups = sorted({k for k in tops if tops.count(k) > 1})
+        assert not dups, f"config.yaml 里有重复顶层键：{dups}"
+
+    def test_no_read_path_still_uses_retired_keys(self):
+        """
+        🔒 守卫的**另一半**：源码里也不许再读旧键。
+
+        只测「配置里没有旧键」是不够的 —— 如果代码还在读
+        `system.log_level`，它会**静默拿到代码里的默认值**，
+        问题就被藏起来了。那正是这条守卫要防的。
+
+        ⚠️ 只匹配「作为 `.get(...)` 参数出现的键」，
+           不匹配任何字符串字面量 —— 否则 `RETIRED_KEYS` 表
+           自己（它合法地列出这些键名）会造成**自引用假红**。
+        """
+        import re
+        from pathlib import Path as _P
+        root = _P(GLOBAL_CONFIG_FILE).resolve().parent.parent
+        patterns = [r'\.get\(\s*["\']' + re.escape(k) + r'["\']'
+                    for k in ("system.log_level", "system.reliability",
+                              "storage.database_path")]
+        offenders = []
+        for target in ("core", "storage", "services", "communication",
+                       "agents", "llm", "main.py"):
+            node = root / target
+            files = [node] if node.is_file() else sorted(node.rglob("*.py"))
+            for f in files:
+                if "__pycache__" in str(f):
+                    continue
+                text = f.read_text(encoding="utf-8")
+                for pat in patterns:
+                    if re.search(pat, text):
+                        offenders.append(
+                            f"{f.relative_to(root)} 仍在读旧键（会静默拿默认值）")
+        assert not offenders, "\n  ".join(offenders)
 
 
 # ============================================================
@@ -701,11 +773,9 @@ class TestRuntimeOverridesAreAnAllowlist:
         cfg = load_global_config()
 
         monkeypatch.setenv("AI_ECONOMY_LOG_LEVEL", "DEBUG")
-        assert cfg.get("system.log_level") == "DEBUG"
         assert cfg.get("runtime.log_level") == "DEBUG"
 
         monkeypatch.setenv("AI_ECONOMY_DB_PATH", "/tmp/override-check.db")
-        assert cfg.get("storage.database_path") == "/tmp/override-check.db"
         assert cfg.get("runtime.database_path") == "/tmp/override-check.db"
 
     def test_unlisted_keys_are_never_overridden(self, monkeypatch):
@@ -747,8 +817,8 @@ class TestRuntimeOverridesAreAnAllowlist:
         monkeypatch.setenv("AI_ECONOMY_LOG_LEVEL", "")
         monkeypatch.setenv("AI_ECONOMY_DB_PATH", "")
 
-        assert cfg.get("system.log_level") == raw["system"]["log_level"]
-        assert cfg.get("storage.database_path") == raw["storage"]["database_path"]
+        assert cfg.get("runtime.log_level") == raw["runtime"]["log_level"]
+        assert cfg.get("runtime.database_path") == raw["runtime"]["database_path"]
 
     def test_allowlist_stays_small_and_named(self):
         """
@@ -764,8 +834,11 @@ class TestRuntimeOverridesAreAnAllowlist:
             "AI_ECONOMY_LOG_LEVEL", "AI_ECONOMY_DB_PATH"}, (
             "运行时覆盖的环境变量集合变了 —— 如果是有意的，"
             "请同时更新这条测试与 ./dev.sh config 的说明")
-        assert len(RUNTIME_OVERRIDES) == 4, (
-            "运行时覆盖的 dotted key 数量变了")
+        # 🔒 只有 2 项：runtime.log_level / runtime.database_path。
+        #    以前还成对列了 system.log_level / storage.database_path ——
+        #    那两份定义已删除（所有读取路径都改读 runtime.*）。
+        assert set(RUNTIME_OVERRIDES) == {
+            "runtime.log_level", "runtime.database_path"}, RUNTIME_OVERRIDES
 
     def test_agent_config_get_does_not_apply_runtime_overrides(self, monkeypatch):
         """
@@ -773,8 +846,8 @@ class TestRuntimeOverridesAreAnAllowlist:
 
         `Config.get` 吃运行时覆盖，`AgentConfig.get` **不吃**。
 
-        当前无实际影响 —— 被覆盖的两个键（`system.log_level` /
-        `storage.database_path`）不走 `AgentConfig`。
+        当前无实际影响 —— 被覆盖的两个键（`runtime.log_level` /
+        `runtime.database_path`）不走 `AgentConfig`。
         这条测试的作用是：**如果哪天有人让 AgentConfig 也开始吃覆盖，
         或者让被覆盖的键流进 AgentConfig，这里会红**。
         """
@@ -784,6 +857,6 @@ class TestRuntimeOverridesAreAnAllowlist:
         agent = AgentConfig(cfg.to_dict())
 
         monkeypatch.setenv("AI_ECONOMY_LOG_LEVEL", "DEBUG")
-        assert cfg.get("system.log_level") == "DEBUG"
+        assert cfg.get("runtime.log_level") == "DEBUG"
         # AgentConfig 看到的是**原始值**（不受运行时覆盖影响）
-        assert agent.get("system.log_level") == "INFO"
+        assert agent.get("runtime.log_level") == "INFO"
