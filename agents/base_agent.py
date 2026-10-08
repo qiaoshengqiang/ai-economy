@@ -334,6 +334,9 @@ class BaseAgent:
             因为 token 用量是经济信息，Agent 迟早要拿它算成本。
             如果这里就把响应拍扁成字符串，那些信息就丢了。
             只想拿文本的场合，用下面的 think()。
+
+        🔴 **认知输出被截断时，这里记一条关键观察。**
+           理由见 `_record_truncation_if_needed()`。
         """
         if self.brain is None:
             raise RuntimeError(
@@ -351,7 +354,63 @@ class BaseAgent:
             total_tokens=getattr(response, "total_tokens", None),
         )
 
+        # 🔴 **认知输出被截断 → 记成关键观察**（Critical Observation）。
+        #
+        #    ⚠️ 这段以前只在 `act()` 里。但**生产实验走的是 `generate()`**
+        #       （见 experiments/heterogeneous_production/production.py），
+        #       于是截断事实在真实生产里**从来没有被记录过** ——
+        #       `cognitive_status=TRUNCATED` 只是躺在返回值里没人看。
+        #       实测证明：generate() 走 11 轮 length，Experience 表 0 条。
+        #
+        #    🔒 放在 `generate()` 是**唯一不重复**的位置：
+        #       `act()` 内部经 `run_cognition()` → `self.generate()`，
+        #       所以它自动被覆盖，不需要在 `act()` 里再记一次。
+        self._record_truncation_if_needed(response)
+
         return response
+
+    def _record_truncation_if_needed(self, response: Any) -> None:
+        """
+        认知输出被截断时，记一条 **Critical Observation Experience**。
+
+        🔒 为什么走 Experience：这是已有的「事实 → 下一轮可见」通道。
+           不为一个状态新建 CognitiveTurnStore，也不新建表。
+           下一轮 `CognitiveContext.critical_observations` 会带上它。
+
+        🔒 **只记事实，不写策略** —— 不写「你必须重试」。
+           那属于 Agent 自己的决定（规则限制结构，策略决定行为）。
+
+        🔒 记录失败**不能**破坏主要 Cognition。
+        """
+        if getattr(response, "cognitive_status", None) != "TRUNCATED":
+            return
+        store = getattr(self, "experience_store", None)
+        if store is None:
+            return
+        finish_reason = getattr(response, "finish_reason", None)
+        try:
+            store.record(
+                self.agent_id if hasattr(self, "agent_id") else self.name,
+                "observation",
+                result={
+                    # 🔴 标记成关键观察 —— 保证进入下一轮 Context。
+                    #    截断这件事如果丢了，Agent 会以为上一轮
+                    #    「正常结束了」，于是基于不完整的认知继续走。
+                    "critical_observation": True,
+                    "observed_state": "cognitive_output_truncated",
+                    "cognitive_output": "TRUNCATED",
+                    "finish_reason": finish_reason,
+                    "output_status": getattr(response, "output_status", None),
+                    "cognitive_status": "TRUNCATED",
+                },
+                feedback=(
+                    "上一轮认知输出未完整完成：模型输出达到 token 上限"
+                    f"（finish_reason={finish_reason}）。"
+                    "这一轮认知被标记为 TRUNCATED。"),
+                metadata={"finish_reason": finish_reason},
+            )
+        except Exception as exc:                          # noqa: BLE001
+            logger.warning("截断观察记录失败：%s", exc)
 
     def act(self, messages=None, *, dispatcher=None, execute: bool = True,
             write_service=None, **kwargs):
@@ -388,56 +447,6 @@ class BaseAgent:
                     if hasattr(run, "__dataclass_fields__") else None
             except Exception as exc:                      # noqa: BLE001
                 logger.warning("Experience 记录失败：%s", exc)
-
-        # 🔴 认知输出被截断 → 记成一条 **Observation Experience**（§7/§8）。
-        #
-        #   为什么走 Experience：
-        #     这是已有的「事实 → 下一轮可见」通道。不为一个状态新建
-        #     CognitiveTurnStore，也不新建表。
-        #   下一轮的 `CognitiveContext.relevant_experiences` 会带上它，
-        #     Agent 因此能观察到「上一轮输出被截断了」。
-        #
-        #   🔒 **只记事实，不写策略。**
-        #     不写「你必须重试」——那属于 Agent 自己的决定。
-        #     这符合「规则限制结构，策略决定行为」。
-        if store is not None and run.is_truncated:
-            try:
-                store.record(
-                    self.agent_id if hasattr(self, "agent_id") else self.name,
-                    "observation",
-                    result={
-                        # 🔴 **标记成关键观察** —— 保证进入下一轮 Context。
-                        #
-                        #    依据：截断这件事如果丢了，Agent 会以为
-                        #    上一轮"正常结束了"，于是基于一个不完整的
-                        #    认知继续往下走。那是行为错误，不只是信息缺失。
-                        #
-                        #    🔒 它写进既有的 `result` JSON 列，
-                        #       **没有新增数据库列**。
-                        "critical_observation": True,
-                        # 结构化事实：下一轮可以机械读出
-                        "observed_state": "cognitive_output_truncated",
-                        "cognitive_output": "TRUNCATED",
-                        "finish_reason": run.finish_reason,
-                        "output_status": run.output_status,
-                        "cognitive_status": run.cognitive_status,
-                        # 截断时 Action 被跳过了 —— 这也是事实
-                        "action_skipped": (run.action_intent is not None
-                                           and run.action_result is None),
-                        "action_kind": (
-                            getattr(run.action_intent, "kind", None)
-                            if run.action_intent is not None else None),
-                    },
-                    feedback=(
-                        "上一轮认知输出未完整完成：模型输出达到 token 上限"
-                        f"（finish_reason={run.finish_reason}）。"
-                        "这一轮认知被标记为 TRUNCATED。"
-                    ),
-                    metadata={"finish_reason": run.finish_reason},
-                )
-            except Exception as exc:                      # noqa: BLE001
-                # 🔒 记录失败**不能**破坏主要 Cognition
-                logger.warning("截断观察记录失败：%s", exc)
 
         return run
 

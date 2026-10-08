@@ -247,6 +247,9 @@ def main() -> int:
         # ---- 环境（Task / Workspace / 命名空间 / 根 Stage）----
         rt = build_runtime(db_path=str(DB), agent_ids=AGENTS)
         _ensure_environment(rt)
+        # §11：记录**真实送进模型的那一份** Context
+        print(f"  🎥 Context telemetry：包装了 "
+              f"{_install_context_recorder(rt)} 个 Agent 的 context_builder")
         rt.budget_service.set_budget(TASK_ID, BUDGET_AIC)
         gw = rt.workspace_gateway
 
@@ -816,6 +819,84 @@ def _workspace_revision(gw: Any) -> str:
     return f"ws:{WS_ID}@{digest}"
 
 
+# ============================================================
+# §9–§12 实验级 telemetry（**不是**正式架构）
+# ============================================================
+#
+# 🔒 用**包装器**记录真实 `CognitiveContextBuilder` 的输出 ——
+#    **不改任何生产源码**，只在实验里把 agent 的 builder 换成这个代理。
+#
+# 🔒 记录的是**真正被渲染进 system prompt 的那一份**（§11）：
+#    不是「库里有没有」，而是「模型这一轮实际看到了什么」。
+#    这是本实验**唯一**的关键证据来源。
+#
+#    ⚠️ 绝不用「Agent 在回复里说它看到了」当证据 —— 它可能自己猜出来。
+_CONTEXT_SINK: Dict[str, Dict[str, Any]] = {}
+
+
+class _RecordingContextBuilder:
+    """透传式包装：记录 `build()` 的**实际产物**，行为与内层完全一致。"""
+
+    def __init__(self, inner: Any, sink: Dict[str, Any], agent_id: str):
+        self._inner = inner
+        self._sink = sink
+        self._agent_id = agent_id
+
+    def build(self, agent_id: str, **kwargs: Any) -> Any:
+        ctx = self._inner.build(agent_id, **kwargs)
+        try:
+            text = ctx.to_text()
+            self._sink[self._agent_id] = {
+                # 关键通道里到底有哪几条（§12：只存 id，不存全文）
+                "critical_ids": [e.experience_id
+                                 for e in ctx.critical_observations],
+                "critical_count": len(ctx.critical_observations),
+                "ordinary_count": len(ctx.relevant_experiences),
+                # 渲染文本里是否真的出现截断事实（§11 硬证据）
+                "has_truncation_marker":
+                    "cognitive_output_truncated" in text,
+                "has_TRUNCATED_literal": "TRUNCATED" in text,
+                "has_finish_reason_length": "length" in text,
+                "context_chars": len(text),
+            }
+        except Exception as exc:                          # noqa: BLE001
+            self._sink[self._agent_id] = {
+                "context_error": f"{type(exc).__name__}: {exc}"}
+        return ctx
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
+def _install_context_recorder(rt: Any) -> int:
+    """把每个 Agent 的 context_builder 换成记录代理。返回包装了几个。"""
+    wrapped = 0
+    for a in rt.economy.all_agents():
+        inner = getattr(a.brain, "context_builder", None)
+        if inner is None or isinstance(inner, _RecordingContextBuilder):
+            continue
+        a.brain.context_builder = _RecordingContextBuilder(
+            inner, _CONTEXT_SINK, a.agent_id)
+        wrapped += 1
+    return wrapped
+
+
+def _latest_critical_id(rt: Any, agent_id: str) -> Optional[str]:
+    """这个 Agent 最近一条关键观察的 id（把 Turn N 和 Experience 对上）。"""
+    for a in rt.economy.all_agents():
+        if a.agent_id != agent_id:
+            continue
+        store = getattr(a, "experience_store", None)
+        if store is None:
+            return None
+        try:
+            rows = store.retrieve_critical(agent_id, limit=1)
+        except Exception:                                 # noqa: BLE001
+            return None
+        return rows[0].experience_id if rows else None
+    return None
+
+
 def _turn(rt: Any, bridge: Any, st: Any, stage: Any, aid: str, rnd: int,
           stage_txt: str, log: Dict[str, Any],
           stats: Dict[str, Any], *, dispatcher: Any = None,
@@ -861,8 +942,22 @@ def _turn(rt: Any, bridge: Any, st: Any, stage: Any, aid: str, rnd: int,
                  "requested_model": r.requested_model,
                  "response_model": r.response_model,
                  "finish_reason": r.finish_reason,
+                 # 🔴 认知输出语义状态（与 output_status 正交）
+                 "cognitive_status": getattr(r, "cognitive_status", None),
                  "ms": round((time.perf_counter() - t0) * 1000, 1),
                  "chars": len(content)})
+
+    # ---- §9/§10/§11：截断事实 + **下一轮真实 Context** 的证据 ----
+    #
+    # 🔒 实验 telemetry，**不进**正式架构、不建表。
+    truncated = getattr(r, "cognitive_status", None) == "TRUNCATED"
+    turn["truncated"] = truncated
+    if truncated:
+        turn["critical_experience_id"] = _latest_critical_id(rt, aid)
+        turn["critical_observation_created"] = bool(
+            turn["critical_experience_id"])
+    # 这一轮**真实构建**的 Context（包装器抓的）
+    turn["context"] = dict(_CONTEXT_SINK.get(aid) or {})
 
     if not getattr(r, "has_valid_content", True):
         s["empty"] += 1

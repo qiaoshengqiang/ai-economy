@@ -34,6 +34,9 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 AGENT = "agent_crit"
 
+#: TestE 要用真实 Runtime —— 那需要 config.yaml 里存在的 Agent id。
+AGENT_ID = "novel_author"
+
 
 @pytest.fixture
 def store(tmp_path):
@@ -45,12 +48,13 @@ def store(tmp_path):
     db.close()
 
 
-def _ordinary(store, n, *, prefix="ord", scope=None):
+def _ordinary(store, n, *, prefix="ord", scope=None, agent_id=None):
     """造 n 条**普通**经历（走真实持久化路径）。"""
+    who = agent_id or AGENT
     out = []
     for i in range(n):
         out.append(store.record(
-            AGENT, "observation",
+            who, "observation",
             result={"note": f"{prefix}-{i}"},
             feedback=f"普通经历 {prefix}-{i}",
             scope=dict(scope or {}),
@@ -58,10 +62,10 @@ def _ordinary(store, n, *, prefix="ord", scope=None):
     return out
 
 
-def _critical(store, *, finish_reason="length", marker="cp"):
+def _critical(store, *, finish_reason="length", marker="cp", agent_id=None):
     """造一条**关键观察**（真实持久化路径）。"""
     return store.record(
-        AGENT, "observation",
+        agent_id or AGENT, "observation",
         result={
             CRITICAL_OBSERVATION_KEY: True,
             "observed_state": "cognitive_output_truncated",
@@ -263,7 +267,7 @@ class TestE_TruncatedReachesNextContext:
 
     不是手工把 Experience 塞进 Context，而是真的走：
 
-        BaseAgent.act()  （finish_reason=length）
+        Agent.generate()  （finish_reason=length，**生产路径就是这个入口**）
             ↓
         ExperienceStore.record()
             ↓
@@ -272,34 +276,45 @@ class TestE_TruncatedReachesNextContext:
         CognitiveContext.to_text()
             ↓
         Turn N+1 的 Agent 看得到
+
+    ⚠️ **这条测试曾经错过一次**：截断记录原本只在 `act()` 里，
+       而生产实验走的是 `generate()` —— 于是真实生产里
+       `cognitive_status=TRUNCATED` 只是躺在返回值里，
+       Experience 表**一条都没有**。所以这里必须走 `generate()`。
     """
 
-    def _turn_n_truncated(self, store):
-        from agents.base_agent import BaseAgent
+    @pytest.fixture
+    def agent(self, tmp_path, monkeypatch):
+        """真实 Runtime 里的一个 Agent（brain.generate 被 stub 掉）。"""
         from llm.base import LLMResponse
+        from main import build_runtime
 
-        class _Host:
-            agent_id = AGENT
-            action_dispatcher = None
-            self_model_write_service = None
+        rt = build_runtime(db_path=str(tmp_path / "e.db"),
+                           agent_ids=[AGENT_ID])
+        target = next(a for a in rt.economy.all_agents()
+                      if a.agent_id == AGENT_ID)
 
-            def __init__(self, st):
-                self.experience_store = st
+        def _stub(finish_reason):
+            target.brain.generate = lambda messages=None, **kw: LLMResponse(
+                content='{"thought": "写第一章"}',
+                provider="mock", model="mock_model",
+                finish_reason=finish_reason,
+                total_tokens=100, token_source="api")
+            return target
 
-            def generate(self, messages=None, **kw):
-                return LLMResponse(
-                    content='{"thought": "写第一章"}',
-                    provider="mock", model="mock_model",
-                    finish_reason="length")      # ← Turn N 被截断
+        yield _stub, target
+        rt.close()
 
-        return BaseAgent.act(_Host(store), messages="hi")
+    def test_truncated_observation_reaches_next_turn_context(self, agent):
+        stub, target = agent
+        stub("length")
+        response = target.generate(messages="hi")   # ← 生产路径的入口
 
-    def test_truncated_observation_reaches_next_turn_context(self, store):
-        run = self._turn_n_truncated(store)
-        assert run.is_truncated is True
+        assert response.cognitive_status == "TRUNCATED"
 
-        # Turn N+1：走真正的 builder
-        ctx = CognitiveContextBuilder(experience_store=store).build(AGENT)
+        # Turn N+1：走**真正的** builder
+        ctx = CognitiveContextBuilder(
+            experience_store=target.experience_store).build(AGENT_ID)
 
         assert ctx.critical_observations, (
             "Turn N 的截断必须出现在 Turn N+1 的 critical 通道里")
@@ -311,44 +326,74 @@ class TestE_TruncatedReachesNextContext:
         assert "TRUNCATED" in text, "渲染文本里必须看得见"
         assert "length" in text
 
-    def test_survives_a_flood_of_ordinary_experiences(self, store):
+    def test_survives_a_flood_of_ordinary_experiences(self, agent):
         """截断之后又积累了 30 条普通经历 —— Turn N+1 仍必须看得到。"""
-        self._turn_n_truncated(store)
-        _ordinary(store, 30)
+        stub, target = agent
+        stub("length")
+        target.generate(messages="hi")
+        _ordinary(target.experience_store, 30, agent_id=AGENT_ID)
 
-        ctx = CognitiveContextBuilder(experience_store=store).build(AGENT)
+        ctx = CognitiveContextBuilder(
+            experience_store=target.experience_store).build(AGENT_ID)
         text = ctx.to_text()
         assert "TRUNCATED" in text, "关键事实不能因为普通经历变多而消失"
         assert len(ctx.relevant_experiences) == 5
 
-    def test_normal_stop_creates_no_critical_observation(self, store):
-        """🔒 回归：正常 stop **不**产生关键观察。"""
-        from agents.base_agent import BaseAgent
-        from llm.base import LLMResponse
+    def test_normal_stop_creates_no_critical_observation(self, agent):
+        """🔒 阴性对照：正常 stop **不**产生关键观察。"""
+        stub, target = agent
+        stub("stop")
+        target.generate(messages="hi")
 
-        class _Host:
-            agent_id = AGENT
-            action_dispatcher = None
-            self_model_write_service = None
-
-            def __init__(self, st):
-                self.experience_store = st
-
-            def generate(self, messages=None, **kw):
-                return LLMResponse(content='{"thought": "ok"}',
-                                   provider="mock", model="mock_model",
-                                   finish_reason="stop")
-
-        BaseAgent.act(_Host(store), messages="hi")
-        ctx = CognitiveContextBuilder(experience_store=store).build(AGENT)
+        ctx = CognitiveContextBuilder(
+            experience_store=target.experience_store).build(AGENT_ID)
         assert ctx.critical_observations == []
 
-    def test_truncated_observation_is_marked_critical(self, store):
-        self._turn_n_truncated(store)
-        rows = store.list(AGENT)
+    def test_truncated_observation_is_marked_critical(self, agent):
+        stub, target = agent
+        stub("length")
+        target.generate(messages="hi")
+
+        rows = target.experience_store.list(AGENT_ID)
         crit = [e for e in rows if e.is_critical_observation]
         assert len(crit) == 1
         assert crit[0].result.get(CRITICAL_OBSERVATION_KEY) is True
+
+    def test_act_does_not_double_record(self, agent):
+        """
+        🔒 回归：`act()` 内部经 `generate()`，所以**只能记一条**。
+
+        截断记录放在 `generate()` 是「唯一不重复」的位置 ——
+        如果哪天有人又往 `act()` 里加一份，这条会红。
+        """
+        stub, target = agent
+        stub("length")
+        target.act(messages="hi")
+
+        rows = target.experience_store.list(AGENT_ID)
+        crit = [e for e in rows if e.is_critical_observation]
+        assert len(crit) == 1, f"截断被重复记录了 {len(crit)} 次"
+
+    def test_generate_is_the_production_entry_point(self):
+        """
+        🔒 结构守卫：生产实验用的入口必须是**被覆盖**的那一个。
+
+        这条防止未来有人把截断记录挪回 `act()`，
+        而生产路径继续走 `generate()` —— 那正是本 Bug 的成因。
+        """
+        source = (PROJECT_ROOT / "agents" / "base_agent.py").read_text(
+            encoding="utf-8")
+        tree = ast.parse(source)
+        gen = next(n for n in ast.walk(tree)
+                   if isinstance(n, ast.FunctionDef) and n.name == "generate")
+        assert "_record_truncation_if_needed" in ast.unparse(gen), (
+            "generate() 必须自己记录截断 —— 生产走的是这个入口")
+
+        runner = (PROJECT_ROOT / "experiments" / "heterogeneous_production"
+                  / "production.py").read_text(encoding="utf-8")
+        assert "a.generate(" in runner, (
+            "生产实验必须仍然走 generate()；若改成 act()，"
+            "请同时更新这条守卫与上面那条测试")
 
 
 # ============================================================
