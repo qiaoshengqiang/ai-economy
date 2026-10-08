@@ -244,63 +244,59 @@ class TestD_NextTurnVisibility:
     §7：Turn N 截断 → 记成事实 → Turn N+1 的 CognitiveContext 能看到。
 
     🔒 复用 Experience 通道，**不新建表**、**不新建 CognitiveTurnStore**。
+    🔒 走**真实 Runtime + generate()**（生产路径的入口）——
+       手搓 host 会绕过生产入口，那正是本 Bug 第一次没被抓住的原因。
     """
 
+    AGENT_ID = "novel_author"
+
     @pytest.fixture
-    def agent_with_store(self, tmp_path):
+    def store(self, tmp_path):
         from experience.store import ExperienceStore
         from storage.database import Database
 
         db = Database(str(tmp_path / "exp.db"))
         db.initialize()
-        store = ExperienceStore(db)
-
-        class _Stub:
-            agent_id = "agent_x"
-        stub = _Stub()
-        # 只给 act() 需要的两个东西
-        stub.experience_store = store
-        stub.action_dispatcher = None
-        stub.self_model_write_service = None
-        yield stub, store
+        yield ExperienceStore(db)
         db.close()
 
-    def _record_via_act(self, stub, response):
-        """直接走 BaseAgent.act() 的记录逻辑（用一个最小的宿主）。"""
-        from agents.base_agent import BaseAgent
+    @pytest.fixture
+    def real_agent(self, tmp_path):
+        from main import build_runtime
 
-        class _Host(_Agent):
-            agent_id = "agent_x"
-            experience_store = stub.experience_store
-            action_dispatcher = None
-            self_model_write_service = None
+        rt = build_runtime(db_path=str(tmp_path / "rt.db"),
+                           agent_ids=[self.AGENT_ID])
+        agent = next(a for a in rt.economy.all_agents()
+                     if a.agent_id == self.AGENT_ID)
+        yield agent
+        rt.close()
 
-        host = _Host(response)
-        # act() 定义在 BaseAgent 上，这里显式绑定到宿主桩
-        return BaseAgent.act(host, messages="hi")
+    def _generate(self, agent, finish_reason):
+        from llm.base import LLMResponse
+        agent.brain.generate = lambda messages=None, **kw: LLMResponse(
+            content='{"thought": "写第一章"}', provider="mock",
+            model="mock_model", finish_reason=finish_reason,
+            total_tokens=100, token_source="api")
+        return agent.generate(messages="hi")
 
-    def test_truncation_is_persisted_as_observation(self, agent_with_store):
-        stub, store = agent_with_store
-        self._record_via_act(stub, _response("length"))
-
-        rows = store.list("agent_x")
+    def test_truncation_is_persisted_as_observation(self, real_agent):
+        self._generate(real_agent, "length")
+        rows = real_agent.experience_store.list(self.AGENT_ID)
         assert rows, "截断必须被持久化成一条 Experience"
         exp = rows[0]
         assert exp.result.get("observed_state") == "cognitive_output_truncated"
         assert exp.result.get("cognitive_output") == "TRUNCATED"
         assert exp.result.get("finish_reason") == "length"
 
-    def test_normal_stop_records_no_truncation_experience(self,
-                                                          agent_with_store):
-        """🔒 回归：正常 stop 不产生截断 Experience。"""
-        stub, store = agent_with_store
-        self._record_via_act(stub, _response("stop"))
-        rows = store.list("agent_x")
+    def test_normal_stop_records_no_truncation_experience(self, real_agent):
+        """🔒 阴性对照：正常 stop 不产生截断 Experience。"""
+        self._generate(real_agent, "stop")
+        rows = real_agent.experience_store.list(self.AGENT_ID)
         assert not [r for r in rows
                     if r.result.get("observed_state")
                     == "cognitive_output_truncated"]
 
-    def test_experience_renders_into_next_context(self, tmp_path):
+    def test_experience_renders_into_next_context(self, store):
         """
         下一轮 CognitiveContext 必须**看得见**这一事实。
 
@@ -318,7 +314,7 @@ class TestD_NextTurnVisibility:
                      "（finish_reason=length）。这一轮认知被标记为 TRUNCATED。",
         )
         ctx = CognitiveContext(
-            relevant_experiences=[exp],
+            critical_observations=[exp],
             other=[ContextSource(source="self", content="(other)")])
         text = ctx.to_text()
 
