@@ -38,11 +38,26 @@ from llm.openai_compatible import OpenAICompatibleProvider
 
 class BailianProvider(OpenAICompatibleProvider):
     """
-    百炼的公共部分。**不要直接注册这个类** —— 用下面两个子类。
+    百炼的公共部分。
 
-    它们的区别只有身份字段；协议、HTTP、错误翻译全部继承。
+    【Configuration System Refactor 之后它成了**唯一的**百炼 adapter】
+
+        以前是本类的两个子类各注册一个 provider 名
+        （`bailian_qwen` / `bailian_glm`），**唯一的区别是 `model_env`**。
+        那导致「换模型」被迫「换 provider 名」。
+
+        现在 canonical 配置里只有一个 `providers.bailian`，
+        模型差异由 `models:` 表达：
+
+            models:
+              qwen_fast: {provider: bailian, model_id: "qwen3.8-flash"}
+              qwen_max:  {provider: bailian, model_id: "qwen3.8-max"}
+
+    🔒 两个子类**保留**（`bailian_qwen` / `bailian_glm`），
+       只为过渡期兼容旧 provider 名，迁移完成后可删。
     """
 
+    name = "bailian"
     PROVIDER_LABEL = "阿里云百炼"
     requires_api_key = True
 

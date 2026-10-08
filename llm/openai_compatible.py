@@ -236,6 +236,13 @@ class OpenAICompatibleProvider(LLMProvider):
     # 模型名是不是必须由用户显式指定（没有合理的默认值）
     requires_explicit_model = False
 
+    #: 🔴 Configuration System Refactor：这个 adapter **需不需要 base_url**。
+    #:
+    #: 与 `requires_api_key` 同一种手法 —— 由 **Provider 自己声明**，
+    #: 让 `ConfigValidator` 不必在 `core/` 里硬编码 adapter 名字。
+    #: OpenAI 兼容协议**必须**有端点，所以是 True；Mock 声明 False。
+    requires_base_url = True
+
     def __init__(
         self,
         provider_config: Optional[Mapping[str, Any]] = None,

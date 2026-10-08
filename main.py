@@ -1310,6 +1310,162 @@ def cmd_providers(runtime: Runtime, args: argparse.Namespace) -> int:
 
 
 # ============================================================
+# 命令：config（看解析后的配置 —— 只读）
+# ============================================================
+def cmd_config(runtime: Runtime, args: argparse.Namespace) -> int:
+    """
+    显示 **ResolvedConfig** —— 配置解析的最终结果。
+
+    【为什么需要这个命令】
+
+        配置系统重构之后，`config/config.yaml` 里存的是
+        **引用**（model profile / credential profile），
+        运行期真正用的是**解析后**的值。
+
+        这个命令把「引用 → 解析结果」摊开，回答三个问题：
+
+            ① 有哪些 Provider / Model / Credential
+            ② 每个 Agent 最终用哪一个（provider / model_id / env 变量名）
+            ③ 这个值**来自哪里**（`sources`）
+
+    🔒 它**只读**，不写任何文件，**不建 runtime**
+       （`runtime` 参数恒为 `None`；见 `main()` 里的提前返回）。
+    🔒 它**不显示任何 secret 的值** —— 只显示环境变量名与「有没有配」。
+    🔒 `--json` 时 stdout 是**纯 JSON**（没有任何日志混进去），
+       因为它是给 GUI / 脚本用的。
+
+    用法：
+        ./dev.sh config              # 给人看
+        ./dev.sh config --json       # 给机器看（GUI / 脚本用）
+        ./dev.sh config --agent novel_author
+    """
+    from core.config_resolver import load_resolved_config, ConfigurationError
+    from llm.router import adapter_specs
+    from core.paths import GLOBAL_CONFIG_FILE
+
+    try:
+        resolved = load_resolved_config(
+            GLOBAL_CONFIG_FILE, adapter_specs=adapter_specs)
+    except ConfigurationError as exc:
+        # 🔒 fail-loud：配置有问题就明确报出来，**不降级**
+        print()
+        print("❌ 配置解析失败")
+        print()
+        print(str(exc))
+        print()
+        print("（本系统不会在配置错误时退回 mock —— 那会让「配置错了」"
+              "看起来像「跑起来了」。）")
+        print()
+        return 2
+
+    if getattr(args, "json", False):
+        import json as _json
+        print(_json.dumps(resolved.to_dict(), ensure_ascii=False,
+                          indent=2, sort_keys=True))
+        return 0
+
+    only = getattr(args, "agent", None)
+    line = "=" * 68
+    print()
+    print(line)
+    print(f"  Resolved Configuration   （来自 {GLOBAL_CONFIG_FILE}）")
+    print(line)
+    print()
+    print(f"  version        = {resolved.version}")
+    print(f"  log_level      = {resolved.log_level}")
+    print(f"  database_path  = {resolved.database_path}")
+    eco = resolved.economy
+    print(f"  currency       = {eco.get('currency')} "
+          f"({eco.get('currency_name')})   "
+          f"tokens_per_ai_coin = {eco.get('tokens_per_ai_coin')}")
+    print(f"  cost           = {resolved.cost}")
+    print()
+
+    # ---- Providers ----
+    print("-" * 68)
+    print("  ① Providers（端点 + 协议 adapter）")
+    print("-" * 68)
+    for name in sorted(resolved.providers):
+        p = resolved.providers[name]
+        print(f"    {name:<12} adapter={p.adapter:<16} timeout={p.timeout_seconds:g}s")
+        print(f"    {'':<12} base_url={p.base_url or '(不需要)'}")
+        if p.request:
+            print(f"    {'':<12} request={dict(p.request)}")
+    print()
+
+    # ---- Models ----
+    print("-" * 68)
+    print("  ② Models（profile → 真实 model id → provider）")
+    print("-" * 68)
+    for prof in sorted(resolved.models):
+        m = resolved.models[prof]
+        print(f"    {prof:<16} id={m.model_id:<30} provider={m.provider.name}")
+    print()
+
+    # ---- Credentials ----
+    print("-" * 68)
+    print("  ③ Credentials（profile → 环境变量名；🔒 不显示值）")
+    print("-" * 68)
+    for prof in sorted(resolved.credentials):
+        c = resolved.credentials[prof]
+        mark = "✅ 已配" if c.present else "❌ 未配"
+        print(f"    {prof:<16} env={c.env:<24} {mark}")
+    print()
+
+    # ---- Agents ----
+    print("-" * 68)
+    print("  ④ Agents（引用 → 解析结果）")
+    print("-" * 68)
+    print(f"    {'agent':<22} {'model profile':<16} {'model_id':<28} "
+          f"{'provider':<9} {'credential':<15} env")
+    for aid in sorted(resolved.agents):
+        if only and aid != only:
+            continue
+        a = resolved.agents[aid]
+        print(f"    {aid:<22} {a.model_profile:<16} {a.model_id:<28} "
+              f"{a.provider.name:<9} {a.credential_profile:<15} "
+              f"{a.credential.env}")
+    print()
+
+    # ---- 一个 Agent 的完整溯源 ----
+    if only:
+        if only not in resolved.agents:
+            print(f"❌ 没有这个 Agent：{only!r}")
+            print(f"   已知：{sorted(resolved.agents)}")
+            return 2
+        a = resolved.agents[only]
+        print("-" * 68)
+        print(f"  ⑤ {only} 的完整解析链")
+        print("-" * 68)
+        print(f"    Agent          {a.agent_id}（{a.name}）")
+        print(f"      ↓ {resolved.sources.get(f'agents.{only}', '?')}")
+        print(f"    Model Profile  {a.model_profile}")
+        print(f"      ↓ {resolved.sources.get(f'models.{a.model_profile}', '?')}")
+        print(f"    model_id       {a.model_id}")
+        print(f"      ↓ 由 models.{a.model_profile}.provider 解析")
+        print(f"    Provider       {a.provider.name}  (adapter={a.provider.adapter})")
+        print(f"      ↓ {resolved.sources.get(f'providers.{a.provider.name}', '?')}")
+        print(f"    base_url       {a.provider.base_url}")
+        print(f"    timeout        {a.provider.timeout_seconds:g}s")
+        print(f"    Credential     {a.credential_profile}")
+        print(f"      ↓ {resolved.sources.get(f'credentials.{a.credential_profile}', '?')}")
+        print(f"    env 变量名     {a.credential.env}"
+              f"   {'✅ 已配' if a.credential.present else '❌ 未配'}")
+        print(f"    temperature    {a.temperature}")
+        print(f"    max_tokens     {a.max_tokens}")
+        print(f"    system_prompt  {len(a.system_prompt)} 字符")
+        print()
+        print("  🔒 上面没有任何 API Key —— 只有环境变量名。")
+        print()
+
+    print(line)
+    print("  改配置只需要改 config/config.yaml —— 不需要改 Python。")
+    print(line)
+    print()
+    return 0
+
+
+# ============================================================
 # 命令：ask（单问一句）
 # ============================================================
 def cmd_ask(runtime: Runtime, args: argparse.Namespace) -> int:
@@ -6744,6 +6900,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="列出所有 LLM provider 的状态",
     ).set_defaults(func=cmd_providers)
 
+    # --- config（Configuration System Refactor：看解析后的配置）---
+    config_cmd = subparsers.add_parser(
+        "config",
+        parents=[shared],
+        help="显示解析后的配置（ResolvedConfig）—— 只读",
+    )
+    config_cmd.add_argument(
+        "--json",
+        action="store_true",
+        help="输出 JSON（给 GUI / 脚本用），而不是给人看的表格",
+    )
+    config_cmd.add_argument(
+        "--agent",
+        default=None,
+        metavar="AGENT_ID",
+        help="只显示某个 Agent，并打印它的完整解析链",
+    )
+    config_cmd.set_defaults(func=cmd_config)
+
     # --- ask（Step 2）---
     ask = subparsers.add_parser(
         "ask",
@@ -7031,6 +7206,22 @@ def main(argv: Optional[List[str]] = None) -> int:
     raw_agents = getattr(args, "agents", None)
     agent_ids = ([a.strip() for a in str(raw_agents).split(",") if a.strip()]
                  if raw_agents else None)
+
+    # 🔒 `config` 是**纯配置检查**命令 —— 它**不建 runtime**。
+    #
+    #    【为什么必须提前返回】
+    #      `build_runtime` 有**写副作用**：
+    #        · `Economy.bootstrap` 建库 / 跑迁移
+    #        · `create_agent` 给每个 Agent 写一行 + 创世铸币
+    #      对一个「看配置」的命令来说那是不可接受的 ——
+    #      它会让 `./dev.sh config` 变成一条**会改数据**的只读命令。
+    #
+    #      而且那些装配过程会打日志到 stdout，把 `--json` 的输出污染掉，
+    #      使机器没法解析。这两件事是同一个根因。
+    #
+    #      `cmd_config` 本来就只读 `config/config.yaml`，不需要 runtime。
+    if getattr(args, "command", None) == "config":
+        return cmd_config(None, args)
 
     try:
         runtime = build_runtime(db_path=db_path, agent_ids=agent_ids)

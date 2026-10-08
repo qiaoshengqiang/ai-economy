@@ -100,13 +100,18 @@ def isolate_from_user_dotenv(request, monkeypatch):
 #
 # 【为什么需要这个】
 #
-#   开发者本机会为了真实实验改 `agents/*/config.yaml`（agent_a = deepseek），
+#   开发者本机会为了真实实验改**配置里 Agent 用哪个 provider**
+#   （现在是 `config/config.yaml` 的 `agents.<id>.brain.model`；
+#     重构前是 `agents/*/config.yaml` —— 那个文件已经删了），
 #   也可能在 main.py 里把 Agent 加到 3 个。
 #
 #   而**仓库测试基线**假设的是：provider = mock，2 个 Agent。
 #
 #   两者混在一起就会出现「28 failed 但其实没有回归」的假象 ——
 #   测试读到的是**某台机器的本地配置**，不是仓库的确定状态。
+#
+#   ⚠️ 更糟的情况：配置指向真实 provider 且本机有 key 时，
+#      测试会**真的调用付费 API**（旧注释记过「实测烧掉 259 tokens」）。
 #
 # 【做法：让测试看到一个确定的配置】
 #
@@ -144,6 +149,17 @@ def isolate_from_local_agent_config(request, monkeypatch):
 
     def deterministic_load(agent_id, global_config=None,
                            agent_config_path=None):
+        # 🔒 这个 seam **在 Configuration System Refactor 之后仍然有效**，
+        #    而且**一行都不用改** —— 因为：
+        #
+        #      `load_agent_config` 保留了名字、签名与返回类型
+        #      （仍然是 `AgentConfig`）；它现在从 canonical
+        #      `config/config.yaml :: agents.<id>` 投影出 Agent 形状的
+        #      dict，其中 `brain.provider` / `brain.model` /
+        #      `brain.credential` 都已经被**解析成具体值**。
+        #
+        #    所以下面这几行覆盖的仍然是「最终生效的那一层」，
+        #    而不是某个中间表示。
         cfg = real_load(agent_id, global_config, agent_config_path)
         data = cfg.to_dict()
 

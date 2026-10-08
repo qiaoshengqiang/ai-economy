@@ -83,6 +83,10 @@ class MockProvider(LLMProvider):
     # Mock 不需要 API Key —— 这是它存在的全部意义
     requires_api_key = False
 
+    #: 🔴 它也不需要 base_url（不发 HTTP）。
+    #: 显式声明给 `ConfigValidator` 用，这样 `core/` 里不必硬编码 "mock"。
+    requires_base_url = False
+
     def __init__(
         self,
         provider_config: Optional[Mapping[str, Any]] = None,

@@ -542,21 +542,28 @@ class TestRealApiIsManualOnly:
 
     def test_no_real_api_key_env_is_read(self):
         """本文件只用测试专用的环境变量名。"""
-        # ⚠️ 这条守卫**改过两次**，两次都是自引用假红
+        # ⚠️ 这条守卫**改过三次**，前两次都是自引用假红
         #    （查文本 → 被自己的字面量绊倒；查常量 → 被 banned 元组绊倒）。
         #
         #    正解：把「真实 key 环境变量名」**从真实配置里读出来**，
         #    测试文件里不该出现那些名字。
+        #
+        #    Configuration System Refactor：真实 key 环境变量名的权威位置
+        #    从 `llm.providers.<p>.api_key_env`（provider 级全局 key）
+        #    搬到了 `credentials.<profile>.env`（每个凭据一个变量名）。
+        #    守卫的**强度不变** —— 仍然是从真实配置里读出名字，
+        #    再断言本文件里不出现它们。
         import ast
         from pathlib import Path
 
         from core.config import load_global_config
 
+        cfg = load_global_config()
         real_names = set()
-        for pcfg in (load_global_config().get("llm.providers", {}) or {}).values():
-            if isinstance(pcfg, dict) and pcfg.get("api_key_env"):
-                real_names.add(str(pcfg["api_key_env"]))
-        assert real_names, "配置里应当有 api_key_env，否则这条守卫没意义"
+        for cred in (cfg.get("credentials", {}) or {}).values():
+            if isinstance(cred, dict) and cred.get("env"):
+                real_names.add(str(cred["env"]))
+        assert real_names, "配置里应当有 credentials.*.env，否则这条守卫没意义"
 
         tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
         hits = [

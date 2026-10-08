@@ -256,65 +256,191 @@ class ProviderRegistry:
 
 
 # ============================================================
+# Adapter 注册表（Configuration System Refactor）
+# ============================================================
+def adapter_classes() -> Dict[str, Any]:
+    """
+    **唯一**把「配置里的 `adapter:` 字符串」映射到 Python 类的地方。
+
+    【为什么需要这一层】
+
+        以前 provider 名**既是**厂商身份、**又是**配置键、**又是**
+        Python 注册键。加一个新厂商 = 改 Python（三处）。
+
+        现在拆成两层：
+
+            providers.<name>.adapter  →  一个**协议实现**（本函数）
+            providers.<name>          →  一个**端点**（base_url / timeout）
+
+        ⇒ 新增一个 provider，只要它的协议能用已有 adapter，
+          **完全不改 Python**。见 `tests/test_config_resolver.py`
+          的 `test_10_*`。
+
+    【为什么 deepseek / doubao / bailian 各占一个 adapter】
+
+        它们**确实**有厂商专属行为，不是纯 OpenAI 兼容：
+
+            DeepSeekProvider  → 402「去充值」提示
+            DoubaoProvider    → 404/429/401 提示 + model_kind
+            BailianProvider   → 401/404/429 提示
+
+        这些都体现在**错误信息**里，属于「保持当前真实 API 行为」
+        （§18）的一部分 —— 所以保留为**厂商 adapter**，
+        而不是硬塞进通用的 `openai_compatible`。
+
+        `openai_compatible` 是**通用** adapter：任何标准 OpenAI 兼容
+        端点（新厂商、自建服务、代理）用它即可，零 Python 改动。
+
+    🔒 未实现的 adapter 名 → 调用方拿 `None`，然后**必须报错**，
+       不许静默退回 mock。
+    """
+    from llm.bailian import BailianProvider
+    from llm.deepseek import DeepSeekProvider
+    from llm.doubao import DoubaoProvider
+    from llm.mock import MockProvider
+    from llm.openai_compatible import OpenAICompatibleProvider
+
+    return {
+        "openai_compatible": OpenAICompatibleProvider,
+        "deepseek": DeepSeekProvider,
+        "doubao": DoubaoProvider,
+        "bailian": BailianProvider,
+        "mock": MockProvider,
+    }
+
+
+def adapter_specs() -> Dict[str, Dict[str, Any]]:
+    """
+    给 `core.config_resolver.ConfigValidator` 用的 adapter 元数据。
+
+    🔒 **为什么要注入而不是让 `core/` 自己判断**：
+       `core/` 不认识 `llm/`（依赖方向见 AGENTS.md §3）。
+       所以「某个 adapter 需不需要 base_url / api_key」这件
+       **provider 的知识**必须由 `llm/` 提供。
+
+    🔒 这里**没有任何 adapter 名字的硬编码判断** ——
+       全部来自 Provider 类的声明式属性
+       （`requires_base_url` / `requires_api_key`），
+       与 `requires_api_key` 是同一种手法。
+    """
+    out: Dict[str, Dict[str, Any]] = {}
+    for name, cls in adapter_classes().items():
+        out[name] = {
+            "class": cls,
+            "requires_base_url": bool(getattr(cls, "requires_base_url", True)),
+            "requires_api_key": bool(getattr(cls, "requires_api_key", True)),
+        }
+    return out
+
+
+def adapter_for(name: str) -> Optional[Any]:
+    """按 adapter 名取类；未实现返回 None（调用方**必须**报错）。"""
+    return adapter_classes().get(str(name or "").strip().lower())
+
+
+# ============================================================
 # 默认注册表
 # ============================================================
-def build_default_registry() -> ProviderRegistry:
+def build_default_registry(config: Any = None) -> ProviderRegistry:
     """
-    建好系统自带的注册表。
+    建好注册表。
 
-    目前 mock / deepseek / doubao 是真正实现的，
-    grok 先登记为「已知但未实现」，
-    这样用户一旦在配置里写它，会得到一条
-    明确告诉他「去建哪个文件」的提示，而不是一句「找不到」。
+    【Configuration System Refactor 之后的职责】
 
-    未实现提示的写法，就是「怎么加一个厂商」的说明书。
+        ① **从 canonical 配置动态注册**（`providers.<name>.adapter`）
+           ⇒ 配置里加一个 provider 就够，不用改 Python。
+        ② 保留**旧 provider 名**（`bailian_qwen` / `bailian_glm`）
+           作为过渡别名 —— 旧 `llm.providers` 段还在时必须能用。
+        ③ `grok` 继续登记为「已知但未实现」，提示精确到建哪个文件。
+
+    参数：
+        config: 全局配置（`Config` 或 raw dict）。为 None 时只注册
+                内置的 adapter 名字集合（测试与兼容用）。
     """
     registry = ProviderRegistry()
 
-    # ---- 已实现 ----
-    # MockProvider 的 __init__ 签名正好是 (provider_config, default_model)，
-    # 所以类本身就可以当工厂用，不需要包一层 lambda。
+    # ---- ① canonical：providers.<name>.adapter ----
+    providers_cfg = _config_get(config, "providers", None)
+    if isinstance(providers_cfg, Mapping):
+        for name, spec in providers_cfg.items():
+            spec = spec if isinstance(spec, Mapping) else {}
+            adapter = str(spec.get("adapter") or "").strip().lower()
+            cls = adapter_for(adapter)
+            if cls is not None:
+                registry.register(str(name), cls)
+            # adapter 未知 → 这里**不注册**；ConfigValidator 已经
+            # 在启动时把这种配置判为 ConfigurationError（fail-loud）。
+            #
+            # 🔒 这里**刻意不**为 `bailian` 顺手注册 `bailian_qwen` /
+            #    `bailian_glm` 别名 —— 那两个名字存在的唯一理由是
+            #    「老结构里一个 provider 只能有一个模型」，正是本次要
+            #    消掉的东西。而且它们各自的 `model_env`
+            #    （BAILIAN_QWEN_MODEL / BAILIAN_GLM_MODEL）与新结构里
+            #    `models.<profile>.model_id` 表达的是同一件事，
+            #    并存只会再造一个来源。
+
+    # ---- ② 旧 llm.providers 段（过渡期）----
+    legacy = _config_get(config, "llm.providers", None)
+    if isinstance(legacy, Mapping) or config is None:
+        _register_legacy_names(registry)
+
+    # ---- ③ 「已知但代码里没有 adapter」----
+    #
+    # 🔒 **与配置无关，无条件注册。**
+    #
+    #    这一条回答的是「**代码**支持到什么程度」，不是「配置里写了什么」：
+    #    用户写出 `grok` 这个名字时，应该拿到一条「怎么把它接进来」的提示，
+    #    而不是一句「找不到」。所以它不能依赖配置文件里有没有 grok 段 ——
+    #    那正是重构前「配置里留着 grok 块但根本没实现」的误导来源。
+    _register_unimplemented(registry)
+
+    return registry
+
+
+def _register_legacy_names(registry: ProviderRegistry) -> None:
+    """
+    注册重构前的那批 provider **名字**（不含 unimplemented）。
+
+    🔒 这是**过渡期**代码：等旧 `llm.providers` 段与
+       `agents/*/config.yaml` 都删除后，本函数可一并删除。
+       它存在只是为了「新配置上线时旧名字还能用」。
+    """
+    from llm.bailian import BailianGLMProvider, BailianQwenProvider
+    from llm.deepseek import DeepSeekProvider
+    from llm.doubao import DoubaoProvider
     from llm.mock import MockProvider
 
-    registry.register("mock", MockProvider)
+    for name, cls in (("mock", MockProvider),
+                      ("deepseek", DeepSeekProvider),
+                      ("doubao", DoubaoProvider),
+                      ("bailian_qwen", BailianQwenProvider),
+                      ("bailian_glm", BailianGLMProvider)):
+        if not registry.is_registered(name):
+            registry.register(name, cls)
 
-    # DeepSeekProvider 的 __init__ 多了一个可选参数 http_post
-    # （注入自定义 HTTP 实现，测试用）。因为有默认值，
-    # 它同样可以直接当工厂用。
-    #
-    # ★ 这一行，就是「接入一家真实厂商」在 Router 侧的全部代价。★
-    #   注册表相比 if/elif 链的好处，在这里体现得最直接。
-    from llm.deepseek import DeepSeekProvider
 
-    registry.register("deepseek", DeepSeekProvider)
+def _register_unimplemented(registry: ProviderRegistry) -> None:
+    """
+    把「代码里还没有 adapter 的厂商」登记成**已知但未实现**。
 
-    # 豆包走同一套 OpenAI 兼容基类，所以注册方式一模一样。
-    # 注意它【没有默认模型】—— 必须先配好模型名才能用。
-    from llm.doubao import DoubaoProvider
+    每个提示都精确到「建哪个文件、写什么类、去哪里登记」，
+    因为这就是用户接下来真正要做的事。
 
-    registry.register("doubao", DoubaoProvider)
-
-    # 阿里云百炼：一个文件、两个极薄的子类。
-    # 它们共用同一 base_url / 同一平台，只是模型不同，
-    # 所以注册成两个**名字**，各自读自己那一段 config
-    # （bailian_qwen → BAILIAN_QWEN_MODEL，bailian_glm → BAILIAN_GLM_MODEL）。
-    from llm.bailian import BailianGLMProvider, BailianQwenProvider
-
-    registry.register("bailian_qwen", BailianQwenProvider)
-    registry.register("bailian_glm", BailianGLMProvider)
-
-    # ---- 已登记，未实现 ----
-    #
-    # 每个提示都精确到「建哪个文件、写什么类、去哪里注册」，
-    # 因为这就是用户接下来真正要做的事。
+    🔒 提示里**先说**「标准 OpenAI 兼容协议根本不用改 Python」——
+       这是 Configuration System Refactor 带来的最重要变化。
+    """
     _HOWTO = (
         "怎么做：\n"
-        "  1. 新建 llm/{name}.py\n"
-        "  2. 写一个继承 LLMProvider 的 {cls}，实现 generate()\n"
-        "  3. 在 llm/router.py 的 build_default_registry() 里注册它\n"
-        "  提示：照抄 llm/deepseek.py 就行。它已经把这四件事\n"
-        "        示范清楚了：可替换的 HTTP 层、请求构造、\n"
-        "        响应解析、错误翻译。\n"
+        "  1. 在 config/config.yaml 的 providers: 段加一条，"
+        "adapter 用 \"openai_compatible\"\n"
+        "     （如果你的服务是标准 OpenAI 兼容协议，"
+        "**到此为止 —— 不需要改 Python**）\n"
+        "  2. 只有当它有厂商专属行为（特殊错误码 / 提示）时，"
+        "才新建 llm/{name}.py\n"
+        "  3. 写一个继承 LLMProvider（或 OpenAICompatibleProvider）"
+        "的 {cls}\n"
+        "  4. 在 llm/router.py 的 adapter_classes() 里登记它\n"
+        "  提示：照抄 llm/deepseek.py 就行。\n"
         "  注意：Provider 只负责把 messages 转成 LLMResponse，\n"
         "        不要在里面记账、算钱、碰数据库。"
     )
@@ -322,12 +448,11 @@ def build_default_registry() -> ProviderRegistry:
     for name, cls_name in (
         ("grok", "GrokProvider"),
     ):
-        registry.register_unimplemented(
-            name,
-            _HOWTO.format(name=name, cls=cls_name),
-        )
-
-    return registry
+        if not registry.is_registered(name):
+            registry.register_unimplemented(
+                name,
+                _HOWTO.format(name=name, cls=cls_name),
+            )
 
 
 # ============================================================
@@ -357,7 +482,9 @@ class LLMRouter:
         registry: Optional[ProviderRegistry] = None,
     ):
         self.config = config
-        self.registry = registry or build_default_registry()
+        #: 🔒 注册表**从配置建** —— `providers.<name>.adapter` 决定用哪个类。
+        #: 配置里加一个 provider 就够，不需要改这里（见 `adapter_classes`）。
+        self.registry = registry or build_default_registry(config)
 
         # Provider 实例缓存。
         # 为什么缓存？因为每次调用都新建一个实例的话，
@@ -380,12 +507,68 @@ class LLMRouter:
     # ------------------------------------------------------------
     @property
     def default_provider(self) -> str:
-        """配置里的全局默认 provider。"""
-        value = _config_get(self.config, "llm.default_provider", "mock")
+        """
+        全局默认 provider。
+
+        🔒 canonical `runtime.default_provider` 优先，旧
+           `llm.default_provider` 作为过渡回退。**不隐式兜底** ——
+           两处都没有时用 "mock"，但那是**声明式的最后一级**，
+           不是「读不到就换 mock」的静默降级。
+        """
+        value = _config_get(self.config, "runtime.default_provider", None)
+        if not value:
+            value = _config_get(self.config, "llm.default_provider", "mock")
         return str(value or "mock").strip().lower()
 
     def provider_config(self, name: str) -> Dict[str, Any]:
-        """取某个 provider 在配置里的那一段。"""
+        """
+        取某个 provider 的**端点配置**（给 Provider 构造函数用）。
+
+        🔒 **一个事实只有一个权威来源** 的落点就在这里：
+
+            ① canonical `providers.<name>`   ← 权威（迁移后）
+            ② 旧 `llm.providers.<name>`      ← 过渡期回退
+
+        canonical 的 `request:` 子块会被**摊平**成 Provider 构造函数
+        认识的键（`max_tokens_field` / `extra_body`）。
+
+        🔴 **`model` 来自 `default_model`（一个 model profile 引用），
+           而不是 provider 段自己写一个模型名。**
+
+           这就是修掉 `CONFIGURATION_SYSTEM_AUDIT.md` §B1
+           「Model 优先级倒置」的地方：以前 `llm.providers.<p>.model`
+           会被 `AgentConfig.model` 当成**显式**参数，于是**静默屏蔽**
+           `.env` 的值，而且只在「那一项恰好非空」的 provider 上发生
+           （deepseek / grok 中招，doubao / bailian 不中招）。
+
+           现在 provider 的默认模型是**显式声明**的
+           （`providers.<name>.default_model: <model profile>`），
+           来源唯一，且**永远让位**给 Agent 显式选的 model profile。
+
+           没有 `default_model` 时 `model` 为 `""`，Provider 会走自己的
+           `DEFAULT_MODEL`；两条都空就在**调用前**抛 `LLMRequestError`
+           （fail-loud），而不是静默用一个错的模型。
+        """
+        canonical = _config_get(self.config, f"providers.{name}", None)
+        if isinstance(canonical, Mapping) and canonical:
+            out: Dict[str, Any] = {}
+            if canonical.get("base_url"):
+                out["base_url"] = canonical["base_url"]
+            if canonical.get("timeout_seconds") is not None:
+                out["timeout_seconds"] = canonical["timeout_seconds"]
+            if canonical.get("chat_path"):
+                out["chat_path"] = canonical["chat_path"]
+            request = canonical.get("request")
+            if isinstance(request, Mapping):
+                out.update(dict(request))
+
+            # provider 的默认模型 = `default_model` 指向的 model profile 的 model_id
+            profile = str(canonical.get("default_model") or "").strip()
+            out["model"] = str(
+                _config_get(self.config, f"models.{profile}.model_id", "") or ""
+            ) if profile else ""
+            return out
+
         value = _config_get(self.config, f"llm.providers.{name}", None)
         return dict(value) if isinstance(value, Mapping) else {}
 
@@ -431,11 +614,20 @@ class LLMRouter:
         """
         配置里有没有把它关掉。
 
+        🔒 canonical `providers.<name>.enabled` 优先，旧
+           `llm.providers.<name>.enabled` 作为过渡回退。
+
         注意默认值是 True：配置里没写 enabled 就当作开启。
         这样新加一个 provider 忘记写 enabled 时不会莫名其妙用不了。
         """
-        configured = self.provider_config(name)
-        if "enabled" not in configured:
+        canonical = _config_get(self.config, f"providers.{name}", None)
+        if isinstance(canonical, Mapping) and canonical:
+            if "enabled" not in canonical:
+                return True
+            return bool(canonical.get("enabled"))
+
+        configured = _config_get(self.config, f"llm.providers.{name}", None)
+        if not isinstance(configured, Mapping) or "enabled" not in configured:
             return True
         return bool(configured.get("enabled"))
 

@@ -1,0 +1,289 @@
+{
+  "agent_a": {
+    "agent_level_model": "deepseek-flash",
+    "allow_bidding": true,
+    "allow_outsourcing": true,
+    "base_url": "https://api.deepseek.com",
+    "credential_env": "DEEPSEEK_KEY_AGENT_A",
+    "credential_ref": "agent_a_deepseek",
+    "credential_source": "agent_env",
+    "currency": "AIC",
+    "estimated_tokens_per_task": 25000,
+    "initial_balance": 100.0,
+    "max_tokens": 2048,
+    "negotiation": {
+      "accept_price": 50,
+      "max_rounds": 2,
+      "opening_ask": 40,
+      "walk_away_price": 100
+    },
+    "provider": "deepseek",
+    "provider_default_model": "deepseek-chat",
+    "requested_model": "deepseek-flash",
+    "skills": [
+      "task_decomposition",
+      "outsourcing",
+      "code_review"
+    ],
+    "system_prompt_len": 91,
+    "temperature": 0.7,
+    "timeout_seconds": 300.0
+  },
+  "agent_b": {
+    "agent_level_model": "",
+    "allow_bidding": true,
+    "allow_outsourcing": false,
+    "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+    "credential_env": "",
+    "credential_ref": "agent_b_doubao",
+    "credential_source": "global_env",
+    "currency": "AIC",
+    "estimated_tokens_per_task": 28000,
+    "initial_balance": 100.0,
+    "max_tokens": 2048,
+    "negotiation": {
+      "accept_price": 50,
+      "max_rounds": 2,
+      "opening_ask": 60,
+      "walk_away_price": 25
+    },
+    "provider": "doubao",
+    "provider_default_model": "ep-20261004151436-sgwpt",
+    "requested_model": "ep-20261004151436-sgwpt",
+    "skills": [
+      "python_coding",
+      "data_analysis",
+      "csv_processing"
+    ],
+    "system_prompt_len": 84,
+    "temperature": 0.7,
+    "timeout_seconds": 300.0
+  },
+  "agent_c": {
+    "agent_level_model": "deepseek-flash",
+    "allow_bidding": true,
+    "allow_outsourcing": false,
+    "base_url": "https://api.deepseek.com",
+    "credential_env": "DEEPSEEK_KEY_AGENT_C",
+    "credential_ref": "agent_c_deepseek",
+    "credential_source": "agent_env",
+    "currency": "AIC",
+    "estimated_tokens_per_task": 28000,
+    "initial_balance": 100.0,
+    "max_tokens": 2048,
+    "negotiation": {
+      "accept_price": 50,
+      "max_rounds": 2,
+      "opening_ask": 60,
+      "walk_away_price": 25
+    },
+    "provider": "deepseek",
+    "provider_default_model": "deepseek-chat",
+    "requested_model": "deepseek-flash",
+    "skills": [
+      "python_coding",
+      "web_development"
+    ],
+    "system_prompt_len": 43,
+    "temperature": 0.7,
+    "timeout_seconds": 300.0
+  },
+  "agent_d": {
+    "agent_level_model": "",
+    "allow_bidding": true,
+    "allow_outsourcing": false,
+    "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "credential_env": "BAILIAN_KEY_AGENT_D",
+    "credential_ref": "agent_d_bailian",
+    "credential_source": "agent_env",
+    "currency": "AIC",
+    "estimated_tokens_per_task": 28000,
+    "initial_balance": 100.0,
+    "max_tokens": 2048,
+    "negotiation": {
+      "accept_price": 50,
+      "max_rounds": 2,
+      "opening_ask": 60,
+      "walk_away_price": 25
+    },
+    "provider": "bailian_qwen",
+    "provider_default_model": "qwen3.8-flash",
+    "requested_model": "qwen3.8-flash",
+    "skills": [
+      "python_coding",
+      "writing"
+    ],
+    "system_prompt_len": 43,
+    "temperature": 0.7,
+    "timeout_seconds": 300.0
+  },
+  "agent_e": {
+    "agent_level_model": "",
+    "allow_bidding": true,
+    "allow_outsourcing": false,
+    "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "credential_env": "BAILIAN_KEY_AGENT_E",
+    "credential_ref": "agent_e_bailian",
+    "credential_source": "agent_env",
+    "currency": "AIC",
+    "estimated_tokens_per_task": 28000,
+    "initial_balance": 100.0,
+    "max_tokens": 2048,
+    "negotiation": {
+      "accept_price": 50,
+      "max_rounds": 2,
+      "opening_ask": 60,
+      "walk_away_price": 25
+    },
+    "provider": "bailian_glm",
+    "provider_default_model": "qwen3.8-max",
+    "requested_model": "qwen3.8-max",
+    "skills": [
+      "code_review",
+      "testing"
+    ],
+    "system_prompt_len": 43,
+    "temperature": 0.7,
+    "timeout_seconds": 300.0
+  },
+  "novel_author": {
+    "agent_level_model": "",
+    "allow_bidding": true,
+    "allow_outsourcing": false,
+    "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+    "credential_env": "DOUBAO_API_KEY",
+    "credential_ref": "novel_author_doubao",
+    "credential_source": "agent_env",
+    "currency": "AIC",
+    "estimated_tokens_per_task": 28000,
+    "initial_balance": 100.0,
+    "max_tokens": 16384,
+    "negotiation": {
+      "accept_price": 50,
+      "max_rounds": 2,
+      "opening_ask": 60,
+      "walk_away_price": 25
+    },
+    "provider": "doubao",
+    "provider_default_model": "ep-20261004151436-sgwpt",
+    "requested_model": "ep-20261004151436-sgwpt",
+    "skills": [
+      "writing"
+    ],
+    "system_prompt_len": 98,
+    "temperature": 0.7,
+    "timeout_seconds": 300.0
+  },
+  "novel_editor": {
+    "agent_level_model": "",
+    "allow_bidding": true,
+    "allow_outsourcing": false,
+    "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "credential_env": "BAILIAN_KEY_AGENT_D",
+    "credential_ref": "novel_editor_bailian_qwen",
+    "credential_source": "agent_env",
+    "currency": "AIC",
+    "estimated_tokens_per_task": 28000,
+    "initial_balance": 100.0,
+    "max_tokens": 16384,
+    "negotiation": {
+      "accept_price": 50,
+      "max_rounds": 2,
+      "opening_ask": 60,
+      "walk_away_price": 25
+    },
+    "provider": "bailian_qwen",
+    "provider_default_model": "qwen3.8-flash",
+    "requested_model": "qwen3.8-flash",
+    "skills": [
+      "writing"
+    ],
+    "system_prompt_len": 101,
+    "temperature": 0.7,
+    "timeout_seconds": 300.0
+  },
+  "novel_plot_architect": {
+    "agent_level_model": "deepseek-chat",
+    "allow_bidding": true,
+    "allow_outsourcing": false,
+    "base_url": "https://api.deepseek.com",
+    "credential_env": "DEEPSEEK_KEY_AGENT_C",
+    "credential_ref": "novel_plot_architect_deepseek",
+    "credential_source": "agent_env",
+    "currency": "AIC",
+    "estimated_tokens_per_task": 28000,
+    "initial_balance": 100.0,
+    "max_tokens": 16384,
+    "negotiation": {
+      "accept_price": 50,
+      "max_rounds": 2,
+      "opening_ask": 60,
+      "walk_away_price": 25
+    },
+    "provider": "deepseek",
+    "provider_default_model": "deepseek-chat",
+    "requested_model": "deepseek-chat",
+    "skills": [
+      "writing"
+    ],
+    "system_prompt_len": 97,
+    "temperature": 0.7,
+    "timeout_seconds": 300.0
+  },
+  "novel_reader": {
+    "agent_level_model": "",
+    "allow_bidding": true,
+    "allow_outsourcing": false,
+    "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "credential_env": "BAILIAN_KEY_AGENT_E",
+    "credential_ref": "novel_reader_bailian_glm",
+    "credential_source": "agent_env",
+    "currency": "AIC",
+    "estimated_tokens_per_task": 28000,
+    "initial_balance": 100.0,
+    "max_tokens": 16384,
+    "negotiation": {
+      "accept_price": 50,
+      "max_rounds": 2,
+      "opening_ask": 60,
+      "walk_away_price": 25
+    },
+    "provider": "bailian_glm",
+    "provider_default_model": "qwen3.8-max",
+    "requested_model": "qwen3.8-max",
+    "skills": [
+      "writing"
+    ],
+    "system_prompt_len": 120,
+    "temperature": 0.7,
+    "timeout_seconds": 300.0
+  },
+  "novel_world_builder": {
+    "agent_level_model": "deepseek-chat",
+    "allow_bidding": true,
+    "allow_outsourcing": false,
+    "base_url": "https://api.deepseek.com",
+    "credential_env": "DEEPSEEK_KEY_AGENT_A",
+    "credential_ref": "novel_world_builder_deepseek",
+    "credential_source": "agent_env",
+    "currency": "AIC",
+    "estimated_tokens_per_task": 28000,
+    "initial_balance": 100.0,
+    "max_tokens": 16384,
+    "negotiation": {
+      "accept_price": 50,
+      "max_rounds": 2,
+      "opening_ask": 60,
+      "walk_away_price": 25
+    },
+    "provider": "deepseek",
+    "provider_default_model": "deepseek-chat",
+    "requested_model": "deepseek-chat",
+    "skills": [
+      "writing"
+    ],
+    "system_prompt_len": 94,
+    "temperature": 0.7,
+    "timeout_seconds": 300.0
+  }
+}

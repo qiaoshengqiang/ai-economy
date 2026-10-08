@@ -51,7 +51,7 @@ def run_cli(*args, db_path=None, timeout=60):
     # 🔒 provider 也显式钉死。
     #
     #    【为什么必须显式】
-    #       `agents/agent_a/config.yaml` 在本机被改成了 deepseek
+    #       `agents/<id>/config.yaml` 在本机被改成了 deepseek
     #       （用于真实实验）。测试如果依赖它，就会：
     #           · 断言 mock 的地方失败
     #           · 更糟：**真的调用了真实 API**（实测烧掉 259 tokens）
@@ -1546,3 +1546,141 @@ class TestReliabilityMultiprocessDemo:
 
         assert first.returncode == EXIT_OK
         assert second.returncode == EXIT_OK
+
+
+# ============================================================
+# ./dev.sh config（Configuration System Refactor）
+# ============================================================
+class TestConfigCommand:
+    """
+    `main.py config` —— 显示 ResolvedConfig（**只读**）。
+
+    这个命令是「配置系统收敛成单一权威模型」之后用户看配置的入口，
+    所以它自己必须有测试。
+    """
+
+    def test_human_readable_output(self, tmp_path):
+        result = run_cli("config", db_path=tmp_path / "cfg.db")
+
+        assert result.returncode == EXIT_OK
+        # 四个段都要在
+        assert "Providers" in result.stdout
+        assert "Models" in result.stdout
+        assert "Credentials" in result.stdout
+        assert "Agents" in result.stdout
+        # 结构关键字
+        assert "adapter=" in result.stdout
+        assert "model_id" in result.stdout or "id=" in result.stdout
+
+    def test_json_output_is_machine_readable(self, tmp_path):
+        import json
+
+        result = run_cli("config", "--json", db_path=tmp_path / "cfg2.db")
+
+        assert result.returncode == EXIT_OK
+        data = json.loads(result.stdout)
+        assert data["version"] == 1
+        for section in ("providers", "models", "credentials", "agents"):
+            assert section in data, f"缺少 {section}"
+        # 5 个异构 Agent 必须在
+        for agent_id in ("novel_world_builder", "novel_plot_architect",
+                         "novel_author", "novel_editor", "novel_reader"):
+            assert agent_id in data["agents"]
+
+    def test_never_prints_any_secret_value(self, tmp_path):
+        """
+        🔒 这个命令**只**输出环境变量名，绝不输出 secret 的值。
+
+        做法：注入一个哨兵值，然后整个 stdout 里都不许出现它。
+        """
+        import os
+        import subprocess
+
+        secret = "SENTINEL_SECRET_VALUE_1234567890abcdef"
+        env = dict(os.environ, DOUBAO_API_KEY=secret)
+        proc = subprocess.run(
+            [sys.executable, "main.py", "config", "--json",
+             "--db", str(tmp_path / "cfg3.db")],
+            cwd=str(PROJECT_ROOT), env=env,
+            capture_output=True, text=True, timeout=90,
+        )
+        assert proc.returncode == EXIT_OK
+        assert secret not in proc.stdout, "❌ config 命令泄漏了 secret 的值"
+        # 但变量名必须出现（它才是可显示的）
+        assert "DOUBAO_API_KEY" in proc.stdout
+
+    def test_agent_chain_shows_provenance(self, tmp_path):
+        result = run_cli("config", "--agent", "novel_author",
+                         db_path=tmp_path / "cfg4.db")
+
+        assert result.returncode == EXIT_OK
+        out = result.stdout
+        assert "novel_author" in out
+        # 完整解析链的每一段都要有
+        assert "Model Profile" in out
+        assert "model_id" in out
+        assert "Credential" in out
+        assert "env 变量名" in out
+        # 且必须说明「上面没有 API Key」
+        assert "没有任何 API Key" in out
+
+    def test_unknown_agent_fails_loudly(self, tmp_path):
+        result = run_cli("config", "--agent", "no_such_agent",
+                         db_path=tmp_path / "cfg5.db")
+
+        assert result.returncode == EXIT_REJECTED
+        assert "no_such_agent" in result.stdout
+
+    def test_agent_config_has_no_provider_or_env_in_output(self, tmp_path):
+        """
+        🔒 输出里不该出现「Agent 自己写了 provider」这种旧形状 ——
+           它应该只显示 **由 model 解析出来** 的 provider。
+        """
+        result = run_cli("config", "--json", db_path=tmp_path / "cfg6.db")
+        import json
+
+        data = json.loads(result.stdout)
+        for agent_id, agent in data["agents"].items():
+            assert "provider" in agent, agent_id        # 解析出来的
+            assert "credential_env" in agent, agent_id  # 变量名
+            assert "credential_profile" in agent, agent_id
+
+    def test_is_truly_read_only(self, tmp_path):
+        """
+        🔴 `config` 必须**不建 runtime** —— 因此不建库、不写 Agent、不铸币。
+
+        为什么这条重要：`build_runtime` 会给每个 Agent `create_agent`
+        （写一行 + 创世铸币）。如果 `config` 走了那条路，
+        一个「看配置」的命令就会**改数据**。
+
+        做法：指定一个**不存在**的 db 路径，跑完断言它仍然不存在。
+        """
+        import subprocess
+
+        db_file = tmp_path / "never-created.db"
+        assert not db_file.exists()
+
+        proc = subprocess.run(
+            [sys.executable, "main.py", "--agents", "agent_a,agent_b",
+             "--db", str(db_file), "config", "--json"],
+            cwd=str(PROJECT_ROOT), capture_output=True, text=True, timeout=90,
+        )
+        assert proc.returncode == EXIT_OK
+        assert not db_file.exists(), (
+            "❌ config 命令建了数据库 —— 它不该装配 runtime")
+
+    def test_json_stdout_is_pure(self, tmp_path):
+        """
+        🔒 `--json` 的 stdout 必须是**纯 JSON**（没有日志混进去）。
+
+        ⚠️ 这条一开始是**红的** —— `build_runtime` 的日志打到了 stdout，
+           `json.loads` 直接 `Expecting ',' delimiter: line 1 column 4`
+           （`[11:06:29]` 里的冒号）。修法是让 `config` 不建 runtime。
+        """
+        import json
+
+        result = run_cli("config", "--json", db_path=tmp_path / "pure.db")
+        assert result.returncode == EXIT_OK
+        # 不 strip 也能解析 = 连首尾空白都不该有额外内容
+        data = json.loads(result.stdout)
+        assert isinstance(data, dict)

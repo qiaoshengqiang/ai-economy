@@ -84,176 +84,6 @@ economy:
   insolvency_threshold: 0
 
 # ------------------------------------------------------------
-# LLM 提供商注册表
-# ------------------------------------------------------------
-# 这里只描述「有哪些提供商、默认模型、用哪个环境变量拿 key」。
-# 真正的调用逻辑在 llm/ 目录里，一个文件一个提供商。
-#
-# enabled: false 的 provider 不会在启动时初始化。
-# v0.1 默认全部走 mock，所以即使一个 Key 都没有，系统也能跑。
-# ------------------------------------------------------------
-llm:
-  # 全局默认提供商。Agent 自己的 config.yaml 可以覆盖它。
-  default_provider: "mock"
-
-  providers:
-
-    mock:
-      enabled: true
-      # MockProvider 不需要 key，不需要网络。
-      # 它的存在是为了：让整个经济系统在没有 API Key 时也能完整测试。
-      model: "mock-model-v1"
-      # 模拟的 token 用量，后面做成本计算时会用到
-      simulated_input_tokens: 20000
-      simulated_output_tokens: 8000
-
-    deepseek:
-      enabled: true
-      api_key_env: "DEEPSEEK_API_KEY"
-      base_url_env: "DEEPSEEK_BASE_URL"
-      model_env: "DEEPSEEK_MODEL"
-      base_url: "https://api.deepseek.com"
-      model: "deepseek-chat"
-      # 🔴 2026-10-07 正式生产实测：60 秒对本项目的调用形状**不够用**。
-      #
-      #    `deepseek-flash` 是推理模型，推理内容也计入输出预算。
-      #    在「长 Context（5 份共享文件 + Stage + 信箱）+ 要求输出
-      #    整份 artifact 的 JSON」这个形状下，一次调用常常要
-      #    60~120 秒。Session 3 实测：10 次调用里 5 次 60 秒超时。
-      #
-      #    与 max_tokens=4096 是同一类问题：不是 Agent 不愿生产，
-      #    而是**基础设施参数把生产截断了**。
-      timeout_seconds: 300
-
-    # ============================================================
-    # 阿里云百炼（DashScope）—— OpenAI 兼容模式
-    # ============================================================
-    #
-    # 【为什么是两个 provider 条目，而不是一个】
-    #   Agent D 和 Agent E **共用同一个百炼端点**，但用**不同的模型**。
-    #   本项目的 `model` / `model_env` 是**每个 provider 一份**，
-    #   所以拆成两条 —— 好处是模型名也放进 .env，你不用改这个文件。
-    #   🔒 两者指向**同一 base_url / 同一 API Key**，只是模型不同。
-    #
-    # 【base_url 必须带 /compatible-mode/v1 后缀】
-    #   那是百炼的 OpenAI 兼容入口；不带后缀的是它的原生协议。
-    #   https://www.alibabacloud.com/help/zh/model-studio/compatibility-of-openai-with-dashscope
-
-    # Agent D —— 千问系列
-    bailian_qwen:
-      enabled: true
-      api_key_env: "BAILIAN_API_KEY"
-      base_url_env: "BAILIAN_BASE_URL"
-      model_env: "BAILIAN_QWEN_MODEL"
-      base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
-      # 留空 = 用 .env 的 BAILIAN_QWEN_MODEL。
-      # ⚠️ **故意不填默认模型名** —— 百炼的模型 id 会更新，
-      #    写死在这里容易几个月后变成「模型不存在」。
-      #    （doubao 那段踩过这个坑：写死的 id 盖住了 .env 的正确值。）
-      model: ""
-      timeout_seconds: 300
-
-    # Agent E —— GLM 系列（智谱，托管在百炼上）
-    bailian_glm:
-      enabled: true
-      api_key_env: "BAILIAN_API_KEY"
-      base_url_env: "BAILIAN_BASE_URL"
-      model_env: "BAILIAN_GLM_MODEL"
-      base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
-      model: ""
-      timeout_seconds: 300
-
-    doubao:
-      enabled: true
-      api_key_env: "DOUBAO_API_KEY"
-      base_url_env: "DOUBAO_BASE_URL"
-      model_env: "DOUBAO_MODEL"
-      base_url: "https://ark.cn-beijing.volces.com/api/v3"
-
-      # 豆包必须显式指定模型，没有合理的默认值。
-      # 两种写法（二选一）：
-      #   ① 模型名称（推荐）：doubao-seed-1-6-250615
-      #   ② 推理接入点 ID：ep-2024xxxxxxxxx-xxxxx
-      # 一般填在 .env 的 DOUBAO_MODEL 里，不用改这里。
-      # 【修：这里原来是 "Doubao-Seed-Evolving" —— 那不是方舟的 model id】
-      #
-      #   实测错误体：
-      #     "The model or endpoint Doubao-Seed-Evolving does not exist"
-      #
-      #   而 .env 里的 DOUBAO_MODEL=ep-2026... 是**有效**的
-      #   （直接 curl 方舟返回 200）。
-      #
-      #   为什么留空才对：`BrainSettings.model` 留空时会回退到
-      #   这里的值，于是**盖住了** .env 的 DOUBAO_MODEL。
-      #   本段的注释本来就写着「一般填在 .env 的 DOUBAO_MODEL 里，
-      #   不用改这里」—— 现在恢复成那个设计。
-      model: ""
-
-      # 【实测：这里原来也是 60，会超时】
-      #
-      #   现象：deepseek 正常，换成 doubao 就超时；
-      #         但豆包侧**确实消耗了 token** ——
-      #         说明请求发出去了、模型也在算，
-      #         是**我们这边的 socket 读超时先到了**。
-      #
-      #   根因（见下面 extra_body 那段实测记录）：
-      #       豆包默认**带思考**，输出量可能是可见内容的百倍量级
-      #       （实测 2586 tokens vs 16 tokens）。
-      #       60 秒对「带思考 + 长输出」根本不够。
-      #
-      #   🔒 本次**只放宽超时**，不改任何调用行为。
-      #      想从根上解决，配合下面两个「逃生舱」：
-      #          · extra_body 关掉 thinking（省 token，也快得多）
-      #          · max_tokens_field 改 max_completion_tokens
-      #      这两项本次**没有动**。
-      timeout_seconds: 300
-
-      # ----------------------------------------------------------
-      # 下面两项是「逃生舱」，平时不用动。
-      # 但豆包的某些模型（尤其是带思考的）【真的会用到】。
-      # ----------------------------------------------------------
-
-      # max_tokens_field：请求体里「最大输出长度」的字段名。
-      #
-      # 【实测发现 / 2025-09】
-      #   某些豆包模型会【忽略】请求里的 max_tokens：
-      #       传 max_tokens=16，实际输出 2586 tokens
-      #   换成 max_completion_tokens 就正常了（输出 16）。
-      #
-      #   注意两个字段不能同时传，否则报 400：
-      #       "max_tokens and max_completion_tokens cannot be set at the same time"
-      #
-      #   所以这里改成 "max_completion_tokens" 即可，无需改代码。
-      max_tokens_field: "max_completion_tokens"
-
-      # extra_body：额外塞进请求体的字段。
-      #
-      # 【实测发现 / 2025-09】这是本配置项最有价值的用法 ——
-      #
-      #   同一个问题，带思考 vs 不带思考：
-      #       带思考（默认）:  输出 2586 tokens，可见内容 27 字
-      #       关掉思考:        输出  16 tokens，可见内容 27 字
-      #
-      #   同样的答案，成本差 160 倍。
-      #   对 AI Economy 这个项目来说，这就是「智力成本」最真实的例子 ——
-      #   它和你能看到的输出完全不成比例。
-      #
-      #   想省钱就打开下面这行：
-      #
-      extra_body:
-        thinking:
-          type: disabled
-
-    grok:
-      enabled: true
-      api_key_env: "GROK_API_KEY"
-      base_url_env: "GROK_BASE_URL"
-      model_env: "GROK_MODEL"
-      base_url: "https://api.x.ai/v1"
-      model: "grok-2-latest"
-      timeout_seconds: 60
-
-# ------------------------------------------------------------
 # 任务与合同
 # ------------------------------------------------------------
 task:
@@ -267,3 +97,388 @@ future:
   enable_network_transport: false
   enable_blockchain_ledger: false
   enable_p2p_discovery: false
+
+# ============================================================
+# Canonical Configuration V1（Configuration System Refactor）
+# ------------------------------------------------------------
+# 🔒 从这一行往下是**唯一权威**的配置结构。读法：
+#
+#     Agent → Model Profile → model_id
+#                              ↓
+#                           Provider → Adapter
+#
+#     Agent → Credential Profile → 环境变量名 → Secret（只在 .env）
+#
+# 三条规则：
+#   ① 一个事实只有一个权威来源。迁移期新旧并存时**值不同就报错**，
+#      绝不静默选一个。
+#   ② Agent 段**不允许**出现 provider / api_key_env / base_url ——
+#      provider 由 model 解析出来，secret 由 credential 解析出来。
+#   ③ 配置文件里**不许出现 secret 本身**，只出现环境变量名。
+#
+# 上面那些旧段（llm / storage / system）是迁移过渡用的，
+# 新代码只读下面这几段。
+# ============================================================
+version: 1
+runtime:
+  log_level: INFO
+  database_path: data/economy.db
+  # 「没有显式指定 provider」时用哪个。
+  # 🔒 它**必须显式写出来** —— 不允许「找不到就用 mock」。
+  #    （默认值 mock 是**声明**，不是兜底。）
+  default_provider: mock
+providers:
+  mock:
+    adapter: mock
+    timeout_seconds: 300
+    # 【default_model 是什么】
+    #   当**没有**显式指定模型时，这个端点用哪个 model profile。
+    #   它是一个 **model profile 名**（不是 model id）—— 改真实模型 id 时
+    #   这里不用动。
+    #
+    #   🔴 这一项的存在是为了修掉 CONFIGURATION_SYSTEM_AUDIT.md §B1
+    #      「Model 优先级倒置」：以前 provider 段的 `model` 会被
+    #      AgentConfig 当成**显式**参数，于是静默屏蔽 .env 的值。
+    #      现在它只是一个**显式的**默认值 —— 来源唯一、GUI 可显示、
+    #      也不再和 Agent 自己的选择打架。
+    default_model: mock_model
+  deepseek:
+    adapter: deepseek
+    base_url: https://api.deepseek.com
+    timeout_seconds: 300
+    # deepseek 有两个 canonical model（chat / flash），
+    # 这里指定「不显式选时用哪个」—— 与重构前的实际行为一致。
+    default_model: deepseek_chat
+  doubao:
+    adapter: doubao
+    base_url: https://ark.cn-beijing.volces.com/api/v3
+    timeout_seconds: 300
+    default_model: doubao_novel
+    request:
+      max_tokens_field: max_completion_tokens
+      extra_body:
+        thinking:
+          type: disabled
+  bailian:
+    adapter: bailian
+    base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+    timeout_seconds: 300
+    # ⚠️ **故意不给 default_model** ——
+    #    百炼这边有**两个** canonical model（qwen_fast / qwen_max），
+    #    没有一个「天然的」默认；给任意一个都会变成静默偏好。
+    #    所有用百炼的 Agent 都在自己的 `brain.model` 里显式选了 profile。
+models:
+  deepseek_chat:
+    provider: deepseek
+    model_id: deepseek-chat
+  deepseek_flash:
+    provider: deepseek
+    model_id: deepseek-flash
+  doubao_novel:
+    provider: doubao
+    model_id: ep-20261004151436-sgwpt
+  qwen_fast:
+    provider: bailian
+    model_id: qwen3.8-flash
+  qwen_max:
+    provider: bailian
+    model_id: qwen3.8-max
+  mock_model:
+    provider: mock
+    model_id: mock-model-v1
+credentials:
+  deepseek_key_a:
+    env: DEEPSEEK_KEY_AGENT_A
+  deepseek_key_c:
+    env: DEEPSEEK_KEY_AGENT_C
+  doubao_key:
+    env: DOUBAO_API_KEY
+  bailian_key_d:
+    env: BAILIAN_KEY_AGENT_D
+  bailian_key_e:
+    env: BAILIAN_KEY_AGENT_E
+cost:
+  ai_per_1k_tokens: 0.01
+  unknown_token_policy: zero
+  model_rates: {}
+agents:
+  agent_a:
+    name: Agent A
+    brain:
+      model: deepseek_flash
+      credential: deepseek_key_a
+      temperature: 0.7
+      max_tokens: 2048
+      system_prompt: |
+        你是 Agent A，一个独立的经济主体。
+        你有自己的钱包、记忆和声誉。
+        你的智力来自外部 LLM，但经济决策必须遵守经济系统的规则。
+        你不能凭空创造货币，也不能直接修改别人的余额。
+    economy:
+      initial_balance: 100
+      min_acceptable_budget: 5
+      risk_appetite: 0.5
+    capabilities:
+      skills:
+      - task_decomposition
+      - outsourcing
+      - code_review
+      estimated_tokens_per_task: 25000
+    negotiation:
+      accept_price: 50
+      opening_ask: 40
+      walk_away_price: 100
+      max_rounds: 2
+    behavior:
+      allow_outsourcing: true
+      allow_bidding: true
+  agent_b:
+    name: Agent B
+    brain:
+      model: doubao_novel
+      credential: doubao_key
+      temperature: 0.7
+      max_tokens: 2048
+      system_prompt: |
+        你是 Agent B，一个独立的经济主体。
+        你通过承接任务、交付成果来赚取 AI 币，
+        并用收入覆盖你调用 LLM 产生的成本。
+        你的目标是长期存活，而不是单次赚最多。
+    economy:
+      initial_balance: 100
+      min_acceptable_price: 3
+      risk_appetite: 0.4
+    capabilities:
+      skills:
+      - python_coding
+      - data_analysis
+      - csv_processing
+      estimated_tokens_per_task: 28000
+    negotiation:
+      accept_price: 50
+      opening_ask: 60
+      walk_away_price: 25
+      max_rounds: 2
+    behavior:
+      allow_outsourcing: false
+      allow_bidding: true
+  agent_c:
+    name: Agent C
+    brain:
+      model: deepseek_flash
+      credential: deepseek_key_c
+      temperature: 0.7
+      max_tokens: 2048
+      system_prompt: |
+        你是 Agent C，一个独立的经济主体。
+        你通过承接任务、交付成果来赚取 AI 币。
+    economy:
+      initial_balance: 100
+      min_acceptable_price: 3
+      risk_appetite: 0.4
+    capabilities:
+      skills:
+      - python_coding
+      - web_development
+      estimated_tokens_per_task: 28000
+    negotiation:
+      accept_price: 50
+      opening_ask: 60
+      walk_away_price: 25
+      max_rounds: 2
+    behavior:
+      allow_outsourcing: false
+      allow_bidding: true
+  agent_d:
+    name: Agent D
+    brain:
+      model: qwen_fast
+      credential: bailian_key_d
+      temperature: 0.7
+      max_tokens: 2048
+      system_prompt: |
+        你是 Agent D，一个独立的经济主体。
+        你通过承接任务、交付成果来赚取 AI 币。
+    economy:
+      initial_balance: 100
+      min_acceptable_price: 3
+      risk_appetite: 0.4
+    capabilities:
+      skills:
+      - python_coding
+      - writing
+      estimated_tokens_per_task: 28000
+    negotiation:
+      accept_price: 50
+      opening_ask: 60
+      walk_away_price: 25
+      max_rounds: 2
+    behavior:
+      allow_outsourcing: false
+      allow_bidding: true
+  agent_e:
+    name: Agent E
+    brain:
+      model: qwen_max
+      credential: bailian_key_e
+      temperature: 0.7
+      max_tokens: 2048
+      system_prompt: |
+        你是 Agent E，一个独立的经济主体。
+        你通过承接任务、交付成果来赚取 AI 币。
+    economy:
+      initial_balance: 100
+      min_acceptable_price: 3
+      risk_appetite: 0.4
+    capabilities:
+      skills:
+      - code_review
+      - testing
+      estimated_tokens_per_task: 28000
+    negotiation:
+      accept_price: 50
+      opening_ask: 60
+      walk_away_price: 25
+      max_rounds: 2
+    behavior:
+      allow_outsourcing: false
+      allow_bidding: true
+  novel_author:
+    name: Novel Author
+    brain:
+      model: doubao_novel
+      credential: doubao_key
+      temperature: 0.7
+      max_tokens: 16384
+      system_prompt: |
+        你是 Novel Author，一个独立的经济主体。
+        你负责正文创作，是主要文本生产者。
+        你可以读设定与结构、主动联系其他 Agent、拒绝不合理建议、
+        修改自己的写作策略、自主决定何时提交阶段。
+    economy:
+      initial_balance: 100
+      min_acceptable_price: 3
+      risk_appetite: 0.4
+    capabilities:
+      skills:
+      - writing
+      estimated_tokens_per_task: 28000
+    negotiation:
+      accept_price: 50
+      opening_ask: 60
+      walk_away_price: 25
+      max_rounds: 2
+    behavior:
+      allow_outsourcing: false
+      allow_bidding: true
+  novel_editor:
+    name: Novel Editor
+    brain:
+      model: qwen_fast
+      credential: bailian_key_d
+      temperature: 0.7
+      max_tokens: 16384
+      system_prompt: |
+        你是 Novel Editor，一个独立的经济主体。
+        你负责文学与结构质量评估：人物、叙事、节奏、语言、一致性、
+        冲突、悬念、结构、前后设定冲突。
+        你必须用自己的判断形成评价与建议，而不是执行检查清单。
+    economy:
+      initial_balance: 100
+      min_acceptable_price: 3
+      risk_appetite: 0.4
+    capabilities:
+      skills:
+      - writing
+      estimated_tokens_per_task: 28000
+    negotiation:
+      accept_price: 50
+      opening_ask: 60
+      walk_away_price: 25
+      max_rounds: 2
+    behavior:
+      allow_outsourcing: false
+      allow_bidding: true
+  novel_plot_architect:
+    name: Novel Plot Architect
+    brain:
+      model: deepseek_chat
+      credential: deepseek_key_c
+      temperature: 0.7
+      max_tokens: 16384
+      system_prompt: |
+        你是 Novel Plot Architect，一个独立的经济主体。
+        你负责故事结构、主线、冲突、悬念、人物弧线、章节方向。
+        你**不是**中央指挥者，也没有凌驾于其他 Agent 之上的权限。
+    economy:
+      initial_balance: 100
+      min_acceptable_price: 3
+      risk_appetite: 0.4
+    capabilities:
+      skills:
+      - writing
+      estimated_tokens_per_task: 28000
+    negotiation:
+      accept_price: 50
+      opening_ask: 60
+      walk_away_price: 25
+      max_rounds: 2
+    behavior:
+      allow_outsourcing: false
+      allow_bidding: true
+  novel_reader:
+    name: Novel Reader
+    brain:
+      model: qwen_max
+      credential: bailian_key_e
+      temperature: 0.7
+      max_tokens: 16384
+      system_prompt: |
+        你是 Novel Reader，一个独立的经济主体。
+        你模拟**真实读者**，不是文学编辑。
+        你关注：是否愿意继续读、哪里无聊、哪里困惑、哪些人物有吸引力、
+        情绪是否有效、是否会期待下一章。
+        你的评价体现**阅读体验**，不是专业创作术语。
+    economy:
+      initial_balance: 100
+      min_acceptable_price: 3
+      risk_appetite: 0.4
+    capabilities:
+      skills:
+      - writing
+      estimated_tokens_per_task: 28000
+    negotiation:
+      accept_price: 50
+      opening_ask: 60
+      walk_away_price: 25
+      max_rounds: 2
+    behavior:
+      allow_outsourcing: false
+      allow_bidding: true
+  novel_world_builder:
+    name: Novel World Builder
+    brain:
+      model: deepseek_chat
+      credential: deepseek_key_a
+      temperature: 0.7
+      max_tokens: 16384
+      system_prompt: |
+        你是 Novel World Builder，一个独立的经济主体。
+        你负责故事世界、背景规则、核心设定、人物基础关系。
+        你可以主动联系其他 Agent 提问或修正设定 —— 由你自己判断。
+    economy:
+      initial_balance: 100
+      min_acceptable_price: 3
+      risk_appetite: 0.4
+    capabilities:
+      skills:
+      - writing
+      estimated_tokens_per_task: 28000
+    negotiation:
+      accept_price: 50
+      opening_ask: 60
+      walk_away_price: 25
+      max_rounds: 2
+    behavior:
+      allow_outsourcing: false
+      allow_bidding: true
