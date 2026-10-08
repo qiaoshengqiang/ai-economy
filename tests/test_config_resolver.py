@@ -92,7 +92,11 @@ def base_canonical() -> dict:
     """
     return {
         "version": 1,
-        "runtime": {"log_level": "INFO", "database_path": "data/x.db"},
+        # 🔒 runtime 段必须给出**四个**运行期事实 ——
+        #    缺任何一个 Runtime 就只能靠猜，那正是 V1 收口要消灭的。
+        "runtime": {"log_level": "INFO", "database_path": "data/x.db",
+                    "message_claim_lease_seconds": 300,
+                    "default_provider": "mock"},
         "providers": {
             "alpha": {
                 "adapter": "openai_compatible",

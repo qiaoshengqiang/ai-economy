@@ -82,7 +82,47 @@ class CostRule:
     unknown_token_policy: str = "zero"
 
     @classmethod
+    def from_resolved(cls, cost: Mapping[str, Any]) -> "CostRule":
+        """
+        从 **ResolvedConfig.cost** 构造（生产路径）。
+
+        🔒 这里读的是**已经解析过的**配置段，不再自己去点号路径里找。
+           `llm.cost.*` 那条旧路径在 Configuration V1 里已经不存在了 ——
+           继续读它会让费率**静默退化成 Python 默认值**。
+
+        🔒 只改配置**来源**，不改任何费率语义与 AIC 结算逻辑。
+        """
+        raw = dict(cost or {})
+        rate = raw.get("ai_per_1k_tokens", None)
+        try:
+            rate_f = float(rate) if rate is not None else DEFAULT_AI_PER_1K_TOKENS
+        except (TypeError, ValueError):
+            rate_f = DEFAULT_AI_PER_1K_TOKENS
+        policy = raw.get("unknown_token_policy", "zero")
+        rates: Dict[str, float] = {}
+        raw_rates = raw.get("model_rates") or {}
+        if isinstance(raw_rates, Mapping):
+            for k, v in raw_rates.items():
+                try:
+                    rates[str(k)] = max(0.0, float(v))
+                except (TypeError, ValueError):
+                    continue
+        return cls(ai_per_1k_tokens=max(0.0, rate_f),
+                   model_rates=rates,
+                   unknown_token_policy=str(policy or "zero"))
+
+    @classmethod
     def from_config(cls, config: Any) -> "CostRule":
+        """
+        ⚠️ **DEPRECATED** —— 读的是已经废弃的 `llm.cost.*` 点号路径。
+
+        保留只为：
+          · Configuration V1 之前的旧调用方
+          · 测试里想拿一份「纯默认值」规则（传 `{}`）
+
+        🔒 生产路径必须用 `from_resolved()`。有守卫禁止
+           `main.py` 再调用这个方法。
+        """
         rate = _config_get(config, "llm.cost.ai_per_1k_tokens", None)
         policy = _config_get(config, "llm.cost.unknown_token_policy",
                              "zero")
@@ -158,7 +198,13 @@ class CostCalculator:
         self.rule = rule or CostRule()
 
     @classmethod
+    def from_resolved(cls, cost: Mapping[str, Any]) -> "CostCalculator":
+        """从 **ResolvedConfig.cost** 构造（生产路径）。"""
+        return cls(CostRule.from_resolved(cost))
+
+    @classmethod
     def from_config(cls, config: Any) -> "CostCalculator":
+        """⚠️ **DEPRECATED** —— 见 `CostRule.from_config`。"""
         return cls(CostRule.from_config(config))
 
     def cost_of(self, response: Any) -> tuple:

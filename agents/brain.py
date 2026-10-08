@@ -77,13 +77,44 @@ class BrainSettings:
     credential_ref: str = ""
 
     @classmethod
+    def from_resolved_agent(cls, resolved: Any) -> "BrainSettings":
+        """
+        从 **ResolvedAgent** 读出这个 Agent 的大脑设置（生产路径）。
+
+        🔒 这是 Runtime 的**唯一**配置入口。四件事全部来自已解析结果：
+
+            provider  ← models.<profile>.provider      （由 model 推导）
+            model     ← models.<profile>.model_id      （真实 model id）
+            credential_ref ← credential profile 名
+            （credential 的 env 变量名由调用方一并取出，见 main.py）
+
+        🔒 不再走 `AgentConfig.provider` / `AgentConfig.model` /
+           `provider.default_model` 那条旧 fallback 路径 ——
+           那条路径会自己猜，而配置缺失应该**显式失败**。
+        """
+        return cls(
+            agent_id=str(resolved.agent_id),
+            provider=str(resolved.provider.name),
+            model=str(resolved.model_id or ""),
+            system_prompt=str(resolved.system_prompt or ""),
+            temperature=float(resolved.temperature),
+            max_tokens=int(resolved.max_tokens if resolved.max_tokens
+                           is not None else 2048),
+            credential_ref=str(resolved.credential_profile or ""),
+        )
+
+    @classmethod
     def from_agent_config(cls, agent_config: Any) -> "BrainSettings":
         """
-        从 AgentConfig 里读出这个 Agent 的大脑设置。
+        ⚠️ **DEPRECATED** —— 从 AgentConfig 里读大脑设置。
 
-        注意这里只读配置，不 import 任何厂商。
-        provider 只是一个字符串名字，至于这个名字背后
-        是 mock 还是别的什么，Brain 不关心、也不该关心。
+        保留只为测试与旧调用方。生产路径（`main.py`）必须用
+        `from_resolved_agent()` —— 有守卫钉住这一点。
+
+        【为什么它不能继续当生产路径】
+            `AgentConfig.model` 是 core/config.py 从 canonical
+            **投影**出来的镜像。让 Runtime 依赖那个镜像，等于同时存在
+            两个「配置事实来源」—— 而这一轮的目标就是消除它。
         """
         return cls(
             agent_id=str(agent_config.agent_id),

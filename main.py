@@ -58,6 +58,12 @@ if str(PROJECT_ROOT) not in sys.path:
 from agents.brain import Brain, BrainSettings                      # noqa: E402
 from communication.agent_runtime import AgentRuntime, RuntimeState  # noqa: E402
 from core.config import load_global_config                     # noqa: E402
+from core.config_resolver import (                              # noqa: E402
+    ResolvedRuntimeConfig,
+    load_resolved_config,
+)
+from core.paths import GLOBAL_CONFIG_FILE                        # noqa: E402
+from llm.router import adapter_specs                            # noqa: E402
 from core.economy import AgentNotFoundError, Economy, EconomyError  # noqa: E402
 from core.ledger import LedgerError, format_amount              # noqa: E402
 from core.logging_setup import get_logger, setup_logging        # noqa: E402
@@ -138,6 +144,19 @@ class Runtime:
                 · 换传输 → 只改 main.py（LocalTransport → P2PTransport）
             而 Agent / Brain / Economy 全都不用动。
     """
+
+    #: 🔒 **配置事实的唯一来源**。
+    #:
+    #:     ConfigurationResolver 负责**解释**配置，
+    #:     ResolvedConfig 负责**表达**事实，
+    #:     Runtime 负责**消费**事实 —— 不再重新解释。
+    #:
+    #:     Runtime 需要什么配置，从这里读：
+    #:       resolved_config.log_level / database_path /
+    #:       message_claim_lease_seconds / default_provider
+    #:       resolved_config.agent(id) / model(profile) /
+    #:       provider(name) / credential(profile) / cost
+    resolved_config: ResolvedRuntimeConfig
 
     economy: Economy
     router: LLMRouter
@@ -663,9 +682,21 @@ def build_runtime(
     ensure_runtime_dirs()
 
     config = load_global_config()
-    # 🔒 canonical 位置是 `runtime.log_level`。
+
+    # 🔴 **配置解释只发生这一次。**
+    #
+    #    从这里往下，Runtime 及其所有子系统只消费 `resolved` ——
+    #    不再自己去 `config.get(...)` 找配置、不再猜 fallback。
+    #
+    #    🔒 失败必须 loud：任何 unknown provider / model / credential /
+    #       adapter、任何已废弃键回归，都会在这里抛 ConfigurationError，
+    #       **不会**退回 mock 或某个默认 provider。
+    resolved = load_resolved_config(GLOBAL_CONFIG_FILE,
+                                    adapter_specs=adapter_specs)
+
+    # 🔒 canonical 位置是 `resolved.log_level`。
     #    `system.log_level` 已删除 —— 那曾经是同一事实的第二份定义。
-    setup_logging(level=str(config.get("runtime.log_level", "INFO")))
+    setup_logging(level=str(resolved.log_level))
 
     economy = Economy.bootstrap(db_path=db_path, config=config)
 
@@ -683,7 +714,7 @@ def build_runtime(
         # 🔒 规则来自配置（含 per-provider/model 费率），不硬编码。
         # 🔒 这里只是「接线」—— 成本怎么算是 llm/cost.py 的事，
         #    记账是 economy.charge_llm_cost 的事，两者都不替 Agent 做策略。
-        cost_calculator=CostCalculator.from_config(config),
+        cost_calculator=CostCalculator.from_resolved(resolved.cost),
         on_cost=lambda agent_id, cost, call_id, row: (
             economy.charge_llm_cost(
                 agent_id, cost, call_id=call_id,
@@ -717,8 +748,9 @@ def build_runtime(
         store_payload=True,
         strict=False,
         claim_lease_seconds=int(
-            config.get("runtime.message_claim_lease_seconds",
-                       DEFAULT_CLAIM_LEASE_SECONDS)
+            resolved.message_claim_lease_seconds
+            if resolved.message_claim_lease_seconds is not None
+            else DEFAULT_CLAIM_LEASE_SECONDS
         ),
     )
     communication = CommunicationManager(
@@ -842,16 +874,24 @@ def build_runtime(
     for agent_id in (agent_ids if agent_ids is not None else DEFAULT_AGENTS):
         agent = economy.create_agent(agent_id)
 
-        # 每个 Agent 的大脑配置来自它自己的 config.yaml，
-        # 所以 A 和 B 可以用不同的 provider，
+        # 每个 Agent 的大脑配置来自 **ResolvedConfig** ——
+        # 所以 A 和 B 可以用不同的 provider / model / credential，
         # 而 Agent 的代码里一行厂商名字都不会出现。
+        #
+        # 🔒 不再走 `AgentConfig.provider` / `AgentConfig.model` /
+        #    `provider.default_model` 那条旧投影路径：
+        #      Agent → Model Profile → model_id → Provider → Adapter
+        #      Agent → Credential Profile → 环境变量名 → Secret（.env）
+        #    两条链的每一段都已在 `resolved` 里解析完毕。
+        resolved_agent = resolved.agent(agent_id)
         brain = Brain(
             router=router,
-            settings=BrainSettings.from_agent_config(agent.config),
+            settings=BrainSettings.from_resolved_agent(resolved_agent),
             recorder=recorder,
             # 🔒 交给 Brain 的是「**怎么解析**凭据」，而**不是** key 本身。
             credential_resolver=credential_resolver,
-            credential_config=agent.config.credential,
+            credential_config={
+                "api_key_env": resolved_agent.credential.env},
             # §五：默认路径自动接入 —— 调用方不必手写 context_query
             context_builder=context_builder,
             default_context_query=default_context_query,
@@ -1034,6 +1074,7 @@ def build_runtime(
     )
 
     return Runtime(
+        resolved_config=resolved,
         economy=economy,
         router=router,
         recorder=recorder,
@@ -1374,8 +1415,6 @@ def cmd_config(runtime: Runtime, args: argparse.Namespace) -> int:
     """
     from core.config_resolver import load_resolved_config, ConfigurationError
     from llm.router import adapter_specs
-    from core.paths import GLOBAL_CONFIG_FILE
-
     try:
         resolved = load_resolved_config(
             GLOBAL_CONFIG_FILE, adapter_specs=adapter_specs)

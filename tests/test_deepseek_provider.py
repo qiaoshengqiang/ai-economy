@@ -844,18 +844,47 @@ class TestApiKeySafety:
             )
 
     def test_env_example_has_empty_key(self):
-        """`.env.example` 里必须是空值，不能带真 Key。"""
-        text = (PROJECT_ROOT / ".env.example").read_text(encoding="utf-8")
+        """
+        `.env.example` 里必须是空值，不能带真 Key。
 
+        ⚠️ **规则变了**（Configuration V1 收口）：以前这里查的是
+           `DEEPSEEK_API_KEY`（provider 级全局 fallback key）。
+           收口之后 Runtime 完全从 ResolvedConfig 取凭据，
+           那个 fallback 层已从 `.env` / `.env.example` 删除。
+
+           所以守卫改成查**全部 canonical credential 变量名** ——
+           覆盖面反而**更宽**（5 把 key 而不是 1 把），
+           而且检查的是「配置里真正在用的那些」。
+        """
+        from core.config_resolver import load_resolved_config
+        from core.paths import GLOBAL_CONFIG_FILE
+        from llm.router import adapter_specs
+
+        text = (PROJECT_ROOT / ".env.example").read_text(encoding="utf-8")
+        entries = {}
         for line in text.splitlines():
             stripped = line.strip()
-            if stripped.startswith("DEEPSEEK_API_KEY="):
-                assert stripped == "DEEPSEEK_API_KEY=", (
-                    ".env.example 里不应该填任何真实 Key"
-                )
-                break
-        else:
-            pytest.fail(".env.example 里缺少 DEEPSEEK_API_KEY")
+            if stripped and not stripped.startswith("#") and "=" in stripped:
+                key, _, value = stripped.partition("=")
+                entries[key.strip()] = value.strip()
+
+        resolved = load_resolved_config(GLOBAL_CONFIG_FILE,
+                                        adapter_specs=adapter_specs)
+        canonical = {c.env for c in resolved.credentials.values()}
+        assert canonical, "canonical 配置里应当有 credentials"
+
+        # ① 每个 canonical secret 都必须有占位行，且**必须是空的**
+        for env_name in sorted(canonical):
+            assert env_name in entries, (
+                f".env.example 缺少 canonical secret {env_name}")
+            assert entries[env_name] == "", (
+                f".env.example 里 {env_name} 不该填任何真实 Key")
+
+        # ② 反过来：example 里不该出现**多余的**变量
+        assert set(entries) == canonical, (
+            f".env.example 与 canonical secret 不一致 —— "
+            f"多余：{sorted(set(entries) - canonical)} / "
+            f"缺少：{sorted(canonical - set(entries))}")
 
 
 # ============================================================

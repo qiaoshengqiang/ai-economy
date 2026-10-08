@@ -283,6 +283,10 @@ class ResolvedRuntimeConfig:
     models: Mapping[str, ResolvedModel]
     credentials: Mapping[str, ResolvedCredential]
     agents: Mapping[str, ResolvedAgent]
+    #: 消息认领租约（秒）。🔒 Runtime 的**唯一**来源。
+    message_claim_lease_seconds: Optional[int] = None
+    #: 「没有显式指定 provider」时用哪个。🔒 Runtime 的**唯一**来源。
+    default_provider: str = ""
     #: dotted key → 这个值最终来自哪里（GUI / 排障用）
     sources: Mapping[str, str] = field(default_factory=dict)
 
@@ -319,8 +323,13 @@ class ResolvedRuntimeConfig:
     def to_dict(self) -> Dict[str, Any]:
         return {
             "version": self.version,
-            "runtime": {"log_level": self.log_level,
-                        "database_path": self.database_path},
+            "runtime": {
+                "log_level": self.log_level,
+                "database_path": self.database_path,
+                "message_claim_lease_seconds":
+                    self.message_claim_lease_seconds,
+                "default_provider": self.default_provider,
+            },
             "economy": dict(self.economy), "task": dict(self.task),
             "system": dict(self.system), "cost": dict(self.cost),
             "providers": {k: v.to_dict() for k, v in self.providers.items()},
@@ -649,6 +658,18 @@ class ConfigValidator:
            本检查负责的是「整段都没了」这种更早的失败。
         """
         problems: List[str] = []
+        # runtime 段必须给出运行期事实 —— 缺了就是「Runtime 只能靠猜」，
+        # 那正是本轮要消灭的情况。
+        runtime = canonical.get("runtime") or {}
+        for key, hint in (("log_level", "日志级别"),
+                          ("database_path", "数据库路径"),
+                          ("message_claim_lease_seconds", "消息认领租约"),
+                          ("default_provider", "默认 provider")):
+            if runtime.get(key) in (None, ""):
+                problems.append(
+                    f"runtime.{key} 缺失（{hint}）。\n"
+                    f"  Runtime 必须能从 ResolvedConfig 拿到它 —— "
+                    f"不允许缺配置时自己猜一个默认值。")
         for section in ("providers", "models", "credentials"):
             if not (canonical.get(section) or {}):
                 problems.append(
@@ -829,6 +850,12 @@ class ConfigResolver:
             version=int(self.canonical.get("version") or 1),
             log_level=str(runtime.get("log_level") or "INFO"),
             database_path=str(runtime.get("database_path") or "data/economy.db"),
+            message_claim_lease_seconds=(
+                int(runtime["message_claim_lease_seconds"])
+                if runtime.get("message_claim_lease_seconds") is not None
+                else None
+            ),
+            default_provider=str(runtime.get("default_provider") or ""),
             economy=dict(self.canonical.get("economy") or {}),
             task=dict(self.canonical.get("task") or {}),
             system=dict(self.canonical.get("system") or {}),
