@@ -172,10 +172,26 @@ providers:
     adapter: bailian
     base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
     timeout_seconds: 300
-    # ⚠️ **故意不给 default_model** ——
-    #    百炼这边有**两个** canonical model（qwen_fast / qwen_max），
-    #    没有一个「天然的」默认；给任意一个都会变成静默偏好。
-    #    所有用百炼的 Agent 都在自己的 `brain.model` 里显式选了 profile。
+    # 🔴 **必须有 default_model** —— 因为 `BailianProvider`
+    #    声明了 `requires_explicit_model = True`：
+    #    百炼没有普适的默认模型名（qwen_fast / qwen_max 取决于用途），
+    #    所以 `is_available()` 要求**端点层给出一个兜底**，
+    #    否则整个端点会被判为不可用。
+    #
+    # ⚠️ 这里曾经**故意留空**，理由是「给任意一个都会变成静默偏好」。
+    #    那个理由与实际行为冲突：留空不是「没有偏好」，
+    #    而是「这个端点不能用」—— `./dev.sh ask --agent agent_e`
+    #    会直接报「百炼 没有配置模型名」。
+    #
+    # 🔒 为什么现在可以安心给一个：它只是**兜底**。
+    #    每个用百炼的 Agent 都在自己的 `brain.model` 里显式选了 profile
+    #    （agent_d/novel_editor → qwen_fast，agent_e/novel_reader → qwen_max），
+    #    Runtime 每次调用都会把解析出的真实 model id 传进来。
+    #    兜底**永远不会改变**这些 Agent 实际用的模型。
+    #
+    # 🔒 选 `qwen_fast` 而不是 `qwen_max`：它是更保守/更便宜的那个，
+    #    作为「有人忘了指定模型」时的默认更合适。
+    default_model: qwen_fast
 models:
   deepseek_chat:
     provider: deepseek

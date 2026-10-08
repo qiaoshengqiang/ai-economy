@@ -335,7 +335,30 @@ class OpenAICompatibleProvider(LLMProvider):
         return f"{self.base_url}{self.chat_path}"
 
     def is_available(self) -> bool:
-        return bool(self._api_key) and bool(self.endpoint) and bool(self.default_model)
+        """
+        这个端点**能不能发起调用**？
+
+        🔒 判据 = 凭据 + 端点 + （若该 provider 声明了）端点级模型兜底。
+
+        【`requires_explicit_model` 是什么】
+            有些厂商（豆包 / 百炼）**没有普适的默认模型名** ——
+            填接入点 ID 还是模型名取决于用户自己的账号。
+            猜一个只会让人困惑，所以这些 provider 声明
+            `requires_explicit_model = True`：**必须**在端点层
+            给出一个兜底模型，否则宁可早报错。
+
+            ⚠️ 这条策略是 provider 的**声明**，不是写死的全局规则 ——
+               `deepseek` 声明 False（它有公认的默认模型）。
+
+        🔒 真正「这次调用没有模型名」的情况在**调用时**另有一道检查
+           （`generate()` 里的 `resolve_model()`），
+           因为只有真的要用的时候才知道缺不缺。
+        """
+        if not (self._api_key and self.endpoint):
+            return False
+        if self.requires_explicit_model and not self.default_model:
+            return False
+        return True
 
     def unavailable_reason(self) -> Optional[str]:
         """
@@ -347,7 +370,7 @@ class OpenAICompatibleProvider(LLMProvider):
         if not self._api_key:
             return self._missing_key_message()
 
-        if not self.default_model:
+        if self.requires_explicit_model and not self.default_model:
             return self._missing_model_message()
 
         if not self.endpoint:
@@ -367,10 +390,19 @@ class OpenAICompatibleProvider(LLMProvider):
         )
 
     def _missing_model_message(self) -> str:
+        """
+        ⚠️ 这条文案以前指的是 `llm.providers.<name>.model` 与
+           `BAILIAN_MODEL` 之类的环境变量 —— **Configuration V1 之后
+           这些路径都不存在了**，照着它去改配置只会白费功夫。
+           现在指向真正生效的两个位置。
+        """
         return (
-            f"{self.PROVIDER_LABEL} 没有配置模型名。\n"
-            f"请设置 config/config.yaml 的 llm.providers.{self.name}.model，"
-            f"或环境变量 {self.model_env}。"
+            f"{self.PROVIDER_LABEL} 这次调用没有拿到模型名。\n"
+            f"  正常路径：Agent 的 `agents.<id>.brain.model` 指向一个 "
+            f"model profile，Runtime 会把它解析成真实 model id 传进来。\n"
+            f"  端点级兜底（可选）：在 config/config.yaml 的 "
+            f"`providers.{self.name}.default_model` 里填一个 profile 名。\n"
+            f"  查看当前解析结果：./dev.sh config"
         )
 
     # ------------------------------------------------------------

@@ -246,18 +246,23 @@ class TestConfigChangePropagates:
         """
         改 `models.<id>.provider` → provider 解析跟着变。
 
-        ⚠️ 用 `qwen_fast` 而不是 `doubao_novel`：后者是
-           `providers.doubao.default_model` 指向的 profile，
-           改它的 provider 会（**正确地**）触发交叉引用校验
+        ⚠️ 必须挑一个**没有被任何 provider 当作 `default_model`** 的
+           profile。三个端点各自认领了：
+               providers.deepseek.default_model = deepseek_chat
+               providers.doubao.default_model   = doubao_novel
+               providers.bailian.default_model  = qwen_fast
+           改这些 profile 的 provider 会（**正确地**）触发交叉引用校验
            「默认模型必须属于这个端点自己」。
-           那条校验本身是好的，所以这里换一个没有该引用的 profile。
+
+           这条校验已经**两次**拦下我随手挑的 profile 了 ——
+           它是对的，所以这里用没有该引用的 `qwen_max`。
         """
-        r = _resolved(**{"models.qwen_fast.provider": "deepseek"})
-        model = r.model("qwen_fast")
+        r = _resolved(**{"models.qwen_max.provider": "deepseek"})
+        model = r.model("qwen_max")
         assert model.provider.name == "deepseek"
         assert model.provider.adapter == "deepseek"
         assert model.provider.base_url == "https://api.deepseek.com"
-        assert model.model_id == "qwen3.8-flash"      # model id 不受影响
+        assert model.model_id == "qwen3.8-max"        # model id 不受影响
 
     def test_E2_credential_is_independent_of_provider(self):
         """
