@@ -218,7 +218,20 @@ class TestIllegalTransitions:
     @pytest.mark.parametrize(
         "target",
         [
-            TaskStatus.IN_PROGRESS,
+            # ⚠️ IN_PROGRESS 从这条列表里**移除了**。
+            #
+            #    它曾经是「不能跳步」的例子，但 Completion / Acceptance
+            #    最小闭环明确要求 Root Task 可以**直接从 CREATED 开工**：
+            #
+            #        Root Task 不是 Commerce。
+            #        Human 提供 Demand → Agent 建 Root Task → 直接进入生产，
+            #        中间没有报价与成交，不该为了复用交易状态
+            #        而污染生产生命周期。
+            #
+            #    🔒 这条边**没有绕过校验**：进入 IN_PROGRESS 仍然必须
+            #       经过 TaskExecutionService 的角色校验
+            #       （发送者必须是参与方，并由此成为承接方）。
+            #       见 tests/test_task_completion_acceptance.py。
             TaskStatus.SUBMITTED,
             TaskStatus.VERIFIED,
             TaskStatus.COMPLETED,
@@ -229,9 +242,28 @@ class TestIllegalTransitions:
         ],
     )
     def test_created_cannot_jump_forward(self, task, target):
-        """CREATED 只能去 OFFERED 或 CANCELLED —— 不能跳步。"""
+        """CREATED 只能去 OFFERED / IN_PROGRESS / CANCELLED —— 不能跳到更后面。"""
         with pytest.raises(InvalidTaskTransition):
             task.transition_to(target)
+
+    def test_created_can_start_directly(self, task):
+        """
+        CREATED → IN_PROGRESS 是**合法**的（Root Task 不走商业前置）。
+
+        🔒 它的安全边界**不在状态机**，而在执行服务：
+           `TaskExecutionService.validate_role()` 要求发送者是参与方。
+        """
+        assert TaskStatus.IN_PROGRESS in TRANSITIONS[TaskStatus.CREATED]
+        assert task.status == TaskStatus.CREATED
+        task.start()
+        assert task.status == TaskStatus.IN_PROGRESS
+
+    def test_created_cannot_reach_submitted_directly(self, task):
+        """不能一步跳到 SUBMITTED / VERIFIED / COMPLETED。"""
+        for target in (TaskStatus.SUBMITTED, TaskStatus.VERIFIED,
+                       TaskStatus.COMPLETED):
+            with pytest.raises(InvalidTaskTransition):
+                task.transition_to(target)
 
     def test_cannot_skip_from_offered_to_completed(self, task):
         task.offer()

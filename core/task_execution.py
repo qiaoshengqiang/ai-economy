@@ -62,7 +62,7 @@ from core.logical_ref import validate_logical_ref
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from types import MappingProxyType
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Dict, Mapping, Optional, Tuple
 
 
 # ============================================================
@@ -280,6 +280,208 @@ class TaskVerification:
 
     def __str__(self) -> str:
         return "通过" if self.passed else f"不通过（{self.feedback}）"
+
+
+# ============================================================
+# Completion Proposal
+# ============================================================
+#: Completion Proposal 在 SUBMIT 事件里的存放位置。
+#:
+#: 🔒 **不新增数据库表** —— 它随 SUBMIT 的 `result.metadata` 一起
+#:    落进既有的 `task_executions.result_metadata`（TEXT/JSON）列。
+#:    读回时由 `TaskExecutionService.latest_completion_proposal()` 按这个键取。
+#:
+#: 【为什么可以放在 metadata 里，而不是提升为一等列】
+#:     Proposal 从来不被**查询**（没有「列出所有 MET 的提议」这种需求），
+#:     它只在「这个任务的验收过程是怎样的」这个上下文里被读。
+#:     为它加列会让 schema 变宽，而收益只是少一层 JSON 解包。
+COMPLETION_PROPOSAL_KEY = "completion_proposal"
+
+
+class CriteriaStatus:
+    """
+    Completion Proposal 对照 Definition of Done 的**结构化**达标情况。
+
+    🔒 为什么必须是结构化值，而不是一句自然语言
+        自然语言没法被校验。而「声称全部达标、同时又说还有 gap」
+        这种自相矛盾**必须能被机械发现** —— 否则
+        「Agent 说完成了」和「真的完成了」就没有区别。
+
+    🔒 它**不是** Task 状态
+        `MET` 只表示「提交者认为对照 DoD 全部达标」，
+        **不代表已验收**。`COMPLETED` 只能由
+        `VERIFY(passed=True)` + `COMPLETE` 产生。
+
+        `Completion Proposal ≠ Completed`。
+    """
+
+    #: 对照 DoD 全部达标 —— 此时 outstanding_gaps 必须为空
+    MET = "MET"
+
+    #: 部分达标（还有 gap，但已经可以请对方验收）
+    PARTIAL = "PARTIAL"
+
+    #: 未达标（例如只是为了留下一次可追溯的提交）
+    NOT_MET = "NOT_MET"
+
+    ALL = (MET, PARTIAL, NOT_MET)
+
+    @classmethod
+    def is_known(cls, value: Any) -> bool:
+        return value in cls.ALL
+
+
+@dataclass(frozen=True)
+class CompletionProposal:
+    """
+    Agent 提交的「完成声明」—— 一个**提议**，不是完成本身。
+
+    【它在整条链里的位置】
+
+        Agent 认为做完了
+              ↓  本类型（提议，纯值对象）
+        SUBMIT（走**现有**执行协议）
+              ↓
+        Acceptance Responsibility（由**别人**来验收）
+              ↓
+        VERIFY(passed=True / False)
+              ↓
+        COMPLETE → COMPLETED
+
+    🔒 四条边界
+        ① 它**不改变 Task 状态** —— 纯值对象，没有任何 store /
+           状态机 / 网络访问能力。
+        ② 它**不能替生产者验收** —— 验收走 VERIFY，角色校验在
+           `TaskExecutionService.validate_role()` 里。
+        ③ 它**不新增数据库表** —— 随 SUBMIT 的
+           `result.metadata["completion_proposal"]` 落进既有的
+           `task_executions` 事件链。
+        ④ 它**不新增 Task 状态** —— `criteria_status` 只是提议的
+           内容，不是状态机的输入。
+
+    【为什么挂在 SUBMIT 上，而不是新开一个事件】
+        SUBMIT 的语义就是「我交付了成果」。Completion Proposal 是
+        对「这次交付对照 DoD 到什么程度」的结构化说明 ——
+        它是**同一次交付**的一部分，不是另一个动作。
+        新开一个事件会多出一套幂等与顺序问题，收益只是名字更直白。
+    """
+
+    #: 提议 ID（引用 / 审计用）
+    proposal_id: str
+
+    #: 属于哪个任务
+    task_id: str
+
+    #: 谁提的 —— 必须是 Task Participant（由执行服务校验）
+    proposed_by: str
+
+    #: 提交时间（ISO 字符串，与项目其它时间戳一致）
+    submitted_at: str = ""
+
+    #: 对照 DoD 的达标情况（见 CriteriaStatus）
+    criteria_status: str = CriteriaStatus.PARTIAL
+
+    #: 证据：成果引用（复用 TaskResultRef 的语义与全部校验）
+    evidence: Tuple[TaskResultRef, ...] = ()
+
+    #: 还没达标的项。**声称 MET 时必须为空。**
+    outstanding_gaps: Tuple[str, ...] = ()
+
+    # ------------------------------------------------------------
+    def __post_init__(self):
+        if not str(self.proposal_id or "").strip():
+            raise ValueError("CompletionProposal 需要 proposal_id")
+        if not str(self.task_id or "").strip():
+            raise ValueError("CompletionProposal 需要 task_id")
+        if not str(self.proposed_by or "").strip():
+            raise ValueError(
+                "CompletionProposal 需要 proposed_by —— "
+                "「谁声称完成了」必须可追溯"
+            )
+
+        # ---- criteria_status 必须是结构化值 ----
+        if not CriteriaStatus.is_known(self.criteria_status):
+            raise ValueError(
+                f"criteria_status 必须是 {list(CriteriaStatus.ALL)} 之一，"
+                f"收到 {self.criteria_status!r}。\n"
+                f"（自由文本没法校验，也就没法区分「声称」和「属实」。）"
+            )
+
+        # ---- evidence 不能为空 ----
+        #
+        # 与现有 SUBMIT 的语义一致：`validate_result()` 已经要求
+        # result_ref 非空。一个没有任何证据的「我完成了」
+        # 无法被验收方核对，只会变成一句口号。
+        if not self.evidence:
+            raise ValueError(
+                "CompletionProposal 必须带至少一条 evidence ——\n"
+                "没有证据的完成声明，验收方无从核对。"
+            )
+
+        # ---- 🔴 自相矛盾检测：声称全部达标，却还留着 gap ----
+        #
+        # 这是本类型存在的**核心**理由：让「Agent 说完成了」
+        # 和「真的完成了」在数据层就能分开。
+        if self.criteria_status == CriteriaStatus.MET and self.outstanding_gaps:
+            raise ValueError(
+                f"criteria_status = MET（声称对照 DoD 全部达标），"
+                f"但 outstanding_gaps 非空：{list(self.outstanding_gaps)}。\n"
+                f"这两件事不能同时成立 —— 要么改成 "
+                f"{CriteriaStatus.PARTIAL}，要么把 gap 清掉。"
+            )
+
+    # ------------------------------------------------------------
+    @property
+    def claims_all_met(self) -> bool:
+        return self.criteria_status == CriteriaStatus.MET
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "proposal_id": self.proposal_id,
+            "task_id": self.task_id,
+            "proposed_by": self.proposed_by,
+            "submitted_at": self.submitted_at,
+            "criteria_status": self.criteria_status,
+            "evidence": [e.to_dict() for e in self.evidence],
+            "outstanding_gaps": list(self.outstanding_gaps),
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "CompletionProposal":
+        raw_gaps = data.get("outstanding_gaps") or ()
+        if isinstance(raw_gaps, str):
+            raw_gaps = (raw_gaps,)
+        return cls(
+            proposal_id=data.get("proposal_id", "") or "",
+            task_id=data.get("task_id", "") or "",
+            proposed_by=data.get("proposed_by", "") or "",
+            submitted_at=data.get("submitted_at", "") or "",
+            criteria_status=data.get("criteria_status", CriteriaStatus.PARTIAL),
+            evidence=tuple(
+                TaskResultRef.from_dict(e) if isinstance(e, Mapping) else e
+                for e in (data.get("evidence") or ())
+            ),
+            outstanding_gaps=tuple(str(g) for g in raw_gaps),
+        )
+
+    def describe(self) -> Dict[str, Any]:
+        return {
+            **self.to_dict(),
+            "evidence_count": len(self.evidence),
+            "gap_count": len(self.outstanding_gaps),
+            # 明确声明它**不是**完成 —— 让读到它的人不必猜
+            "is_completion": False,
+            "is_proposal_only": True,
+        }
+
+    def __str__(self) -> str:
+        return (
+            f"CompletionProposal({self.proposal_id}) "
+            f"by {self.proposed_by} "
+            f"status={self.criteria_status} "
+            f"evidence={len(self.evidence)} "
+            f"gaps={len(self.outstanding_gaps)}"
+        )
 
 
 # ============================================================

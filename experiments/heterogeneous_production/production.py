@@ -44,6 +44,8 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from communication.message import MessageType
+
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
@@ -83,6 +85,35 @@ MIN_PRODUCTIVE_CHARS_PER_SESSION = 400
 BUDGET_AIC = 50.0
 COGNITIVE_BUDGET = 8192
 
+#: 本实验创建的**根 Stage** 的固定 ID。
+#:
+#: 🔒 有了它，`_close_stage()` 才能关**自己驱动的那一个** Stage，
+#:    而不是「碰巧第一个 is_open 的」—— 后者会误关别人的 Stage。
+ROOT_STAGE_ID = "stage_hetero_root"
+
+#: 生产者（承接方）—— 提交成果与 Completion Proposal 的那个 Agent。
+#:
+#: 🔒 **必须与 ACCEPTOR 不同** —— 否则「生产者不能自验」
+#:    这条边界在这条链上就无从体现（验收会被执行服务拒绝）。
+PRODUCER = "novel_author"
+
+#: 验收责任人 —— 负责 VERIFY / COMPLETE 的那个 Agent。
+#:
+#: 让「读者」验收「作者」的作品，语义上也最自然。
+ACCEPTOR = "novel_reader"
+
+#: Definition of Done —— 由 **Agent 自主结构化**（不是系统写死的清单）。
+#:
+#: 它落进 `TaskSharedContext.acceptance_criteria`，
+#: 之后被认知上下文渲染给所有 Agent 看。
+DEFINITION_OF_DONE = (
+    "手稿 artifact 存在且非空",
+    "全书有明确的结尾标记（例如「（完）」）",
+    "至少一个 Agent 提交 Completion Proposal 说明对照 DoD 的达标情况",
+    "由非生产者的验收责任人给出验收结论",
+)
+
+
 DEMAND = """【Human Demand】
 
 请创作一部约 10000 字的原创中文科幻悬疑小说。
@@ -100,6 +131,9 @@ PROMPT = """你是这次长期生产任务的一名参与者。这是**正式生
 
 ========== 当前 Stage ==========
 {stage}
+
+========== 完成标准与验收状态（Definition of Done / Acceptance）==========
+{completion}
 
 ========== 共享 Task Workspace（{ws}）的真实环境事实 ==========
 {workspace}
@@ -231,10 +265,29 @@ def main() -> int:
                     break
             prev_session_chars = chars_now
 
-            # ---- §二十三 正常完成（保守判定：Agent 自述完成 + 字数达标）----
-            if s_log.get("agents_claim_done") and chars_now >= 9000:
+            # ---- 正常完成：走**现有 Task Execution 协议** ----
+            #
+            # 🔴 这里以前是：
+            #
+            #       if s_log.get("agents_claim_done") and chars_now >= 9000:
+            #
+            #    而 `s_log["agents_claim_done"]` **从来没有被写过**
+            #    （初始化 False，之后无人赋值）→ COMPLETED 分支不可达，
+            #    会话永远靠 TOTAL_WALL_LIMIT_REACHED 退出。
+            #
+            #    现在完成**不再是一个布尔值**，而是：
+            #
+            #       DoD 存在 → 提交 Completion Proposal →
+            #       验收责任存在 → 验收责任人 VERIFY(passed=True) →
+            #       COMPLETE → Task.status == COMPLETED
+            #
+            #    全部走既有的消息协议与角色校验（不直接调领域方法）。
+            outcome = _try_complete_task(rt, gw, log, s_log)
+            if outcome == "COMPLETED":
                 exit_reason = "COMPLETED"
                 break
+            if outcome not in ("", None):
+                s_log["completion_blocked_by"] = outcome
 
         log["exit_reason"] = exit_reason
         log["sessions_run"] = session_index
@@ -276,7 +329,7 @@ def main() -> int:
 
 # ================================================================
 def _ensure_environment(rt: Any) -> None:
-    """Task + participants + Workspace + 命名空间 + 最小根 Stage。"""
+    """Task + participants + Workspace + 命名空间 + 最小根 Stage + DoD/验收责任。"""
     from core.task import Task
     from stage import STATUS_ACTIVE, StageStore
 
@@ -305,7 +358,283 @@ def _ensure_environment(rt: Any) -> None:
             "mystery novel about identity / memory / assets / history "
             "conflicting in a world run by AI Agents.",
             deliverables=[{"name": "complete manuscript"}],
-            status=STATUS_ACTIVE, stage_id="stage_hetero_root")
+            status=STATUS_ACTIVE, stage_id=ROOT_STAGE_ID)
+
+    _ensure_completion_setup(rt)
+
+
+def _ensure_completion_setup(rt: Any) -> None:
+    """
+    建立 **Definition of Done** 与 **Acceptance Responsibility**。
+
+    【这一步在整条 Completion 链里的位置】
+
+        Human 提供 Demand / Constraints          ← DEMAND 常量
+              ↓
+        Agent 自主结构化 Definition of Done       ← 本函数
+        Agent 自主指派 Acceptance Responsibility  ← 本函数
+              ↓
+        START（进入生产）
+              ↓
+        SUBMIT + Completion Proposal
+              ↓
+        VERIFY(passed=True/False)  ← 必须由**别人**发
+              ↓
+        COMPLETE → COMPLETED
+
+    🔒 两条都复用**现有**能力，不新增数据结构：
+        · DoD  → `TaskSharedContext.acceptance_criteria`
+                 （走 `TaskAlignmentService.propose` +
+                  `ADD_ACCEPTANCE_CRITERION`）
+        · 验收责任 → `AssignmentRecord.responsibility`
+                 （走 `ASSIGN` 变更类型）
+
+    🔒 生产者与验收者**必须是不同的 Agent** ——
+       否则「生产者不能自验」这条边界在这条链上无从体现。
+       这里用固定的两个角色（见 PRODUCER / ACCEPTOR 常量）。
+    """
+    from core.task import TaskStatus
+    from core.task_shared_context import (
+        ACCEPTANCE_RESPONSIBILITY, AssignmentStatus,
+    )
+
+    task = rt.tasks.get(TASK_ID)
+    if task is None:
+        return
+
+    context = None
+    try:
+        context = rt.alignment.current(TASK_ID)
+    except Exception:  # noqa: BLE001 — 没有上下文就建一个
+        context = None
+
+    if context is None:
+        rt.alignment.create_context(
+            TASK_ID,
+            by=PRODUCER,
+            objective=DEMAND,
+            acceptance_criteria=list(DEFINITION_OF_DONE),
+        )
+        # 指派验收责任（ASSIGN 不需要第二个 aligner 确认）
+        change = rt.alignment.propose(
+            TASK_ID,
+            proposed_by=PRODUCER,
+            change_type="ASSIGN",
+            new_value={"agent_id": ACCEPTOR,
+                       "responsibility": ACCEPTANCE_RESPONSIBILITY},
+            expected_revision=rt.alignment.require_current(TASK_ID).revision,
+            reason="指派验收责任人：由读者角色验收作者的作品",
+        )
+        rt.alignment.accept(TASK_ID, change.change_id, decided_by=PRODUCER,
+                            reason="生产者指派验收方（验收方本人不能是生产者）")
+
+    # ---- 进入生产：走**现有执行协议**（不直接调 task.start()）----
+    if task.status == TaskStatus.CREATED:
+        rt.task_service.handle_message(_task_message(
+            PRODUCER, "system", MessageType.START, {"task_id": TASK_ID}))
+
+
+def _task_message(from_agent: str, to_agent: str, message_type: str,
+                  payload: Dict[str, Any]) -> Any:
+    """构造一条走标准协议的消息（START / SUBMIT / VERIFY / COMPLETE）。"""
+    from communication.message import Message
+
+    return Message(
+        from_agent=from_agent,
+        to_agent=to_agent,
+        message_type=message_type,
+        payload=payload,
+    )
+
+
+def _try_complete_task(rt: Any, gw: Any, log: Dict[str, Any],
+                       s_log: Dict[str, Any]) -> str:
+    """
+    尝试用**现有 Task Execution 协议**把任务推到 COMPLETED。
+
+    返回：
+        "COMPLETED"  —— 任务真的到了 COMPLETED（可以正常退出了）
+        ""           —— 还没到该完成的时候（继续生产）
+        其它字符串   —— 被挡住的**具体原因**（写进 s_log，便于事后查）
+
+    【完整调用链 —— 全部走既有协议，没有一条捷径】
+
+        Agent 自述完成（turn["claims_done"]）
+              ↓  本函数聚合（session 级）
+        Task 必须已有 Definition of Done          ← Shared Context
+        Task 必须已有 Acceptance Responsibility   ← Shared Context
+              ↓
+        PRODUCER 发 SUBMIT（带 Completion Proposal）
+              ↓  TaskService.handle_message → SubmitHandler
+              ↓  validate_role（必须承接方）+ validate_result
+              ↓  validate_completion_proposal（5 条）
+              ↓  Task Core: IN_PROGRESS → SUBMITTED
+        ACCEPTOR 发 VERIFY(passed=True)
+              ↓  validate_role（**不能是承接方** ← 生产者不能自验）
+              ↓  Task Core: SUBMITTED → VERIFIED
+        ACCEPTOR 发 COMPLETE
+              ↓  Task Core: VERIFIED → COMPLETED
+        读回 task.status 确认真的是 COMPLETED
+
+    🔒 本函数**不直接改 Task 状态** —— 它只发消息。
+       状态变化全部由 Task Core 的状态机产生。
+       读回来的 `task.status` 是**证据**，不是假设。
+    """
+    from core.task import TaskStatus
+    from core.task_execution import (
+        COMPLETION_PROPOSAL_KEY, CompletionProposal, CriteriaStatus,
+        TaskResultRef,
+    )
+
+    if not s_log.get("agents_claim_done"):
+        return ""                       # 还没有任何 Agent 声称完成
+
+    task = rt.tasks.get(TASK_ID)
+    if task is None:
+        return "no-task"
+
+    # ---- 前置一：Definition of Done ----
+    dod = rt.task_execution.definition_of_done(task)
+    if not dod:
+        return "no-definition-of-done"
+
+    # ---- 前置二：Acceptance Responsibility ----
+    acceptors = rt.task_execution.acceptors_of(task)
+    if not acceptors:
+        return "no-acceptance-responsibility"
+    if PRODUCER in acceptors:
+        # 🔒 生产者不能给自己派验收责任来绕过「不能自验」。
+        #    执行服务也会拒绝，但这里提前说清楚原因。
+        return "producer-cannot-be-acceptor"
+
+    # ---- 生产：SUBMIT + Completion Proposal ----
+    if task.status == TaskStatus.IN_PROGRESS:
+        manuscript = _manuscript_ref(rt)
+        if manuscript is None:
+            return "no-manuscript-artifact"
+        proposal = CompletionProposal(
+            proposal_id=f"cp_{s_log.get('index', 0)}_{task.version}",
+            task_id=TASK_ID,
+            proposed_by=PRODUCER,
+            criteria_status=CriteriaStatus.MET,
+            evidence=(manuscript,),
+        )
+        result = rt.task_service.handle_message(_task_message(
+            PRODUCER, ACCEPTOR, MessageType.SUBMIT,
+            {"task_id": TASK_ID, "result": manuscript.to_dict(),
+             COMPLETION_PROPOSAL_KEY: proposal.to_dict()}))
+        log.setdefault("completion_events", []).append(
+            {"event": "SUBMIT", "ok": bool(result.ok),
+             "errors": list(result.errors or ())})
+        if not result.ok:
+            return f"submit-rejected: {(result.errors or ['?'])[0][:80]}"
+        task = rt.tasks.get(TASK_ID)
+
+    # ---- 验收：VERIFY(passed=True) —— 必须由**非生产者**发 ----
+    if task.status == TaskStatus.SUBMITTED:
+        verify = rt.task_service.handle_message(_task_message(
+            ACCEPTOR, PRODUCER, MessageType.VERIFY,
+            {"task_id": TASK_ID, "passed": True,
+             "feedback": "手稿完整、有结尾标记，符合 Definition of Done"}))
+        log.setdefault("completion_events", []).append(
+            {"event": "VERIFY", "ok": bool(verify.ok),
+             "errors": list(verify.errors or ())})
+        if not verify.ok:
+            return f"verify-rejected: {(verify.errors or ['?'])[0][:80]}"
+        task = rt.tasks.get(TASK_ID)
+
+    # ---- 结项：COMPLETE ----
+    if task.status == TaskStatus.VERIFIED:
+        done = rt.task_service.handle_message(_task_message(
+            ACCEPTOR, PRODUCER, MessageType.COMPLETE,
+            {"task_id": TASK_ID, "summary": "作品完成，验收通过"}))
+        log.setdefault("completion_events", []).append(
+            {"event": "COMPLETE", "ok": bool(done.ok),
+             "errors": list(done.errors or ())})
+        if not done.ok:
+            return f"complete-rejected: {(done.errors or ['?'])[0][:80]}"
+        task = rt.tasks.get(TASK_ID)
+
+    # ---- 证据：读回真实状态 ----
+    if task.status == TaskStatus.COMPLETED:
+        _close_stage(rt, log)
+        return "COMPLETED"
+
+    blockers = rt.task_execution.completion_blockers(task)
+    return "blocked: " + " / ".join(blockers)
+
+
+def _manuscript_ref(rt: Any) -> Any:
+    """把手稿 artifact 变成一个 TaskResultRef（逻辑名字，不是路径）。"""
+    from core.task_execution import TaskResultRef
+
+    try:
+        entries = rt.workspace_gateway.list(WS_ID, PRODUCER)
+    except Exception:  # noqa: BLE001
+        return None
+    for entry in entries:
+        name = getattr(entry, "name", "") or ""
+        if "manuscript" in name:
+            return TaskResultRef(
+                result_ref="manuscript/novel",
+                result_type="document",
+                summary=f"手稿文件 {name}",
+                metadata={"artifact": name},
+            )
+    return None
+
+
+def _close_stage(rt: Any, log: Dict[str, Any]) -> None:
+    """
+    任务完成后，把**本 Runner 自己驱动的那个** Stage 正确收尾。
+
+    🔒 这是「Task COMPLETED → Stage 正确结束 → Runner 正常退出」
+       中间那一环。以前 Stage 永远停在 ACTIVE（没人调 complete）。
+
+    【Task ↔ Stage 的真实关系：**1 Task : N Stages**】
+
+        `Stage.task_id` 表示「这个 Stage 属于哪个 Task」，
+        而 `StageStore.list_stages(task_id)` 返回**全部** ——
+        所以一个 Task 可以有多个 Stage。
+
+        ⇒ 「Task COMPLETED → 这个 Task 的**所有** Stage 都 COMPLETED」
+          **不成立**：别的 Stage 可能属于同一 Task 但尚未开始 /
+          已取消 / 已失败。
+
+    🔒 所以本函数做三件事，而不是「关掉第一个 is_open 的」：
+
+        ① 只关 **`ROOT_STAGE_ID`** —— 那是本 Runner 自己创建的；
+           用「第一个 is_open」会误关别人的 Stage（顺序依赖，不可预测）。
+        ② 关之前**校验它真的属于这个 Task** —— 跨任务关 Stage 是错的。
+        ③ 已经不在 open 状态就不重复关（幂等）。
+
+    ⚠️ 本轮**不**重新设计 Stage 模型：没有 deliverable→artifact 的
+       映射可用（`StageControlExecutor` 从未接线），所以这里
+       只表达「Runner 驱动的那一个 Stage 结束了」，
+       不去推断「Task 完成是否意味着每个 Stage 都该完成」。
+    """
+    from stage import StageStore
+
+    try:
+        st = StageStore(rt.economy.db)
+        stage = next((s for s in st.list_stages(TASK_ID)
+                      if s.stage_id == ROOT_STAGE_ID), None)
+        if stage is None:
+            log["stage_completed"] = None
+            log["stage_note"] = f"没有找到根 Stage {ROOT_STAGE_ID}"
+            return
+        # ② 归属校验：绝不关别的任务的 Stage
+        if stage.task_id != TASK_ID:
+            log["stage_completed"] = None
+            log["stage_note"] = (f"Stage {stage.stage_id} 属于 "
+                                 f"{stage.task_id}，不是 {TASK_ID} —— 不关")
+            return
+        # ③ 幂等
+        if stage.is_open:
+            st.complete(stage.stage_id)
+        log["stage_completed"] = stage.stage_id
+    except Exception as exc:  # noqa: BLE001
+        log["stage_complete_error"] = f"{type(exc).__name__}: {exc}"
 
 
 def _action_seam(rt: Any) -> tuple:
@@ -426,6 +755,30 @@ def _run_session(rt: Any, bridge: Any, index: int, limit: float,
                             progress={"session": index, "rounds": rnd})
     s_log["checkpoint"] = ck.to_dict()
     s_log["workspace_revision"] = rev
+
+    # ---- 🔴 Session 级聚合：Agent turn claim → Session 状态 ----
+    #
+    # 这是本轮修的**核心 Bug**。
+    #
+    #   以前：
+    #       turn["claims_done"] = True         （每轮写了）
+    #       s_log["agents_claim_done"] = False （初始化后**再没人写过**）
+    #       → 外层 `if s_log.get("agents_claim_done")` 永远为假
+    #       → COMPLETED 分支不可达
+    #       → 会话只能靠 TOTAL_WALL_LIMIT_REACHED 退出
+    #
+    #   🔒 注意这里**不是**把某个布尔值改成 True 就完事 ——
+    #      聚合出来的只是「有 Agent **自称**完成」这一个事实。
+    #      真正的完成判定在 `_try_complete_task()` 里，
+    #      必须走完 DoD / Proposal / 验收责任 / VERIFY / COMPLETE 全链。
+    claims = [t for t in s_log["turns"] if t.get("claims_done")]
+    s_log["agents_claim_done"] = bool(claims)
+    s_log["claiming_agents"] = sorted({t["agent_id"] for t in claims})
+    s_log["claiming_turns"] = len(claims)
+    if claims:
+        print(f"  📣 Session {index}：{len(claims)} 个 turn 声称完成 "
+              f"（{', '.join(s_log['claiming_agents'])}）")
+
     print(f"  🛑 Session {index} 结束：{sess.state}  "
           f"rounds={rnd}  checkpoint={ck.checkpoint_id}  rev={rev}")
     return sess, bridge, s_log
@@ -470,6 +823,7 @@ def _turn(rt: Any, bridge: Any, st: Any, stage: Any, aid: str, rnd: int,
 
     prompt = PROMPT.format(
         demand=DEMAND, stage=stage_txt, ws=WS_ID,
+        completion=_completion_facts(rt),
         workspace=_workspace_facts(gw, aid),
         roster=_roster_facts(rt, aid),
         inbox=channels.render_inbox(inbox["received"]))
@@ -618,6 +972,74 @@ def _describe_entry(e: Dict[str, Any]) -> str:
     if e.get("effective_lock_holder"):
         facts.append(f"lock={e['effective_lock_holder']}")
     return f"{name}（{', '.join(facts)}）" if facts else name
+
+
+def _completion_facts(rt: Any) -> str:
+    """
+    Definition of Done / 验收责任 / 完成进度 —— 渲染给**每个** Agent 看。
+
+    【为什么放在 prompt 里】
+
+        这段信息必须有唯一的权威来源（Shared Context + Task Core），
+        而且要**被 Agent 看见** —— 否则「自主结构化 DoD」就只是
+        写在库里没人读的数据。
+
+        🔒 这里刻意**不新建**一套 Task Context：
+           DoD 来自 `SharedContext.acceptance_criteria`，
+           验收责任来自 `assignments`，完成进度来自 Task Core 的 `status`。
+           本函数只是把它们**渲染**出来。
+
+        🔒 读不到就如实说「（还没有）」——
+           不用占位符假装有内容。
+    """
+    from core.task import TaskStatus
+
+    lines: List[str] = []
+    task = rt.tasks.get(TASK_ID)
+    if task is None:
+        return "（任务尚未建立）"
+
+    lines.append(f"Task 目标：{DEMAND.strip().splitlines()[0]}")
+
+    # ---- Definition of Done（权威：Shared Context）----
+    dod = rt.task_execution.definition_of_done(task)
+    lines.append("Definition of Done（完成标准）：")
+    if dod:
+        lines.extend(f"  {i}. {c}" for i, c in enumerate(dod, 1))
+    else:
+        lines.append("  （还没有 —— 任何参与方都可以添加验收标准）")
+
+    # ---- Acceptance Responsibility（权威：Shared Context 的 assignments）----
+    acceptors = rt.task_execution.acceptors_of(task)
+    lines.append(
+        "验收责任人（Acceptance Responsibility）："
+        + ("、".join(acceptors) if acceptors else "（还没有 —— 需要有人负责验收）")
+    )
+
+    # ---- 完成进度（权威：Task Core 的状态机）----
+    lines.append(f"Task 当前状态：{task.status}"
+                 + (f"（承接方：{task.contractor}）" if task.contractor else ""))
+
+    proposal = rt.task_execution.latest_completion_proposal(TASK_ID)
+    if proposal is not None:
+        lines.append(
+            f"最近一次 Completion Proposal：由 {proposal.proposed_by} 提交，"
+            f"对照 DoD 的达标情况 = {proposal.criteria_status}，"
+            f"证据 {len(proposal.evidence)} 条"
+            + (f"，未达标项 {list(proposal.outstanding_gaps)}"
+               if proposal.outstanding_gaps else "")
+        )
+    else:
+        lines.append("最近一次 Completion Proposal：（还没有人提交）")
+
+    if task.status != TaskStatus.COMPLETED:
+        blockers = rt.task_execution.completion_blockers(task)
+        lines.append("距离结项还差：" + ("、".join(blockers) if blockers
+                                        else "（已满足全部前置条件，等验收）"))
+
+    # ---- 当前交付物（权威：Task Workspace 的真实文件）----
+    lines.append("当前交付物：见上面的 Workspace 事实（本段不复制内容）")
+    return "\n".join(lines)
 
 
 def _workspace_facts(gw: Any, agent: str) -> str:

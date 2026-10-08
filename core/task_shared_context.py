@@ -312,6 +312,31 @@ class AssignmentStatus:
         return (cls.ACTIVE, cls.DONE, cls.RELEASED, cls.BLOCKED)
 
 
+#: 「验收责任」的 `responsibility` 取值。
+#:
+#: 【为什么复用 AssignmentRecord，而不是新建一套角色系统】
+#:
+#:     验收责任本来就是「谁负责什么」的一种。已经有
+#:     `AssignmentRecord` 表达这件事，而且它已经有
+#:     `ASSIGN` 变更类型、对齐规则、修订历史与持久化。
+#:
+#:     新建一张「Acceptor 角色表」会立刻产生**第二套分工真相**：
+#:     同一个事实（谁负责验收）在两处各存一份，然后靠人去同步。
+#:     那正是本项目一直在消除的东西。
+#:
+#: 【为什么是常量，而不是枚举 / 白名单】
+#:
+#:     `responsibility` 是**开放文本** —— 研究任务写 "research"、
+#:     写作任务写 "drafting"、翻译任务写 "translation"。
+#:     设白名单会把「Agent 自主决定分工」变成「系统规定有哪些分工」，
+#:     那是把 Agent Strategy 写进系统。
+#:
+#:     这里只给最常用的那一个起个名字，让「谁负责验收」
+#:     可以被**查询**（`TaskSharedContext.acceptors()`），
+#:     而不是靠人肉读字符串。
+ACCEPTANCE_RESPONSIBILITY = "acceptance"
+
+
 # ============================================================
 # 三、记录类型（不可变）
 # ============================================================
@@ -790,6 +815,68 @@ class TaskSharedContext:
         return next(
             (q for q in self.open_questions if q.question_id == question_id), None
         )
+
+    # ------------------------------------------------------------
+    # 验收责任（Acceptance Responsibility）
+    # ------------------------------------------------------------
+    def assignees_for(self, responsibility: str) -> Tuple[str, ...]:
+        """
+        按 `responsibility` 取负责的 Agent（只读查询）。
+
+        🔒 只读：不派发、不调度、不改任何东西。
+        🔒 `RELEASED` 的分配**不算** —— 那是「显式解除责任」。
+           `DONE` / `BLOCKED` 仍算（DONE 之后返工还要能再验收；
+           BLOCKED 只是卡住，责任还在）。
+        🔒 结果去重且排序 —— 相同输入永远给相同输出。
+        """
+        text = str(responsibility or "").strip().lower()
+        if not text:
+            return ()
+        found = []
+        for assignment in self.assignments:
+            if (assignment.responsibility or "").strip().lower() != text:
+                continue
+            if assignment.status == AssignmentStatus.RELEASED:
+                continue
+            if assignment.agent_id not in found:
+                found.append(assignment.agent_id)
+        return tuple(sorted(found))
+
+    def acceptors(self) -> Tuple[str, ...]:
+        """
+        当前承担「验收责任」的 Agent。
+
+        🔒 不固定角色：任何 Task Participant 都可以被指派，
+           也可以有 0 个 / 1 个 / 多个。
+        🔒 它**不会**让生产者绕过「不能自验」——
+           那条规则在
+           `TaskExecutionService.validate_role()` 里，
+           而且那里 **contractor 身份优先于 acceptor**：
+           就算生产者也给自己派了验收责任，VERIFY 依然会被拒。
+        """
+        return self.assignees_for(ACCEPTANCE_RESPONSIBILITY)
+
+    def has_acceptance_responsibility(self) -> bool:
+        """
+        有没有人负责验收。
+
+        这是 Completion 的前置条件之一（见
+        `services/task_execution_service.py` 的 Completion 检查）。
+        """
+        return bool(self.acceptors())
+
+    def acceptance_criteria_list(self) -> Tuple[str, ...]:
+        """
+        Definition of Done（只读）。
+
+        🔒 权威来源就是本对象的 `acceptance_criteria` 字段 ——
+           刻意**没有**第二套 DoD 数据结构。
+        """
+        return tuple(c for c in self.acceptance_criteria if str(c).strip())
+
+    def has_definition_of_done(self) -> bool:
+        """有没有可验证的 Definition of Done。"""
+        return bool(self.acceptance_criteria_list())
 
     @property
     def open_question_count(self) -> int:

@@ -46,7 +46,12 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from core.money import Money, MoneyError
-from core.task_execution import TaskResultRef, TaskVerification
+from core.task_execution import (
+    COMPLETION_PROPOSAL_KEY,
+    CompletionProposal,
+    TaskResultRef,
+    TaskVerification,
+)
 
 from communication.message import Message, MessageType
 
@@ -135,6 +140,16 @@ class SubmitIntent(MessageIntent):
 
     task_id: Optional[str] = None
     result: Optional["TaskResultRef"] = None
+
+    #: 可选的 Completion Proposal —— 「这次交付对照 DoD 到什么程度」。
+    #:
+    #: 🔒 它挂在 **SUBMIT** 上，不新开事件、不新增表：
+    #:    落地时它会进 `result.metadata[COMPLETION_PROPOSAL_KEY]`，
+    #:    随既有的 `task_executions` 事件链一起持久化。
+    #:
+    #: 🔒 它**不改变** Task 状态 —— 只是一个提议。
+    #:    `COMPLETED` 仍然只能由 VERIFY(passed=True) + COMPLETE 产生。
+    proposal: Optional["CompletionProposal"] = None
 
 
 @dataclass(frozen=True)
@@ -373,7 +388,43 @@ class TaskMessageMapper:
         # 由 ExecutionService.validate_result 给出业务语义的错误信息
         # （「SUBMIT 必须携带成果引用」比「缺少 result_ref」更说明问题）
 
-        return SubmitIntent(errors=tuple(errors), task_id=task_id, result=result)
+        # ---- 可选的 Completion Proposal ----
+        #
+        # 🔒 解析失败**不**静默忽略 —— 那会让「我声称完成了」
+        #    变成一次普通的 SUBMIT，而 Agent 以为自己说清楚了。
+        proposal: Optional[CompletionProposal] = None
+        raw_proposal = payload.get(COMPLETION_PROPOSAL_KEY)
+        if isinstance(raw_proposal, Mapping):
+            # 🔒 这几个字段以**消息本身**为权威，**覆盖** payload 里的值。
+            #
+            #    为什么不是 setdefault：
+            #        `proposed_by` 决定「谁声称完成了」，`task_id` 决定
+            #        「针对哪个任务」。如果允许 payload 自己写，
+            #        一个 Agent 就能替另一个 Agent 声称完成 ——
+            #        而验收链最需要的就是「谁说的」可追溯。
+            data = dict(raw_proposal)
+            data["task_id"] = task_id or ""
+            data["proposed_by"] = message.from_agent or ""
+            data["proposal_id"] = (
+                raw_proposal.get("proposal_id") or message.message_id or ""
+            )
+            data["submitted_at"] = (
+                raw_proposal.get("submitted_at")
+                or getattr(message, "created_at", "") or ""
+            )
+            try:
+                proposal = CompletionProposal.from_dict(data)
+            except ValueError as exc:
+                errors.append(f"completion_proposal 不合法：{exc}")
+        elif raw_proposal is not None:
+            errors.append(
+                "completion_proposal 必须是对象"
+                "（proposal_id / task_id / proposed_by / criteria_status / "
+                "evidence / outstanding_gaps）"
+            )
+
+        return SubmitIntent(errors=tuple(errors), task_id=task_id,
+                            result=result, proposal=proposal)
 
     def parse_verify(self, message: Message) -> VerifyIntent:
         """VERIFY → VerifyIntent"""

@@ -592,11 +592,19 @@ class SubmitHandler(ExecutionMessageHandler):
         return self.mapper.parse_submit(message)
 
     def extra_errors(self, task, intent) -> List[str]:
-        return self.execution.validate_result(intent)
+        errors = list(self.execution.validate_result(intent))
+        # Completion Proposal 的五条校验（规格 §3）——
+        # 挂在这一条 SUBMIT 上，不新开事件。
+        proposal = getattr(intent, "proposal", None)
+        if proposal is not None:
+            errors.extend(
+                self.execution.validate_completion_proposal(task, proposal))
+        return errors
 
     def apply(self, task, intent, message: Message) -> HandlerResult:
         return self.execution.apply_submit(
-            task, intent.result, incoming=message
+            task, intent.result, incoming=message,
+            proposal=getattr(intent, "proposal", None),
         )
 
 

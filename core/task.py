@@ -162,6 +162,20 @@ class TaskStatus:
 TRANSITIONS: Dict[str, frozenset] = {
     TaskStatus.CREATED: frozenset({
         TaskStatus.OFFERED,
+        # 【为什么 CREATED 可以直接开工】
+        #
+        #   `CREATED → OFFERED → ACCEPTED → IN_PROGRESS` 是一条**商业**路径：
+        #   它存在的前提是「这个任务要拿出去报价、谈价、成交」。
+        #
+        #   Root Task 不是 Commerce。Human 提供 Demand →
+        #   Agent 建 Root Task → 直接进入生产，中间没有报价与成交。
+        #   要求它先走 OFFERED / ACCEPTED，等于为了复用交易状态
+        #   而污染生产生命周期。
+        #
+        #   🔒 这条边**不绕过任何校验**：进入 IN_PROGRESS 仍然必须
+        #      经过 `TaskExecutionService.apply_start()` 的角色校验
+        #      （见 services/task_execution_service.py 的 REQUIRED_ROLE）。
+        TaskStatus.IN_PROGRESS,
         TaskStatus.CANCELLED,
     }),
 
@@ -745,8 +759,64 @@ class Task:
         self.note = reason or self.note
         return self.transition_to(TaskStatus.REJECTED)
 
+    def claim_producer(self, agent_id: str) -> "Task":
+        """
+        承接这个任务：把 `agent_id` 指定为承接方（contractor）。
+
+        【为什么需要这个方法】
+
+            `CREATED → IN_PROGRESS` 是一条**非商业**路径
+            （Root Task 不是 Commerce，见 `TRANSITIONS`）。
+
+            商业路径里 contractor 是 `accept(price, contractor)` 产生的 ——
+            谈成了，谁接活就定了。但 Root Task 没有报价与成交，
+            所以必须有人**显式成为承接方**：
+            「谁在干活」是后续 SUBMIT 的依据，也是
+            **「生产者不能自验」**的依据。
+
+        【它做什么 / 不做什么】
+            ✅ 只设置 `contractor`
+            ❌ **不改状态** —— 状态由 `start()` 按状态机推进
+            ❌ 不做角色判断 —— 那是
+               `TaskExecutionService.validate_role()` 的职责
+               （领域层只保证「这个事实是合法的」，不保证「这个人有权做」）
+
+        【两条领域约束】
+            ① 只在 CREATED / ACCEPTED 阶段可承接
+               （已经开始生产之后再换人，历史就没法解释了）
+            ② 不能把已经确定的 contractor 换成别人
+        """
+        if not agent_id:
+            raise TaskValidationError("承接方不能是空字符串")
+
+        if self._status not in (TaskStatus.CREATED, TaskStatus.ACCEPTED):
+            raise TaskValidationError(
+                f"任务 {self.task_id} 当前状态是 {self._status}，不能承接。\n"
+                f"  只有 CREATED / ACCEPTED 阶段可以确定承接方 —— "
+                f"开工之后再换人，之前的记录就没法解释了。"
+            )
+
+        if self.contractor and self.contractor != agent_id:
+            raise TaskValidationError(
+                f"任务 {self.task_id} 已经有承接方 {self.contractor}，"
+                f"不能改成 {agent_id}。\n"
+                f"  （要换人必须先取消/失败再重建任务。）"
+            )
+
+        self.contractor = agent_id
+        self.updated_at = utc_now_iso()
+        return self
+
     def start(self) -> "Task":
-        """开工（ACCEPTED → IN_PROGRESS）。"""
+        """
+        开工（CREATED / ACCEPTED → IN_PROGRESS）。
+
+        【CREATED 也能开工】
+            Root Task 不走商业前置（OFFERED / ACCEPTED）。
+            调用方（执行服务）会先确保承接方已确定 ——
+            见 `claim_producer()` 与
+            `TaskExecutionService.apply_start()`。
+        """
         return self.transition_to(TaskStatus.IN_PROGRESS)
 
     def submit(self) -> "Task":

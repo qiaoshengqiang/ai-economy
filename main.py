@@ -939,7 +939,38 @@ def build_runtime(
     #     TaskExecutionService    怎么干（Step 4D）
     # 它们共享幂等 / trace / 协议违规回复（同一个基类），
     # 但互相不知道对方存在。有架构守卫盯着这条线。
-    task_execution = TaskExecutionService(store=tasks)
+    # ---- Completion / Acceptance：把 Shared Context 的两件事注入执行服务 ----
+    #
+    # 【为什么是注入，而不是让 TaskExecutionService 自己去读】
+    #     `services/` 不直接依赖 `storage/`（AGENTS.md §3），
+    #     而 Shared Context 的读取入口是 TaskContextStore / Alignment。
+    #     让执行服务依赖**两个只读能力**，而不是依赖它们的实现 ——
+    #     和 WorkspaceGateway 收注入 is_participant 是同一种手法。
+    #
+    # 🔒 两个回调都**只读**，而且 fail-closed：
+    #     读不到 → 返回空 → 「没有 DoD / 没有验收人」
+    #     → 结项被挡住，而不是被放行。
+    #
+    # ⚠️ `contexts` 在下面几行才创建 —— 这里用闭包，调用时才解析。
+    def _acceptors_of(task_id: str):
+        try:
+            revision = contexts.current(task_id)
+        except Exception:  # noqa: BLE001 — 读不到就是「没有验收人」
+            return ()
+        return revision.context.acceptors() if revision else ()
+
+    def _criteria_of(task_id: str):
+        try:
+            revision = contexts.current(task_id)
+        except Exception:  # noqa: BLE001 — 读不到就是「没有 DoD」
+            return ()
+        return revision.context.acceptance_criteria_list() if revision else ()
+
+    task_execution = TaskExecutionService(
+        store=tasks,
+        acceptors_of=_acceptors_of,
+        criteria_of=_criteria_of,
+    )
 
     # ---- Step 4F：Task Shared Context / Alignment ----
     #
