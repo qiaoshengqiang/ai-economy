@@ -6,7 +6,7 @@
 
     ✅ 这是 Agent 的**当前世界状态 / 任务状态**：
          Stage Goal · Status · Deliverables · 当前 Checkpoint
-         Hard runtime limit · 本次 Session 已用时间
+         Session 墙钟上限 · 已用时间（**不是** Agent 的写作速度预算）
 
     ❌ **不是**「你现在必须做 X」
     ❌ 不写 "you must" / "you should"（有守卫测试扫）
@@ -62,10 +62,24 @@ def render_stage(
             line += f", revision={rev})" if rev else ")"
         lines.append(line)
 
+    # 🔴 措辞修正（2026-10-10）：原先写 `Hard runtime limit: N minutes`。
+    #
+    #    实测：Agent 把它读成了**自己的写作时间预算** —— 它的思考原话是
+    #        「The runtime limit is 4 minutes, elapsed 0」
+    #    于是决定「**先赶紧把正文写出来**」。
+    #
+    #    🔒 但它**作用不了**那个数字：LLM 的产出在**一次调用内**完成
+    #       （~10 秒），它没有任何办法"写快一点"。
+    #
+    #    🔒 这条限制的**真实含义**是「这段还能给你几个回合」——
+    #       所以要说成那个意思，而不是"你还有几分钟"。
+    #       给一个自己作用不了的约束，只会让它去**猜**该怎么应对。
     if limit_seconds:
-        lines.append(f"Hard runtime limit: {int(limit_seconds / 60)} minutes")
-        if elapsed_seconds is not None:
-            lines.append(
-                f"Current session elapsed: {int(elapsed_seconds / 60)} minutes"
-            )
+        elapsed = int((elapsed_seconds or 0) / 60)
+        lines.append(
+            f"Session: 墙钟上限 {int(limit_seconds / 60)} 分钟 · "
+            f"已用 {elapsed} 分钟 · 到点后**不再有新的回合**")
+        lines.append(
+            "（这条限制的是「还能给你几个回合」，不是「你写得多快」——"
+            " 你的一次产出在一次调用内完成。）")
     return "\n".join(lines)

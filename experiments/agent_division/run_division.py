@@ -525,7 +525,14 @@ def main() -> int:
         log["budget"] = _safe_budget(rt)
         rt.close()
 
-    _erase_thinking()          # 报告上面不留思考块
+    # 🔴 **结束前不擦。**
+    #
+    #    原先这里也擦一次 —— 而观察实验**总在第 2 轮就结束**
+    #    （第一轮写完、没人被唤醒），于是刚显示的思考**立刻被抹掉**，
+    #    用户在终端上什么也看不到。
+    #
+    #    🔒 要的是「**旧的**不显示」—— **最后一份是最新的，应该留着**，
+    #       它就摆在报告上面。擦除只发生在「下一次思考要显示之前」。
     _report(log)
     out = RESULTS / "division_result.json"
     out.write_text(json.dumps(log, ensure_ascii=False, indent=2),

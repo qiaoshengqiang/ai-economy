@@ -191,8 +191,15 @@ class TestStageInContext:
         assert "完成第 1～10 章" in text          # Goal
         assert "Status: ACTIVE" in text
         assert "revision=rev-7" in text
-        assert "Hard runtime limit: 90 minutes" in text
-        assert "elapsed: 63 minutes" in text
+        # 🔴 2026-10-10 改措辞：原先写 `Hard runtime limit: N minutes`，
+        #    而 Agent 把它读成了**自己的写作时间预算**（实测它的思考原话：
+        #    「The runtime limit is 4 minutes, elapsed 0」⇒「赶紧写完」）。
+        #    🔒 它**作用不了**那个数字 —— 产出在一次调用内完成。
+        assert "Session: 墙钟上限 90 分钟" in text
+        assert "已用 63 分钟" in text
+        assert "不再有新的回合" in text
+        # 澄清必须**在场** —— 否则又会被读成"你还有几分钟"
+        assert "不是「你写得多快」" in text
         low = text.lower()
         for w in ("must", "should", "required to"):
             assert w not in low, f"Stage 被渲染成了指令：{w}"
