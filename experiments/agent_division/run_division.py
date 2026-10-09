@@ -83,8 +83,16 @@ from experiments.heterogeneous_production import production as P   # noqa: E402
 NEUTRAL_AGENTS = ["agent_a", "agent_b", "agent_c", "agent_d", "agent_e"]
 
 AGENTS: List[str] = list(NEUTRAL_AGENTS)
-TASK_ID = "task_division_001"
-WS_ID = "WS-DIVISION-001"
+# 🔴 **中性 id** —— 不许把实验意图写进 id。
+#
+#    实测抓到的泄露：原先是 `WS-DIVISION-001`，
+#    而 agent_a 的思考里出现了
+#        「the task says **"division"** — maybe agents are supposed to
+#          divide work? But nothing says that.」
+#    ⇒ **是我们自己的 id 在提示它"这个实验要分工"**，
+#      和 `novel_world_builder` 那种"名字即分工"是同一类问题。
+TASK_ID = "task_0001"
+WS_ID = "WS-0001"
 EXPERIMENT_ID = "agent_division"
 DB: Path = ROOT / "experiments" / "agent_division" / "data" / "division.db"
 RESULTS: Path = ROOT / "experiments" / "agent_division" / "results"
@@ -214,6 +222,75 @@ def _seed(rt: Any, bridge: Any) -> None:
 # ================================================================
 # ③ 只跑**被消息唤醒**的 Agent
 # ================================================================
+# ================================================================
+# 思考过程显示 —— **只显示，不保存**
+# ================================================================
+#
+# 【用户的要求】
+#     「我只需要看到怎么思考的，**不需要他的思考数据**」
+#
+# 【怎么做到"新的出现、旧的消失"】
+#
+#     模型的思考已经拿到了（`LLMResponse.reasoning`）—— 只是没人打印它。
+#
+#     🔒 **不落盘**：它**不进** `log` / 结果 JSON / `llm_calls` 表。
+#        设计 §十三 说的是「不记录上下文原文 / Memory / Prompt」——
+#        推理是**输出**，但它**可能复述 prompt 内容**，
+#        所以进生产表等于间接把输入也记下来了。
+#        ⇒ 只在屏幕上过一遍，调用结束就没了。
+#
+#     🔒 **擦除只对 TTY 生效**：输出被重定向到文件时
+#        （`> run.log` / `tee`），ANSI 控制码会变成乱码。
+#
+#     ⚠️ **不是逐字滚动**：`llm/openai_compatible.py` 明确
+#        `"stream": False`（注释："本项目目前不需要"），所以思考是
+#        **调用结束后一次性拿到**的。屏幕效果是「显示 → 被下一次思考
+#        替换」，不是逐字往外冒。要逐字必须给 `llm/` 开流式 ——
+#        那是生产层改动。
+_THINKING_REGION = {"lines": 0}
+
+
+def _erase_thinking() -> None:
+    """把上一次打印的思考块从屏幕上擦掉（仅 TTY）。"""
+    n = _THINKING_REGION["lines"]
+    _THINKING_REGION["lines"] = 0
+    if n <= 0:
+        return
+    import sys as _sys
+    if not _sys.stdout.isatty():
+        return
+    # 光标上移 n 行，然后清到屏幕末尾
+    _sys.stdout.write("\x1b[%dA\x1b[J" % n)
+    _sys.stdout.flush()
+
+
+def _show_thinking(agent_id: str, reasoning: Any, *,
+                   max_lines: int = 24) -> None:
+    """
+    显示某个 Agent 这一轮的思考。
+
+    🔒 先擦掉上一份（**任意时刻屏幕上只有一份思考**），再在**最底部**
+       打印 —— 这样擦除才能精确到「它自己那几行」。
+    """
+    import sys as _sys
+    text = str(reasoning or "").strip()
+    _erase_thinking()
+    if not text:
+        return
+
+    raw = text.split("\n")
+    shown = raw[:max_lines]
+    _THINKING_REGION["lines"] = len(shown) + 3
+    tail = ("（前 %d 行）" % max_lines) if len(raw) > max_lines else ""
+    print("\n  +--- [thinking] %s %s" % (agent_id, tail))
+    for line in shown:
+        print("  | " + line)
+    if len(raw) > max_lines:
+        print("  | ...（还有 %d 行：不显示，也不保存）" % (len(raw) - max_lines))
+    print("  +" + "-" * 46)
+    _sys.stdout.flush()
+
+
 def _inject_fake_history(rt: Any) -> Dict[str, Any]:
     """
     把 `FAKE_HISTORY` 注入成每个 Agent 的**公开履历**。
@@ -280,7 +357,12 @@ def main() -> int:
     ap.add_argument("--cognitive-budget", type=int, default=None)
     ap.add_argument("--out", default=None)
     ap.add_argument("--reuse-db", action="store_true")
+    ap.add_argument("--show-thinking", action="store_true",
+                    help="显示模型这一轮的思考过程（只显示，不保存；"
+                         "新的出现时旧的从屏幕消失）")
     args = ap.parse_args()
+    # 🔒 只影响**显示**，不影响任何落盘路径
+    show_thinking = bool(args.show_thinking)
 
     if args.demand and args.demand_file:
         ap.error("--demand 与 --demand-file 只能给一个")
@@ -374,6 +456,7 @@ def main() -> int:
                 if (time.time() - t0) >= WALL_LIMIT:
                     stop_reason = "WALL_LIMIT"
                     break
+                _erase_thinking()          # 旧的思考从屏幕消失
                 turn = P._turn(rt, bridge, st, stage, aid, rnd, stage_txt,
                                log, stats, dispatcher=dispatcher,
                                experience_store=experience_store,
@@ -384,6 +467,13 @@ def main() -> int:
                                        "Task 目标、以及工作区里的事实。）"))
                 log["turns"].append(turn)
                 P._print_turn(aid, turn)
+                if show_thinking:
+                    # 从 **response** 读思考 —— 不是 turn["reasoning"]
+                    # （那是模型在信封里自己填的"简短判断"，两回事）。
+                    # 读完只用于打印：不进 turn / log / 任何表。
+                    _resp = getattr(rt.economy.agent(aid),
+                                    "last_response", None)
+                    _show_thinking(aid, getattr(_resp, "reasoning", None))
             if stop_reason == "WALL_LIMIT":
                 break
         else:
@@ -405,6 +495,7 @@ def main() -> int:
         log["budget"] = _safe_budget(rt)
         rt.close()
 
+    _erase_thinking()          # 报告上面不留思考块
     _report(log)
     out = RESULTS / "division_result.json"
     out.write_text(json.dumps(log, ensure_ascii=False, indent=2),
