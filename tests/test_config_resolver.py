@@ -376,16 +376,7 @@ class TestResolvesCorrectly:
                     f"迁移前 {expected_env!r}")
 
             # ⑥ system_prompt 一个字都不能丢
-            #
-            # 🔴 **有意偏离**：原 system_prompt 里有**禁令**（"必须遵守"
-            #    "不能修改别人的余额"）和**目标**（"你的目标是长期存活"），
-            #    分别违反 §0.5.5（边界靠结构、不靠 prompt）和 §13
-            #    （禁止把「赚钱」「避免死亡」硬编码成驱动）。已删。
-            _dev_sp = _dev.get("system_prompt_len") or {}
-            assert not _dev_sp or _dev.get("_reasons", {}).get(
-                "system_prompt_len"), "有意偏离必须带理由（_reasons）"
-            _want_sp = int(_dev_sp.get(agent_id, before["system_prompt_len"]))
-            assert len(a.system_prompt) == _want_sp, (
+            assert len(a.system_prompt) == before["system_prompt_len"], (
                 f"{agent_id}: system_prompt 长度变了")
 
             # ⑦ 其它 Agent 段原样保留（迁移不允许丢字段）

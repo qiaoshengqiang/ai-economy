@@ -410,11 +410,7 @@ class TestMigrationBaselineStillHolds:
             _want_mt = int(_dev_mt.get(agent.agent_id,
                                       before["max_tokens"]))
             assert int(agent.max_tokens) == _want_mt, agent.agent_id
-            # 🔴 **有意偏离**：删掉了 prompt 里的**禁令**与**目标**
-            #    （§0.5.5 边界靠结构；§13 禁止硬编码「赚钱」「避免死亡」）。
-            _want_sp = int((_dev.get("system_prompt_len") or {}).get(
-                agent_id, before["system_prompt_len"]))
-            assert len(agent.system_prompt) == _want_sp, agent_id
+            assert len(agent.system_prompt) == before["system_prompt_len"], agent_id
             expected_env = (before["credential_env"]
                             or GLOBAL_FALLBACK.get(agent_id, ""))
             assert agent.credential.env == expected_env, agent_id

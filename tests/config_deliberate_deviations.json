@@ -15,14 +15,6 @@
     "agent_e": 16384
   },
   "_reasons": {
-    "max_tokens": "2026-10-10。agent_a..e 原为 2048（老配置遗留）。实测：agent_a 用 deepseek-flash —— **推理模型**，它把 2048 全用在 reasoning 上，撞到输出上限，content 一个字都不剩（output_status=EMPTY_CONTENT · cognitive_status=TRUNCATED · finish_reason=length · chars=0）。观察实验因此什么都没产出，而报告还误说成「Agent 选择不分工」。写到 16384，与 novel_* 一致。",
-    "system_prompt_len": "2026-10-10。原 system_prompt 里有两类**不该有的东西**：\n① 禁令：「经济决策**必须**遵守经济系统的规则」「你**不能**凭空创造货币，也**不能**直接修改别人的余额」。\n   🔴 违反 §0.5.5「硬边界，软行为」—— 它明确写着：\n      ✅ 没有 Workspace 权限 → 无法写入\n      ❌ 而不是：Prompt 告诉 Agent「不要这样做」\n      边界靠**结构**（Ledger 只追加 ⇒ 它**做不到**），不靠 prompt 说。\n② 目标：「你的目标是**长期存活**，而不是单次赚最多」（agent_b）、「你通过承接任务、交付成果来**赚取 AI 币**」（agent_c/d/e）。\n   🔴 违反 §13【`OPEN` —— 只记录方向，**禁止实现**】：\n      「尤其不要现在就把下面这些硬编码成 Agent 的驱动：「提高能力」·「节约算力」·**「赚钱」**·**「避免死亡」**」\n      「长期存活」= 避免死亡，「赚取 AI 币」= 赚钱。\n   §0.5.9 也写了：🔴 Core Drives **不应该只是普通 System Prompt**。\n\n⇒ 改成**只陈述身份与它真有的东西**（5 个 Agent 只有名字不同）：\n   你是 Agent X，一个独立的经济主体。\n   你有自己的钱包、记忆和声誉。\n   你的智力来自外部 LLM。\n   长度：agent_a 124→50 · agent_b 117→50 · agent_c/d/e 60→50。\n🔒 不改基线快照 —— 改了就再也不是「迁移前」了。"
-  },
-  "system_prompt_len": {
-    "agent_a": 50,
-    "agent_b": 50,
-    "agent_c": 50,
-    "agent_d": 50,
-    "agent_e": 50
+    "max_tokens": "2026-10-10。agent_a..e 原为 2048（老配置遗留）。实测：agent_a 用 deepseek-flash —— **推理模型**，它把 2048 全用在 reasoning 上，撞到输出上限，content 一个字都不剩（output_status=EMPTY_CONTENT · cognitive_status=TRUNCATED · finish_reason=length · chars=0）。观察实验因此什么都没产出，而报告还误说成「Agent 选择不分工」。写到 16384，与 novel_* 一致。"
   }
 }
