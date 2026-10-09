@@ -469,3 +469,117 @@ def test_prompt_forbids_dumping_prose_into_messages():
     src = PROD.read_text(encoding="utf-8")
     assert "不要整篇复制进 message" in src, (
         "这条约束被删掉了？它正是读动作存在的理由")
+
+
+# ======================================================================
+# ⑤ 路径归一化 —— 第一轮 4 个 Agent 全部 bad_path 的回归测试
+# ======================================================================
+def test_parse_intent_normalizes_the_leading_slash():
+    """
+    🔴 真实事故的回归测试（2026-10-09 实测）：
+
+        r1 四个 Agent 的 workspace_read **全部** `bad_path`，
+        它们发的都是 `/plot/outline_chapter1.md`（**带前导斜杠**）。
+
+        为什么会带？因为**环境事实就是这么显示的**：
+        `_workspace_facts` 渲染成 `/plot/  负责人=...`，
+        Agent 自然把 `/plot/` 与条目名拼成 `/plot/x.md`。
+
+        而写入路径早在 `parse_intent` 里就剥掉了前导 `/`
+        （`str(a["path"]).strip().lstrip("/")`）—— 读的通道漏了这一步。
+    """
+    got = _prod().parse_intent(
+        '{"action":{"type":"workspace_read",'
+        '"parameters":{"path":"/plot/outline_chapter1.md"}}}')
+    assert got["action"]["parameters"]["path"] == "plot/outline_chapter1.md"
+
+
+def test_normalization_matches_the_write_path_rule():
+    """读与写必须用**同一条**规则 —— 否则又会出现两种写法。"""
+    P = _prod()
+    w = P.parse_intent('{"artifact":{"path":"/notes/a.md",'
+                       '"write_mode":"create","content":"x"}}')
+    r = P.parse_intent('{"action":{"type":"workspace_read",'
+                       '"parameters":{"path":"/notes/a.md"}}}')
+    assert w["artifact"]["path"] == r["action"]["parameters"]["path"]
+
+
+def test_normalization_does_not_touch_other_parameters():
+    """只归一化约定名为 `path` 的参数 —— 别的参数原样透传。"""
+    got = _prod().parse_intent(
+        '{"action":{"type":"workspace_read",'
+        '"parameters":{"path":"/a.md","note":"/keep/me"}}}')
+    assert got["action"]["parameters"]["path"] == "a.md"
+    assert got["action"]["parameters"]["note"] == "/keep/me", (
+        "非路径参数被误改了 —— 归一化只能作用于 path")
+
+
+def test_stripping_a_slash_does_not_weaken_host_path_protection(tmp_path):
+    """
+    🔒 剥前导 `/` **不降低**宿主路径防护。
+
+    理由：Workspace 是**封闭命名空间**。剥掉 `/` 之后，
+    `..` / 反斜杠 / 盘符 / `~` **仍然**一律被拒，
+    而 `gateway.read(ws, "/etc/passwd")` 读的是 Workspace 里那个
+    **逻辑**路径，永远不是宿主机的 `/etc/passwd`。
+
+    服务层本身仍然严格拒绝绝对路径（见
+    `test_absolute_path_is_rejected`）—— 归一化只发生在
+    **解析 Agent 输入**这一层。
+    """
+    from services.artifacts import read_artifact
+    from tests.workspace_harness import WorkspaceHarness
+
+    W2, A2, R2 = "WS-NORM", "novel_author", "novel_reader"
+    h = WorkspaceHarness.in_memory(participants={W2: {A2, R2}}, agents={A2, R2})
+    try:
+        gw = h.gateway()
+        gw.ensure_workspace(W2, A2)
+        for bad in ("../secret.md", "a\\b.md", "~/x.md", "C:/x.md"):
+            res = read_artifact(gw, W2, R2, bad)
+            assert res["ok"] is False, f"{bad!r} 不该被接受"
+        # 剥掉前导 `/` 之后，读的是 Workspace **内部**的逻辑路径
+        res = read_artifact(gw, W2, R2, "etc/passwd")
+        assert res["ok"] is False and res["code"] == "not_found", (
+            f"应当在本 Workspace 里找不到 —— 而不是读到宿主机文件：{res}")
+    finally:
+        h.close()
+
+
+def test_end_to_end_leading_slash_read_succeeds():
+    """
+    🔴 端到端回归：Agent 用环境事实显示的形式（带 `/`）发请求时，
+    经过 `parse_intent` → dispatcher → executor → read_artifact，
+    **必须读得到**。这正是第一轮失败的那条路径。
+    """
+    from actions import (ActionDispatcher, WorkspaceReadExecutor,
+                         WorkspaceWriteExecutor, build_intent)
+    from services.artifacts import read_artifact, write_artifact
+    from tests.workspace_harness import WorkspaceHarness
+
+    W3, A3, R3 = "WS-E2E-NORM", "novel_author", "novel_reader"
+    h = WorkspaceHarness.in_memory(participants={W3: {A3, R3}}, agents={A3, R3})
+    try:
+        gw = h.gateway()
+        gw.ensure_workspace(W3, A3)
+        write_artifact(gw, W3, A3, "plot/outline_chapter1.md", "第一章大纲",
+                      write_mode="create")
+        disp = ActionDispatcher([
+            WorkspaceWriteExecutor(write_artifact, gateway=gw, workspace_id=W3),
+            WorkspaceReadExecutor(read_artifact, gateway=gw, workspace_id=W3)])
+
+        # Agent 原样发出环境事实里那种带 `/` 的路径
+        intent = _prod().parse_intent(
+            '{"assessment":"我要读大纲",'
+            '"action":{"type":"workspace_read",'
+            '"parameters":{"path":"/plot/outline_chapter1.md"}}}')
+        res = disp.dispatch(build_intent(R3, intent["action"]))
+
+        assert res.success is True, (
+            f"带前导 `/` 的路径又失败了（第一轮的 bad_path 回归）："
+            f"{res.error}")
+        assert res.output["content"] == "第一章大纲"
+        # 🔒 返回的 path 是归一化形式，与 write_artifact 对称
+        assert res.output["path"] == "plot/outline_chapter1.md"
+    finally:
+        h.close()

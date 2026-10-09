@@ -216,7 +216,13 @@ def read_artifact(
     content = res.get("content")
     return {
         "ok": True,
-        "path": str(res.get("path") or target),
+        # 🔒 回**归一化后**的 `target`，不是 Gateway 的 `/plot/x.md`。
+        #    理由：`write_artifact` 的成功返回也是归一化形式
+        #    （`world/world_setting.md`）。两者不一致的话，下游
+        #    （turn 记录 / Experience / 日志）会同时出现两种写法 ——
+        #    实测就是这样，读的记录里带斜杠、写的没有。
+        #    调用方要 Gateway 形式时自己加 `/` 即可（`_read` 就这么做）。
+        "path": target,
         "revision": res.get("revision"),
         # 🔒 字符数在这里算一次 —— 免得每个调用方各算一遍（算法还可能不同）。
         "chars": len(content) if isinstance(content, str) else 0,

@@ -293,11 +293,37 @@ def parse_intent(text: str) -> Dict[str, Any]:
         #     只要在新的组合根里注册执行器，Agent 立刻就能请求它。
         ac = d.get("action")
         if isinstance(ac, dict) and (ac.get("type") or ac.get("action_type")):
-            _params = ac.get("parameters")
+            _params = dict(ac.get("parameters") or {}) \
+                if isinstance(ac.get("parameters"), dict) else {}
+            # 🔴 与上面 `artifact.path` **同一条**归一化：去掉前导 `/`。
+            #
+            #    2026-10-09 实测：第一轮 4 个 Agent 的 workspace_read
+            #    **全部** `bad_path`，它们发的都是 `/plot/outline_chapter1.md`。
+            #
+            #    为什么会带斜杠？因为**环境事实就是这么显示的** ——
+            #    `_workspace_facts` 渲染成 `/plot/  负责人=...`，
+            #    Agent 自然把 `/plot/` 和条目名拼成 `/plot/x.md`。
+            #
+            #    而 `validate_artifact_path` 把前导 `/` 判为**宿主机绝对
+            #    路径**并拒绝。写入路径早就在 `parse_intent` 里剥掉它，
+            #    我加 action 通道时漏了这一步。
+            #
+            #    🔒 `parameters.path` 是**约定**的 Workspace 逻辑路径参数名。
+            #       这里是「把 Agent 写下的路径归一化成服务层接受的形式」，
+            #       **不是**替 Agent 决定读什么。
+            #
+            #    🔒 剥前导 `/` **不降低**宿主路径防护：Workspace 是封闭
+            #       命名空间（`..` / 反斜杠 / 盘符 / `~` 仍然一律拒绝），
+            #       `gateway.read(ws, "/etc/passwd")` 读的是 Workspace 里
+            #       那个逻辑路径，**永远不是**宿主机的 /etc/passwd。
+            #       服务层 `read_artifact` 仍然严格拒绝绝对路径 ——
+            #       归一化只发生在解析 Agent 输入这一层。
+            _pp = _params.get("path")
+            if isinstance(_pp, str):
+                _params["path"] = _pp.strip().lstrip("/")
             out["action"] = {
                 "type": str(ac.get("type") or ac.get("action_type")).strip(),
-                "parameters": (dict(_params)
-                               if isinstance(_params, dict) else {}),
+                "parameters": _params,
             }
         break
     return out
