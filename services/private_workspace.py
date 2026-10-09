@@ -91,6 +91,32 @@ def read_private(ws: Any, path: Any) -> Dict[str, Any]:
             "chars": len(content), "content": content}
 
 
+def delete_private(ws: Any, path: Any) -> Dict[str, Any]:
+    """
+    删自己的私有文件。
+
+    🔒 删不掉（不存在）时返回 `not_found`，**不假装成功** ——
+       「没删到」和「删成功」必须能分开（本项目反复吃过的
+       「接口成功掩盖语义空转」）。
+
+    🔒 只删**文件**。`Workspace.delete()` 对目录返回 False ⇒
+       本函数会报 `not_found`。**当前不支持删目录** ——
+       递归删除是危险动作，等有明确需求再说。
+    """
+    target = str(path or "").strip()
+    if not target:
+        return _fail(target, "bad_path", "path 不能为空")
+    try:
+        deleted = bool(ws.delete(target))
+    except WorkspaceViolationError as exc:
+        return _fail(target, "bad_path", str(exc))
+    except Exception as exc:                                  # noqa: BLE001
+        return _fail(target, "delete_failed", f"{type(exc).__name__}: {exc}")
+    if not deleted:
+        return _fail(target, "not_found", "没有这个文件（或它是目录）")
+    return {"ok": True, "path": target}
+
+
 def list_private(ws: Any) -> Dict[str, Any]:
     """列出自己私有空间里的文件（逻辑相对路径）。"""
     try:

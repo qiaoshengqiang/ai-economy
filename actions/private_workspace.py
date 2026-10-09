@@ -41,10 +41,20 @@ from actions.intent import ActionResult, ActionIntent
 ACTION_PRIVATE_WRITE = "private_write"
 ACTION_PRIVATE_READ = "private_read"
 ACTION_PRIVATE_LIST = "private_list"
+ACTION_PRIVATE_DELETE = "private_delete"
 
 
 class _PrivateBase:
-    """三个执行器共用的部分：按 agent 拿到空间 + 结构化失败。"""
+    """几个执行器共用的部分：按 agent 拿到空间 + 结构化失败。"""
+
+    #: 这个执行器是否需要 `path` 参数。
+    #:
+    #: 🔴 只有 `private_list` 是 False。**别把它当"空 path 就列清单"的开关** ——
+    #:    第一版 `_run` 写成 `self.fn(ws, path) if path else self.fn(ws)`，
+    #:    于是 `private_read` / `private_delete` 传空 path 时会去调
+    #:    `fn(ws)`（少一个参数）→ `TypeError` → 报成 `executor_error`，
+    #:    而正确答案是 `bad_path`。
+    NEEDS_PATH = True
 
     def __init__(self, fn: Callable[..., Any], *,
                  workspace_of: Callable[[str], Any]) -> None:
@@ -79,7 +89,7 @@ class _PrivateBase:
                               "没有这个 Agent，或它没有私有空间",
                               code="no_private_workspace", path=path)
         try:
-            raw = self.fn(ws, path) if path else self.fn(ws)
+            raw = self.fn(ws, path) if self.NEEDS_PATH else self.fn(ws)
         except Exception as exc:                              # noqa: BLE001
             return self._fail(intent, f"{type(exc).__name__}: {exc}",
                               code="executor_error", path=path)
@@ -145,11 +155,24 @@ class PrivateReadExecutor(_PrivateBase):
         return self._run(intent, str(params.get("path") or ""))
 
 
+class PrivateDeleteExecutor(_PrivateBase):
+    """`private_delete` —— 删自己的私有文件。"""
+
+    action_types = frozenset({ACTION_PRIVATE_DELETE})
+    OUTPUT_FIELDS = ("path",)
+    # NEEDS_PATH = True（默认）—— 空 path 必须是 `bad_path`，不是"列清单"
+
+    def execute(self, intent: ActionIntent) -> ActionResult:
+        params = dict(getattr(intent, "parameters", None) or {})
+        return self._run(intent, str(params.get("path") or ""))
+
+
 class PrivateListExecutor(_PrivateBase):
     """`private_list` —— 列出自己私有空间里的文件。"""
 
     action_types = frozenset({ACTION_PRIVATE_LIST})
     OUTPUT_FIELDS = ("paths", "count")
+    NEEDS_PATH = False        # ← 只有它是无参数的
 
     def execute(self, intent: ActionIntent) -> ActionResult:
         return self._run(intent)

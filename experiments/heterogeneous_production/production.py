@@ -54,14 +54,14 @@ sys.path.insert(0, str(ROOT))
 from actions import (  # noqa: E402
     ACTION_MESSAGE_SEND, ACTION_PUBLIC_QUERY, ACTION_WORKSPACE_READ,
     ACTION_WORKSPACE_WRITE, ActionDispatcher, ActionIntent,
-    MessageSendExecutor, PrivateListExecutor, PrivateReadExecutor,
-    PrivateWriteExecutor, PublicQueryExecutor,
+    MessageSendExecutor, PrivateDeleteExecutor, PrivateListExecutor,
+    PrivateReadExecutor, PrivateWriteExecutor, PublicQueryExecutor,
     WorkspaceReadExecutor, WorkspaceWriteExecutor,
     build_intent, new_intent_id,
 )
 from services.messaging import send_message_as  # noqa: E402
 from services.private_workspace import (  # noqa: E402
-    list_private, read_private, write_private,
+    delete_private, list_private, read_private, write_private,
 )
 from services.public_reference import PublicReference  # noqa: E402
 from services.artifacts import (  # noqa: E402
@@ -288,6 +288,7 @@ PROMPT = """你是这次长期生产任务的一名参与者。这是**正式生
         private_write  parameters: {{"path": "...", "content": "..."}}
         private_read   parameters: {{"path": "..."}}
         private_list   无参数 —— 列出你有哪些文件
+        private_delete parameters: {{"path": "..."}}   ← 只删文件，不删目录
 
         约束（环境事实）：
           - 只能碰**你自己**的目录；越界（`..` / 绝对路径）被拒绝；
@@ -998,7 +999,8 @@ def _action_seam(rt: Any, bridge: Any = None) -> tuple:
         #    否则 Agent 能读写别人的私有空间。
         PrivateWriteExecutor(write_private, workspace_of=_ws_of(rt)),
         PrivateReadExecutor(read_private, workspace_of=_ws_of(rt)),
-        PrivateListExecutor(list_private, workspace_of=_ws_of(rt))])
+        PrivateListExecutor(list_private, workspace_of=_ws_of(rt)),
+        PrivateDeleteExecutor(delete_private, workspace_of=_ws_of(rt))])
     try:
         experience_store = ExperienceStore(rt.economy.db)
     except Exception as exc:                              # noqa: BLE001

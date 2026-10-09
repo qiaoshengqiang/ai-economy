@@ -21,11 +21,12 @@ A, B = "novel_author", "novel_reader"
 
 @pytest.fixture(scope="module")
 def disp():
-    from actions import (ActionDispatcher, PrivateListExecutor,
-                         PrivateReadExecutor, PrivateWriteExecutor)
+    from actions import (ActionDispatcher, PrivateDeleteExecutor,
+                         PrivateListExecutor, PrivateReadExecutor,
+                         PrivateWriteExecutor)
     from main import build_runtime
-    from services.private_workspace import (list_private, read_private,
-                                            write_private)
+    from services.private_workspace import (delete_private, list_private,
+                                            read_private, write_private)
 
     db = os.path.join(tempfile.mkdtemp(), "priv.db")
     rt = build_runtime(db_path=db, agent_ids=[A, B])
@@ -39,7 +40,8 @@ def disp():
     d = ActionDispatcher([
         PrivateWriteExecutor(write_private, workspace_of=ws_of),
         PrivateReadExecutor(read_private, workspace_of=ws_of),
-        PrivateListExecutor(list_private, workspace_of=ws_of)])
+        PrivateListExecutor(list_private, workspace_of=ws_of),
+        PrivateDeleteExecutor(delete_private, workspace_of=ws_of)])
     try:
         yield d
     finally:
@@ -124,3 +126,59 @@ def test_composition_root_registers_all_three():
     for cls in ("PrivateWriteExecutor", "PrivateReadExecutor",
                 "PrivateListExecutor"):
         assert cls in names, f"没注册 {cls}"
+
+
+def test_delete_removes_only_that_file(disp):
+    go(disp, A, "private_write", {"path": "del_me.md", "content": "x"})
+    go(disp, A, "private_write", {"path": "keep_me.md", "content": "y"})
+    r = go(disp, A, "private_delete", {"path": "del_me.md"})
+    assert r.success and r.output["path"] == "del_me.md"
+    left = go(disp, A, "private_list").output["paths"]
+    assert "del_me.md" not in left and "keep_me.md" in left
+
+
+def test_delete_twice_is_not_found(disp):
+    """🔒 「没删到」不能假装成功。"""
+    go(disp, A, "private_write", {"path": "twice.md", "content": "x"})
+    assert go(disp, A, "private_delete", {"path": "twice.md"}).success
+    r = go(disp, A, "private_delete", {"path": "twice.md"})
+    assert r.success is False and r.metadata["code"] == "not_found"
+
+
+def test_cannot_delete_another_agents_file(disp):
+    go(disp, A, "private_write", {"path": "mine.md", "content": "x"})
+    r = go(disp, B, "private_delete", {"path": "mine.md"})
+    assert r.success is False
+    assert "mine.md" in go(disp, A, "private_list").output["paths"], (
+        "B 删掉了 A 的文件")
+
+
+def test_empty_path_is_bad_path_not_a_crash(disp):
+    """
+    🔴 回归：第一版 `_run` 写成 `fn(ws, path) if path else fn(ws)`，
+       于是空 path 会去调 `fn(ws)`（少一个参数）→ TypeError →
+       报成 `executor_error`。正确答案是 `bad_path`。
+
+       ⚠️ 只有 `private_list` 才该"无参数"。
+    """
+    for typ in ("private_read", "private_delete"):
+        r = go(disp, A, typ, {})
+        assert r.success is False
+        assert r.metadata["code"] == "bad_path", (typ, r.metadata)
+    assert go(disp, A, "private_list").success is True
+
+
+def test_delete_refuses_escape(disp):
+    r = go(disp, A, "private_delete", {"path": "../x.md"})
+    assert r.success is False and r.metadata["code"] == "bad_path"
+
+
+def test_composition_root_registers_delete():
+    import ast
+
+    src = (ROOT / "experiments" / "heterogeneous_production"
+           / "production.py").read_text(encoding="utf-8")
+    fn = next(n for n in ast.walk(ast.parse(src))
+              if isinstance(n, ast.FunctionDef) and n.name == "_action_seam")
+    assert "PrivateDeleteExecutor" in {n.id for n in ast.walk(fn)
+                                       if isinstance(n, ast.Name)}
