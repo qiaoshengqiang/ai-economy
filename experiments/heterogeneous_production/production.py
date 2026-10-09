@@ -239,9 +239,9 @@ PROMPT = """你是这次长期生产任务的一名参与者。这是**正式生
 如果你**不采取动作**（只是想说点什么，或者什么都不做），就直接正常回复 ——
 没有这个信封就是一次普通回复。
 
-🔒 一轮**一个动作**。这是**环境的形状**，不是对你的要求：
-   「写完产物再通知别人」是**两件事** —— 想都做就分两轮。
-   先做哪件、要不要做，完全由你自己判断。
+🔒 你可以在**一次**输出里给出**多个动作** ——
+   当它们**属于同一件事**时（例如「写完正文 + 通知下一个人」）。
+   写一个还是几个、写哪些，完全由你自己判断。
 
 🔴 **你会不会被再次叫醒，取决于有没有消息到达**（§22.27）：
    你**不会被自动唤醒**。只有在**收到新消息**时，才会有你的下一个回合。
@@ -273,7 +273,7 @@ PROMPT = """你是这次长期生产任务的一名参与者。这是**正式生
         约束（同样是环境事实，不是建议）：
           - 只有本 Task 的参与者能读；
           - 读**不受** Write Lock 影响（锁约束的是修改与删除）；
-          - 结果会进入你的经历，在**下一轮**认知里才可见。
+          - 读到的内容**不会**立刻回到你手上 —— 它进入你的经历。
 
   · "message_send"
         parameters: {{"to": "收件人 agent_id", "text": "要说的话",
@@ -1564,8 +1564,18 @@ def _turn(rt: Any, bridge: Any, st: Any, stage: Any, aid: str, rnd: int,
     #   🔒 下面把一次动作**投影**成 turn 的既有字段（write / message），
     #      好让 `_print_turn` 与报告不用改 —— 那是**视图**，
     #      不是第二个事实源。
-    ai, ar = run.action_intent, run.action_result
-    if ai is not None:
+    # 🔴 2026-10-10：**一次决策可以有 0..N 个动作** ⇒ 这里逐个投影。
+    #
+    #    🔒 不 dispatch —— `run_cognition` 已经执行过了（再 dispatch 会**重复执行**）。
+    #    🔒 不记 Experience —— `BaseAgent.act()` 已经记了（`run.experiences`）。
+    #    🔒 下面把每个动作**投影**成 turn 的字段（write / message / action），
+    #       那是**视图**，不是第二个事实源。
+    #
+    #    🎯 **这就是「写完正文的同时通知下一个人」的落点** ——
+    #       以前一次只能一个动作，于是 Agent 只能把它拆成两次决策，
+    #       而「下一次」需要有人唤醒它 ⇒ 拆完就断在那里。
+    actions_out: List[Dict[str, Any]] = []
+    for _i, (ai, ar) in enumerate(zip(run.action_intents, run.action_results)):
         atype = str(ai.action_type)
         params = dict(getattr(ai, "parameters", None) or {})
         out = (ar.output if (ar is not None and isinstance(ar.output, dict))
@@ -1573,27 +1583,24 @@ def _turn(rt: Any, bridge: Any, st: Any, stage: Any, aid: str, rnd: int,
         code = (ar.metadata or {}).get("code") if ar is not None else None
         ok = bool(ar is not None and ar.success)
 
-        turn["action"] = {
+        item: Dict[str, Any] = {
             "type": atype, "ok": ok, "code": code,
             "path": out.get("path") or params.get("path"),
             "revision": out.get("revision"),
             "chars": out.get("chars"),
             # 🔒 内容也记进 turn —— 否则「读到了什么」没有证据。
             "content": out.get("content"),
+            # 🔒 只记 experience_id，不记 Experience 对象
+            #    （对象不可 JSON 序列化 —— 实测把整轮结果卡死过）。
+            "experience_id": getattr(
+                (run.experiences[_i] if _i < len(getattr(run, "experiences", []))
+                 else None), "experience_id", None),
         }
         if ar is None:
             # TRUNCATED 时 run_cognition **保留 intent 但不执行** ——
-            # 那是真实发生的事实，如实记下来：既不假装成功，
-            # 也不假装没发生。
-            turn["action"]["skipped"] = "TRUNCATED"
-        # 🔴 **只记 experience_id，不记 Experience 对象。**
-        #    冒烟跑出来的真 bug：`act()` 把 Experience **对象**挂在
-        #    `run.experience` 上，直接塞进 log 会让最后那次
-        #    `json.dumps(log)` 抛 `TypeError: Object of type Experience
-        #    is not JSON serializable` —— 整轮结果写不出来。
-        #    🔒 与 `_record_action_experience()` 的返回口径一致（它也返回 id）。
-        turn["action_experience"] = getattr(
-            getattr(run, "experience", None), "experience_id", None)
+            # 那是真实发生的事实：既不假装成功，也不假装没发生。
+            item["skipped"] = "TRUNCATED"
+        actions_out.append(item)
 
         if atype == ACTION_WORKSPACE_WRITE:
             mode = str(params.get("write_mode") or "")
@@ -1620,6 +1627,13 @@ def _turn(rt: Any, bridge: Any, st: Any, stage: Any, aid: str, rnd: int,
                 log["comm_events"].append(
                     {"kind": "sent", "agent_id": aid, "round": rnd,
                      "to": params.get("to")})
+
+    if actions_out:
+        # 🔒 `action`（单数）保留为**第一个** —— 向后兼容报告与既有守卫；
+        #    复数在 `actions` 里。
+        turn["action"] = actions_out[0]
+        turn["actions"] = actions_out
+        turn["action_experience"] = actions_out[0].get("experience_id")
     return turn
 
 

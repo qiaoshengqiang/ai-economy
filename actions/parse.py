@@ -204,35 +204,56 @@ def decision_from_text(agent_id: str, text: Optional[str]) -> Decision:
         return Decision(
             decision_id=decision_id, agent_id=agent_id,
             kind=DECISION_REPLY, reasoning=text or "",
-            intent=None, created_at=utc_now_iso(),
+            created_at=utc_now_iso(),
         )
 
     reasoning = str(envelope.get("reasoning") or "")
-    action = envelope.get("action")
 
-    if not isinstance(action, dict) or not (
-            action.get("type") or action.get("action_type")):
+    # 🔴 2026-10-10：**一次决策可以有 0..N 个动作**。
+    #
+    #    【为什么要多个】
+    #        API 完全支持，而我们**有这个需求** ——
+    #        例如「写完正文的**同时**通知下一个人」。
+    #        旧形状只有单数，Agent 只能拆成两次决策，
+    #        而「下一次」需要有人唤醒它 ⇒ 拆完就断在那里。
+    #
+    #    🔒 `actions`（列表）与 `action`（单数）**都接受** ——
+    #       向后兼容：老实验 / `real_api_self_evolution` 一行都不用改。
+    raw = envelope.get("actions")
+    if raw is None:
+        single = envelope.get("action")
+        raw = [] if single is None else [single]
+    elif isinstance(raw, dict):
+        raw = [raw]              # 容忍 `actions` 里塞了个 dict
+
+    intents: List[ActionIntent] = []
+    dropped = 0
+    for entry in (raw if isinstance(raw, (list, tuple)) else []):
+        if not isinstance(entry, dict) or not (
+                entry.get("type") or entry.get("action_type")):
+            dropped += 1
+            continue
+        try:
+            intents.append(build_intent(
+                agent_id, entry, reason=reasoning,
+                decision_id=decision_id))
+        except ValueError:
+            # 单个写坏 → **跳过它**，但不静默（`dropped` 如实记数）
+            dropped += 1
+
+    if not intents:
+        # 一个都没成 → 和今天一样**降级为普通回复，不崩**
         return Decision(
             decision_id=decision_id, agent_id=agent_id,
             kind=DECISION_REPLY, reasoning=reasoning or (text or ""),
-            intent=None, created_at=utc_now_iso(),
-        )
-
-    try:
-        intent = build_intent(agent_id, action, reason=reasoning,
-                              decision_id=decision_id)
-    except ValueError:
-        # 信封畸形的 action 块 → 降级为普通回复，**不崩**
-        return Decision(
-            decision_id=decision_id, agent_id=agent_id,
-            kind=DECISION_REPLY, reasoning=reasoning or (text or ""),
-            intent=None, created_at=utc_now_iso(),
+            created_at=utc_now_iso(),
         )
 
     return Decision(
         decision_id=decision_id, agent_id=agent_id,
         kind=DECISION_ACT, reasoning=reasoning,
-        intent=intent, created_at=utc_now_iso(),
+        intents=intents, dropped_actions=dropped,
+        created_at=utc_now_iso(),
     )
 
 
@@ -241,6 +262,9 @@ def decision_from_text(agent_id: str, text: Optional[str]) -> Decision:
 ENVELOPE_INSTRUCTION = (
     'If you decide to take an action, answer with a JSON object:\n'
     '{"decision":"act","reasoning":"...",'
-    '"action":{"type":"<type>","parameters":{...}}}\n'
+    '"actions":[{"type":"<type>","parameters":{...}}]}\n'
+    'You may put **more than one** action in the list when they belong'
+    ' together (e.g. write a file and notify somebody about it).\n'
+    'The single form {"action":{...}} is also accepted.\n'
     'Otherwise just reply normally.'
 )

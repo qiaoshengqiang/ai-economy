@@ -139,12 +139,31 @@ class Decision:
     agent_id: str
     kind: str
     reasoning: str = ""
-    intent: Optional[ActionIntent] = None
+    #: 🔴 一次决策可以有 **0..N** 个动作（2026-10-10）。
+    #:
+    #:    【为什么要多个】
+    #:        API 完全支持一次输出多个动作，而我们**有这个需求** ——
+    #:        例如「写完正文的**同时**通知下一个人」。
+    #:        旧形状只有单数，于是 Agent 只能把它拆成两次决策，
+    #:        而「下一次」需要有人唤醒它 ⇒ 拆完就断在那里。
+    #:
+    #:    🔒 **向后兼容**：信封里给 `action`（单数）也接受，
+    #:       会被归一成单元素列表。
+    intents: List[ActionIntent] = field(default_factory=list)
+    #: 信封里写坏、被**跳过**的动作个数。
+    #: 🔒 不静默丢弃 —— 跳过了几个，就如实记几个。
+    dropped_actions: int = 0
+    created_at: str = ""
+
+    @property
+    def intent(self) -> Optional[ActionIntent]:
+        """向后兼容：**第一个**动作（老调用方只认一个）。"""
+        return self.intents[0] if self.intents else None
     created_at: str = ""
 
     @property
     def is_action(self) -> bool:
-        return self.kind == DECISION_ACT and self.intent is not None
+        return self.kind == DECISION_ACT and bool(self.intents)
 
     @property
     def is_reply_only(self) -> bool:
@@ -154,7 +173,9 @@ class Decision:
         return {
             "decision_id": self.decision_id, "agent_id": self.agent_id,
             "kind": self.kind, "reasoning": self.reasoning,
+            "intents": [i.to_dict() for i in self.intents],
             "intent": self.intent.to_dict() if self.intent else None,
+            "dropped_actions": self.dropped_actions,
             "created_at": self.created_at,
         }
 
@@ -169,8 +190,11 @@ class CognitiveRunResult:
     """
 
     decision: Optional[Decision] = None
-    action_intent: Optional[ActionIntent] = None
-    action_result: Optional[ActionResult] = None
+    #: 🔴 **0..N** 个动作及其结果（2026-10-10）。顺序 = Agent 声明的顺序。
+    #:    🔒 `action_results[i]` 可能为 `None` —— 表示第 i 个动作**没被执行**
+    #:       （例如认知被截断）。「有意图但没执行」是真实事实，不假装。
+    action_intents: List[ActionIntent] = field(default_factory=list)
+    action_results: List[Optional[ActionResult]] = field(default_factory=list)
     #: §九 / §十：Agent 本次 Cognition 产生的 **0..N** 个 Reflection Proposal。
     #: 🔒 **可选** —— 空列表是合法且常见的（Agent 决定「不值得反思」）。
     reflection_proposals: List[Any] = field(default_factory=list)
@@ -207,8 +231,18 @@ class CognitiveRunResult:
     finish_reason: Optional[str] = None
 
     @property
+    def action_intent(self) -> Optional[ActionIntent]:
+        """向后兼容：**第一个**动作。"""
+        return self.action_intents[0] if self.action_intents else None
+
+    @property
+    def action_result(self) -> Optional[ActionResult]:
+        """向后兼容：**第一个**动作的结果。"""
+        return self.action_results[0] if self.action_results else None
+
+    @property
     def has_action(self) -> bool:
-        return self.action_intent is not None
+        return bool(self.action_intents)
 
     @property
     def is_truncated(self) -> bool:
@@ -240,6 +274,9 @@ class CognitiveRunResult:
     def to_dict(self) -> Dict[str, Any]:
         return {
             "decision": self.decision.to_dict() if self.decision else None,
+            "action_intents": [i.to_dict() for i in self.action_intents],
+            "action_results": [(r.to_dict() if r else None)
+                               for r in self.action_results],
             "action_intent": (self.action_intent.to_dict()
                               if self.action_intent else None),
             "action_result": (self.action_result.to_dict()

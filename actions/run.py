@@ -142,16 +142,30 @@ def run_cognition(
     #      ActionIntent 仍然**保留**在结果里（那是真实发生的事实），
     #      只是 `action_result` 为 None。
     #      没有 ActionFailure / RETRY / ABORT / RECOVER。
-    result: Optional[ActionResult] = None
-    if execute and decision.is_action and dispatcher is not None:
+    # 🔴 2026-10-10：**0..N 个动作**，按 Agent 声明的顺序执行。
+    #
+    #    🔒 每个动作**独立**执行、独立留结果 —— 一个失败**不阻止**后面的。
+    #       理由：它们都是 Agent **自己声明的**决定，我们不替它取舍
+    #       （「第 1 个失败了就别发第 2 个消息」是**我们的判断**，不是它的）。
+    #       失败会如实进 Experience，它自己能看到。
+    intents = list(decision.intents)
+    results: List[Optional[ActionResult]] = []
+    if intents and execute and dispatcher is not None:
         if truncated:
             logger.warning(
-                "跳过 Action 执行（认知输出被截断）：agent=%s action=%s —— "
+                "跳过全部 Action 执行（认知输出被截断）：agent=%s %d 个动作 —— "
                 "「JSON 能解析」不等于「这一轮认知已经完成」。",
-                agent_id, getattr(decision.intent, "kind", "?"),
+                agent_id, len(intents),
             )
+            results = [None] * len(intents)
         else:
-            result = dispatcher.dispatch(decision.intent)
+            for it in intents:
+                results.append(dispatcher.dispatch(it))
+    elif intents:
+        # 有意图但**没有执行**（execute=False / 没 dispatcher）——
+        # 意图照样保留（那是真实发生的事实），结果如实留空。
+        results = [None] * len(intents)
+
 
     # --- Reflection（§十：**可选**，0..N 个）---------------------------
     proposals = _reflections_of(agent_id, response)
@@ -167,8 +181,8 @@ def run_cognition(
 
     return CognitiveRunResult(
         decision=decision,
-        action_intent=decision.intent,
-        action_result=result,
+        action_intents=intents,
+        action_results=results,
         reflection_proposals=proposals,
         write_outcomes=outcomes,
         # §七：把 Provider 输出契约**带出** Cognition，不留在里面被吃掉

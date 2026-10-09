@@ -470,17 +470,31 @@ class BaseAgent:
                             **kwargs)
 
         # §五 / §二十三：ActionResult → Experience（**只记录，不解读**）
+        #
+        # 🔴 2026-10-10：一次决策可能有 **0..N** 个动作 ⇒ **每个动作各记一条**。
+        #
+        #    🔒 只记**真的执行过**的（`action_results[i] is not None`）——
+        #       「有意图但没执行」也是真实事实，但它没产生 ActionResult，
+        #       没有东西可记（意图本身已经在 `decision.intents` 里）。
         store = getattr(self, "experience_store", None)
-        if (store is not None and run.action_intent is not None
-                and run.action_result is not None):
-            try:
-                run_experience = store.record_action_result(
-                    self.agent_id if hasattr(self, "agent_id") else self.name,
-                    run.action_intent, run.action_result)
-                object.__setattr__(run, "experience", run_experience) \
-                    if hasattr(run, "__dataclass_fields__") else None
-            except Exception as exc:                      # noqa: BLE001
-                logger.warning("Experience 记录失败：%s", exc)
+        if store is not None:
+            _aid = (self.agent_id if hasattr(self, "agent_id") else self.name)
+            recorded = []
+            for _intent, _result in zip(run.action_intents, run.action_results):
+                if _result is None:
+                    continue
+                try:
+                    recorded.append(
+                        store.record_action_result(_aid, _intent, _result))
+                except Exception as exc:                      # noqa: BLE001
+                    logger.warning("Experience 记录失败：%s", exc)
+            if hasattr(run, "__dataclass_fields__"):
+                # 🔒 `experience` 保留为**第一个**（向后兼容），
+                #    复数在 `experiences` 里。
+                object.__setattr__(run, "experiences", recorded)
+                object.__setattr__(run, "experience",
+                                   recorded[0] if recorded else None)
+
 
         return run
 
