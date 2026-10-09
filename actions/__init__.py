@@ -5,6 +5,7 @@ Minimal Action Seam —— Agent 的认知第一次有了行动出口。
         ActionIntent, ActionResult, Decision, CognitiveRunResult,
         ActionDispatcher, ReplyExecutor, NoopExecutor, run_cognition,
         WorkspaceWriteExecutor, ACTION_WORKSPACE_WRITE,
+        WorkspaceReadExecutor, ACTION_WORKSPACE_READ,
     )
 
 🔒 边界（本轮**刻意不做**）：
@@ -33,6 +34,9 @@ from actions.parse import (
     extract_envelope,
 )
 from actions.run import reply_decision, run_cognition
+from actions.workspace_read import (
+    ACTION_WORKSPACE_READ, WorkspaceReadExecutor,
+)
 from actions.workspace_write import (
     ACTION_WORKSPACE_WRITE, WorkspaceWriteExecutor,
 )
@@ -44,6 +48,7 @@ __all__ = [
     "extract_envelope", "build_intent", "ENVELOPE_INSTRUCTION",
     "ACTION_REPLY", "ACTION_NOOP", "ACTION_OBSERVE",
     "ACTION_WORKSPACE_WRITE", "WorkspaceWriteExecutor",
+    "ACTION_WORKSPACE_READ", "WorkspaceReadExecutor",
     "BUILTIN_ACTION_TYPES", "DECISION_ACT", "DECISION_REPLY",
     "VALID_DECISION_KINDS", "new_intent_id", "new_decision_id",
 ]

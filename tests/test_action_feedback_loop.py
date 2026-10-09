@@ -613,10 +613,24 @@ def _fallback_mode_literals(src: str) -> list:
 
 
 #: `_turn` 里**必须**出现的接线标记（少一个就说明 Action Seam 断了）。
+#:
+#: 🔴 2026-10-09：`_turn` 现在会分发**两个**动作（写 + 通用动作），
+#:    所以 dispatch 这条标记必须写成**带实参**的形式。
+#:
+#:    以前它是泛化的 `"dispatcher.dispatch("`。加入通用动作之后，
+#:    那条泛化标记会**被另一个 dispatch 满足** —— 于是本文件末尾的
+#:    反向测试（挖掉写的那次 dispatch，断言守卫变红）**不再变红**。
+#:    那个反向测试当场抓到了这次改动，这条修法是**加强**而不是放宽：
+#:
+#:        泛化 `"dispatcher.dispatch("`
+#:            → 只要有任何一次 dispatch 就算过
+#:        现在 `"dispatcher.dispatch(action_intent)"` + `"...(act_intent)"`
+#:            → **两次都要在**，少任何一次都变红
 _TURN_WIRING = (
-    "ACTION_WORKSPACE_WRITE",        # 产生的 intent 是这个类型
-    "dispatcher.dispatch(",          # 真的经过 Dispatcher
-    "_record_action_experience(",    # 结果真的落成 Experience
+    "ACTION_WORKSPACE_WRITE",                  # 写的 intent 类型
+    "dispatcher.dispatch(action_intent)",      # 写操作真的经过 Dispatcher
+    "_record_action_experience(",              # 结果真的落成 Experience
+    "dispatcher.dispatch(act_intent)",         # 通用动作走**同一个** Dispatcher
 )
 
 

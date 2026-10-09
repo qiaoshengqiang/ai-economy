@@ -157,6 +157,73 @@ def write_artifact(
     return _replace(gateway, workspace_id, agent_id, target, body)
 
 
+def read_artifact(
+    gateway: Any,
+    workspace_id: str,
+    agent_id: str,
+    path: str,
+) -> Dict[str, Any]:
+    """
+    读一个 Artifact 的**内容**。
+
+    返回结构与 `write_artifact` **统一**：
+
+        成功 → {"ok": True, "path": ..., "revision": ..., "chars": ...,
+                "content": ...}
+        失败 → {"ok": False, "path": ..., "code": ..., "message": ...}
+
+    【🔒 为什么返回结构要和 write_artifact 一致】
+
+        `actions/WorkspaceReadExecutor` 与 `WorkspaceWriteExecutor` 是
+        **对称**的两个叶子执行器，职责都只是「把服务层的返回翻译成
+        ActionResult」。返回结构统一 ⇒ 翻译逻辑统一 ⇒ 执行器不需要
+        认识本层内部的 `{"error": {...}}` 形状。
+
+        （内部那个形状是给 `_create/_replace/_append` 用的，它们要
+          结构化的错误对象；**对外**统一成 `code` / `message`。）
+
+    【🔒 读不受 Write Lock 影响 —— 这是设计，不是遗漏】
+
+        Gateway 的 `read()` **只**检查「是不是 Task 参与者」，不查锁。
+        Write Lock 挡的是**修改与删除**，不是阅读。
+
+        所以这里**不新增**任何权限判断、不看 `effective_lock_holder`、
+        不做 ACL —— 那会是另一套 Permission 机制（`FORBIDDEN NOW`）。
+
+    【🔒 它不决定 Agent 该读什么】
+
+        `path` 必须由 Agent **显式**给出。
+        ❌ 不根据 Task / Stage / 上一轮内容替 Agent 挑文件
+        ❌ 不自动附加「相关文件」
+        ❌ 不因为读不到就换一个路径重试
+    """
+    target = _norm(path)
+    path_err = validate_artifact_path(path)
+    if path_err:
+        return _fail(target, "bad_path", path_err)
+
+    got = _read(gateway, workspace_id, agent_id, target)
+    if not got.get("ok"):
+        err = dict(got.get("error") or {})
+        return _fail(target,
+                     _map_code(str(err.get("code") or "")),
+                     str(err.get("message") or "读取失败"),
+                     # 🔒 与写入路径对称：原始 Gateway 错误码一并带上，
+                     #    好让上层既能按分类处理、也能追溯到底层原因。
+                     gateway_code=err.get("code"))
+
+    res = dict(got.get("result") or {})
+    content = res.get("content")
+    return {
+        "ok": True,
+        "path": str(res.get("path") or target),
+        "revision": res.get("revision"),
+        # 🔒 字符数在这里算一次 —— 免得每个调用方各算一遍（算法还可能不同）。
+        "chars": len(content) if isinstance(content, str) else 0,
+        "content": content,
+    }
+
+
 # ================================================================
 def _read(gateway: Any, workspace_id: str, agent_id: str,
           path: str) -> Dict[str, Any]:

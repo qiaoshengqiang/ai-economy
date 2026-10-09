@@ -52,12 +52,13 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from actions import (  # noqa: E402
-    ACTION_WORKSPACE_WRITE, ActionDispatcher, ActionIntent,
-    WorkspaceWriteExecutor, new_intent_id,
+    ACTION_WORKSPACE_READ, ACTION_WORKSPACE_WRITE, ActionDispatcher,
+    ActionIntent, WorkspaceReadExecutor, WorkspaceWriteExecutor,
+    build_intent, new_intent_id,
 )
 from services.artifacts import (  # noqa: E402
     MODE_APPEND, MODE_CREATE, MODE_REPLACE,
-    provision_namespaces, write_artifact,
+    provision_namespaces, read_artifact, write_artifact,
 )
 
 HERE = Path(__file__).resolve().parent
@@ -223,19 +224,35 @@ PROMPT = """你是这次长期生产任务的一名参与者。这是**正式生
     "write_mode": "create | replace | append",
     "content": "这次要写入的完整文本"
   }},
-  "message": {{"to": "收件人 agent_id", "text": "要说的话"}}
+  "message": {{"to": "收件人 agent_id", "text": "要说的话"}},
+  "action": {{"type": "动作类型", "parameters": {{}}}}
 }}
 
-"artifact" / "message" 都是**可选**的：不写就是不写，可以写成 null。
+"artifact" / "message" / "action" 都是**可选**的：不写就是不写，可以写成 null。
 "write_mode" 决定这次写入的语义（新建 / 整体替换 / 末尾追加），由你自己决定。
 不要整篇复制进 message —— 正文属于 Workspace。
+
+"action" 是一个**通用动作通道**。当前这个环境**注册了**哪些动作类型、
+各自要什么 parameters —— 这些是**环境事实**：
+
+  · "workspace_read"
+        parameters: {{"path": "共享 Workspace 里的逻辑路径"}}
+        作用：读取该文件**当前**的内容与 revision。
+
+        约束（同样是环境事实，不是建议）：
+          - 只有本 Task 的参与者能读；
+          - 读**不受** Write Lock 影响（锁约束的是修改与删除）；
+          - 结果会进入你的经历，在**下一轮**认知里才可见。
+
+🔒 这只是一个**能力**。用不用、什么时候用、读哪个文件，
+   **完全由你自己判断** —— 环境不替你决定，也不会因为你不读而催你。
 """
 
 
 # ================================================================
 def parse_intent(text: str) -> Dict[str, Any]:
     out: Dict[str, Any] = {"assessment": "", "artifact": None,
-                           "message": None, "parsed": False}
+                           "message": None, "action": None, "parsed": False}
     if not text:
         return out
     raw = text.strip()
@@ -263,6 +280,25 @@ def parse_intent(text: str) -> Dict[str, Any]:
         if isinstance(m, dict) and m.get("to") and m.get("text"):
             out["message"] = {"to": str(m["to"]).strip(),
                               "text": str(m["text"])}
+        # ---- 🔴 通用动作通道：Agent 可以请求**任何**已注册的 action_type ----
+        #
+        #  🔒 这里刻意**不**枚举 action_type、不判它合不合法：
+        #     `type` 是自由字符串，合法性由「组合根注册了哪些执行器」
+        #     决定（没注册 → dispatcher 返回一个明确的失败 ActionResult）。
+        #
+        #     在这里枚举 = 替 Agent 预先划定「它能做什么」——
+        #     那正是「系统不替 Agent 决定」所禁止的（§1）。
+        #
+        #  🔒 因此在生产层**新增一个动作不需要改这个解析器**：
+        #     只要在新的组合根里注册执行器，Agent 立刻就能请求它。
+        ac = d.get("action")
+        if isinstance(ac, dict) and (ac.get("type") or ac.get("action_type")):
+            _params = ac.get("parameters")
+            out["action"] = {
+                "type": str(ac.get("type") or ac.get("action_type")).strip(),
+                "parameters": (dict(_params)
+                               if isinstance(_params, dict) else {}),
+            }
         break
     return out
 
@@ -794,10 +830,26 @@ def _action_seam(rt: Any) -> tuple:
     """
     from experience import ExperienceStore
 
+    # 🔒 组合根在**这里**决定「这个实验给 Agent 哪些动作」。
+    #
+    #    ⚠️ 这是**实验级组合**，不是生产层内建：两个执行器都来自生产层
+    #       （`actions/workspace_write.py` / `actions/workspace_read.py`），
+    #       本处只做**注册**。注册哪些 = 这个实验允许 Agent 发起什么。
+    #
+    #    2026-10-09 加入 `workspace_read`：此前 Agent 只有「写」，
+    #    于是**验收责任人结构上读不到被验收的内容**。实测
+    #    `novel_reader` 因此在
+    #    `/reader/chapter1_reader_acceptance.md` 里拒绝盖章：
+    #        「我目前只能看到 /manuscript/chapter_001.md 的路径和锁定状态，
+    #          无法读取正文，所以不能负责任地给出通过。」
+    #    🔒 读**不受 Write Lock 影响** —— 锁只挡修改/删除（ADR-0021）。
     dispatcher = ActionDispatcher([
         WorkspaceWriteExecutor(write_artifact,
                                gateway=rt.workspace_gateway,
-                               workspace_id=WS_ID)])
+                               workspace_id=WS_ID),
+        WorkspaceReadExecutor(read_artifact,
+                              gateway=rt.workspace_gateway,
+                              workspace_id=WS_ID)])
     try:
         experience_store = ExperienceStore(rt.economy.db)
     except Exception as exc:                              # noqa: BLE001
@@ -1250,6 +1302,40 @@ def _turn(rt: Any, bridge: Any, st: Any, stage: Any, aid: str, rnd: int,
         turn["experience"] = _record_action_experience(
             experience_store, aid, action_intent, action_result)
 
+    # ---- 🔴 通用动作：走**同一个** dispatcher，不新增任何旁路 ----
+    #
+    #  🔒 这里也**不**判断 type 是什么、不提前拒绝任何类型 ——
+    #     合法性由「组合根注册了哪些执行器」决定，不由调用点决定。
+    #
+    #  ⚠️ 与写操作的一个真实差别（**不是缺陷，是既有机制的性质**）：
+    #     读到的内容进入 ActionResult.output，经 ExperienceStore 要
+    #     **下一轮** Cognition 才被 Agent 看到。
+    #     本实验**不**发明「同步返回给本轮」的新路径 —— 那会绕过
+    #     Experience 机制，属于架构改动（需要任务书）。
+    #     本次只做「把动作接上」，让 Agent 至少能**发起**读。
+    if intent.get("action"):
+        if dispatcher is None:                            # pragma: no cover
+            raise RuntimeError("_turn 需要 ActionDispatcher")
+        act = dict(intent["action"])
+        act_intent = build_intent(
+            aid, {"type": act["type"], "parameters": act["parameters"]},
+            reason=str(intent.get("assessment") or "")[:200])
+        act_result = dispatcher.dispatch(act_intent)
+        a_out = (act_result.output
+                 if isinstance(act_result.output, dict) else {})
+        turn["action"] = {
+            "type": act["type"],
+            "ok": bool(act_result.success),
+            "code": (act_result.metadata or {}).get("code"),
+            "path": a_out.get("path") or act["parameters"].get("path"),
+            "revision": a_out.get("revision"),
+            "chars": a_out.get("chars"),
+            # 🔒 内容也记进 turn —— 否则「读到了什么」没有证据。
+            "content": a_out.get("content"),
+        }
+        turn["action_experience"] = _record_action_experience(
+            experience_store, aid, act_intent, act_result)
+
     if intent["message"]:
         res = channels.send(comm, bridge, from_agent=aid,
                             to_agent=intent["message"]["to"],
@@ -1275,6 +1361,11 @@ def _print_turn(aid: str, turn: Dict[str, Any]) -> None:
         if w["mode"] == MODE_APPEND and w["ok"]:
             extra = f" (+{w.get('appended_chars')}→R{w.get('revision')})"
         bits.append(f"📝{w['mode']} {w['path']} {mark}{extra}")
+    a = turn.get("action")
+    if a:
+        mark = "✅" if a["ok"] else f"❌{a.get('code')}"
+        bits.append(f"📖{a['type']} {a.get('path')} "
+                    f"({a.get('chars')}字) {mark}")
     if turn.get("message"):
         bits.append(f"✉️→{turn['message']['to']}")
     print(f"    ✅ {aid:22s} {'  '.join(bits)}")
