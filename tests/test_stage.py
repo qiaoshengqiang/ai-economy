@@ -200,6 +200,24 @@ class TestStageInContext:
         assert "不再有新的回合" in text
         # 澄清必须**在场** —— 否则又会被读成"你还有几分钟"
         assert "不是「你写得多快」" in text
+        # 而且必须告诉它「只有在收到消息时才会有下一个回合」——
+        # 否则它会以为"留到后续回合"总会成立（实测连续 5 次都这么说）
+        assert "只有在收到消息时" in text
+
+    def test_rounds_left_is_rendered_when_given(self, store):
+        """
+        🔴 「还能给你几个回合」是 Agent **能算**的事实
+           （"留到后续回合"到底可不可行）。
+           "还有几分钟"它算不了 —— LLM 的产出在一次调用内完成。
+        """
+        from stage.context import render_stage
+
+        s = _active(store)
+        text = render_stage(s, limit_seconds=480, elapsed_seconds=0,
+                            rounds_left=6)
+        assert "最多再跑 6 轮" in text
+        # 不给就**不渲染**（向后兼容：老的调用点一行都不用改）
+        assert "最多再跑" not in render_stage(s, limit_seconds=480)
         low = text.lower()
         for w in ("must", "should", "required to"):
             assert w not in low, f"Stage 被渲染成了指令：{w}"

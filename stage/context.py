@@ -29,6 +29,7 @@ def render_stage(
     checkpoint: Optional[Any] = None,
     limit_seconds: Optional[float] = None,
     elapsed_seconds: Optional[float] = None,
+    rounds_left: Optional[int] = None,
 ) -> str:
     """
     渲染 Stage 状态。**只陈述状态，不给指令。**
@@ -74,12 +75,16 @@ def render_stage(
     #    🔒 这条限制的**真实含义**是「这段还能给你几个回合」——
     #       所以要说成那个意思，而不是"你还有几分钟"。
     #       给一个自己作用不了的约束，只会让它去**猜**该怎么应对。
-    if limit_seconds:
-        elapsed = int((elapsed_seconds or 0) / 60)
+    if limit_seconds or rounds_left is not None:
+        parts = []
+        if limit_seconds:
+            parts.append(f"墙钟上限 {int(limit_seconds / 60)} 分钟")
+            parts.append(f"已用 {int((elapsed_seconds or 0) / 60)} 分钟")
+        if rounds_left is not None:
+            parts.append(f"**最多再跑 {int(rounds_left)} 轮**")
+        lines.append("Session: " + " · ".join(parts) + " · 到点后不再有新的回合")
         lines.append(
-            f"Session: 墙钟上限 {int(limit_seconds / 60)} 分钟 · "
-            f"已用 {elapsed} 分钟 · 到点后**不再有新的回合**")
-        lines.append(
-            "（这条限制的是「还能给你几个回合」，不是「你写得多快」——"
-            " 你的一次产出在一次调用内完成。）")
+            "（它限制的是「还能给你几个回合」，不是「你写得多快」——"
+            " 你的一次产出在一次调用内完成。"
+            " 另外：你**只有在收到消息时**才会有下一个回合。）")
     return "\n".join(lines)

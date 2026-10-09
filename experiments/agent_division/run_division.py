@@ -420,6 +420,11 @@ def main() -> int:
         log["injected_fake_history"] = injected
         log["history_seed"] = history_seed
         dispatcher, experience_store = P._action_seam(rt, bridge)
+        # 🔴 **必须装** —— `production.py` 的 main() 里装了，我这里漏了，
+        #    于是 `turn["context"]` 一直是 `{}`（"它这一轮看到了什么"没有证据）。
+        #    它记录的是**真正渲染进 system 的那一份**（不是"库里有没有"）。
+        _n_wrapped = P._install_context_recorder(rt)
+        print(f"  context 遥测: 已包装 {_n_wrapped} 个 Agent 的 context_builder")
         _seed(rt, bridge)
 
         from stage import StageStore
@@ -452,9 +457,15 @@ def main() -> int:
                     print(f"        这不是「它没找人」，是**这次没获得观察**。")
                 break
             ckpt = st.latest_checkpoint(stage.stage_id) if stage else None
-            stage_txt = render_stage(stage, checkpoint=ckpt,
-                                     limit_seconds=WALL_LIMIT,
-                                     elapsed_seconds=time.time() - t0)
+            stage_txt = render_stage(
+
+                stage, checkpoint=ckpt, limit_seconds=WALL_LIMIT,
+
+                elapsed_seconds=time.time() - t0,
+
+                # 🔴 「还能给你几个回合」—— Agent **能算**的事实
+
+                rounds_left=max(0, MAX_ROUNDS - rnd + 1))
             print(f"\n  ── 第 {rnd} 轮：被唤醒的是 {', '.join(woken)}")
             for aid in woken:
                 if (time.time() - t0) >= WALL_LIMIT:
@@ -491,6 +502,7 @@ def main() -> int:
         log["budget"] = _safe_budget(rt)
         rt.close()
 
+    log["report"] = _build_report(log)
     _report(log)
     out = RESULTS / "division_result.json"
     out.write_text(json.dumps(log, ensure_ascii=False, indent=2),
@@ -539,6 +551,68 @@ def _safe_budget(rt: Any) -> Any:
 # ================================================================
 def AGENTS_FIRST(log: Dict[str, Any]) -> str:
     return str(log.get("first_agent") or "")
+
+
+def _build_report(log: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    把控制台那份分析做成**机器可读**的，进结果 JSON。
+
+    【为什么（用户反馈）】
+        「结果给的 json 里面没有什么有用信息」——
+        因为分析只打印在终端上，JSON 里只有一堆原始 turn。
+        ⇒ 结论必须和原始数据**在一起**，否则事后没法复算。
+    """
+    turns = log.get("turns") or []
+    first = str(log.get("first_agent") or "")
+
+    broken = [t for t in turns
+              if t.get("output_status") == "EMPTY_CONTENT"
+              or t.get("cognitive_status") == "TRUNCATED"]
+    acted = []
+    for t in turns:
+        if t.get("agent_id") not in acted:
+            acted.append(t.get("agent_id"))
+
+    sent = [(e.get("agent_id"), e.get("to"))
+            for e in (log.get("comm_events") or []) if e.get("kind") == "sent"]
+    from collections import Counter
+    per_action: Dict[str, Any] = {}
+    for t in turns:
+        aid = t.get("agent_id")
+        per_action.setdefault(aid, Counter())
+        act = t.get("action") or {}
+        per_action[aid][f"{act.get('type') or '(无动作)'}"
+                        f"{'' if act.get('ok') else '(失败)'}"] += 1
+
+    first_ran = first in acted
+    first_broken = any(t.get("agent_id") == first for t in broken)
+    return {
+        # 🔴 **这次有没有获得观察** —— 后面所有结论的前提
+        "observed": bool(first_ran and not first_broken),
+        "why_not_observed": (None if (first_ran and not first_broken) else
+                             ("第一个 Agent 没跑过" if not first_ran
+                              else "第一个 Agent 那一轮模型没返回内容")),
+        "first_agent_ran": first_ran,
+        "broken_turns": [{"round": t.get("round"),
+                          "agent_id": t.get("agent_id"),
+                          "finish_reason": t.get("finish_reason"),
+                          "output_status": t.get("output_status"),
+                          "cognitive_status": t.get("cognitive_status")}
+                         for t in broken],
+        # 分工有没有发生（三个独立证据）
+        "agents_acted": acted,
+        "agents_never_woken": [a for a in (log.get("agents") or [])
+                               if a not in acted],
+        "messages": [{"from": s, "to": d} for s, d in sent],
+        "anyone_contacted": bool(sent),
+        "workspace_tree": log.get("final_workspace") or [],
+        "per_agent_actions": {k: dict(v) for k, v in per_action.items()},
+        # 「它打算怎么做」—— 模型在信封里自己写的判断
+        "reasoning_by_turn": [{"round": t.get("round"),
+                               "agent_id": t.get("agent_id"),
+                               "reasoning": t.get("reasoning")}
+                              for t in turns if t.get("reasoning")],
+    }
 
 
 def _report(log: Dict[str, Any]) -> None:

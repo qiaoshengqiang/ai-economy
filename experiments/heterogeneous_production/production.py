@@ -243,6 +243,11 @@ PROMPT = """你是这次长期生产任务的一名参与者。这是**正式生
    「写完产物再通知别人」是**两件事** —— 想都做就分两轮。
    先做哪件、要不要做，完全由你自己判断。
 
+🔴 **你会不会被再次叫醒，取决于有没有消息到达**（§22.27）：
+   你**不会被自动唤醒**。只有在**收到新消息**时，才会有你的下一个回合。
+   （这条是**机制事实**，不是"你该去发消息"——
+     发不发、发给谁，仍然完全由你自己判断。）
+
 下面这些动作类型是**环境事实**（这个环境注册了什么、各自要什么参数）：
 
   · "workspace_write"
@@ -1164,8 +1169,12 @@ def _run_session(rt: Any, bridge: Any, index: int, limit: float,
         #    旧实现不传它 → 上一轮的 workspace revision 从未进入下一轮认知。
         ckpt = (st.latest_checkpoint(stage.stage_id)
                 if stage is not None else None)
-        stage_txt = render_stage(stage, checkpoint=ckpt, limit_seconds=limit,
-                                 elapsed_seconds=sess.elapsed_seconds())
+        stage_txt = render_stage(
+            stage, checkpoint=ckpt, limit_seconds=limit,
+            elapsed_seconds=sess.elapsed_seconds(),
+            # 🔴 「还能给你几个回合」—— 这是 Agent **能算**的事实
+            #    （"留到后续回合"到底可不可行）。"还有几分钟"它算不了。
+            rounds_left=max(0, MAX_ROUNDS_PER_SESSION - rnd + 1))
         if ckpt is not None:
             # 可观测证据：这一轮的 prompt 里**确实**带了哪个 checkpoint
             s_log["checkpoint_in_context"] = ckpt.checkpoint_id
