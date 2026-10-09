@@ -52,10 +52,12 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from actions import (  # noqa: E402
-    ACTION_WORKSPACE_READ, ACTION_WORKSPACE_WRITE, ActionDispatcher,
-    ActionIntent, WorkspaceReadExecutor, WorkspaceWriteExecutor,
+    ACTION_MESSAGE_SEND, ACTION_WORKSPACE_READ, ACTION_WORKSPACE_WRITE,
+    ActionDispatcher, ActionIntent, MessageSendExecutor,
+    WorkspaceReadExecutor, WorkspaceWriteExecutor,
     build_intent, new_intent_id,
 )
+from services.messaging import send_message_as  # noqa: E402
 from services.artifacts import (  # noqa: E402
     MODE_APPEND, MODE_CREATE, MODE_REPLACE,
     provision_namespaces, read_artifact, write_artifact,
@@ -244,8 +246,27 @@ PROMPT = """你是这次长期生产任务的一名参与者。这是**正式生
           - 读**不受** Write Lock 影响（锁约束的是修改与删除）；
           - 结果会进入你的经历，在**下一轮**认知里才可见。
 
-🔒 这只是一个**能力**。用不用、什么时候用、读哪个文件，
-   **完全由你自己判断** —— 环境不替你决定，也不会因为你不读而催你。
+  · "message_send"
+        parameters: {{"to": "收件人 agent_id", "text": "要说的话",
+                     "message_type": "消息类型（可省，省了就是 TEXT）",
+                     "payload": {{}}}}   ← payload 可省
+
+        作用：按**显式** `message_type` 发一条消息。
+
+        本环境**已注册 handler** 的消息类型（环境事实）：
+          TEXT · TASK_OFFER · COUNTER_OFFER · ACCEPT · REJECT ·
+          START · SUBMIT · VERIFY · COMPLETE
+
+        约束（同样是环境事实）：
+          - 发送方由运行时填成**你自己**，你给不了别人；
+          - payload 的字段要求与合法性由**协议层**判断 ——
+            不合规会返回结构化错误，不会静默丢弃；
+          - 发消息会同时把对方的唤醒信号置位（Wakeup ≠ Message：
+            信号不携带内容，对方仍然要自己去信箱取）。
+
+🔒 这些都只是**能力**。用不用、什么时候用、读哪个文件、
+   给谁发什么类型的消息 —— **完全由你自己判断** ——
+   环境不替你决定，也不会因为你不做而催你。
 """
 
 
@@ -831,7 +852,32 @@ def _close_stage(rt: Any, log: Dict[str, Any]) -> None:
         log["stage_complete_error"] = f"{type(exc).__name__}: {exc}"
 
 
-def _action_seam(rt: Any) -> tuple:
+def _send_fn(bridge: Any) -> Any:
+    """
+    把**异步**的 `send_message_as` 适配成执行器要的**同步** `send_fn`。
+
+    🔒 为什么这个适配器必须在**实验侧**：
+       通信层是 async（`comm.send` 是协程），而 Action 执行器是同步的。
+       `SyncBridge` 本来就是这条实验的同步驱动器的一部分
+       （见 `experiments/novel_production/channels.py` 的说明）。
+       **生产层仍然是 async 的**，没有被污染。
+
+    🔒 它只做协程调度，**不改任何语义** —— 类型、正文、payload
+       原样透传，不做校验、不做默认值。
+    """
+    def _send(comm: Any, *, from_agent: str, to_agent: str,
+              message_type: str, text: Any, payload: Any) -> Dict[str, Any]:
+        if bridge is None:                                    # pragma: no cover
+            return {"ok": False, "to": to_agent, "code": "no_bridge",
+                    "message": "没有同步桥，无法调异步通信层"}
+        return bridge.run(send_message_as(
+            comm, from_agent=from_agent, to_agent=to_agent,
+            message_type=message_type, text=text, payload=payload,
+            trace_id=EXPERIMENT_ID))
+    return _send
+
+
+def _action_seam(rt: Any, bridge: Any = None) -> tuple:
     """
     🔴 M3：把「写操作 → ActionResult → Experience」接起来。
 
@@ -875,7 +921,13 @@ def _action_seam(rt: Any) -> tuple:
                                workspace_id=WS_ID),
         WorkspaceReadExecutor(read_artifact,
                               gateway=rt.workspace_gateway,
-                              workspace_id=WS_ID)])
+                              workspace_id=WS_ID),
+        # 2026-10-09 加入 message_send：此前 Agent 只能发 MessageType.TEXT
+        # （`channels.send` 写死），于是协议里那 8 种业务消息
+        # —— 尤其 **TASK_OFFER**（`handle_offer` 会用它建 Task，
+        # `creator = 发起方 Agent`）—— 在组合根里接好了却从没被触发。
+        # 🔒 这是「Agent 自己组织生产」唯一的现成通道。
+        MessageSendExecutor(_send_fn(bridge), comm=rt.communication)])
     try:
         experience_store = ExperienceStore(rt.economy.db)
     except Exception as exc:                              # noqa: BLE001
@@ -917,7 +969,7 @@ def _run_session(rt: Any, bridge: Any, index: int, limit: float,
     st = StageStore(rt.economy.db)
     stage = next((s for s in st.list_stages(TASK_ID) if s.is_open), None)
     # 🔴 M3：Action Seam —— 写操作必须经过 Dispatcher，结果必须落成 Experience
-    dispatcher, experience_store = _action_seam(rt)
+    dispatcher, experience_store = _action_seam(rt, bridge)
 
     sess = RuntimeSession(limit_seconds=limit).start()
     s_log: Dict[str, Any] = {"index": index, "limit_seconds": limit,

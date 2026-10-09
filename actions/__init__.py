@@ -33,6 +33,9 @@ from actions.parse import (
     ENVELOPE_INSTRUCTION, build_intent, decision_from_text,
     extract_envelope,
 )
+from actions.message_send import (
+    ACTION_MESSAGE_SEND, MessageSendExecutor,
+)
 from actions.run import reply_decision, run_cognition
 from actions.workspace_read import (
     ACTION_WORKSPACE_READ, WorkspaceReadExecutor,
@@ -49,6 +52,7 @@ __all__ = [
     "ACTION_REPLY", "ACTION_NOOP", "ACTION_OBSERVE",
     "ACTION_WORKSPACE_WRITE", "WorkspaceWriteExecutor",
     "ACTION_WORKSPACE_READ", "WorkspaceReadExecutor",
+    "ACTION_MESSAGE_SEND", "MessageSendExecutor",
     "BUILTIN_ACTION_TYPES", "DECISION_ACT", "DECISION_REPLY",
     "VALID_DECISION_KINDS", "new_intent_id", "new_decision_id",
 ]
