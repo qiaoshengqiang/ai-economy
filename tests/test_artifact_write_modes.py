@@ -31,6 +31,21 @@ READER = "novel_reader"
 AGENTS = [OWNER, "novel_plot_architect", AUTHOR, EDITOR, READER]
 OUTSIDER = "outsider"
 
+#: 🔴 **本测试自己的分工映射。**
+#:
+#:    这份映射以前是 `services/artifacts.py` 里的一个模块常量
+#:    （`ARTIFACT_NAMESPACES`）—— 也就是**生产层内建了某次实验的分工**。
+#:    现在生产层只提供机制，映射由调用方给；测试当然就自己声明一份。
+#:
+#:    🔒 这正是「预分配分工属于测试脚手架，不属于架构」的落实。
+NAMESPACES = {
+    "world": OWNER,
+    "plot": "novel_plot_architect",
+    "manuscript": AUTHOR,
+    "notes": EDITOR,
+    "reader": READER,
+}
+
 
 @pytest.fixture()
 def rig():
@@ -227,7 +242,7 @@ class TestEmptyContent:
 # ================================================================
 class TestDynamicArtifactCreation:
     def test_18_agent_can_create_in_its_namespace(self, gw):
-        prov = provision_namespaces(gw, W, OWNER)
+        prov = provision_namespaces(gw, W, OWNER, NAMESPACES)
         created = [p for p in prov if p["ok"]]
         assert len(created) == 5
 
@@ -236,7 +251,7 @@ class TestDynamicArtifactCreation:
         assert r["ok"] is True, r
 
     def test_19_new_artifact_shows_up_in_workspace(self, gw):
-        provision_namespaces(gw, W, OWNER)
+        provision_namespaces(gw, W, OWNER, NAMESPACES)
         write_artifact(gw, W, OWNER, "world/characters.md", "# 人物",
                        write_mode=MODE_CREATE)
         entries = gw.list(W, "/world", OWNER).result["entries"]
@@ -249,14 +264,14 @@ class TestDynamicArtifactCreation:
         assert got.success and got.result["content"] == "# 人物"
 
     def test_20_new_artifact_has_revision(self, gw):
-        provision_namespaces(gw, W, OWNER)
+        provision_namespaces(gw, W, OWNER, NAMESPACES)
         r = write_artifact(gw, W, OWNER, "world/locations.md", "地点",
                            write_mode=MODE_CREATE)
         assert r["revision"] == 1
         assert _rev(gw, "world/locations.md") == 1
 
     def test_21_illegal_path_fails(self, gw):
-        provision_namespaces(gw, W, OWNER)
+        provision_namespaces(gw, W, OWNER, NAMESPACES)
         r = write_artifact(gw, W, OWNER, "world/../../etc/passwd", "x",
                            write_mode=MODE_CREATE)
         assert r["ok"] is False and r["code"] == "bad_path"
@@ -267,21 +282,21 @@ class TestDynamicArtifactCreation:
             assert r["ok"] is False and r["code"] == "bad_path", bad
 
     def test_23_unauthorized_agent_cannot_create(self, gw):
-        provision_namespaces(gw, W, OWNER)
+        provision_namespaces(gw, W, OWNER, NAMESPACES)
         r = write_artifact(gw, W, OUTSIDER, "world/x.md", "x",
                            write_mode=MODE_CREATE)
         assert r["ok"] is False
 
     def test_agent_cannot_create_in_another_agents_namespace(self, gw):
         """🔒 Lock 模型不回归：`/world/` 归 world_builder，author 建不了。"""
-        provision_namespaces(gw, W, OWNER)
+        provision_namespaces(gw, W, OWNER, NAMESPACES)
         r = write_artifact(gw, W, AUTHOR, "world/intruder.md", "x",
                            write_mode=MODE_CREATE)
         assert r["ok"] is False and r["code"] == "locked_by_other"
 
     def test_namespaces_are_idempotent(self, gw):
-        a = provision_namespaces(gw, W, OWNER)
-        b = provision_namespaces(gw, W, OWNER)
+        a = provision_namespaces(gw, W, OWNER, NAMESPACES)
+        b = provision_namespaces(gw, W, OWNER, NAMESPACES)
         assert all(p["status"] == "exists" for p in b)
         assert {p["revision"] for p in a} == {p["revision"] for p in b}
 
@@ -350,7 +365,7 @@ class TestDeepPathCreation:
     """
 
     def test_deep_path_creates_intermediate_directories(self, gw):
-        provision_namespaces(gw, W, OWNER)
+        provision_namespaces(gw, W, OWNER, NAMESPACES)
         r = write_artifact(gw, W, OWNER, "world/regions/north/cities.md",
                            "北方城市", write_mode=MODE_CREATE)
         assert r["ok"] is True, r
@@ -361,14 +376,14 @@ class TestDeepPathCreation:
         🔒 建中间目录**不绕过** Lock：
             author 不能在 world_builder 的命名空间下造目录。
         """
-        provision_namespaces(gw, W, OWNER)
+        provision_namespaces(gw, W, OWNER, NAMESPACES)
         r = write_artifact(gw, W, AUTHOR, "world/regions/cities.md", "x",
                            write_mode=MODE_CREATE)
         assert r["ok"] is False
         assert r["code"] == "locked_by_other"
 
     def test_repeat_deep_create_is_idempotent_on_parents(self, gw):
-        provision_namespaces(gw, W, OWNER)
+        provision_namespaces(gw, W, OWNER, NAMESPACES)
         a = write_artifact(gw, W, OWNER, "world/regions/a.md", "A",
                            write_mode=MODE_CREATE)
         b = write_artifact(gw, W, OWNER, "world/regions/b.md", "B",

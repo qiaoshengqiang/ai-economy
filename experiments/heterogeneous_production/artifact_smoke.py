@@ -34,6 +34,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
+# 同目录的 production.py 持有本实验的分工映射
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from services.artifacts import (  # noqa: E402
     MODE_APPEND, MODE_CREATE, MODE_REPLACE, provision_namespaces,
@@ -127,7 +129,7 @@ def main() -> int:
 
         🔒 只陈述「有哪些区域、归谁负责」，**不写**「你应该创建什么」。
         """
-        from services.artifacts import ARTIFACT_NAMESPACES
+        from production import ARTIFACT_NAMESPACES
         lines = []
         for d, owner in ARTIFACT_NAMESPACES.items():
             got = gw.list(WS_ID, "/" + d, agent)
@@ -177,7 +179,8 @@ def main() -> int:
             print(f"  Task {TASK_ID} 已存在（participants 补齐 {len(missing)}）")
 
         gw.ensure_workspace(WS_ID, WORLD)
-        prov = provision_namespaces(gw, WS_ID, WORLD)
+        prov = provision_namespaces(gw, WS_ID, WORLD,
+                                 ARTIFACT_NAMESPACES)
         log["provision"] = prov
         print(f"  Task Workspace {WS_ID} 已就绪；命名空间 {len(prov)} 个")
 

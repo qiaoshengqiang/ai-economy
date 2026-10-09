@@ -35,7 +35,7 @@ Artifact Write Modes —— CREATE / REPLACE / APPEND
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Mapping
 
 #: 显式写入模式（§三：Runtime 不猜）。
 MODE_CREATE = "create"
@@ -345,27 +345,37 @@ def _map_code(gateway_code: str) -> str:
 #:        而「建目录 + handoff」用的**全是已有的正式入口**，
 #:        Lock / Authorization / Revision 语义一个字都不用改。
 #:
+#: 🔴 **`namespaces` 映射必须由调用方传入 —— 本模块不再内建任何映射。**
+#:
+#:    这里曾经写着 `ARTIFACT_NAMESPACES = {"world": "novel_world_builder",
+#:    "manuscript": "novel_author", ...}` —— 也就是说**某一次实验的
+#:    具体分工被写进了生产应用层**，而它**零个生产调用方**
+#:    （只有 `experiments/heterogeneous_production/` 与一个测试在用）。
+#:
+#:    那违反了 AGENTS.md §1「系统**不**负责：替 Agent 决定」与
+#:    §7 的「策略硬编码（属于 Agent Strategy，不得写进系统）」。
+#:
+#:    🔒 生产层只提供**机制**：「建目录 + handoff 所有权」。
+#:        **谁负责哪片区域**属于实验/Agent 侧的决定，由调用方给。
+#:
 #: 🔒 这不是 Workflow：目录只表达「谁负责哪片区域」，
 #:    不规定「必须创建哪些文件」。Agent 自己决定要不要建、建什么名。
-ARTIFACT_NAMESPACES = {
-    "world": "novel_world_builder",
-    "plot": "novel_plot_architect",
-    "manuscript": "novel_author",
-    "notes": "novel_editor",
-    "reader": "novel_reader",
-}
-
-
 def provision_namespaces(gateway: Any, workspace_id: str, owner: str,
-                         *, budget: int = 64) -> list:
+                         namespaces: Mapping[str, str], *,
+                         budget: int = 64) -> list:
     """
-    为每个 Agent 建一个命名空间目录并 handoff —— **幂等**。
+    按**调用方给出的映射**为每个 Agent 建命名空间目录并 handoff —— **幂等**。
+
+    参数：
+        namespaces: `{目录名: 负责的 agent_id}`。
+            🔒 **必填，没有默认值** —— 默认值会让「某次实验的分工」
+               再次悄悄变回生产层的硬编码。
 
     返回每个目录的结果（含**真实 revision**）。
     """
     out = []
     from core.workspace_core import normalize_path  # 复用既有实现
-    for name, agent_id in ARTIFACT_NAMESPACES.items():
+    for name, agent_id in dict(namespaces).items():
         res = gateway.create(workspace_id, "/", name, "directory", owner)
         if res.success:
             status, rev = "created", int((res.result or {}).get("revision", 0))

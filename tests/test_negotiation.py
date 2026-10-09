@@ -573,28 +573,72 @@ class TestRoleAndTurnValidation:
         assert any("终态" in e for e in result.errors)
 
     def test_validation_has_no_hardcoded_agent_names(self):
-        """验证逻辑必须靠任务字段判断，不能认 Agent 的名字。"""
+        """
+        `services/` 里不许出现**任何真实 Agent 的名字**。
+
+        🔴 这条守卫原来有两个盲区，`ARTIFACT_NAMESPACES` 就是这么漏过去的
+           （它曾经住在 `services/artifacts.py`）：
+
+             ① 只看 `ast.Compare`（比较语句）
+                → 字典 / 列表 / 函数默认参数里的名字**全都漏**
+             ② 只认 `"agent_"` 前缀
+                → 守卫写的时候只有 agent_a…agent_e；
+                  后来为小说实验加的 `novel_*` 那一批**完全没被覆盖**，
+                  而且它**静默失效**（守卫一直绿）。
+
+        现在的判据：
+          · 扫描 `services/**/*.py` 的**全部字符串常量**
+            （注释不进 AST，天然排除；docstring 显式排除）
+          · 与 `config/config.yaml` 里**真实存在的 agent id 集合**比对
+            —— 不再依赖任何前缀假设，新增 Agent 自动被覆盖
+        """
         import ast
         from pathlib import Path
 
-        services_dir = Path(__file__).resolve().parent.parent / "services"
-        problems = []
+        from core.config_resolver import load_resolved_config
+        from core.paths import GLOBAL_CONFIG_FILE
+        from llm.router import adapter_specs
 
+        services_dir = Path(__file__).resolve().parent.parent / "services"
+
+        # 🔑 判据来自**配置里的真实 Agent 集合**，不是一个人的前缀猜测
+        resolved = load_resolved_config(GLOBAL_CONFIG_FILE,
+                                        adapter_specs=adapter_specs)
+        agent_ids = set(resolved.agents)
+        assert agent_ids, "配置里应当有 agents —— 否则这条守卫会空转"
+
+        def _docstring_nodes(tree):
+            """收集 docstring 的 Constant 节点 —— 说明文字里提到名字是允许的。"""
+            out = set()
+            for node in ast.walk(tree):
+                for attr in ("body",):
+                    body = getattr(node, attr, None)
+                    if not isinstance(body, list) or not body:
+                        continue
+                    first = body[0]
+                    if (isinstance(first, ast.Expr)
+                            and isinstance(first.value, ast.Constant)
+                            and isinstance(first.value.value, str)):
+                        out.add(id(first.value))
+            return out
+
+        problems = []
         for source in sorted(services_dir.rglob("*.py")):
             tree = ast.parse(source.read_text(encoding="utf-8"))
+            skip = _docstring_nodes(tree)
             for node in ast.walk(tree):
-                if isinstance(node, ast.Compare):
-                    for comparator in node.comparators:
-                        if isinstance(comparator, ast.Constant) and isinstance(
-                            comparator.value, str
-                        ) and comparator.value.startswith("agent_"):
-                            problems.append(
-                                f"{source.name}: {comparator.value!r}"
-                            )
+                if (isinstance(node, ast.Constant)
+                        and isinstance(node.value, str)
+                        and id(node) not in skip
+                        and node.value in agent_ids):
+                    problems.append(f"{source.name}:{node.lineno} {node.value!r}")
 
         assert not problems, (
-            f"services/ 里出现了硬编码的 Agent 名：{problems}"
+            "services/ 里出现了硬编码的 Agent 名：\n  "
+            + "\n  ".join(problems)
+            + "\n（生产层只提供机制，不内建某次实验的分工 / 参与者）"
         )
+
 
 
 # ============================================================

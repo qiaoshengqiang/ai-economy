@@ -56,7 +56,7 @@ from actions import (  # noqa: E402
     WorkspaceWriteExecutor, new_intent_id,
 )
 from services.artifacts import (  # noqa: E402
-    ARTIFACT_NAMESPACES, MODE_APPEND, MODE_CREATE, MODE_REPLACE,
+    MODE_APPEND, MODE_CREATE, MODE_REPLACE,
     provision_namespaces, write_artifact,
 )
 
@@ -109,6 +109,28 @@ ROOT_STAGE_ID = "stage_hetero_root"
 #:
 #: 🔒 **必须与 ACCEPTOR 不同** —— 否则「生产者不能自验」
 #:    这条边界在这条链上就无从体现（验收会被执行服务拒绝）。
+#: 🔴 **本实验的分工映射 —— 它属于实验层，不属于生产层。**
+#:
+#:    这里曾经住在 `services/artifacts.py`，也就是**生产应用层**，
+#:    而它零个生产调用方（只有本实验与本仓的一个测试在用）。
+#:    那是「实验专用的分工被写进系统」，违反 AGENTS.md §1 / §7。
+#:
+#:    🔒 现在生产层只提供**机制**（建目录 + handoff 所有权），
+#:       **谁负责哪片区域**由实验自己声明 —— 就在这一行。
+#:       `provision_namespaces(..., ARTIFACT_NAMESPACES)` 显式传进去。
+#:
+#:    ⚠️ 这**不代表** Agent 能自主分工 —— 轮询调度与预分配分工
+#:       仍然是 V1 的**临时替身**（Constitution §15.1 把
+#:       `Scheduler / 自主唤醒` 列为未解锁）。本改动只是把它
+#:       放回正确的那一层，没有解锁任何能力。
+ARTIFACT_NAMESPACES = {
+    "world": "novel_world_builder",
+    "plot": "novel_plot_architect",
+    "manuscript": "novel_author",
+    "notes": "novel_editor",
+    "reader": "novel_reader",
+}
+
 PRODUCER = "novel_author"
 
 #: 验收责任人 —— 负责 VERIFY / COMPLETE 的那个 Agent。
@@ -390,7 +412,8 @@ def _ensure_environment(rt: Any) -> None:
             rt.tasks.save(t)
 
     rt.workspace_gateway.ensure_workspace(WS_ID, OWNER)
-    provision_namespaces(rt.workspace_gateway, WS_ID, OWNER)
+    provision_namespaces(rt.workspace_gateway, WS_ID, OWNER,
+                         ARTIFACT_NAMESPACES)
 
     st = StageStore(rt.economy.db)
     if not st.list_stages(TASK_ID):
