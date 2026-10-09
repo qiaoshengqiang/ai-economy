@@ -167,6 +167,31 @@ class ExperienceStore:
             "action_type": getattr(intent, "action_type", ""),
             "parameters": dict(getattr(intent, "parameters", {}) or {}),
         }
+        # 🔴 2026-10-10：把 `intent.reason` 也记下来。
+        #
+        #    【为什么 —— 这是**唯一**廉价的连续性载体】
+        #
+        #    实测确认：这个实验里**每轮 LLM 调用都从头开始** ——
+        #    `messages` 只有这一轮的新 prompt（`normalize_messages(str)`
+        #    → 单条 user）；`Brain` / `BaseAgent` 都**没有**任何对话历史。
+        #
+        #    设计上这不是 bug：§2.1 说「Provider-side context **可以**参与
+        #    认知连续性」，但 §2.2 把它整个列为 `OPEN`
+        #    （"如何保存 / 如何迁移 / 如何与本地 Memory 合并"**都没有答案**），
+        #    §3 还明确**禁止**去实现一个 `CognitiveSubstrate` 类。
+        #
+        #    🔴 但 `intent.reason` 一直存在（`ActionIntent.reason`），
+        #       只是**从来没被记下来** —— 于是下一轮连
+        #       「我上一轮**打算**做什么」都不知道，只剩「我做了什么」。
+        #       实测：6 次运行它都说「通知/验收留到下一轮」，
+        #       而下一轮它**不记得自己说过**。
+        #
+        #    🔒 形态与 `code` 一致：**有才写**，没有就不写这个键 ——
+        #       旧记录的形状一个字节都不变。
+        _reason = str(getattr(intent, "reason", "") or "").strip()
+        if _reason:
+            result["reason"] = _reason[:1000]
+
         code = (dict(getattr(action_result, "metadata", None) or {})
                 .get("code"))
         if code:

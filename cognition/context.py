@@ -403,6 +403,12 @@ def _experience_detail(e: Experience) -> str:
 
     parts = [f"action={action_type}"]
 
+    # ---- 为什么做（Agent 自己声明的意图）----
+    # 🔒 它是**材料**，不是指令 —— 原样呈现，不加解读。
+    #    这是跨回合唯一廉价的意图载体（每轮 LLM 都从头开始）。
+    if r.get("reason"):
+        parts.append(f"reason={_render_value(r['reason'])}")
+
     # ---- 对**什么**做了（target）----
     target = params.get("path") or out.get("path")
     if target:

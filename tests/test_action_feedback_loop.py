@@ -711,3 +711,59 @@ def _turn_forbidden_gaps(turn_src: str) -> list:
 
 def _turn_wiring_gaps(turn_src: str) -> list:
     return [marker for marker in _TURN_WIRING if marker not in turn_src]
+
+
+# ================================================================
+# 🔴 跨回合唯一廉价的「意图」载体（2026-10-10）
+# ================================================================
+def test_intent_reason_survives_into_the_next_context():
+    """
+    🔴 【为什么这条重要 —— 实测确认的事实】
+
+        这个实验里**每轮 LLM 调用都从头开始**：
+        `messages` 只有这一轮的新 prompt（`normalize_messages(str)`
+        → 单条 user）；`Brain` / `BaseAgent` 都**没有**对话历史。
+
+        🔒 设计上这不是 bug：§2.1 说「Provider-side context **可以**参与
+           认知连续性」，但 §2.2 把它整个列为 `OPEN`（"如何保存 / 如何迁移
+           / 如何与本地 Memory 合并"**都没有答案**），§3 还**禁止**
+           去实现一个 `CognitiveSubstrate` 类。
+
+        ⇒ 于是 `intent.reason` 成了**唯一**廉价的连续性载体。
+          实测 6 次运行它都说「通知/验收留到下一轮」——
+          而下一轮它**不记得自己说过**（那时还没记 reason）。
+
+    🔒 形态与 `code` 一致：**有才写**，没有就不写这个键。
+    """
+    from actions import ActionIntent, ActionResult
+    from cognition.context import _experience_detail
+    from experience import ExperienceStore
+    from storage.database import Database
+
+    import tempfile
+
+    db = Database(f"{tempfile.mkdtemp()}/reason.db")
+    store = ExperienceStore(db)
+    res = ActionResult(success=True, output={"path": "a.md", "revision": 1},
+                       error=None, action_id="i1",
+                       action_type="workspace_write", metadata={"code": None})
+
+    with_reason = store.record_action_result(
+        "agent_a",
+        ActionIntent(action_type="workspace_write", agent_id="agent_a",
+                     parameters={"path": "a.md", "write_mode": "create"},
+                     reason="先写正文；通知留到后续回合", intent_id="i1"),
+        res)
+    assert with_reason.result["reason"] == "先写正文；通知留到后续回合"
+    assert "reason=" in _experience_detail(with_reason), (
+        "reason 存了却**没渲染** —— 那下一轮还是看不到（存了等于没存）")
+
+    # 🔒 没有 reason 时，**旧记录的形状一个字节都不变**
+    without = store.record_action_result(
+        "agent_a",
+        ActionIntent(action_type="workspace_write", agent_id="agent_a",
+                     parameters={"path": "b.md", "write_mode": "create"},
+                     intent_id="i2"),
+        res)
+    assert "reason" not in without.result, "没 reason 也写了这个键 —— 旧形状变了"
+    assert "reason=" not in _experience_detail(without)
