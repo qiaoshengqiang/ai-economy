@@ -54,11 +54,15 @@ sys.path.insert(0, str(ROOT))
 from actions import (  # noqa: E402
     ACTION_MESSAGE_SEND, ACTION_PUBLIC_QUERY, ACTION_WORKSPACE_READ,
     ACTION_WORKSPACE_WRITE, ActionDispatcher, ActionIntent,
-    MessageSendExecutor, PublicQueryExecutor,
+    MessageSendExecutor, PrivateListExecutor, PrivateReadExecutor,
+    PrivateWriteExecutor, PublicQueryExecutor,
     WorkspaceReadExecutor, WorkspaceWriteExecutor,
     build_intent, new_intent_id,
 )
 from services.messaging import send_message_as  # noqa: E402
+from services.private_workspace import (  # noqa: E402
+    list_private, read_private, write_private,
+)
 from services.public_reference import PublicReference  # noqa: E402
 from services.artifacts import (  # noqa: E402
     MODE_APPEND, MODE_CREATE, MODE_REPLACE,
@@ -276,6 +280,21 @@ PROMPT = """你是这次长期生产任务的一名参与者。这是**正式生
 
         🔒 如果你对所处的环境有不清楚的地方（比如「我能做什么」
            「这个边界是谁在管」），**先去查它**。
+
+  · "private_write" / "private_read" / "private_list"
+        这三个操作的是**你自己的**文件空间
+        （`agents/<你的 id>/workspace/`，别人看不到也读不到）。
+
+        private_write  parameters: {{"path": "...", "content": "..."}}
+        private_read   parameters: {{"path": "..."}}
+        private_list   无参数 —— 列出你有哪些文件
+
+        约束（环境事实）：
+          - 只能碰**你自己**的目录；越界（`..` / 绝对路径）被拒绝；
+          - 它**不属于任何 Task** —— 没有锁、没有修订、没有审计，
+            是你自己的长期资产空间，**换任务也还在**；
+          - 🔒 设计上它是你放**个人记忆 / 经验 / 策略 / 工具**的地方
+            （以后的形态），当前至少可以当你的草稿与笔记空间。
 
 🔒 这些都只是**能力**。用不用、什么时候用、读哪个文件、
    给谁发什么类型的消息 —— **完全由你自己判断** ——
@@ -869,6 +888,25 @@ def _close_stage(rt: Any, log: Dict[str, Any]) -> None:
 _PUBLIC = PublicReference()
 
 
+def _ws_of(rt: Any) -> Any:
+    """
+    按 `agent_id` 取那个 Agent **自己的**私有空间。
+
+    🔒 这是私有侧与 Task 侧在注入方式上的**实质差异**：
+       Task Workspace 的执行器拿一个**固定**的 `gateway + workspace_id`；
+       私有侧必须**按 agent 路由** —— 因为每个 Agent 一份空间。
+
+    🔒 取不到就返回 None（执行器会给出结构化失败），
+       **不抛异常** —— 一个 Agent 查不到不该让整轮崩掉。
+    """
+    def _resolve(aid: str) -> Any:
+        try:
+            return rt.economy.agent(str(aid)).workspace
+        except Exception:                                     # noqa: BLE001
+            return None
+    return _resolve
+
+
 def _send_fn(bridge: Any) -> Any:
     """
     把**异步**的 `send_message_as` 适配成执行器要的**同步** `send_fn`。
@@ -950,7 +988,17 @@ def _action_seam(rt: Any, bridge: Any = None) -> tuple:
         #    因为没有需要 Agent 改的东西。只是一份可查的资料。
         #    入口是「系统地图」：告诉 Agent 这个环境里有什么、
         #    边界在哪、它能发起哪些动作。
-        PublicQueryExecutor(_PUBLIC.query)])
+        PublicQueryExecutor(_PUBLIC.query),
+        # 2026-10-09 加入私有空间三件套：Agent 读/写/列**自己的**文件。
+        # 🔒 它们与 Task Workspace 那三个是**两套** —— 私有侧没有
+        #    锁/修订/审计/参与者，安全边界只有"路径逃逸"。
+        # 🔒 **按 intent.agent_id 路由**（每个 Agent 一份空间），
+        #    所以注入的是 resolver 而不是固定的 workspace_id。
+        # 🔒 agent_id 只取自 intent（运行时填的），不可伪造 ——
+        #    否则 Agent 能读写别人的私有空间。
+        PrivateWriteExecutor(write_private, workspace_of=_ws_of(rt)),
+        PrivateReadExecutor(read_private, workspace_of=_ws_of(rt)),
+        PrivateListExecutor(list_private, workspace_of=_ws_of(rt))])
     try:
         experience_store = ExperienceStore(rt.economy.db)
     except Exception as exc:                              # noqa: BLE001
