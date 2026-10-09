@@ -429,10 +429,27 @@ def _ensure_environment(rt: Any) -> None:
     from stage import STATUS_ACTIVE, StageStore
 
     if rt.tasks.get(TASK_ID) is None:
+        # 🔴 这里曾经写死 `creator="human_demand"` 与**另一份**中文目标。
+        #
+        #    两处都违反了本项目自己的边界：
+        #
+        #    ① `creator="human_demand"` —— AGENTS.md §6 的
+        #       **`Human ≠ Task Creator`**（ADR-0024：Creator 始终是 Agent。
+        #       Human 提供的是 **Demand**，那是 `Origin`，不是 `Creator`）。
+        #       它平时被 `run_demand.py` 的包装盖住了，但源码里就在这 ——
+        #       任何直接调用 `_ensure_environment` 的路径都会中招。
+        #
+        #    ② `description` 是那句「约 10000 字科幻悬疑」的**第三份拷贝**
+        #       （另两份：`DEMAND` 常量、根 Stage 的 goal）。
+        #       三份文字各不相同 —— 典型的「一个事实多个来源」。
+        #       它变成真 bug 是在 runner 被当成通用入口之后：
+        #       Task 说科幻、Stage 说修仙，Agent 收到两个矛盾目标。
+        #
+        #    🔒 现在 `DEMAND` 是**唯一来源**：Task 描述、Stage goal
+        #       都从它派生。覆盖 `DEMAND` 就等于同时改了这两处。
         rt.tasks.save(Task.create(
-            creator="human_demand",
-            description=(f"创作一部约 10000 字的原创中文科幻悬疑小说。"
-                         f"主题：AI Agent 世界中的身份、记忆、资产与历史冲突。"),
+            creator=PRODUCER,          # ADR-0024：Creator 始终是 Agent
+            description=DEMAND,
             workspace_id=WS_ID, task_id=TASK_ID, participants=list(AGENTS)))
     else:
         t = rt.tasks.get(TASK_ID)
@@ -448,12 +465,31 @@ def _ensure_environment(rt: Any) -> None:
     st = StageStore(rt.economy.db)
     if not st.list_stages(TASK_ID):
         # §十七：**只**创建一个最小根 Stage，不预设后续阶段
+        # 🔴 Stage 的 **goal 从 DEMAND 派生**，不另写一份。
+        #
+        #    这里曾经写死一句**英文**的科幻目标 —— 而它其实是
+        #    `DEMAND`（中文）的复述，连「10,000 字」都对得上。
+        #    那是**同一个事实的两份定义**，违反本项目自己的
+        #    「一个事实只有一个权威来源」。
+        #
+        #    它变成真 bug 是在 `experiments/user_demand/run_demand.py`
+        #    把这个 runner 变成**通用入口**之后：那里覆盖了 Task 目标，
+        #    却没覆盖 Stage 目标 —— 于是 Agent 同时收到
+        #        Task : 写修仙第一章
+        #        Stage: 写 10,000 字科幻悬疑小说
+        #    两个互相矛盾的目标。`novel_reader` 自己在消息里指出了
+        #    这个冲突并裁决「以当前 Task 为目标」—— 它处理得比我好。
+        #
+        #    🔒 Stage 的**机制**是「把长任务切成有界时段 + Checkpoint」，
+        #       它不负责决定「写什么题材」。所以 goal 只能是**引用**，
+        #       不能是另一份定义。
         st.create_stage(
             TASK_ID,
-            "Produce a complete ~10,000-word original Chinese sci-fi "
-            "mystery novel about identity / memory / assets / history "
-            "conflicting in a world run by AI Agents.",
-            deliverables=[{"name": "complete manuscript"}],
+            DEMAND.strip(),
+            # ⚠️ deliverables 是自由文本推不出来的，所以这里给一个
+            #    **中性**名字。旧的 "complete manuscript" 是题材相关的
+            #    —— 对代码任务、对"只写第一章"都是错的限定。
+            deliverables=[{"name": "task deliverables"}],
             status=STATUS_ACTIVE, stage_id=ROOT_STAGE_ID)
 
     _ensure_completion_setup(rt)

@@ -46,11 +46,26 @@
     结果 JSON + 退出原因
 
 🔒 会花真实 API 的钱。墙钟有硬上限（`--minutes`，默认 6 分钟）。
+
+跑完看什么
+----------
+🔴 **本次运行的 stdout 会完整落到 `<输出目录>/run.log`**，
+   而且结束时额外打印一段「本次运行发生了什么」，专门暴露
+   **不产生报错、但也没做成事**的情况：
+
+       · 哪些 Agent **从没轮到**        （终端上只是少一行，看不出异常）
+       · 哪些 turn **没成功写入**        （`locked_by_other` / 没提交 artifact）
+       · Agent 之间**真实发了什么消息**   （终端上只有一个 ✉️ 箭头）
+
+   🔒 这三项的数据**本来就存在**（results JSON + `communication_messages`），
+      以前只是**没有出口**。不是新增记录，是把已有记录露出来。
 """
 
 from __future__ import annotations
 
 import argparse
+import json
+import sqlite3
 import sys
 import uuid
 from datetime import datetime
@@ -77,6 +92,201 @@ DEFAULT_AGENTS = ["novel_world_builder", "novel_plot_architect",
                   "novel_author", "novel_editor", "novel_reader"]
 
 
+# ======================================================================
+# A：把 stdout 同时写到控制台和 run.log
+# ======================================================================
+class _Tee:
+    """
+    一份输出，两个去处。
+
+    🔴 为什么需要：以前**控制台输出完全不落盘**。于是"我跑的时候看到
+       一行怪东西"这件事无法复核 —— 事后只能靠数据库反推，
+       而数据库里没有"用户看到了什么"。
+
+    🔒 只转发 `write` / `flush`；不做缓冲合并，保证崩溃时前面已经落盘。
+    """
+
+    def __init__(self, path: Path, stream):
+        self._f = open(path, "w", encoding="utf-8")
+        self._out = stream
+
+    def write(self, s: str) -> int:
+        try:
+            self._out.write(s)
+            self._out.flush()
+        except Exception:                                     # noqa: BLE001
+            pass                       # 控制台断了也不能影响落盘
+        self._f.write(s)
+        self._f.flush()
+        return len(s)
+
+    def flush(self) -> None:
+        try:
+            self._out.flush()
+        except Exception:                                     # noqa: BLE001
+            pass
+        self._f.flush()
+
+    def isatty(self) -> bool:
+        return False
+
+    def close(self) -> None:
+        try:
+            self._f.close()
+        except Exception:                                     # noqa: BLE001
+            pass
+
+
+# ======================================================================
+# B + C：本次运行到底发生了什么
+# ======================================================================
+def _payload_text(payload) -> str:
+    """从通信 payload 里取出人能读的消息正文。"""
+    if not payload:
+        return "(空 payload)"
+    try:
+        p = json.loads(payload)
+    except Exception:                                         # noqa: BLE001
+        return str(payload)[:400]
+    if isinstance(p, dict):
+        for key in ("text", "content", "body", "message"):
+            v = p.get(key)
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+        return json.dumps(p, ensure_ascii=False)[:400]
+    return str(p)[:400]
+
+
+def _report_messages(db_path: Path) -> None:
+    """B：Agent 之间**真实发了什么**。终端上以前只有一个 ✉️ 箭头。"""
+    print()
+    print("-" * 68)
+    print("  Agent 之间的消息（`communication_messages`，以前没有出口）")
+    print("-" * 68)
+    try:
+        con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        rows = con.execute(
+            "SELECT created_at, from_agent, to_agent, message_type, status, "
+            "payload FROM communication_messages ORDER BY created_at").fetchall()
+        con.close()
+    except Exception as exc:                                  # noqa: BLE001
+        print(f"  （读取失败：{exc}）")
+        return
+
+    if not rows:
+        print("  ⚠️ 一条消息都没有 —— Agent 之间**完全没有沟通**")
+        return
+
+    for at, frm, to, mtype, status, payload in rows:
+        print()
+        print(f"  [{str(at)[11:19]}] {frm} → {to}"
+              f"   ({mtype} / {status})")
+        for line in _payload_text(payload).splitlines():
+            print(f"      {line}")
+
+
+def _report_turns(results_dir: Path, agents) -> None:
+    """
+    C：哪些 Agent 从没轮到 · 哪些 turn 没成功写入。
+
+    🔒 这两类**都不报错**，所以从终端上完全看不出来。
+    """
+    print()
+    print("-" * 68)
+    print("  执行情况（results JSON，以前只打了「成功」的那些）")
+    print("-" * 68)
+
+    hits = sorted(results_dir.glob("*.json"))
+    if not hits:
+        print("  （没有结果 JSON —— 可能没跑到收尾）")
+        return
+    try:
+        log = json.loads(hits[0].read_text(encoding="utf-8"))
+    except Exception as exc:                                  # noqa: BLE001
+        print(f"  （读取 {hits[0].name} 失败：{exc}）")
+        return
+
+    turns = [t for s in log.get("sessions", []) for t in (s.get("turns") or [])]
+    print(f"  退出原因 : {log.get('exit_reason')}")
+    print(f"  轮次     : {len(turns)} 个 turn / {log.get('sessions_run')} 个 session")
+
+    # ---- 谁从没轮到 ----
+    seen = {t.get("agent_id") for t in turns}
+    missing = [a for a in agents if a not in seen]
+    if missing:
+        print()
+        print("  🔴 从没轮到的参与者（终端上只是少一行）:")
+        for a in missing:
+            print(f"       {a}")
+        print("       ⇒ 它没有产出、没有发言、也没有报错。")
+        print("         通常是因为墙钟/轮数在它之前用尽。")
+    else:
+        print("  ✅ 所有参与者都至少轮到过一次")
+
+    # ---- 没成功写入的 turn ----
+    silent = []
+    for t in turns:
+        w = t.get("write")
+        if w is None:
+            silent.append((t, "NO_WRITE", "这一轮没有提交任何 artifact"))
+        elif not w.get("ok"):
+            silent.append((t, str(w.get("code") or "WRITE_FAILED"),
+                           f"想写 {w.get('path')}（mode={w.get('mode')}）但被拒"))
+
+    if silent:
+        print()
+        print(f"  🔴 没有成功写入的 turn：{len(silent)}/{len(turns)}"
+              f"（每一轮都被记为 ok={True}，所以不看这里发现不了）")
+        for t, code, why in silent:
+            print(f"       r{t.get('round')} {t.get('agent_id'):22s} "
+                  f"{code:16s} {why}")
+    else:
+        print(f"  ✅ 每个 turn 都成功写入了（{len(turns)}/{len(turns)}）")
+
+
+def _report_calls(db_path: Path) -> None:
+    """模型调用汇总（原样保留，加上 finish_reason 分布）。"""
+    print()
+    print("-" * 68)
+    print("  模型调用")
+    print("-" * 68)
+    try:
+        con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        rows = con.execute(
+            "SELECT created_at, agent_id, finish_reason, total_tokens, "
+            "actual_max_tokens FROM llm_calls ORDER BY created_at").fetchall()
+        con.close()
+    except Exception as exc:                                  # noqa: BLE001
+        print(f"  （读取调用记录失败：{exc}）")
+        return
+
+    print(f"  共 {len(rows)} 次调用")
+    for r in rows:
+        flag = "  ⚠️ 撞到输出上限" if r[2] == "length" else ""
+        print(f"    {str(r[0])[11:19]}  {r[1]:22s} {str(r[2]):8s} "
+              f"{r[3]:>6} tok  max={r[4]}{flag}")
+    n_len = sum(1 for r in rows if r[2] == "length")
+    if n_len:
+        print()
+        print(f"  🔴 有 {n_len} 次 finish_reason=length（撞上输出 token 上限）。")
+        print("     这类响应会解析失败 → **整轮不写入**，而且不报错。")
+        print("     调大 --cognitive-budget 可以缓解。")
+
+
+def _report(db_path: Path, results_dir: Path, agents) -> None:
+    """把「本次运行发生了什么」一次说清 —— 重点是**没做成**的那些。"""
+    print()
+    print("=" * 68)
+    print("  本次运行发生了什么")
+    print("=" * 68)
+    _report_calls(db_path)
+    _report_turns(results_dir, agents)
+    _report_messages(db_path)
+    print()
+    print("=" * 68)
+
+
+# ======================================================================
 def _parse_args(argv=None) -> argparse.Namespace:
     ap = argparse.ArgumentParser(
         prog="run_demand.py",
@@ -189,73 +399,82 @@ def main(argv=None) -> int:
 
     P._run_session = _counting_run_session
 
-    # ---- Task 用**用户的 Demand** 作为 description ----
+    # ---- 🔒 这里**不再**包装 `_ensure_environment` ----
     #
-    # `_ensure_environment` 里的 description 是写死的（那部 10000 字小说）。
-    # 这里先把 Task 建好，它就会发现「已存在」而跳过创建 ——
-    # 于是用户 Demand 成为任务描述，而 Workspace / Stage / DoD 仍然由
-    # **原函数**照常建立（我们只是包一层，不改它的任何逻辑）。
-    _orig_ensure = P._ensure_environment
+    # 以前这里要"抢建"一个 Task，好把 `_ensure_environment` 里
+    # **写死的那份** description（那部 10000 字科幻小说）顶掉。
+    #
+    # 现在不需要了 —— `production.py` 已经改成：
+    #
+    #     Task.description ← DEMAND        （唯一来源）
+    #     Stage.goal       ← DEMAND        （唯一来源）
+    #     Task.creator     ← PRODUCER      （ADR-0024：Creator 始终是 Agent）
+    #
+    # 于是覆盖 `P.DEMAND` 就等于同时改了两处，**一条创建路径**。
+    #
+    # 🔒 这本身修掉了一个真 bug：以前 Task 说"修仙第一章"、
+    #    Stage 说"10000 字科幻悬疑小说"，Agent 收到两个矛盾目标。
+    #    你那次运行里 `novel_reader` **自己在消息里指出了这个冲突**
+    #    并裁决「以当前 Task 为目标」—— 它处理得比我好。
 
-    def _ensure_environment(rt):
-        from core.task import Task
-
-        if rt.tasks.get(P.TASK_ID) is None:
-            rt.tasks.save(Task.create(
-                creator=P.PRODUCER,              # ADR-0024：Creator 始终是 Agent
-                description=P.DEMAND,
-                workspace_id=P.WS_ID,
-                task_id=P.TASK_ID,
-                participants=list(P.AGENTS),
-                note=f"user_demand:{run_id}",
-            ))
-        _orig_ensure(rt)
-
-    P._ensure_environment = _ensure_environment
-
-    print("=" * 68)
-    print("  用户 Demand → 多 Agent 协作生产")
-    print("=" * 68)
-    print(f"  Demand  : {demand[:100]}{'…' if len(demand) > 100 else ''}")
-    print(f"  参与者  : {', '.join(agents)}")
-    print(f"  墙钟上限: {P.TOTAL_WALL_LIMIT / 60:.1f} 分钟 "
-          f"（单 Session {P.SESSION_LIMIT / 60:.1f} 分钟，最多 "
-          f"{P.MAX_ROUNDS_PER_SESSION} 轮/Session）")
-    print(f"  Session : 最多 {target_sessions} 个（精确生效）")
-    print(f"  预算    : {P.BUDGET_AIC} AIC")
-    print(f"  认知预算: {P.COGNITIVE_BUDGET} tokens/次（输出上限，"
-          f"reasoning 与正文共享）")
-    print(f"  输出    : {outdir}")
-    print(f"  数据库  : {db_path}")
-    print("=" * 68)
-    print()
-
-    rc = P.main()
-
-    print()
-    print("=" * 68)
-    print("  产物位置")
-    print("=" * 68)
-    print(f"  结果 JSON : {results_dir / 'heterogeneous_production_result.json'}")
-    print(f"  数据库    : {db_path}")
-    print(f"  Demand    : {outdir / 'demand.txt'}")
-    (outdir / "demand.txt").write_text(demand, encoding="utf-8")
-
-    # 让用户能直接看到「Agent 到底写了什么」
+    # ---- A：从这里开始，stdout 同时落盘 ----
+    log_path = outdir / "run.log"
+    tee = _Tee(log_path, sys.stdout)
+    original_stdout = sys.stdout
+    sys.stdout = tee
+    rc = 0
     try:
-        import sqlite3
-        con = sqlite3.connect(str(db_path))
-        rows = con.execute(
-            "SELECT created_at, agent_id, finish_reason, total_tokens "
-            "FROM llm_calls ORDER BY created_at").fetchall()
-        con.close()
-        print(f"  模型调用  : {len(rows)} 次")
-        for r in rows[:10]:
-            print(f"    {r[0][11:19]}  {r[1]:22s} {r[2]:8s} {r[3]} tok")
-        if len(rows) > 10:
-            print(f"    …（共 {len(rows)} 次）")
-    except Exception as exc:                                  # noqa: BLE001
-        print(f"  （读取调用记录失败：{exc}）")
+        print("=" * 68)
+        print("  用户 Demand → 多 Agent 协作生产")
+        print("=" * 68)
+        print(f"  Demand  : {demand[:100]}{'…' if len(demand) > 100 else ''}")
+        print(f"  参与者  : {', '.join(agents)}")
+        print(f"  墙钟上限: {P.TOTAL_WALL_LIMIT / 60:.1f} 分钟 "
+              f"（单 Session {P.SESSION_LIMIT / 60:.1f} 分钟，最多 "
+              f"{P.MAX_ROUNDS_PER_SESSION} 轮/Session）")
+        print(f"  Session : 最多 {target_sessions} 个（精确生效）")
+        print(f"  预算    : {P.BUDGET_AIC} AIC")
+        print(f"  认知预算: {P.COGNITIVE_BUDGET} tokens/次（输出上限，"
+              f"reasoning 与正文共享）")
+        print(f"  输出    : {outdir}")
+        print(f"  数据库  : {db_path}")
+        print(f"  本次日志: {log_path}")
+        print("=" * 68)
+        print()
+
+        # Demand 先落盘 —— 即使后面崩了，也知道当时要的是什么。
+        (outdir / "demand.txt").write_text(demand, encoding="utf-8")
+
+        rc = P.main()
+    finally:
+        # ---- B + C：把"没做成的事"露出来 ----
+        #
+        # 🔴 放在 `finally` 里：**崩掉的时候正是最需要看这个的时候**。
+        #    只放在成功路径上的话，最需要证据的那一次恰好没有报告。
+        try:
+            _report(db_path, results_dir, agents)
+        except Exception as exc:                              # noqa: BLE001
+            print(f"  （生成运行报告失败：{exc}）")
+
+        print()
+        print("=" * 68)
+        print("  产物位置")
+        print("=" * 68)
+        print(f"  结果 JSON : {results_dir / 'heterogeneous_production_result.json'}")
+        print(f"  数据库    : {db_path}")
+        print(f"  Demand    : {outdir / 'demand.txt'}")
+        print(f"  完整日志  : {log_path}")
+        print()
+        print("  看产物全文：")
+        print(f"    ./.venv/bin/python experiments/user_demand/view_result.py "
+              f"--path {outdir}")
+        print("=" * 68)
+
+        sys.stdout = original_stdout
+        tee.close()
+        # 控制台也提一句，免得用户不知道日志在哪。
+        # （这一句故意**不进** run.log —— 此时 stdout 已还原。）
+        print(f"\n  （本次运行的完整输出已保存到 {log_path}）")
 
     return rc
 
