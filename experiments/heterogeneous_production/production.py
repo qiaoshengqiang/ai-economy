@@ -1410,7 +1410,8 @@ def _latest_critical_id(rt: Any, agent_id: str) -> Optional[str]:
 def _turn(rt: Any, bridge: Any, st: Any, stage: Any, aid: str, rnd: int,
           stage_txt: str, log: Dict[str, Any],
           stats: Dict[str, Any], *, dispatcher: Any = None,
-          experience_store: Any = None) -> Dict[str, Any]:
+          experience_store: Any = None,
+          demand: Any = None) -> Dict[str, Any]:
     import channels
 
     comm, gw = rt.communication, rt.workspace_gateway
@@ -1425,7 +1426,10 @@ def _turn(rt: Any, bridge: Any, st: Any, stage: Any, aid: str, rnd: int,
                                    "round": rnd})
 
     prompt = PROMPT.format(
-        demand=DEMAND, stage=stage_txt, ws=WS_ID,
+        # 🔴 `demand` 可覆盖：**「人类命令」只递给被指定的那个 Agent**。
+        #    默认仍是模块级的 `DEMAND`（老实验行为完全不变）。
+        demand=DEMAND if demand is None else demand,
+        stage=stage_txt, ws=WS_ID,
         completion=_completion_facts(rt),
         workspace=_workspace_facts(gw, aid),
         roster=_roster_facts(rt, aid),
