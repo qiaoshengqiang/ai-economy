@@ -346,7 +346,26 @@ class TestResolvesCorrectly:
 
             # ④ 生成参数
             assert float(a.temperature) == float(before["temperature"]), agent_id
-            assert int(a.max_tokens) == int(before["max_tokens"]), agent_id
+
+            # 🔴 **有意偏离**（`config_deliberate_deviations.json`）
+            #
+            #    基线是「迁移前快照」，作用是证明配置重构**没有偷偷改变行为**。
+            #    而 `agent_a..e` 的 `max_tokens` 是**有意的**变更（实测：
+            #    推理模型把 2048 全用在 reasoning 上 ⇒ content 为空）。
+            #
+            #    🔒 所以**不改快照** —— 改快照它就再也不是「迁移前」了。
+            #       这里显式登记，并**要求给出理由**。
+            _dev_path = (Path(__file__).resolve().parent
+                     / "config_deliberate_deviations.json")
+            _dev = (json.loads(_dev_path.read_text(encoding="utf-8"))
+                if _dev_path.exists() else {})
+            _dev_mt = _dev.get("max_tokens") or {}
+            assert not _dev_mt or _dev.get("_reasons", {}).get("max_tokens"), (
+            "有意偏离必须带理由（_reasons）")
+
+            _want_mt = int(_dev_mt.get(a.agent_id,
+                                      before["max_tokens"]))
+            assert int(a.max_tokens) == _want_mt, a.agent_id
 
             # ⑤ 凭据：指向**同一个环境变量**
             expected_env = (before["credential_env"]

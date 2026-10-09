@@ -119,3 +119,52 @@ def test_report_refuses_to_conclude_without_a_turn(code):
     """
     assert "没有获得观察" in _src(), "报告缺少「没获得观察」的分支"
     assert "AGENTS_FIRST" in code
+
+
+# ================================================================
+# 🔴 「模型没返回内容」必须被响亮地说出来（2026-10-10 真实踩到）
+# ================================================================
+def test_report_distinguishes_empty_content_from_a_choice():
+    """
+    实测（03:08）：`agent_a` 的 turn 是
+
+        finish_reason=length · output_status=EMPTY_CONTENT ·
+        cognitive_status=TRUNCATED · chars=0
+
+    而报告却说「agent_a 跑过，但**没有把工作分给任何人**」——
+    **它什么都没产出，凭什么说它"选择不分工"？**
+
+    🔒 「Agent 跑过且选择不做」与「Agent 跑过但模型没返回」
+       长得一模一样，**必须分开**。否则报告在替 Agent 编故事。
+    """
+    src = SRC_PATH.read_text(encoding="utf-8")
+    assert "EMPTY_CONTENT" in src, "报告没有识别 EMPTY_CONTENT"
+    assert "TRUNCATED" in src, "报告没有识别 TRUNCATED"
+    assert "模型没返回内容" in src, "没有把两者区分开的文字"
+    assert "不能**用来回答" in src or "不能" in src
+
+
+def test_it_prints_model_and_budget_up_front():
+    """
+    🔴 早暴露：`agent_a` 的 `max_tokens` 是 **2048**，
+       而 `deepseek-flash` 是**推理模型** —— 推理把 2048 吃满，
+       `content` 一个字都不剩。这个数字早打印出来就不会查半天。
+    """
+    src = SRC_PATH.read_text(encoding="utf-8")
+    assert "max_tokens" in src, "环境说明里没有打印 max_tokens"
+
+
+def test_neutral_agents_have_a_workable_output_budget():
+    """
+    🔒 `agent_a..e` 曾经是 `max_tokens: 2048`（老配置遗留）。
+       对**推理模型**（deepseek-flash）和写长文都远远不够 ⇒
+       `finish_reason=length` + content 为空。
+    """
+    import yaml
+
+    cfg = yaml.safe_load(
+        (ROOT / "config" / "config.yaml").read_text(encoding="utf-8"))
+    for a in ("agent_a", "agent_b", "agent_c", "agent_d", "agent_e"):
+        mt = ((cfg["agents"][a].get("brain") or {}).get("max_tokens"))
+        assert mt is not None and int(mt) >= 8192, (
+            f"{a} 的 max_tokens={mt} 太小 —— 推理模型会把 content 挤空")

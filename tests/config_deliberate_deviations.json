@@ -1,0 +1,20 @@
+{
+  "_why": [
+    "`config_migration_baseline.json` 是**迁移前快照**，它的作用是证明",
+    "「配置重构没有偷偷改变行为」。",
+    "",
+    "这里登记的是**有意的、可追溯的**变更 —— 不是意外，也不改快照。",
+    "（改快照会削弱它的意义：快照就不再是「迁移前」了。）",
+    "任何一项都必须带理由。"
+  ],
+  "max_tokens": {
+    "agent_a": 16384,
+    "agent_b": 16384,
+    "agent_c": 16384,
+    "agent_d": 16384,
+    "agent_e": 16384
+  },
+  "_reasons": {
+    "max_tokens": "2026-10-10。agent_a..e 原为 2048（老配置遗留）。实测：agent_a 用 deepseek-flash —— **推理模型**，它把 2048 全用在 reasoning 上，撞到输出上限，content 一个字都不剩（output_status=EMPTY_CONTENT · cognitive_status=TRUNCATED · finish_reason=length · chars=0）。观察实验因此什么都没产出，而报告还误说成「Agent 选择不分工」。写到 16384，与 novel_* 一致。"
+  }
+}

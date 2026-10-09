@@ -171,6 +171,15 @@ def _setup(rt: Any) -> None:
     print(f"    Creator    : {first}   ← 它也是 **root Controller**")
     print(f"    Participants: {', '.join(AGENTS)}")
     print(f"    🔴 未预设命名空间 · 未建 DoD · 未指派验收责任 · 未发 START")
+    # 🔴 把「模型 + 输出预算」早打印出来 ——
+    #    推理模型 + 小 max_tokens 会让 content 为空（实测踩过）。
+    for a in AGENTS:
+        try:
+            cfg = rt.economy.agent(a).config
+            print(f"      {a:10s} model={getattr(cfg, 'provider', '?'):10s} "
+                  f"max_tokens={getattr(cfg, 'max_tokens', None)}")
+        except Exception:                                      # noqa: BLE001
+            pass
 
 
 # ================================================================
@@ -462,11 +471,41 @@ def _report(log: Dict[str, Any]) -> None:
               f"**测试用**信誉/历史（不是真实数据）")
 
     # ---- 0. 🔴 先看**这次有没有获得观察** ----
-    #     没有第一个 Agent 的 turn ⇒ 后面的结论一句都不成立。
+    #
+    #   【必须区分两件长得一样的事】
+    #
+    #       「Agent 跑过，**选择**不做动作」      ← 这是观察结果
+    #       「Agent 跑过，但**模型没返回内容**」  ← 这**不是**观察结果
+    #
+    #   实测（03:08）：`agent_a` 的 turn 是
+    #       finish_reason=length · output_status=EMPTY_CONTENT ·
+    #       cognitive_status=TRUNCATED · chars=0
+    #   而报告却说「agent_a 跑过，但**没有把工作分给任何人**」——
+    #   **它什么都没产出，凭什么说它"选择不分工"？**
+    #
+    #   🔒 这正是本项目反复警告的那一类：**报告在替 Agent 编故事**。
+    broken = [t for t in turns
+              if t.get("output_status") == "EMPTY_CONTENT"
+              or t.get("cognitive_status") == "TRUNCATED"]
     acted = []
     for t in turns:
         if t.get("agent_id") not in acted:
             acted.append(t.get("agent_id"))
+
+    if broken:
+        print(f"\n  🔴 **有 {len(broken)} 个 turn 是「模型没返回内容」**"
+              f"（不是 Agent 选择不做）：")
+        for t in broken:
+            print(f"       r{t.get('round')} {t.get('agent_id'):10s} "
+                  f"finish_reason={t.get('finish_reason')} "
+                  f"output={t.get('output_status')} "
+                  f"cognitive={t.get('cognitive_status')} "
+                  f"tokens={t.get('tokens')}")
+        print("     ⇒ 那不是它的决定 —— **它根本没获得机会**。")
+        print("     ⇒ 本次数据**不能**用来回答「它有没有分工」。")
+        print("     ⚠️ 常见成因：推理模型把输出上限全用在 reasoning 上"
+              "（`finish_reason=length` + content 为空）。")
+
     if AGENTS_FIRST(log) not in acted:
         print(f"\n  🔴 **没有获得观察**（`stop_reason={log.get('stop_reason')}`）")
         print(f"     第一个 Agent（{AGENTS_FIRST(log)}）**一次都没跑过** ——")
@@ -478,6 +517,13 @@ def _report(log: Dict[str, Any]) -> None:
     for a in log["agents"]:
         mark = "✅" if a in acted else "⬜ 从没轮到（**没人叫它**）"
         print(f"       {a:22s} {mark}")
+    first_turn_broken = any(t.get("agent_id") == AGENTS_FIRST(log)
+                            for t in broken)
+    if first_turn_broken:
+        print(f"\n  ⚠️ 第一个 Agent（{AGENTS_FIRST(log)}）那一轮**没有产出**，"
+              f"所以下面「谁没轮到」只能读作**事实**，")
+        print(f"     不能读作「它选择不找人」。")
+
     never = [a for a in log["agents"] if a not in acted]
     if never:
         print(f"     🔴 从没被唤醒的：{', '.join(never)}")
