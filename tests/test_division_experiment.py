@@ -330,3 +330,53 @@ def test_other_agents_are_told_they_got_no_direct_order():
     assert "没有" in NO_DIRECT_ORDER
     for nudge in ("你该", "你应该", "去找", "建议"):
         assert nudge not in NO_DIRECT_ORDER
+
+
+# ================================================================
+# 🔴 分发给 Agent 的 prompt 里**不许有规范性句子**（2026-10-10）
+# ================================================================
+def test_the_prompt_only_states_facts_not_instructions():
+    """
+    【用户的指正】
+
+        「是你在测试的时候**分发不该有的提示词**。」
+
+    🔴 实测分发出去的 prompt 里有 3 句是**指导行为**，不是环境事实：
+        · 「写不完的长文**用 append，不要用 replace**」   ← 建议
+        · 「**不要**整篇复制进 message —— 正文属于 Workspace」← 规则 + 策略
+        · 「**先去查它**」                                  ← 引导
+
+    为什么不该有：
+        §0.5 —— **不要设计行为本身**。环境只陈述「它有什么、机制怎么走」；
+        「用不用、怎么用」是 Agent 的判断。
+        而且这三句**都可以被事实替代**：
+        · 三个 write_mode 的语义上面已经作为**事实**列过了
+        · 「公共资料区里有一份 SYSTEM_MAP.md」是事实；去不去查不必我说
+
+    🔒 保留的「必须是」是**被强制执行的约束**（执行器会拒），那是**事实**，
+       不是建议 —— 所以下面的词表**不含**「必须」。
+    """
+    import re
+
+    from experiments.agent_division.prompt import PROMPT as D
+    from experiments.heterogeneous_production import production as P
+
+    forbidden = ("不要", "⚠️", "建议", "先去", "别 ")
+    for name, text in (("观察实验", D), ("production", P.PROMPT)):
+        for line in text.split("\n"):
+            s = line.strip()
+            if not s:
+                continue
+            for w in forbidden:
+                assert w not in s, (
+                    f"{name} 的 prompt 里分发了规范性句子（{w}）：{s}")
+
+
+def test_the_prompt_does_not_prescribe_a_write_mode():
+    """🔒 三个 mode 的**语义**是事实，该说；**推荐哪个**是行为设计，不该说。"""
+    from experiments.agent_division.prompt import PROMPT as D
+    from experiments.heterogeneous_production import production as P
+
+    for text in (D, P.PROMPT):
+        assert '"append"  = 末尾追加' in text, "mode 的语义（事实）不能删"
+        assert "不要用 \"replace\"" not in text
