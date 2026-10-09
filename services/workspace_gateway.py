@@ -48,6 +48,7 @@ Workspace Gateway —— Agent 访问 Task Workspace 的**唯一受控入口**�
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
 from core.workspace_core import (
@@ -100,6 +101,53 @@ def _deny_all(workspace_id: str, agent_id: str) -> bool:  # pragma: no cover
     return False
 
 
+@dataclass(frozen=True)
+class WorkspaceLimits:
+    """
+    资源层的**结构上限**。由组合根从 `config.yaml` 的 `workspace:` 段注入。
+
+    🔒 为什么由 **Gateway** 强制，而不是 `services/artifacts.py`：
+
+        「路径有多深」「一个目录能挂几个孩子」是关于**资源树结构**的事实。
+        资源树的权威是 `WorkspaceGateway`（它拥有 `WorkspaceStore` 与锁）。
+        `services/artifacts.py` 只是便捷包装 —— 以前那条「最多 8 层」
+        写在它里面，是**分层失误**：
+
+            结构规则 与 便捷包装 混在一起 ⇒ 换个调用方就绕过了上限。
+
+    🔒 上限**宽到不影响正常分工** —— 它防的是意外爆炸，不是限制协作。
+    """
+
+    #: 逻辑路径最多几层（`a/b/c.md` = 3 层；只算非空、非 `.` 的段）。
+    max_path_depth: int = 8
+    #: 一个目录最多几个**直接**子项（文件 + 子目录）。
+    max_children_per_directory: int = 50
+
+    @classmethod
+    def from_mapping(cls, raw: Any) -> "WorkspaceLimits":
+        """
+        从配置的 `workspace:` 段构造。
+
+        🔒 配置缺失 / 值不合法时**回落到这里声明的默认值** ——
+           而不是回落到另一处写死的数字（那会变成两个来源）。
+
+        ⚠️ 非正整数一律忽略（`0` / 负数 / 字符串都不接受）——
+           上限为 0 会**静默禁掉一切创建**，那比不设上限更危险。
+        """
+        def _positive(key: str, default: int) -> int:
+            try:
+                got = int((raw or {}).get(key, default))
+            except (TypeError, ValueError):
+                return default
+            return got if got > 0 else default
+
+        return cls(
+            max_path_depth=_positive("max_path_depth", 8),
+            max_children_per_directory=_positive(
+                "max_children_per_directory", 50),
+        )
+
+
 class WorkspaceGateway:
     """Workspace Core 的门面（唯一受控入口）。"""
 
@@ -110,6 +158,7 @@ class WorkspaceGateway:
         store: Optional[WorkspaceStore] = None,
         lock_registry: Optional[ResourceLockRegistry] = None,
         is_participant: Optional[ParticipantCheck] = None,
+        limits: Optional["WorkspaceLimits"] = None,
         agent_exists: AgentExistsCheck,
     ) -> None:
         """
@@ -153,6 +202,8 @@ class WorkspaceGateway:
         self.db = db
         self.store = store or WorkspaceStore(db)
         self.locks = lock_registry or ResourceLockRegistry()
+        # 🔒 结构上限：由组合根从配置注入；不传就用 WorkspaceLimits 的默认。
+        self.limits = limits or WorkspaceLimits()
         # 默认拒绝 —— 忘记注入时**不会**意外放开访问
         self._is_participant: ParticipantCheck = is_participant or _deny_all
         # 🔒 必需依赖，构造期已校验
@@ -517,6 +568,24 @@ class WorkspaceGateway:
                 message=str(exc),
             )
 
+        # 🔴 结构上限①：路径深度。
+        #
+        #    以前这条写在 `services/artifacts.py` 的
+        #    `validate_artifact_path()` 里（写死 8）—— 分层失误：
+        #    结构权威是资源树，不是便捷包装层。
+        #    现在由 Gateway 从配置强制，**artifact 层那段已删掉**。
+        #
+        #    ⚠️ 段数算法与旧实现一致（只算非空、非 `.` 的段），
+        #       所以既有路径的判定结果**不变**。
+        _seg = [s for s in child_path.split("/") if s not in ("", ".")]
+        if len(_seg) > self.limits.max_path_depth:
+            return OperationResult.fail(
+                operation_id=op_id,
+                code=ErrorCode.INVALID_ARGUMENT,
+                message=(f"路径层级过深（{len(_seg)} > "
+                         f"{self.limits.max_path_depth}）：{child_path}"),
+            )
+
         # 🔒 目录结构操作共用**父目录的命名空间锁**
         #
         # ⚠️ 锁的 key 用**加锁前**解析出的 resource_id —— 那是安全的，
@@ -565,6 +634,27 @@ class WorkspaceGateway:
                                 "parent_effective_lock": holder,
                                 "actor": agent_id},
                         lock_holder=holder,
+                    )
+
+                # 🔴 结构上限②：一个目录的**直接**子项数。
+                #
+                #    🔒 必须在**事务内、锁检查之后**数 —— 锁只保证
+                #       「不会同时进入」，「进入后看到最新状态」靠事务内重读
+                #       （本项目在 create 里踩过「序列化 ≠ 一致性」的坑）。
+                _n_kids = len(tree.children_of(parent.resource_id))
+                if _n_kids >= self.limits.max_children_per_directory:
+                    return self._fail(
+                        op_id, ErrorCode.RESOURCE_BOUNDARY_VIOLATION,
+                        (f"父目录子项数已达上限（{_n_kids} >= "
+                         f"{self.limits.max_children_per_directory}）："
+                         f"{parent.path}"),
+                        audit=(self._attempt(AuditAction.CREATE), agent_id,
+                               parent.resource_id),
+                        workspace_id=workspace_id,
+                        detail={"parent": parent.path,
+                                "children": _n_kids,
+                                "limit":
+                                    self.limits.max_children_per_directory},
                     )
 
                 if self.store.find_by_path(workspace_id, child_path) is not None:

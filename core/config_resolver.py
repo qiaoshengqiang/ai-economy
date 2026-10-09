@@ -278,6 +278,8 @@ class ResolvedRuntimeConfig:
     economy: Mapping[str, Any]
     task: Mapping[str, Any]
     system: Mapping[str, Any]
+    #: 资源层结构上限（`workspace.*`）。🔒 Runtime 的**唯一**来源。
+    workspace: Mapping[str, Any]
     cost: Mapping[str, Any]
     providers: Mapping[str, ResolvedProvider]
     models: Mapping[str, ResolvedModel]
@@ -331,7 +333,8 @@ class ResolvedRuntimeConfig:
                 "default_provider": self.default_provider,
             },
             "economy": dict(self.economy), "task": dict(self.task),
-            "system": dict(self.system), "cost": dict(self.cost),
+            "system": dict(self.system),
+            "workspace": dict(self.workspace), "cost": dict(self.cost),
             "providers": {k: v.to_dict() for k, v in self.providers.items()},
             "models": {k: v.to_dict() for k, v in self.models.items()},
             "credentials": {k: v.to_dict()
@@ -346,7 +349,7 @@ class ResolvedRuntimeConfig:
 # ============================================================
 #: canonical 的**映射段**（也是 GUI 的展示顺序）。
 CANONICAL_SECTIONS: Tuple[str, ...] = (
-    "runtime", "economy", "task", "system",
+    "runtime", "economy", "task", "system", "workspace",
     "providers", "models", "credentials", "cost", "agents",
 )
 
@@ -859,6 +862,7 @@ class ConfigResolver:
             economy=dict(self.canonical.get("economy") or {}),
             task=dict(self.canonical.get("task") or {}),
             system=dict(self.canonical.get("system") or {}),
+            workspace=dict(self.canonical.get("workspace") or {}),
             cost=dict(self.canonical.get("cost") or {}),
             providers=providers, models=models,
             credentials=credentials, agents=agents, sources=sources,

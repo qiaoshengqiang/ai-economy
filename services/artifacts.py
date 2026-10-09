@@ -104,8 +104,13 @@ def validate_artifact_path(path: Any) -> Optional[str]:
         return "path 规范化后为空"
     if any(s == ".." for s in segments):
         return "path 不允许 '..'（Workspace 是封闭命名空间）"
-    if len(segments) > 8:
-        return "path 层级过深（>8）"
+    # 🔒 **深度上限不在这里。** 它是**资源树的结构规则**，
+    #    权威是 `WorkspaceGateway`（从 `config.yaml` 的
+    #    `workspace.max_path_depth` 取），在 `create` 时强制。
+    #
+    #    ⚠️ 这里曾经写死 `if len(segments) > 8` —— 分层失误：
+    #       结构规则藏在便捷包装层里，换个调用方就绕过了上限。
+    #       现在只有一个定义处（配置）。
     return None
 
 
@@ -402,6 +407,7 @@ def _map_code(gateway_code: str) -> str:
         "INVALID_ARGUMENT": "bad_path",
         "OUTSIDE_WORKSPACE": "bad_path",
         "INVALID_PARENT": "bad_path",
+        "RESOURCE_BOUNDARY_VIOLATION": "limit_exceeded",
         "UNKNOWN_AGENT": "unknown_agent",
     }
     return table.get(gateway_code, "unknown" if gateway_code else "unknown")

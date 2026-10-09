@@ -80,7 +80,9 @@ from change.worktree import WorkspaceSnapshot                    # noqa: E402
 from change.worktree_store import WorktreeStore                  # noqa: E402
 from change.materializer import WorktreeMaterializer             # noqa: E402
 from services.workspace_concurrency import ResourceLockRegistry  # noqa: E402
-from services.workspace_gateway import WorkspaceGateway         # noqa: E402
+from services.workspace_gateway import (  # noqa: E402
+    WorkspaceGateway, WorkspaceLimits,
+)
 from services import (
     TaskExecutionService,  # noqa: E402
     TaskAlignmentService,  # noqa: E402
@@ -541,6 +543,7 @@ def build_workspace_services(
     agent_exists,
     is_participant=None,
     lock_registry: Optional[ResourceLockRegistry] = None,
+    limits=None,
 ) -> tuple:
     """
     组装 Workspace Core 的三件套。
@@ -579,6 +582,7 @@ def build_workspace_services(
         lock_registry=registry,
         is_participant=is_participant,
         agent_exists=agent_exists,
+        limits=limits,
     )
     return store, registry, gateway
 
@@ -1056,6 +1060,8 @@ def build_runtime(
         is_participant=build_participant_checker(tasks),
         agent_exists=build_agent_exists_checker(economy),
         lock_registry=workspace_locks,
+        # 🔒 结构上限的唯一来源：config.yaml 的 `workspace:` 段。
+        limits=WorkspaceLimits.from_mapping(resolved.workspace),
     )
 
     # ---- Change Pipeline（第二阶段 · Phase 1）----
