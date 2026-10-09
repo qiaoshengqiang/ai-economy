@@ -503,6 +503,46 @@ def _agent_context_query(base: Mapping[str, Any],
     return out
 
 
+
+def build_task_people_checker(task_store: Any) -> Any:
+    """
+    造一个 `is_task_person(task_id, agent_id) -> bool` 回调。
+
+        「谁可以在这条 Task 上行动」= participants ∪ {creator, contractor}
+
+    【为什么需要它（真实测试抓到的洞）】
+
+        `assign_acceptance` 第一版**不检查接收方是否存在** ——
+        于是
+
+            assign_acceptance(to="not_a_real_agent")
+
+        **成功了**。后果不是报错，而是**静默停住**：
+        `acceptors_of()` 返回一个幽灵，谁都 VERIFY 不了。
+
+        🔒 这与 `WorkspaceGateway.handoff` 已经堵过的是**同一类**洞
+           （「接收方必须是真实存在且属于这个 Workspace 的 Agent」）。
+
+    🔒 **fail-closed**：查不到 Task ⇒ False。
+       与 Gateway 的 `agent_exists` 同一原则 ——
+       「读不到就放行」在这条链上是最不该出现的行为。
+    """
+    def _is_task_person(task_id: str, agent_id: str) -> bool:
+        try:
+            task = task_store.get(str(task_id))
+        except Exception:                                     # noqa: BLE001
+            return False
+        if task is None:
+            return False
+        who = str(agent_id or "").strip()
+        if not who:
+            return False
+        people = {str(p) for p in (getattr(task, "participants", None) or [])}
+        people |= {str(x) for x in (getattr(task, "creator", None),
+                                    getattr(task, "contractor", None)) if x}
+        return who in people
+    return _is_task_person
+
 def build_participant_checker(task_store: TaskStore):
     """
     造一个 `is_participant(workspace_id, agent_id) -> bool` 回调。

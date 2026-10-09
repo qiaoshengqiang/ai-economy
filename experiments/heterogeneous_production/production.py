@@ -56,6 +56,7 @@ from actions import (  # noqa: E402
     ACTION_WORKSPACE_WRITE, ActionDispatcher,
     MessageSendExecutor, PrivateDeleteExecutor, PrivateListExecutor,
     PrivateReadExecutor, PrivateWriteExecutor, PublicQueryExecutor,
+    AssignAcceptanceExecutor,
     ResourceCreateExecutor, ResourceHandoffExecutor,
     ResourceReleaseExecutor,
     WorkspaceReadExecutor, WorkspaceWriteExecutor,
@@ -65,6 +66,7 @@ from services.private_workspace import (  # noqa: E402
     delete_private, list_private, read_private, write_private,
 )
 from services.public_reference import PublicReference  # noqa: E402
+from services.assignment_ops import assign_acceptance  # noqa: E402
 from services.resource_control import (  # noqa: E402
     create_directory, handoff_resource, release_resource,
 )
@@ -905,6 +907,34 @@ def _close_stage(rt: Any, log: Dict[str, Any]) -> None:
 _PUBLIC = PublicReference()
 
 
+def _TASK_PEOPLE(rt: Any) -> Any:
+    """本实验的 `is_task_person(task_id, agent_id)`（缓存一次）。"""
+    from main import build_task_people_checker
+    checker = getattr(rt, "_task_people_checker", None)
+    if checker is None:
+        checker = build_task_people_checker(rt.tasks)
+        try:
+            rt._task_people_checker = checker
+        except Exception:                                     # noqa: BLE001
+            pass
+    return checker
+
+
+def _bind_align(rt: Any, fn: Any) -> Any:
+    """
+    把 `fn(alignment, task_id, *, by, to, reason)` 绑定成本实验的形状。
+
+    🔒 `alignment` 与 `task_id` 在这里绑定掉 —— Agent 只说要给谁。
+       Agent 既看不到 alignment 服务，也无法指定**别的** task。
+    """
+    def _bound(*, by: str, to: Any, reason: str = "") -> Any:
+        return fn(rt.alignment, TASK_ID, by=by, to=to, reason=reason,
+                  # 🔒 生产组合根提供的「谁可以在这条 Task 上行动」
+                  #    —— fail-closed，查不到就是 False。
+                  is_participant=_TASK_PEOPLE(rt))
+    return _bound
+
+
 def _bind_gw(rt: Any, fn: Any) -> Any:
     """
     把一个 `fn(gateway, workspace_id, agent_id, ...)` 绑定成本实验的形状。
@@ -1038,7 +1068,14 @@ def _action_seam(rt: Any, bridge: Any = None) -> tuple:
         #    所以 Agent 无法替别人交接责任。
         ResourceCreateExecutor(_bind_gw(rt, create_directory)),
         ResourceHandoffExecutor(_bind_gw(rt, handoff_resource)),
-        ResourceReleaseExecutor(_bind_gw(rt, release_resource))])
+        ResourceReleaseExecutor(_bind_gw(rt, release_resource)),
+        # 2026-10-09 加入 assign_acceptance：**Agent 自己**指派验收责任。
+        # 🔴 依据：`task_execution_service` 自己写着「谁负责验收由 Agent
+        #    自己通过现有的 ASSIGN 能力决定」—— 但 ASSIGN **没有消息通道**，
+        #    所以以前只能由 runner 代做 ⇒「Agent 自主完成任务」断在这里
+        #    （能发 SUBMIT，却没人能被授权 VERIFY）。
+        # 🔒 alignment 与 task_id 在组合根**绑定**掉，Agent 只说要给谁。
+        AssignAcceptanceExecutor(_bind_align(rt, assign_acceptance))])
     try:
         experience_store = ExperienceStore(rt.economy.db)
     except Exception as exc:                              # noqa: BLE001
