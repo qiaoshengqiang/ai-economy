@@ -41,6 +41,8 @@ from services.artifacts import (  # noqa: E402
     MODE_APPEND, MODE_CREATE, MODE_REPLACE, provision_namespaces,
     write_artifact,
 )
+# 🔒 本实验的认知预算 / 分工映射都从 production.py 取 —— 单一来源。
+from production import ARTIFACT_NAMESPACES, COGNITIVE_BUDGET  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 DB = HERE / "data" / "hetero.db"
@@ -129,7 +131,6 @@ def main() -> int:
 
         🔒 只陈述「有哪些区域、归谁负责」，**不写**「你应该创建什么」。
         """
-        from production import ARTIFACT_NAMESPACES
         lines = []
         for d, owner in ARTIFACT_NAMESPACES.items():
             got = gw.list(WS_ID, "/" + d, agent)
@@ -145,7 +146,7 @@ def main() -> int:
         a.brain.preflight_credential()
         t0 = time.perf_counter()
         r = a.generate(messages=prompt, task_id=TASK_ID,
-                       requested_cognitive_budget=8192)
+                       requested_cognitive_budget=COGNITIVE_BUDGET)
         return {"agent_id": agent_id, "ok": bool((r.content or "").strip()),
                 "output_status": r.output_status,
                 "requested_model": r.requested_model,
@@ -253,7 +254,7 @@ def main() -> int:
                 f"任务主题：{TOPIC}\n\n"
                 f"共享 Task Workspace 当前内容：\n{workspace_tree(AUTHOR)}\n\n"
                 f"请继续推进你的正文。{CONTRACT}"),
-                task_id=TASK_ID, requested_cognitive_budget=8192)
+                task_id=TASK_ID, requested_cognitive_budget=COGNITIVE_BUDGET)
             d3 = parse_intent(r3.content or "")
             entry3 = {"phase": "3_author_second_session",
                       "output_status": r3.output_status,
@@ -289,7 +290,7 @@ def main() -> int:
             a3 = next(x for x in rt2.economy.all_agents()
                       if x.agent_id == AUTHOR)
             r4 = a3.generate(messages=cont_prompt, task_id=TASK_ID,
-                             requested_cognitive_budget=8192)
+                             requested_cognitive_budget=COGNITIVE_BUDGET)
             d4 = parse_intent(r4.content or "")
             entry4 = {"phase": "4_author_continues_same_chapter",
                       "output_status": r4.output_status,

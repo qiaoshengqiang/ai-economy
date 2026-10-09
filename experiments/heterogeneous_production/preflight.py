@@ -39,7 +39,11 @@ AGENTS = ["novel_world_builder", "novel_plot_architect", "novel_author",
           "novel_editor", "novel_reader"]
 
 #: 每个 Agent 请求的认知预算（§九）。Runtime 会裁剪。
-COGNITIVE_BUDGET = 8192
+#:
+#: 🔒 **单一来源** —— 从 `production.py` 导入，不在这里重复一个数字。
+#:    以前这里和 `production.py` 各写一份 8192，改一处漏一处。
+sys.path.insert(0, str(HERE))
+from production import COGNITIVE_BUDGET  # noqa: E402
 
 PROMPT = ("请用一句话说明：你在这次小说生产里负责什么？"
           "（不超过 30 字，直接回答，不要 JSON。）")

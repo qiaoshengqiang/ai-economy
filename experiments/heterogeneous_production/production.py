@@ -97,7 +97,37 @@ MAX_ROUNDS_PER_SESSION = int(os.environ.get("HETERO_MAX_ROUNDS", "60"))
 MIN_PRODUCTIVE_CHARS_PER_SESSION = 400
 
 BUDGET_AIC = 50.0
-COGNITIVE_BUDGET = 8192
+
+#: 🔴 **单次响应的输出上限**（`requested_cognitive_budget` → Provider 的 `max_tokens`）。
+#:
+#: 【它到底限制什么】
+#:     **只**限制一次响应的输出 token 数。不影响输入、轮数、墙钟、AIC。
+#:     ⚠️ 而且 **reasoning 与正文共享它** —— 实测 `novel_editor` 一次调用
+#:     用了 11705 output tokens 却只产出 826 字符，差额全在推理上。
+#:     所以「思考得多」会直接挤掉「能写多少」。
+#:
+#: 【为什么从 8192 抬到 16384】（2026-10-09）
+#:     8192 是 2026-10-07 随 runner 一起引入的一个**保守值**
+#:     （commit e47793a，提交信息没写理由）。
+#:     实测与对照后发现它偏小，三个依据：
+#:
+#:       ① **行业默认就是 16384**：Pydantic AI 把 Anthropic 的默认
+#:          `max_tokens` 从 4096 抬到了 16384（Claude Sonnet 4.5+）。
+#:       ② **Agent 配置本来就是 16384**（`config/config.yaml` 的
+#:          `brain.max_tokens`）—— 8192 反而把它**压低了一半**，
+#:          因为 `requested_cognitive_budget` 优先于配置的 `max_tokens`。
+#:       ③ 一次真实截断就是被 8192 撞出来的：作者要把整章写进 JSON 的
+#:          单个 `content` 字段，超了就截断 → `parse_intent` 全失败
+#:          → **整轮不写入、不报错**（RUN2 报告「阻塞点 ①」）。
+#:
+#: 【为什么不是更大】
+#:     · 生产层 `MAX_COGNITIVE_BUDGET = 32768` 是**结构上限**，够用；
+#:     · ⚠️ 我们**永远发 `stream: False`**（见 `build_payload`），
+#:       而 Anthropic 的非流式 SDK 上限约 21,000 tokens。
+#:       16384 在这条线之内；再往上抬就要先有流式能力。
+#:
+#: 🔒 可覆盖：`HETERO_COGNITIVE_BUDGET`。
+COGNITIVE_BUDGET = int(os.environ.get("HETERO_COGNITIVE_BUDGET", "16384"))
 
 #: 本实验创建的**根 Stage** 的固定 ID。
 #:

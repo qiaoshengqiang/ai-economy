@@ -99,6 +99,9 @@ def _parse_args(argv=None) -> argparse.Namespace:
                     help="最多跑几个 Session，默认 1（精确生效，见下方说明）")
     ap.add_argument("--budget", type=float, default=20.0,
                     help="生产预算（AIC），默认 20")
+    ap.add_argument("--cognitive-budget", type=int, default=None,
+                    help="单次响应的输出上限（tokens）。默认沿用实验默认值"
+                         "（现为 16384；见 production.py 的 COGNITIVE_BUDGET）")
     ap.add_argument("--out", default=None,
                     help="输出目录（默认 experiments/user_demand/runs/<run_id>）")
     ap.add_argument("--reuse-db", action="store_true",
@@ -146,6 +149,9 @@ def main(argv=None) -> int:
     P.SESSION_LIMIT = max(30.0, args.session_minutes * 60.0)
     P.MAX_ROUNDS_PER_SESSION = max(1, args.rounds)
     P.BUDGET_AIC = float(args.budget)
+    # 🔒 None = 不改，沿用 production.py 的默认（单一来源）。
+    if args.cognitive_budget is not None:
+        P.COGNITIVE_BUDGET = int(args.cognitive_budget)
 
     # 生产者 / 验收责任人必须是参与者。默认集合本来就包含它们；
     # 用户换 Agent 集时按位置对齐，避免完成链因为「不在参与者里」而失败。
@@ -217,6 +223,8 @@ def main(argv=None) -> int:
           f"{P.MAX_ROUNDS_PER_SESSION} 轮/Session）")
     print(f"  Session : 最多 {target_sessions} 个（精确生效）")
     print(f"  预算    : {P.BUDGET_AIC} AIC")
+    print(f"  认知预算: {P.COGNITIVE_BUDGET} tokens/次（输出上限，"
+          f"reasoning 与正文共享）")
     print(f"  输出    : {outdir}")
     print(f"  数据库  : {db_path}")
     print("=" * 68)
