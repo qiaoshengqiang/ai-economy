@@ -246,17 +246,20 @@ PROMPT = """你是这次长期生产任务的一名参与者。这是**正式生
 下面这些动作类型是**环境事实**（这个环境注册了什么、各自要什么参数）：
 
   · "workspace_write"
-        parameters: {{"path": "共享 Workspace 里的逻辑路径（可含子目录）",
-                     "content": "这次要写入的完整文本",
-                     "write_mode": "create | replace | append"}}
+        把一个产物写进共享 Workspace。**这三个参数都要给。**
 
-        🔴 "write_mode" **必须显式给出** —— 不传会被拒绝，**没有默认值**。
+        形状（照着填）：
+          parameters: {{"path": "manuscript/chapter_001.md",
+                       "write_mode": "append",
+                       "content": "这次要写入的完整文本"}}
 
-           create  = 文件**不存在**时新建（已存在会被拒绝，不会悄悄覆盖）
-           replace = **整体替换**，原来的内容会消失
-           append  = 末尾追加，旧内容完整保留
+        🔴 "write_mode" 只能取这三个之一，**没有默认值 —— 漏了整次写入会被拒绝**：
 
-        ⚠️ 写不完的长文用 append，不要用 replace —— 那会丢掉已写好的部分。
+           "create"  = 文件**不存在**时新建（已存在会被拒绝，不会悄悄覆盖）
+           "append"  = 末尾追加，旧内容完整保留
+           "replace" = **整体替换**，原来的内容会消失
+
+        ⚠️ 写不完的长文用 "append"，不要用 "replace" —— 那会丢掉已写好的部分。
 
   · "workspace_read"
         parameters: {{"path": "共享 Workspace 里的逻辑路径"}}

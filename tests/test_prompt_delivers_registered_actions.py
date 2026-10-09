@@ -74,3 +74,44 @@ def test_the_guard_is_not_vacuous():
     broken = P.PROMPT.replace(victim, "X" * len(victim))
     assert victim not in broken
     assert [t for t in types if t not in broken] == [victim]
+
+
+def test_write_mode_is_shown_before_content_in_a_filled_shape():
+    """
+    🔴 2026-10-10 真实踩到：`write_mode` 被漏了。
+
+        旧契约（**模型会给**）     新契约（**漏了**）
+        · 填好的具体模板          · 一行 schema
+        · write_mode 排在**第二** · write_mode 排在**最后**
+
+    ⇒ 实测：`agent_a` 准备了 **1968 字符**的正文、路径也对，
+      **只差 `write_mode`** ⇒ `bad_mode` ⇒ 那一次机会用掉了。
+
+    🔒 这是「投递方式」问题，不是设计问题 ——
+       所以修的是**形状**：给填好的样子，并把 `write_mode` 提到 `content` 之前。
+    """
+    import experiments.heterogeneous_production.production as P
+
+    prompt = P.PROMPT
+    i = prompt.index('· "workspace_write"')
+    j = prompt.index('· "workspace_read"', i)
+    block = prompt[i:j]
+
+    assert '"write_mode"' in block and '"content"' in block
+    assert block.index('"write_mode"') < block.index('"content"'), (
+        "write_mode 又排到 content 后面了 —— 实测模型会漏掉它")
+    # 必须是**填好的形状**（有具体取值），不是一行 schema
+    assert '"append"' in block or '"create"' in block, (
+        "只给了 schema 没给填好的取值 —— 那正是漏参数的原因")
+
+
+def test_the_guard_is_not_vacuous_for_write_mode():
+    """反向：把 write_mode 挪到 content 后面 ⇒ 守卫必须变红。"""
+    import experiments.heterogeneous_production.production as P
+
+    i = P.PROMPT.index('· "workspace_write"')
+    j = P.PROMPT.index('· "workspace_read"', i)
+    block = P.PROMPT[i:j]
+    swapped = block.replace('"write_mode"', "TMP").replace(
+        '"content"', '"write_mode"').replace("TMP", '"content"')
+    assert swapped.index('"write_mode"') > swapped.index('"content"')
