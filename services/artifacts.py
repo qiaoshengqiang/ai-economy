@@ -211,7 +211,7 @@ def read_artifact(
     if not got.get("ok"):
         err = dict(got.get("error") or {})
         return _fail(target,
-                     _map_code(str(err.get("code") or "")),
+                     map_gateway_code(str(err.get("code") or "")),
                      str(err.get("message") or "读取失败"),
                      # 🔒 与写入路径对称：原始 Gateway 错误码一并带上，
                      #    好让上层既能按分类处理、也能追溯到底层原因。
@@ -244,12 +244,12 @@ def _read(gateway: Any, workspace_id: str, agent_id: str,
     return {"ok": True, "result": dict(got.result or {})}
 
 
-def _ensure_parents(gateway: Any, workspace_id: str, agent_id: str,
-                    path: str) -> Optional[Dict[str, Any]]:
+def ensure_directories(gateway: Any, workspace_id: str, agent_id: str,
+                       dir_path: str) -> Optional[Dict[str, Any]]:
     """
-    按需创建缺失的**中间目录**（逐层，全部经过 Gateway）。
+    逐层创建 `dir_path` 的**每一个目录段**（全部经过 Gateway）。
 
-    返回 None 表示父目录链已就绪；否则返回一个失败结果。
+    返回 None 表示目录链已就绪；否则返回一个失败结果。
 
     【🔴 为什么需要它（真实 smoke 发现）】
 
@@ -264,8 +264,15 @@ def _ensure_parents(gateway: Any, workspace_id: str, agent_id: str,
        权限、锁、revision 语义**完全照旧**：
        建不了目录就说明这个 Agent 在那层没有 Directory Lock，
        此时如实返回 `locked_by_other`，**不绕过**。
+
+    【2026-10-09 提升为公开函数】
+        原先只有私有的 `_ensure_parents(文件路径)`（建"父目录链"）。
+        `resource_control.create_directory` 需要的是**同一个算法**
+        建"目录路径本身"。**复制一份会得到两份有坑的逻辑** ——
+        所以改成：这一个函数吃**目录路径**，`_ensure_parents`
+        只是它的一层薄包装。
     """
-    parts = [p for p in path.split("/")[:-1] if p]
+    parts = [p for p in str(dir_path or "").split("/") if p not in ("", ".")]
     parent_path = "/"
     for seg in parts:
         child_path = parent_path.rstrip("/") + "/" + seg
@@ -286,7 +293,7 @@ def _ensure_parents(gateway: Any, workspace_id: str, agent_id: str,
             continue
 
         res = gateway.create(workspace_id, parent_path, seg, "directory",
-                            agent_id)
+                             agent_id)
         if res.success:
             parent_path = child_path
             continue
@@ -294,10 +301,19 @@ def _ensure_parents(gateway: Any, workspace_id: str, agent_id: str,
         if code == "NAME_CONFLICT":
             parent_path = child_path
             continue
-        return _fail(path, _map_code(code),
-                     (res.error or {}).get("message") or "父目录创建失败",
+        return _fail(dir_path, map_gateway_code(code),
+                     (res.error or {}).get("message") or "目录创建失败",
                      gateway_code=code)
     return None
+
+
+def _ensure_parents(gateway: Any, workspace_id: str, agent_id: str,
+                    path: str) -> Optional[Dict[str, Any]]:
+    """建 `path` 的**父目录链**（`ensure_directories` 的薄包装）。"""
+    parent = path.rpartition("/")[0]
+    if not parent:
+        return None
+    return ensure_directories(gateway, workspace_id, agent_id, parent)
 
 
 def _create(gateway: Any, workspace_id: str, agent_id: str,
@@ -325,7 +341,7 @@ def _create(gateway: Any, workspace_id: str, agent_id: str,
                      f"{path} 已存在 —— CREATE 不会覆盖它。"
                      f"想替换请显式用 write_mode=replace。",
                      gateway_code=code)
-    return _fail(path, _map_code(code), err.get("message") or "创建失败",
+    return _fail(path, map_gateway_code(code), err.get("message") or "创建失败",
                  gateway_code=code)
 
 
@@ -336,7 +352,7 @@ def _replace(gateway: Any, workspace_id: str, agent_id: str,
     if not cur["ok"]:
         code = str(cur["error"].get("code") or "")
         return _fail(path, "not_found" if "NOT_FOUND" in code
-                     else _map_code(code),
+                     else map_gateway_code(code),
                      cur["error"].get("message") or "读取失败",
                      gateway_code=code)
     base = int(cur["result"].get("revision") or 0)
@@ -349,7 +365,7 @@ def _replace(gateway: Any, workspace_id: str, agent_id: str,
                 "previous_chars": len(cur["result"].get("content") or ""),
                 "chars": len(body)}
     err = dict(res.error or {})
-    return _fail(path, _map_code(str(err.get("code") or "")),
+    return _fail(path, map_gateway_code(str(err.get("code") or "")),
                  err.get("message") or "替换失败",
                  gateway_code=err.get("code"))
 
@@ -366,7 +382,7 @@ def _append(gateway: Any, workspace_id: str, agent_id: str,
     if not cur["ok"]:
         code = str(cur["error"].get("code") or "")
         return _fail(path, "not_found" if "NOT_FOUND" in code
-                     else _map_code(code),
+                     else map_gateway_code(code),
                      f"{path} 不存在 —— APPEND 需要已有 Artifact。"
                      f"第一次写请用 write_mode=create。",
                      gateway_code=code)
@@ -385,7 +401,7 @@ def _append(gateway: Any, workspace_id: str, agent_id: str,
                 "previous_chars": len(old), "appended_chars": len(body),
                 "chars": len(merged)}
     err = dict(res.error or {})
-    return _fail(path, _map_code(str(err.get("code") or "")),
+    return _fail(path, map_gateway_code(str(err.get("code") or "")),
                  err.get("message") or "追加失败",
                  gateway_code=err.get("code"))
 
@@ -394,7 +410,7 @@ def _norm(path: Any) -> str:
     return str(path or "").strip().lstrip("/")
 
 
-def _map_code(gateway_code: str) -> str:
+def map_gateway_code(gateway_code: str) -> str:
     """把 Gateway 的错误码翻译成 Artifact 层可读的分类。"""
     table = {
         "LOCKED_BY_OTHER_AGENT": "locked_by_other",

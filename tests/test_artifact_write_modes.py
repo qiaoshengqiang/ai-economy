@@ -399,6 +399,27 @@ class TestDeepPathCreation:
         import pathlib
         src = (pathlib.Path(__file__).resolve().parent.parent
                / "services" / "artifacts.py").read_text("utf-8")
-        block = src[src.index("def _ensure_parents"):src.index("def _create")]
-        assert "gateway.read(" in block, (
-            "_ensure_parents 没有先用 read 探测存在性 —— 会重现那个 bug")
+
+        # 🔴 2026-10-09：算法**搬家**了 —— 它现在是公开的
+        #    `ensure_directories(dir_path)`，`_ensure_parents` 只是它
+        #    的一层薄包装（因为 `resource_control.create_directory`
+        #    需要**同一个**算法建"目录本身"，而复制一份会得到两份有坑的逻辑）。
+        #
+        #    🔒 性质**没有变**：存在性必须用 `read` 探测，**不许**用
+        #       「create 返回 NAME_CONFLICT」来判断。
+        #    变的是位置 ⇒ 守卫跟着搬，并**两边都断言**（更强）。
+        algo = src[src.index("def ensure_directories"):
+                   src.index("def _ensure_parents")]
+        assert "gateway.read(" in algo, (
+            "ensure_directories 没有先用 read 探测存在性 —— 会重现那个 bug")
+        assert "gateway.create(" in algo, "ensure_directories 不建目录了？"
+
+        wrapper = src[src.index("def _ensure_parents"):
+                      src.index("def _create")]
+        assert "ensure_directories(" in wrapper, (
+            "_ensure_parents 必须委托给 ensure_directories —— "
+            "否则写文件路径会走另一套（可能已经跑偏的）逻辑")
+
+        # 🔒 反向：把 read 探测挖掉 ⇒ 守卫必须变红
+        evil = algo.replace("gateway.read(", "gateway.peek(")
+        assert "gateway.read(" not in evil

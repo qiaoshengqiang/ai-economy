@@ -38,6 +38,10 @@ from actions.private_workspace import (
     ACTION_PRIVATE_WRITE, PrivateDeleteExecutor, PrivateListExecutor,
     PrivateReadExecutor, PrivateWriteExecutor,
 )
+from actions.resource_control import (
+    ACTION_RESOURCE_CREATE, ACTION_RESOURCE_HANDOFF, ACTION_RESOURCE_RELEASE,
+    ResourceCreateExecutor, ResourceHandoffExecutor, ResourceReleaseExecutor,
+)
 from actions.public_query import (
     ACTION_PUBLIC_QUERY, PublicQueryExecutor,
 )
@@ -62,6 +66,10 @@ __all__ = [
     "ACTION_WORKSPACE_READ", "WorkspaceReadExecutor",
     "ACTION_MESSAGE_SEND", "MessageSendExecutor",
     "ACTION_PUBLIC_QUERY", "PublicQueryExecutor",
+    "ACTION_RESOURCE_CREATE", "ACTION_RESOURCE_HANDOFF",
+    "ACTION_RESOURCE_RELEASE",
+    "ResourceCreateExecutor", "ResourceHandoffExecutor",
+    "ResourceReleaseExecutor",
     "ACTION_PRIVATE_WRITE", "ACTION_PRIVATE_READ", "ACTION_PRIVATE_LIST",
     "ACTION_PRIVATE_DELETE",
     "PrivateWriteExecutor", "PrivateReadExecutor", "PrivateListExecutor",

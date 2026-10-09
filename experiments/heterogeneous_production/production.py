@@ -56,6 +56,8 @@ from actions import (  # noqa: E402
     ACTION_WORKSPACE_WRITE, ActionDispatcher,
     MessageSendExecutor, PrivateDeleteExecutor, PrivateListExecutor,
     PrivateReadExecutor, PrivateWriteExecutor, PublicQueryExecutor,
+    ResourceCreateExecutor, ResourceHandoffExecutor,
+    ResourceReleaseExecutor,
     WorkspaceReadExecutor, WorkspaceWriteExecutor,
 )
 from services.messaging import send_message_as  # noqa: E402
@@ -63,6 +65,9 @@ from services.private_workspace import (  # noqa: E402
     delete_private, list_private, read_private, write_private,
 )
 from services.public_reference import PublicReference  # noqa: E402
+from services.resource_control import (  # noqa: E402
+    create_directory, handoff_resource, release_resource,
+)
 from services.artifacts import (  # noqa: E402
     MODE_APPEND, MODE_CREATE, MODE_REPLACE,
     provision_namespaces, read_artifact, write_artifact,
@@ -900,6 +905,19 @@ def _close_stage(rt: Any, log: Dict[str, Any]) -> None:
 _PUBLIC = PublicReference()
 
 
+def _bind_gw(rt: Any, fn: Any) -> Any:
+    """
+    把一个 `fn(gateway, workspace_id, agent_id, ...)` 绑定成本实验的形状。
+
+    🔒 **gateway 与 workspace_id 在这里绑定掉** —— Agent 只给路径。
+       Agent 永远看不到 gateway 是什么，也不需要知道。
+    """
+    def _bound(agent_id: str, path: Any, *args: Any, **kwargs: Any) -> Any:
+        return fn(rt.workspace_gateway, WS_ID, str(agent_id), path,
+                  *args, **kwargs)
+    return _bound
+
+
 def _ws_of(rt: Any) -> Any:
     """
     按 `agent_id` 取那个 Agent **自己的**私有空间。
@@ -1011,7 +1029,16 @@ def _action_seam(rt: Any, bridge: Any = None) -> tuple:
         PrivateWriteExecutor(write_private, workspace_of=_ws_of(rt)),
         PrivateReadExecutor(read_private, workspace_of=_ws_of(rt)),
         PrivateListExecutor(list_private, workspace_of=_ws_of(rt)),
-        PrivateDeleteExecutor(delete_private, workspace_of=_ws_of(rt))])
+        PrivateDeleteExecutor(delete_private, workspace_of=_ws_of(rt)),
+        # 2026-10-09 加入资源结构/责任三件套：建目录 · 交接 · 释放。
+        # 🔒 它们管的是**结构与责任**，不是内容（内容归 workspace_*）。
+        # 🔒 gateway 与 workspace_id 在这里**绑定**掉，Agent 只给路径 ——
+        #    Agent 永远看不到 gateway 是什么。
+        # 🔒 **发起方只取自 intent.agent_id**（运行时填的），
+        #    所以 Agent 无法替别人交接责任。
+        ResourceCreateExecutor(_bind_gw(rt, create_directory)),
+        ResourceHandoffExecutor(_bind_gw(rt, handoff_resource)),
+        ResourceReleaseExecutor(_bind_gw(rt, release_resource))])
     try:
         experience_store = ExperienceStore(rt.economy.db)
     except Exception as exc:                              # noqa: BLE001
