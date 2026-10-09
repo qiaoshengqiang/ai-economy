@@ -114,3 +114,105 @@ def test_composition_root_registers_it():
     assert "PublicQueryExecutor" in {n.id for n in ast.walk(fn)
                                      if isinstance(n, ast.Name)}
     assert "SYSTEM_MAP.md" in src, "prompt 里没告诉 Agent 去查系统地图"
+
+
+# ================================================================
+# 对抗性边界（2026-10-09 加）
+#
+# 【为什么加】用户确认「对公共资料区的动作只做了查询，没有安全风险」——
+#    这句话**必须能被验证**，不能只是相信。下面把当时跑过的对抗用例
+#    固化成回归：**符号链接逃逸**、控制字符、以及「一次都不许泄漏」。
+# ================================================================
+@pytest.fixture
+def hostile(tmp_path):
+    """一个**故意**布了逃逸的公共资料区 + 一份外面的机密。"""
+    root = tmp_path / "public"
+    root.mkdir()
+    (root / "OK.md").write_text("正常资料", encoding="utf-8")
+    secret = tmp_path / "SECRET.txt"
+    secret.write_text("机密", encoding="utf-8")
+
+    (root / "link_out.txt").symlink_to(secret)        # 直接指向外面
+    (root / "link_dir").symlink_to(tmp_path)          # 指向外面的目录
+    (root / "sub").mkdir()
+    (root / "sub" / "deep_link").symlink_to(secret)   # 嵌一层
+    (root / ".hidden").write_text("隐藏", encoding="utf-8")
+
+    from services.public_reference import PublicReference
+
+    return PublicReference(root), secret
+
+
+@pytest.mark.parametrize("name", [
+    "../SECRET.txt", "..", "/etc/passwd", "~/.ssh/id_rsa",
+    "link_out.txt", "link_dir/SECRET.txt", "sub/deep_link",
+    "link_dir/../SECRET.txt", "sub/../../SECRET.txt",
+    "sub\\..\\..\\SECRET.txt", "", "   ", ".",
+])
+def test_nothing_escapes_the_public_area(hostile, name):
+    """🔴 **一次都不许拿到外面的东西。**"""
+    ref, secret = hostile
+    got = ref.read(name)
+    assert got.get("ok") is False, f"{name!r} 竟然成功了"
+    assert got.get("content") != secret.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("name", [
+    "nul\x00.md", "tab\tname", "esc\x1b[31m", "\x7f", "\n",
+])
+def test_control_characters_are_refused_not_raised(hostile, name):
+    """
+    🔴 回归：对抗测试抓到的真 bug —— 带 `\\x00` 的名字会让
+       `Path.resolve()` 抛 `ValueError: lstat: embedded null character`，
+       而 `read()` 的契约说「失败返回**结构化**结果」。
+       **抛异常 = 破坏契约**（调用方得靠运气才不崩）。
+    """
+    ref, _ = hostile
+    got = ref.read(name)                     # ← 不许抛
+    assert got.get("ok") is False
+    assert got.get("code") == "bad_name"
+
+
+def test_symlinks_are_caught_by_resolve_not_by_string_matching(hostile):
+    """逃逸检查必须发生在 `resolve()` **之后**（否则符号链接绕过）。"""
+    ref, _ = hostile
+    assert ref.read("link_out.txt").get("code") == "outside_public"
+
+
+def test_listing_skips_hidden_files(hostile):
+    ref, _ = hostile
+    names = ref.list_names()
+    assert ".hidden" not in names
+    assert "OK.md" in names
+
+
+def test_the_area_is_structurally_read_only():
+    """
+    🔒 「只读」是**结构性**的 —— 不是「有写接口但不给用」。
+
+    对抗性验证的结论要能被守卫钉住，不能只靠当次目测。
+    """
+    import ast
+
+    src = (ROOT / "services" / "public_reference.py").read_text(encoding="utf-8")
+    names = {n.name for n in ast.walk(ast.parse(src))
+             if isinstance(n, ast.FunctionDef)}
+    for forbidden in ("write", "write_text", "save", "create", "delete",
+                      "unlink", "mkdir", "rename", "move"):
+        assert forbidden not in names, f"公共资料区长出了写接口：{forbidden}"
+
+
+def test_only_one_action_type_touches_the_public_area():
+    """目前只有 `public_query` 一个动作类型 —— 用户确认过的范围。"""
+    import ast
+
+    src = (ROOT / "actions" / "public_query.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    types = set()
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Assign) and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and node.targets[0].id.startswith("ACTION_")
+                and isinstance(node.value, ast.Constant)):
+            types.add(node.value.value)
+    assert types == {"public_query"}, sorted(types)

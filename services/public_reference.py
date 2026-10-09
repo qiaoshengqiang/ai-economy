@@ -53,6 +53,13 @@ def _safe_name(name: Any) -> str:
     raw = str(name or "").strip().replace("\\", "/").lstrip("/")
     if not raw:
         return ""
+    # 🔴 **控制字符必须先拒掉。** 对抗测试抓到的真 bug：
+    #    带 `\x00` 的名字会让 `Path.resolve()` 抛
+    #    `ValueError: lstat: embedded null character in path` ——
+    #    而 `read()` 的契约说「失败返回**结构化**结果」，
+    #    抛异常就破坏了那个契约（调用方得靠运气才不崩）。
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in raw):
+        return ""
     parts = [p for p in raw.split("/") if p not in ("", ".")]
     if not parts or any(p == ".." for p in parts):
         return ""
