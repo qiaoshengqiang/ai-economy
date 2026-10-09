@@ -1017,9 +1017,28 @@ def build_runtime(
     #     调用方（TaskService / Agent）的代码一行都不用改。
     directory = LocalAgentDirectory()
     for agent in economy.all_agents():
+        # 🔴 §22.20 B：**系统维护的公开事实**（Dynamic runtime facts）。
+        #
+        #    设计原文：
+        #        Agent ID · Current Provider · **Current Model** · Current Model Version
+        #        「Provider / Model / Version 属于 Dynamic runtime facts」——
+        #        用户换了模型，其他 Agent 查询时**必须看到新的**。
+        #
+        #    🔒 所以它从 `resolved`（**当前真实解析结果**）里读，
+        #       不是从别处复制一份 —— 换了 provider/model 它自动跟着变。
+        #
+        #    🔴 **刻意不放 `model_profile`**（我们给模型起的别名）：
+        #       那里面会有 `doubao_novel` 这种**带角色暗示**的名字，
+        #       投出去等于又泄露一次分工。
+        #       投的是**真实的 model_id**（`deepseek-flash` / `ep-…`）。
+        _resolved_agent = resolved.agent(agent.agent_id)
         directory.register_agent(
             agent_id=agent.agent_id,
             capabilities=agent.config.skills,
+            metadata={
+                "provider": _resolved_agent.provider.name,
+                "model": _resolved_agent.model_id,
+            },
             # 位置提示用字符串 —— 这样 core/ 不必依赖 communication/。
             #
             # 地址从**通信层的注册表**里读，而不是自己拼 ——

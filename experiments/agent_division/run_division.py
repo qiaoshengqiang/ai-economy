@@ -73,10 +73,16 @@ from experiments.heterogeneous_production import production as P   # noqa: E402
 # ================================================================
 # 设置（会被 CLI 覆盖）
 # ================================================================
-NOVEL_AGENTS = ["novel_world_builder", "novel_plot_architect", "novel_author",
-                "novel_editor", "novel_reader"]
+# 🔴 **无角色的名字**（平台默认就是它们）。
+#
+#    为什么不用 `novel_world_builder` 这类名字：
+#    **名字本身就在泄露分工** —— 它告诉所有人"我是世界构建者"，
+#    于是"该找谁"根本不需要涌现，照着名字念就行了。
+#    （实测已证实：`novel_world_builder` 的 reasoning 几乎逐句复述
+#      它 config 里那句「你负责故事世界…为写手 novel_author 提供地基」。）
+NEUTRAL_AGENTS = ["agent_a", "agent_b", "agent_c", "agent_d", "agent_e"]
 
-AGENTS: List[str] = list(NOVEL_AGENTS)
+AGENTS: List[str] = list(NEUTRAL_AGENTS)
 TASK_ID = "task_division_001"
 WS_ID = "WS-DIVISION-001"
 EXPERIMENT_ID = "agent_division"
@@ -90,6 +96,36 @@ WALL_LIMIT = float(os.environ.get("DIVISION_WALL", "900"))       # 总墙钟（�
 MAX_ROUNDS = int(os.environ.get("DIVISION_ROUNDS", "40"))        # 轮数上限
 BUDGET_AIC = float(os.environ.get("DIVISION_BUDGET", "50"))
 COGNITIVE_BUDGET = int(os.environ.get("DIVISION_COGNITIVE", "16384"))
+
+# ================================================================
+# 🔴 **测试注入的假履历** —— 不是真实历史，**不得当作真实数据**
+# ================================================================
+#
+# 【为什么要注入】
+#
+#   §0.5.8 说：**OS 提供：Agent 信息 · 价格 · 信誉 · 历史 · 资源**
+#   §0.5.3 说：激励应包含 `Reputation · 历史成功率 · 合作记录`
+#   §0.5.7 说：专业化应由 `能力 · 成本 · 信誉 · 历史` 长期反馈涌现
+#
+#   🔴 **但我们还没有真实的反馈回路** —— 审计 A-11 原文：
+#        「`Reputation` 存在但**没有真实反馈回路**
+#          （无结算、无成功率累积）」
+#
+#   而 §0.5.7 又说「不要预先规定 A 是程序员、B 是测试 Agent」——
+#   所以也不能拿 `skills` 标签去充当区分度（那是预设角色表）。
+#
+#   ⇒ 暂时用**假履历**注入，专门测一件事：
+#        **Agent 会不会用这些公开事实来做选择？**
+#
+#   ⚠️ 每个 Agent 的履历**刻意不同** —— 全同的话"找谁"就变成瞎猜，
+#      测不出"选择"。这里给的是：老手 / 新人 / 高成功率 / 有失败记录。
+FAKE_HISTORY: Dict[str, Dict[str, float]] = {
+    "agent_a": {"reputation_score": 0.86, "completed_tasks": 7, "failed_tasks": 1},
+    "agent_b": {"reputation_score": 0.00, "completed_tasks": 0, "failed_tasks": 0},
+    "agent_c": {"reputation_score": 0.55, "completed_tasks": 3, "failed_tasks": 2},
+    "agent_d": {"reputation_score": 0.92, "completed_tasks": 2, "failed_tasks": 0},
+    "agent_e": {"reputation_score": 0.21, "completed_tasks": 1, "failed_tasks": 4},
+}
 
 #: 人类这个 Actor 的名字（ADR-0022：Human 是正式协作 Actor）
 HUMAN = "human"
@@ -169,6 +205,48 @@ def _seed(rt: Any, bridge: Any) -> None:
 # ================================================================
 # ③ 只跑**被消息唤醒**的 Agent
 # ================================================================
+def _inject_fake_history(rt: Any) -> Dict[str, Any]:
+    """
+    把 `FAKE_HISTORY` 注入成每个 Agent 的**公开履历**。
+
+    🔒 注入的是 `Reputation` 对象本身（`Reputation` 有三个最朴素的计数：
+       `score` / `completed_tasks` / `failed_tasks`，还有 `success_rate`）。
+       注入后 `_roster_facts` 就会把它当作公开事实投递给其他 Agent。
+
+    🔴 **这不是真实历史。** 每一条都被记进结果 JSON 的
+       `injected_fake_history`，控制台也会打印 ——
+       就是为了**任何人回头看时都不会把它当成真实数据**。
+    """
+    from agents.base_agent import Reputation
+
+    done: Dict[str, Any] = {}
+    for aid, fake in FAKE_HISTORY.items():
+        if aid not in AGENTS:
+            continue
+        try:
+            agent = rt.economy.agent(aid)
+        except Exception:                                      # noqa: BLE001
+            continue
+        agent.reputation = Reputation(
+            score=float(fake["reputation_score"]),
+            completed_tasks=int(fake["completed_tasks"]),
+            failed_tasks=int(fake["failed_tasks"]))
+        rep = agent.reputation
+        done[aid] = {"reputation_score": rep.score,
+                     "completed_tasks": rep.completed_tasks,
+                     "failed_tasks": rep.failed_tasks,
+                     "success_rate": rep.success_rate}
+    if done:
+        print("\n  🔴 **测试注入的假履历**（不是真实历史，不得当作真实数据）：")
+        for aid, v in done.items():
+            print(f"       {aid:10s} 完成任务={v['completed_tasks']} "
+                  f"失败={v['failed_tasks']} "
+                  f"成功率={v['success_rate']} 声誉={v['reputation_score']}")
+        print("    依据 §0.5.8「OS 提供…信誉·历史」；真实反馈回路尚未实现"
+              "（审计 A-11）")
+    return done
+
+
 def _is_woken(rt: Any, agent_id: str) -> bool:
     """只看唤醒**信号**，不消费 —— 消费由 `_turn` 里的 drain 负责。"""
     try:
@@ -185,7 +263,7 @@ def main() -> int:
         description="观察实验：Demand → 第一个 Agent → 看它能否分工")
     ap.add_argument("--demand", help="直接给一句 Demand")
     ap.add_argument("--demand-file", help="从文本文件读 Demand")
-    ap.add_argument("--agents", default=",".join(NOVEL_AGENTS))
+    ap.add_argument("--agents", default=",".join(NEUTRAL_AGENTS))
     ap.add_argument("--minutes", type=float, default=WALL_LIMIT / 60,
                     help="总墙钟上限（分钟）")
     ap.add_argument("--rounds", type=int, default=MAX_ROUNDS)
@@ -244,6 +322,8 @@ def main() -> int:
     stop_reason = "UNKNOWN"
     try:
         _setup(rt)
+        injected = _inject_fake_history(rt)
+        log["injected_fake_history"] = injected
         dispatcher, experience_store = P._action_seam(rt, bridge)
         _seed(rt, bridge)
 
@@ -376,6 +456,10 @@ def _report(log: Dict[str, Any]) -> None:
     print(f"  轮次     : {log.get('rounds')} 轮 / {len(turns)} 个 turn")
     print(f"  墙钟     : {log.get('wall_seconds')}s")
     print(f"  Task 状态: {log.get('task_status')}")
+    fake = log.get("injected_fake_history") or {}
+    if fake:
+        print(f"  🔴 假履历 : 已注入 {len(fake)} 个 Agent 的"
+              f"**测试用**信誉/历史（不是真实数据）")
 
     # ---- 0. 🔴 先看**这次有没有获得观察** ----
     #     没有第一个 Agent 的 turn ⇒ 后面的结论一句都不成立。

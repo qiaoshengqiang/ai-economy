@@ -1774,18 +1774,67 @@ def _workspace_facts(gw: Any, agent: str) -> str:
 
 def _roster_facts(rt: Any, agent: str) -> str:
     """
-    §六：Agent Directory 事实 —— 谁在、专业方向。
+    其他 Agent 的**公开事实**（§22.20 Public Manifest + §0.5.8 信誉/历史）。
 
-    🔒 只提供事实，**不写**「你应该联系谁」。
+    【🔴 为什么不投 `skills` 了】
+
+        `skills` 是**我们手写的标签**，没有任何东西支撑它（没验证、没历史）。
+        它其实**就是 §0.5.7 说的"预设角色表"换了个名字**：
+
+            🔴 不要预先规定「A 是程序员、B 是测试 Agent」。
+               应该让**能力、成本、信誉、历史**和任务需求逐步形成专业化。
+               这应该是**经济机制和长期反馈**产生的结果。
+
+        而 §22.21 说得更直接：
+
+            Public Manifest  ≠  Capability  ≠  Authorization
+                             ≠  Ability Evaluation
+
+        ⇒ 所以这里投的是**公开事实**，不是"谁会什么"的声明。
+
+    【投什么】
+
+        · §22.20 B（系统维护）：`provider` / `model`
+          —— 真实的动态事实，有区分度，而且**不是我们替它说的**
+        · §0.5.8（OS 提供）：`信誉 · 历史`
+          —— 完成任务 / 失败 / 成功率 / 声誉
+
+    🔒 只陈述事实，**不写**「你应该联系谁」，也不写「谁更厉害」。
+       🔴 §22.19：Agent 据此**自己**形成 `Other-Agent Model`（含它自己的
+          confidence 与 evidence）—— 判断**不由我们代做**。
     """
-    lines = []
-    for entry in rt.directory.all():
-        aid = getattr(entry, "agent_id", "")
-        if not aid or aid == agent:
-            continue
-        caps = ", ".join(str(c) for c in (entry.capabilities or ()))
-        lines.append(f"  - {aid}  capabilities={caps or '(none)'}")
-    return "\n".join(lines) or "  （没有其他参与者）"
+    entries = [e for e in rt.directory.all()
+               if getattr(e, "agent_id", "") and e.agent_id != agent]
+    if not entries:
+        return "  （没有其他参与者）"
+
+    lines: List[str] = []
+    for e in entries:
+        meta = dict(getattr(e, "metadata", None) or {})
+        head = f"  - {e.agent_id}"
+        if meta.get("provider") or meta.get("model"):
+            head += (f"  provider={meta.get('provider') or '?'}"
+                     f"  model={meta.get('model') or '?'}")
+        lines.append(head)
+
+        # ---- §0.5.8：OS 提供的**信誉 / 历史** ----
+        rep = _reputation_of(rt, e.agent_id)
+        if rep is not None:
+            rate = rep.success_rate
+            lines.append(
+                f"      履历：完成任务={rep.completed_tasks}"
+                f"  失败={rep.failed_tasks}"
+                f"  成功率={'—' if rate is None else f'{rate:.2f}'}"
+                f"  声誉={rep.score:.2f}")
+    return "\n".join(lines)
+
+
+def _reputation_of(rt: Any, agent_id: str) -> Any:
+    """读一个 Agent 的声誉（读不到就是 None —— **不伪造一个 0**）。"""
+    try:
+        return getattr(rt.economy.agent(agent_id), "reputation", None)
+    except Exception:                                          # noqa: BLE001
+        return None
 
 
 def _total_chars(gw: Any) -> int:

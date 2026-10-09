@@ -93,8 +93,24 @@ class TestDefaultRuntimeWiring:
 
     def test_default_path_builds_context_without_explicit_query(
             self, runtime):
-        """🔒 **不传 context_query**，Context 依然被构建。"""
-        ag = _agent(runtime)
+        """
+        🔒 **不传 context_query**，Context 依然被构建。
+
+        🔴 2026-10-10 修一个**假绿**（不是我的改动引入的，是被暴露出来的）：
+
+            这条以前用**真实 router** 调 `ag.generate()` —— 于是它只有在
+            「**别的测试碰巧留下了 `DEEPSEEK_API_KEY`**」时才通过。
+
+            而 `tests/conftest.py` 有一个 `autouse` fixture
+            **故意清掉** `DEEPSEEK_API_KEY`（"让单元测试不读用户本机的 .env"）。
+            所以孤立跑它必然 `ProviderDisabledError` ——
+            它之前绿的是**别的测试的环境残留**，不是它自己。
+
+            🔒 本测试测的是**接线**（"默认路径会不会构建 Context"），
+               **不是** "真实 API 通不通" —— 所以应该用同文件里
+               其它 8 条测试都在用的 `_capture`（假 provider）。
+        """
+        ag, _prov = _capture(runtime)
         SelfModelStore(runtime.economy.db).add_strategy(
             "agent_a", "默认路径也要能看到我", domain="fiction",
             confidence=0.9)
