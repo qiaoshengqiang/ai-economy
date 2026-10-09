@@ -815,10 +815,36 @@ def _run_session(rt: Any, bridge: Any, index: int, limit: float,
     #
     #   🔒 只引用 `workspace_id + revision`，**不复制内容** ——
     #      Workspace 才是 Artifact 的唯一事实源。
+    #
+    #   🔴 **交班原因必须如实记录。**
+    #
+    #      这里曾经写死 `reason="hard_limit"` —— 于是「因轮数用尽而结束」
+    #      的那一班也被标成 hard_limit。看日志的人会以为它是撞墙钟停的，
+    #      而实际上它是**正常跑完配置的轮数**。两种情况的含义完全不同：
+    #          hard_limit            → 时间不够，被打断
+    #          max_rounds_reached    → 这一班正常收工
+    #
+    #      `RuntimeSession` 已经把真实原因放在 `stop_reason` 里（上面两个
+    #      分支各自设过）：
+    #          enforce()          → "hard_limit"             （撞墙钟）
+    #          stop_by_agent(r)   → r = "max_rounds_reached" （轮数用尽）
+    #
+    #      🔒 用**原值**而不是硬映射到 `stage/models.py` 的 `REASON_*`：
+    #         那 5 个常量里没有「轮数用尽」这一类，而
+    #         `MAX_ROUNDS_PER_SESSION` 是**实验级**概念（不是 Stage 概念），
+    #         不该为了它去扩生产层的词汇。`reason` 本来就是自由文本，
+    #         `stage/control.py` 也是「reason 放类别 + 起因进 metadata」。
+    #
+    #      🔒 `metadata` 里同时留下 session 状态，便于事后核对。
     rev = _workspace_revision(rt.workspace_gateway)
-    ck = st.save_checkpoint(stage.stage_id, reason="hard_limit",
-                            workspace_id=WS_ID, revision=rev,
-                            progress={"session": index, "rounds": rnd})
+    ck = st.save_checkpoint(
+        stage.stage_id,
+        reason=sess.stop_reason or "session_ended",
+        workspace_id=WS_ID, revision=rev,
+        progress={"session": index, "rounds": rnd},
+        metadata={"session_state": sess.state,
+                  "session_stop_reason": sess.stop_reason,
+                  "hard_limit": bool(s_log["hard_limit"])})
     s_log["checkpoint"] = ck.to_dict()
     s_log["workspace_revision"] = rev
 
