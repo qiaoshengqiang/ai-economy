@@ -62,6 +62,7 @@
 | [0036](0036-change-pipeline-concurrency-and-crash-consistency.md) | **Change Pipeline 的并发模型与 Crash Consistency** | Accepted（设计） | 第二阶段设计 | Change Pipeline |
 | [0037](0037-worktree-branch-per-worktree.md) | **Worktree 的 branch 是每个 worktree 一个** | Accepted（**已实现**） | 第二阶段 Phase 1 | Change Pipeline |
 | [0038](0038-agent-world-core-boundaries.md) | **Agent / World / Asset / Capability 的核心边界**（10 条架构不变量） | Accepted（**文档，无实现**） | 架构治理补充 | Agent Core Model |
+| [0039](0039-system-level-public-reference.md) | **系统级公开资料**（不是 World / 不是 Task / 不是 Public Manifest） | Accepted（**已实现**） | 架构治理补充 | Agent Core Model |
 | [0028](0028-read-visibility-and-native-communication.md) | **Read 靠 Task Participation；Communication 是 Agent 基础能力** | Accepted（实现为 FUTURE） | Read / Visibility / Communication | Workspace / Communication |
 
 ---

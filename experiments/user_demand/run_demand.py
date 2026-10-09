@@ -223,25 +223,33 @@ def _report_turns(results_dir: Path, agents) -> None:
     else:
         print("  ✅ 所有参与者都至少轮到过一次")
 
-    # ---- 没成功写入的 turn ----
+    # ---- 这一轮**什么都没做**的 turn ----
+    #
+    #   🔴 2026-10-09：实验改走**生产信封**之后是**一轮一个动作**，
+    #      所以「没有 write」**不再**等于「什么都没做」——
+    #      Agent 这一轮可能选择的是**读 / 发消息 / 查资料**。
+    #
+    #      旧判据（`w is None` ⇒ NO_WRITE）会把那些正常轮次全部报成 🔴
+    #      —— 报告开始**说谎**。判据改成「**整轮没有发起任何动作**」。
     silent = []
     for t in turns:
         w = t.get("write")
-        if w is None:
-            silent.append((t, "NO_WRITE", "这一轮没有提交任何 artifact"))
-        elif not w.get("ok"):
+        if w is not None and not w.get("ok"):
             silent.append((t, str(w.get("code") or "WRITE_FAILED"),
                            f"想写 {w.get('path')}（mode={w.get('mode')}）但被拒"))
+        elif t.get("action") is None:
+            silent.append((t, "NO_ACTION",
+                           "这一轮没有发起任何动作（也没有写产物）"))
 
     if silent:
         print()
-        print(f"  🔴 没有成功写入的 turn：{len(silent)}/{len(turns)}"
+        print(f"  🔴 整轮没有动作的 turn：{len(silent)}/{len(turns)}"
               f"（每一轮都被记为 ok={True}，所以不看这里发现不了）")
         for t, code, why in silent:
             print(f"       r{t.get('round')} {t.get('agent_id'):22s} "
                   f"{code:16s} {why}")
     else:
-        print(f"  ✅ 每个 turn 都成功写入了（{len(turns)}/{len(turns)}）")
+        print(f"  ✅ 每个 turn 都至少发起了一个动作（{len(turns)}/{len(turns)}）")
 
 
 def _report_calls(db_path: Path) -> None:

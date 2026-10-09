@@ -368,6 +368,11 @@ class BaseAgent:
         self.last_call_id = getattr(self.brain, "last_call_id", None)
         self.last_request_evidence = getattr(
             self.brain, "last_request_evidence", None)
+        # 🔒 与上面两个对称：调用方（实验 / CLI）需要这次调用的
+        #    token 用量与 model 名，而那只有 response 上有。
+        #    `Brain.last_response` 早就有，这里只是**把它暴露到 Agent 层** ——
+        #    否则调用方要穿透到 `agent.brain` 去取。
+        self.last_response = response
 
         self._record_truncation_if_needed(response, **kwargs)
 

@@ -53,11 +53,10 @@ sys.path.insert(0, str(ROOT))
 
 from actions import (  # noqa: E402
     ACTION_MESSAGE_SEND, ACTION_PUBLIC_QUERY, ACTION_WORKSPACE_READ,
-    ACTION_WORKSPACE_WRITE, ActionDispatcher, ActionIntent,
+    ACTION_WORKSPACE_WRITE, ActionDispatcher,
     MessageSendExecutor, PrivateDeleteExecutor, PrivateListExecutor,
     PrivateReadExecutor, PrivateWriteExecutor, PublicQueryExecutor,
     WorkspaceReadExecutor, WorkspaceWriteExecutor,
-    build_intent, new_intent_id,
 )
 from services.messaging import send_message_as  # noqa: E402
 from services.private_workspace import (  # noqa: E402
@@ -223,25 +222,34 @@ PROMPT = """你是这次长期生产任务的一名参与者。这是**正式生
 {inbox}
 
 ========== 你这一轮做什么，完全由你自己判断 ==========
-请只输出下面这个 JSON：
+🔴 走**生产协议的信封**（本实验与生产环境用同一个信封）：
 
-{{
-  "assessment": "你对当前进展的判断（简短）",
-  "artifact": {{
-    "path": "共享 Workspace 里的逻辑路径（可含子目录）",
-    "write_mode": "create | replace | append",
-    "content": "这次要写入的完整文本"
-  }},
-  "message": {{"to": "收件人 agent_id", "text": "要说的话"}},
-  "action": {{"type": "动作类型", "parameters": {{}}}}
-}}
+如果你决定**采取一个动作**，就输出：
 
-"artifact" / "message" / "action" 都是**可选**的：不写就是不写，可以写成 null。
-"write_mode" 决定这次写入的语义（新建 / 整体替换 / 末尾追加），由你自己决定。
-不要整篇复制进 message —— 正文属于 Workspace。
+{{"decision":"act","reasoning":"你对当前进展的判断（简短）",
+  "action":{{"type":"动作类型","parameters":{{}}}}}}
 
-"action" 是一个**通用动作通道**。当前这个环境**注册了**哪些动作类型、
-各自要什么 parameters —— 这些是**环境事实**：
+如果你**不采取动作**（只是想说点什么，或者什么都不做），就直接正常回复 ——
+没有这个信封就是一次普通回复。
+
+🔒 一轮**一个动作**。这是**环境的形状**，不是对你的要求：
+   「写完产物再通知别人」是**两件事** —— 想都做就分两轮。
+   先做哪件、要不要做，完全由你自己判断。
+
+下面这些动作类型是**环境事实**（这个环境注册了什么、各自要什么参数）：
+
+  · "workspace_write"
+        parameters: {{"path": "共享 Workspace 里的逻辑路径（可含子目录）",
+                     "content": "这次要写入的完整文本",
+                     "write_mode": "create | replace | append"}}
+
+        🔴 "write_mode" **必须显式给出** —— 不传会被拒绝，**没有默认值**。
+
+           create  = 文件**不存在**时新建（已存在会被拒绝，不会悄悄覆盖）
+           replace = **整体替换**，原来的内容会消失
+           append  = 末尾追加，旧内容完整保留
+
+        ⚠️ 写不完的长文用 append，不要用 replace —— 那会丢掉已写好的部分。
 
   · "workspace_read"
         parameters: {{"path": "共享 Workspace 里的逻辑路径"}}
@@ -258,6 +266,9 @@ PROMPT = """你是这次长期生产任务的一名参与者。这是**正式生
                      "payload": {{}}}}   ← payload 可省
 
         作用：按**显式** `message_type` 发一条消息。
+
+        🔴 不要整篇复制进 message —— **正文属于 Workspace**。
+           消息是**通知与协商**用的，不是搬运产物的通道。
 
         本环境**已注册 handler** 的消息类型（环境事实）：
           TEXT · TASK_OFFER · COUNTER_OFFER · ACCEPT · REJECT ·
@@ -1338,37 +1349,62 @@ def _turn(rt: Any, bridge: Any, st: Any, stage: Any, aid: str, rnd: int,
     turn["experiment_run_id"] = EXPERIMENT_RUN_ID
 
     t0 = time.perf_counter()
+
+    # 🔴 走**生产认知入口** `act()`，不再自己造协议。
+    #
+    #   旧路径：a.generate() → 实验自己的 parse_intent() → 自己 dispatch
+    #   新路径：a.act() → run_cognition() → **生产信封** → dispatcher.dispatch()
+    #
+    #   🔒 一次解决两件事：
+    #      ① 协议不再重复（实验与生产用同一个信封 parser）
+    #      ② **Self Model 回流接通** —— act() 会把 Agent 提出的
+    #         Reflection Proposal 交给它自己的 write_service 走受控写入。
+    #         （旧路径走 generate()，那条链在真实实验里从来没被用过。）
+    #
+    #   ⚠️ **一轮一个动作**是生产信封的形状（`action` 单数）。
+    #      实测：旧契约下 **88% 的轮次一轮做 2 件事**（写 + 通知），
+    #      所以这次切换会让那部分轮次需要分两轮 —— 这是**有意的代价**，
+    #      为了让实验跑在**生产协议**上，不是为了省轮数。
+    #
+    #   🔒 **不显式传 write_service** —— act() 会自己取 Agent 身上的
+    #      `self_model_write_service`（生产组合根已经注入了）。
     try:
-        r = a.generate(messages=prompt, task_id=TASK_ID,
-                       requested_cognitive_budget=COGNITIVE_BUDGET,
-                       # §5.3 purpose 由**调用方**声明，绝不从结果反推
-                       call_purpose="cognition",
-                       cognition_turn_id=cognition_turn_id,
-                       experiment_run_id=EXPERIMENT_RUN_ID)
+        run = a.act(messages=prompt,
+                    dispatcher=dispatcher,
+                    task_id=TASK_ID,
+                    requested_cognitive_budget=COGNITIVE_BUDGET,
+                    # §5.3 purpose 由**调用方**声明，绝不从结果反推
+                    call_purpose="cognition",
+                    cognition_turn_id=cognition_turn_id,
+                    experiment_run_id=EXPERIMENT_RUN_ID)
     except Exception as exc:                                  # noqa: BLE001
         turn["error"] = f"{type(exc).__name__}: {exc}"
         stats[aid]["calls"] += 1
         stats[aid]["empty"] += 1
         return turn
 
+    # 🔒 act() 内部经 run_cognition() → self.generate()，
+    #    所以这次 LLM 调用的事实仍可从 Agent 上取到。
+    #    契约状态用 `run.*` —— 那是**生产层**的读数，
+    #    不是实验自己从 response 再推一遍。
+    r = getattr(a, "last_response", None)
+    content = getattr(r, "content", None) or ""
+
     s = stats[aid]
-    content = r.content or ""
     s["calls"] += 1
-    s["tokens"] += int(r.total_tokens or 0)
-    turn.update({"ok": True, "tokens": r.total_tokens,
-                 "output_status": r.output_status,
-                 "requested_model": r.requested_model,
-                 "response_model": r.response_model,
-                 "finish_reason": r.finish_reason,
-                 # 🔴 认知输出语义状态（与 output_status 正交）
-                 "cognitive_status": getattr(r, "cognitive_status", None),
+    s["tokens"] += int(getattr(r, "total_tokens", 0) or 0)
+    turn.update({"ok": True,
+                 "tokens": getattr(r, "total_tokens", None),
+                 "requested_model": getattr(r, "requested_model", None),
+                 "response_model": getattr(r, "response_model", None),
+                 # 🔴 生产层读出来的契约状态
+                 "output_status": run.output_status,
+                 "cognitive_status": run.cognitive_status,
+                 "finish_reason": run.finish_reason,
                  "ms": round((time.perf_counter() - t0) * 1000, 1),
                  "chars": len(content)})
 
     # ---- §5.1/§7：这次调用的 llm_call_id 与 Provider 边界证据 ----
-    #
-    #   🔒 记录的是**这一次调用自己的** id 与证据，
-    #      不是「某个时间点上最近的一次」—— 那样 Turn 与 Call 就分不开了。
     turn["llm_call_id"] = getattr(a, "last_call_id", None)
     evidence = getattr(a, "last_request_evidence", None)
     if evidence:
@@ -1379,124 +1415,98 @@ def _turn(rt: Any, bridge: Any, st: Any, stage: Any, aid: str, rnd: int,
         turn["request_sha256_16"] = evidence.get("request_sha256_16")
 
     # ---- §9/§10/§11：截断事实 + **下一轮真实 Context** 的证据 ----
-    #
-    # 🔒 实验 telemetry，**不进**正式架构、不建表。
-    truncated = getattr(r, "cognitive_status", None) == "TRUNCATED"
+    truncated = run.cognitive_status == "TRUNCATED"
     turn["truncated"] = truncated
     if truncated:
         turn["critical_experience_id"] = _latest_critical_id(rt, aid)
         turn["critical_observation_created"] = bool(
             turn["critical_experience_id"])
-    # 这一轮**真实构建**的 Context（包装器抓的）
     turn["context"] = dict(_CONTEXT_SINK.get(aid) or {})
 
-    if not getattr(r, "has_valid_content", True):
+    # 🔴 EMPTY_CONTENT **不许悄悄成功**（与 run_cognition 同一条纪律）。
+    #    用**生产层的** output_status 判定，不从内容长度反推。
+    if run.output_status == "EMPTY_CONTENT" or not content.strip():
         s["empty"] += 1
         turn["ok"] = False
         turn["error"] = "EMPTY_CONTENT"
         return turn
     s["valid"] += 1
 
-    intent = parse_intent(content)
-    if "完成" in intent["assessment"] and "未" not in intent["assessment"]:
+    # ---- Decision（由**生产 parser** 得出）----
+    decision = run.decision
+    reasoning = str(getattr(decision, "reasoning", "") or "")
+    turn["decision"] = getattr(decision, "kind", None)
+    turn["reasoning"] = reasoning[:400]
+    if "完成" in reasoning and "未" not in reasoning:
         turn["claims_done"] = True
 
-    if intent["artifact"]:
-        art = intent["artifact"]
-        mode = art["write_mode"] or MODE_REPLACE
-        if mode == MODE_CREATE:
-            s["created"] += 1
-        elif mode == MODE_APPEND:
-            s["appended"] += 1
-        else:
-            s["replaced"] += 1
-
-        # 🔴 M3：**经过 ActionDispatcher**，不再直连 Gateway。
-        #
-        #   旧路径：write_artifact() → 裸 dict → turn["write"] → 进程结束即消失
-        #   新路径：ActionIntent → Dispatcher → WorkspaceWriteExecutor
-        #           → write_artifact() → **ActionResult**
-        #
-        #   🔒 write_mode 仍然是 **Agent 自己声明的那个**，原样透传；
-        #      Executor 不重试、不改 mode、不改路径。
-        if dispatcher is None:                            # pragma: no cover
-            raise RuntimeError(
-                "_turn 需要 ActionDispatcher —— 写操作必须经过 Action Seam（M3）")
-        action_intent = ActionIntent(
-            action_type=ACTION_WORKSPACE_WRITE, agent_id=aid,
-            parameters={"path": art["path"], "content": art["content"],
-                        "write_mode": mode},
-            reason=str(intent.get("assessment") or "")[:200],
-            intent_id=new_intent_id())
-        action_result = dispatcher.dispatch(action_intent)
-
-        out = (action_result.output
-               if isinstance(action_result.output, dict) else {})
-        turn["write"] = {"path": art["path"], "mode": mode,
-                         "ok": bool(action_result.success),
-                         "code": (action_result.metadata or {}).get("code"),
-                         "revision": out.get("revision"),
-                         "previous_chars": out.get("previous_chars"),
-                         "appended_chars": out.get("appended_chars")}
-        if action_result.success:
-            s["writes_ok"] += 1
-            s["chars_written"] += len(art["content"])
-        else:
-            s["writes_fail"] += 1
-
-        # 🔴 M3：ActionResult → Experience —— **成功与失败都记**。
-        #
-        #   这一行就是审计里「Gateway 知道 → Runtime 知道 → **Agent 不知道**」
-        #   那个缺口的补法：记下来之后，下一轮 `Brain.generate` 经
-        #   `CognitiveContextBuilder.build()` → `retrieve_relevant()` 会取到它，
-        #   渲染进 system —— 闭环成立。
-        turn["experience"] = _record_action_experience(
-            experience_store, aid, action_intent, action_result)
-
-    # ---- 🔴 通用动作：走**同一个** dispatcher，不新增任何旁路 ----
+    # ---- 🔴 唯一的动作通道（一轮一个）----
     #
-    #  🔒 这里也**不**判断 type 是什么、不提前拒绝任何类型 ——
-    #     合法性由「组合根注册了哪些执行器」决定，不由调用点决定。
+    #   🔒 **这里不 dispatch** —— run_cognition 已经执行过了。
+    #      再 dispatch 一次会**重复执行**（写两次文件、发两条消息）。
     #
-    #  ⚠️ 与写操作的一个真实差别（**不是缺陷，是既有机制的性质**）：
-    #     读到的内容进入 ActionResult.output，经 ExperienceStore 要
-    #     **下一轮** Cognition 才被 Agent 看到。
-    #     本实验**不**发明「同步返回给本轮」的新路径 —— 那会绕过
-    #     Experience 机制，属于架构改动（需要任务书）。
-    #     本次只做「把动作接上」，让 Agent 至少能**发起**读。
-    if intent.get("action"):
-        if dispatcher is None:                            # pragma: no cover
-            raise RuntimeError("_turn 需要 ActionDispatcher")
-        act = dict(intent["action"])
-        act_intent = build_intent(
-            aid, {"type": act["type"], "parameters": act["parameters"]},
-            reason=str(intent.get("assessment") or "")[:200])
-        act_result = dispatcher.dispatch(act_intent)
-        a_out = (act_result.output
-                 if isinstance(act_result.output, dict) else {})
+    #   🔒 Experience 也**不在这里记** —— BaseAgent.act() 已经记了，
+    #      并挂在 `run.experience` 上。这里只**读**。
+    #
+    #   🔒 下面把一次动作**投影**成 turn 的既有字段（write / message），
+    #      好让 `_print_turn` 与报告不用改 —— 那是**视图**，
+    #      不是第二个事实源。
+    ai, ar = run.action_intent, run.action_result
+    if ai is not None:
+        atype = str(ai.action_type)
+        params = dict(getattr(ai, "parameters", None) or {})
+        out = (ar.output if (ar is not None and isinstance(ar.output, dict))
+               else {})
+        code = (ar.metadata or {}).get("code") if ar is not None else None
+        ok = bool(ar is not None and ar.success)
+
         turn["action"] = {
-            "type": act["type"],
-            "ok": bool(act_result.success),
-            "code": (act_result.metadata or {}).get("code"),
-            "path": a_out.get("path") or act["parameters"].get("path"),
-            "revision": a_out.get("revision"),
-            "chars": a_out.get("chars"),
+            "type": atype, "ok": ok, "code": code,
+            "path": out.get("path") or params.get("path"),
+            "revision": out.get("revision"),
+            "chars": out.get("chars"),
             # 🔒 内容也记进 turn —— 否则「读到了什么」没有证据。
-            "content": a_out.get("content"),
+            "content": out.get("content"),
         }
-        turn["action_experience"] = _record_action_experience(
-            experience_store, aid, act_intent, act_result)
+        if ar is None:
+            # TRUNCATED 时 run_cognition **保留 intent 但不执行** ——
+            # 那是真实发生的事实，如实记下来：既不假装成功，
+            # 也不假装没发生。
+            turn["action"]["skipped"] = "TRUNCATED"
+        # 🔴 **只记 experience_id，不记 Experience 对象。**
+        #    冒烟跑出来的真 bug：`act()` 把 Experience **对象**挂在
+        #    `run.experience` 上，直接塞进 log 会让最后那次
+        #    `json.dumps(log)` 抛 `TypeError: Object of type Experience
+        #    is not JSON serializable` —— 整轮结果写不出来。
+        #    🔒 与 `_record_action_experience()` 的返回口径一致（它也返回 id）。
+        turn["action_experience"] = getattr(
+            getattr(run, "experience", None), "experience_id", None)
 
-    if intent["message"]:
-        res = channels.send(comm, bridge, from_agent=aid,
-                            to_agent=intent["message"]["to"],
-                            text=intent["message"]["text"],
-                            trace_id=EXPERIMENT_ID)
-        turn["message"] = {"to": intent["message"]["to"], "ok": res.get("ok")}
-        if res.get("ok"):
-            s["messages"] += 1
-            log["comm_events"].append({"kind": "sent", "agent_id": aid,
-                                       "round": rnd, "to": intent["message"]["to"]})
+        if atype == ACTION_WORKSPACE_WRITE:
+            mode = str(params.get("write_mode") or "")
+            if mode == MODE_CREATE:
+                s["created"] += 1
+            elif mode == MODE_APPEND:
+                s["appended"] += 1
+            else:
+                s["replaced"] += 1
+            turn["write"] = {
+                "path": params.get("path"), "mode": mode, "ok": ok,
+                "code": code, "revision": out.get("revision"),
+                "previous_chars": out.get("previous_chars"),
+                "appended_chars": out.get("appended_chars")}
+            if ok:
+                s["writes_ok"] += 1
+                s["chars_written"] += len(str(params.get("content") or ""))
+            else:
+                s["writes_fail"] += 1
+        elif atype == ACTION_MESSAGE_SEND:
+            turn["message"] = {"to": params.get("to"), "ok": ok}
+            if ok:
+                s["messages"] += 1
+                log["comm_events"].append(
+                    {"kind": "sent", "agent_id": aid, "round": rnd,
+                     "to": params.get("to")})
     return turn
 
 
@@ -1641,7 +1651,17 @@ def _workspace_facts(gw: Any, agent: str) -> str:
         mine = "（你的命名空间）" if owner == agent else ""
         body = (", ".join(_describe_entry(e) for e in entries)
                 if entries else "（空）")
-        lines.append(f"  /{d}/  负责人={owner}{mine}  内容: {body}")
+        # 🔴 显示的是**写入时要用的格式** —— 不带前导 `/`。
+        #
+        #    历史教训（真实运行 1009-2100）：这里原先显示 `/plot/`，
+        #    于是 4 个 Agent 全都照着写了 `/plot/outline.md`，
+        #    而 `validate_artifact_path` 把**以 `/` 开头**当成宿主绝对路径拒绝
+        #    ⇒ 全员 `bad_path`。
+        #
+        #    ⚠️ 注意这是**显示侧**的修法。根因是 `services/artifacts.py`
+        #       与 `WorkspaceGateway`（它的规范语法是 `/plot`）**不一致** ——
+        #       那属于策略问题，**没有**在这里改。
+        lines.append(f"  {d}/  负责人={owner}{mine}  内容: {body}")
 
     # 根目录下的既有 Artifact
     root = gw.list(WS_ID, "/", agent)

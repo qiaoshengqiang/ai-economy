@@ -282,8 +282,36 @@ def test_report_flags_a_silent_write_failure(tmp_path, capsys):
     rd._report_turns(tmp_path, ["novel_world_builder", "novel_author"])
     out = capsys.readouterr().out
     assert "locked_by_other" in out
-    assert "NO_WRITE" in out
+    # 🔴 2026-10-09：判据从「没有 write」改成「整轮没有动作」——
+    #    因为实验现在走生产信封，是**一轮一个动作**，
+    #    「没写」可能只是「这一轮选择了读 / 发消息」。
+    assert "NO_ACTION" in out
     assert "2/2" in out, "两个失败都要被数出来"
+
+
+def test_report_does_not_flag_a_non_write_action(tmp_path, capsys):
+    """
+    🔴 回归：**一轮一个动作**下，「这一轮做了读 / 发消息」
+       不能被报成「什么都没做」—— 那是旧判据的假阳性。
+    """
+    import json
+
+    import experiments.user_demand.run_demand as rd
+
+    (tmp_path / "results").mkdir()
+    (tmp_path / "results"
+     / "heterogeneous_production_result.json").write_text(
+        json.dumps({"sessions": [{"turns": [
+            {"round": 1, "agent_id": "novel_reader", "ok": True,
+             "action": {"type": "workspace_read", "ok": True}},
+            {"round": 2, "agent_id": "novel_author", "ok": True,
+             "action": {"type": "message_send", "ok": True}},
+        ]}]}), encoding="utf-8")
+
+    rd._report_turns(tmp_path, ["novel_author", "novel_reader"])
+    out = capsys.readouterr().out
+    assert "🔴 整轮没有动作" not in out, out
+    assert "NO_ACTION" not in out, out
 
 
 def test_report_reads_message_bodies(tmp_path, capsys, monkeypatch):

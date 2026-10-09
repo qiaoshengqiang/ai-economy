@@ -531,19 +531,36 @@ class TestReverseTheMechanismIsReal:
         """
         import inspect
 
-        turn_src = inspect.getsource(hetero_production._turn)
+        # 🔒 **先过 code_only** —— 否则守卫会被 `_turn` 里的注释绊倒
+        #    （注释里写着「旧路径 a.generate()」「这里不 dispatch」）。
+        turn_src = _code_only(inspect.getsource(hetero_production._turn))
+        assert len(turn_src) > 800, (
+            f"清理后的源码只有 {len(turn_src)} 字符 —— "
+            f"守卫可能在对着空字符串断言（假绿）")
         assert _turn_wiring_gaps(turn_src) == [], (
             f"_turn 没有真正接上 Action Seam：{_turn_wiring_gaps(turn_src)}")
+        assert _turn_forbidden_gaps(turn_src) == [], (
+            f"_turn 自己做了不该做的事：{_turn_forbidden_gaps(turn_src)}")
 
         rec_src = inspect.getsource(hetero_production._record_action_experience)
         assert "record_action_result(" in rec_src
 
-        # 🔒 反向：把 dispatch 那一行挖掉，守卫必须变红
-        evil = turn_src.replace("dispatcher.dispatch(action_intent)", "pass")
-        assert _turn_wiring_gaps(evil) != []
-        # 🔒 反向：把 Experience 记录挖掉，守卫必须变红
-        evil2 = turn_src.replace("_record_action_experience(", "# gone: ")
-        assert _turn_wiring_gaps(evil2) != []
+        # 🔒 反向 1：不走 act() 而走 generate() ⇒ 守卫必须变红。
+        #    （那正是 2026-10-09 之前的旧路径：协议重复 + Self Model 回流断掉。）
+        assert _turn_wiring_gaps(
+            turn_src.replace("a.act(", "a.generate(")) != []
+        # 🔒 反向 2：把「把经验读出来」挖掉 ⇒ 守卫必须变红
+        assert _turn_wiring_gaps(
+            turn_src.replace("action_experience", "gone")) != []
+        # 🔒 反向 3/4：给**检测器**喂一段真含违规标记的合法源码 ⇒ 必须变红。
+        #    这一条盯的是「重复执行」（写两次文件 / 发两条消息）。
+        assert _turn_forbidden_gaps(
+            "def t():\n    dispatcher.dispatch(x)\n") != []
+        assert _turn_forbidden_gaps(
+            "def t():\n    _record_action_experience(a, b, c, d)\n") != []
+        # 🔒 反向 5：`_code_only` 必须真的清掉注释 ——
+        #    否则上面第 ① 条会再次被说明文字绊倒。
+        assert "boom" not in _code_only("def t():\n    # boom\n    return 1\n")
 
 
 # ================================================================
@@ -626,12 +643,70 @@ def _fallback_mode_literals(src: str) -> list:
 #:            → 只要有任何一次 dispatch 就算过
 #:        现在 `"dispatcher.dispatch(action_intent)"` + `"...(act_intent)"`
 #:            → **两次都要在**，少任何一次都变红
+# 🔴 2026-10-09：实验改走**生产认知入口** `act()`，所以这条守卫
+#    断言的是**新机制**，不是把旧断言删掉。
+#
+#    性质**没有变**：「Action 的结果必须真的落成 Experience，
+#    从而在下一轮 Cognition 里可见」。
+#    变的是**谁负责**：以前实验自己 `dispatcher.dispatch()` +
+#    `_record_action_experience()`；现在 `act()` → `run_cognition()`
+#    一次做完两件事，实验只**读** `run.experience`。
+# ⚠️ 标记必须是**能扛过 `ast.unparse()` 的东西**。
+#    `_turn` 的源码在断言前会过 `_code_only()`，而 unparse 会
+#    **把双引号规范成单引号** —— 本项目记录过的 bug 类 ⑤。
+#    所以：
+#       ✅ 标识符 / 属性名 / 关键字参数   （`a.act(` · `action_intent`）
+#       ❌ 字符串字面量                  （`run.experience` 会变成 `'experience'`）
 _TURN_WIRING = (
-    "ACTION_WORKSPACE_WRITE",                  # 写的 intent 类型
-    "dispatcher.dispatch(action_intent)",      # 写操作真的经过 Dispatcher
-    "_record_action_experience(",              # 结果真的落成 Experience
-    "dispatcher.dispatch(act_intent)",         # 通用动作走**同一个** Dispatcher
+    "a.act(",                        # 走生产认知入口
+    "dispatcher=dispatcher",         # 动作真的经过 Dispatcher
+    "action_intent",                 # 动作被读出来
+    "action_experience",             # Experience 由 act() 落了，实验**读**它
 )
+
+#: 🔴 实验**自己**不许有的东西 —— 有了就是绕开生产入口或重复执行。
+_TURN_FORBIDDEN = (
+    "dispatcher.dispatch(",          # 再 dispatch 一次会重复执行
+    "_record_action_experience(",    # 再记一次会重复 Experience
+    "a.generate(",                   # 绕开 act() ⇒ Self Model 回流断掉
+)
+
+
+def _code_only(src: str) -> str:
+    """
+    **纯代码**：去掉注释与文档字符串（`ast.unparse` 会一并丢掉注释）。
+
+    🔴 【为什么必须这样 —— 2026-10-09 真实踩到】
+
+        我给 `_TURN_FORBIDDEN` 写了 `"dispatcher.dispatch("` 和
+        `"a.generate("`，而 `_turn` 的**注释**里恰好解释着：
+
+            旧路径：a.generate() → … → 自己 dispatch
+            新路径：a.act() → … → dispatcher.dispatch()
+            🔒 这里不 dispatch —— run_cognition 已经执行过了
+
+        ⇒ 守卫命中的是**说明文字**，报了一个**假的违规**。
+          这正是本项目记录过的 bug 类 ⑦「守卫查原文而不是纯代码」——
+          **我自己的守卫又踩了一次**。
+
+    ⚠️ 所以：**任何在源码里找「不许出现的东西」的守卫，都必须先过这一层。**
+    """
+    tree = ast.parse(src)
+    for node in ast.walk(tree):
+        body = getattr(node, "body", None)
+        if not isinstance(body, list) or not body:
+            continue
+        first = body[0]
+        if (isinstance(first, ast.Expr)
+                and isinstance(first.value, ast.Constant)
+                and isinstance(first.value.value, str)):
+            node.body = body[1:] or [ast.Pass()]
+    return ast.unparse(tree)
+
+
+def _turn_forbidden_gaps(turn_src: str) -> list:
+    """🔴 反向断言：实验不许自己 dispatch / 自己记 Experience / 绕开 act()。"""
+    return [m for m in _TURN_FORBIDDEN if m in turn_src]
 
 
 def _turn_wiring_gaps(turn_src: str) -> list:
