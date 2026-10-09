@@ -1121,6 +1121,17 @@ POST_MIGRATION_INDEXES: Final[tuple[str, ...]] = (
 # 格式：表名 -> [(列名, 列定义), ...]
 COLUMN_MIGRATIONS: Final[dict] = {
     "llm_calls": [
+        # 🔴 2026-10-08：调用归属与 Turn 关联（Telemetry Repair V2）。
+        #
+        #    【为什么必须加这三列】
+        #    上一轮真实实验出现了 163 条调用 vs 85 条 turn，无法归因 ——
+        #    因为记录里**没有任何键**能把一次调用和它的调用方对上。
+        #    只靠 token 数 / 时间戳反推是不允许的（§2）。
+        #
+        #    老数据一律 NULL —— 「当时没记」就是不知道，**不回填猜测**。
+        ("call_purpose", "TEXT"),
+        ("cognition_turn_id", "TEXT"),
+        ("experiment_run_id", "TEXT"),
         ("latency_ms", "REAL NOT NULL DEFAULT 0"),
         ("simulated", "INTEGER NOT NULL DEFAULT 0"),
         ("token_source", "TEXT NOT NULL DEFAULT 'unknown'"),

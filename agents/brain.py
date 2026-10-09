@@ -299,6 +299,77 @@ class Brain:
             )
         return info
 
+    @staticmethod
+    def _capture_request_evidence(*, messages: Any, system: Optional[str],
+                                  ctx: Any, call_purpose: Optional[str],
+                                  cognition_turn_id: Optional[str],
+                                  experiment_run_id: Optional[str]) -> dict:
+        """
+        在 Provider 边界记录**最终请求**里到底有没有关键观察（§7）。
+
+        返回一个 dict（**只含摘要与命中情况**，不含请求原文）：
+
+            context_snapshot_id
+            critical_observation_ids_selected     从 ctx 的关键通道取出
+            critical_observation_ids_rendered     渲染文本里**确实出现**的
+            critical_observation_ids_found_in_final_request
+            final_request_contains_expected_critical_observation
+
+        🔒 判据是「experience_id 是否出现在**最终送给 Provider 的文本**里」，
+           而不是「ctx 里有没有」。两者不同：渲染可能为空，
+           拼接可能失败，`effective_system` 可能没被用上。
+        """
+        import hashlib
+
+        def _text_of(value: Any) -> str:
+            if value is None:
+                return ""
+            if isinstance(value, str):
+                return value
+            if isinstance(value, (list, tuple)):
+                return "\n".join(_text_of(v) for v in value)
+            if isinstance(value, Mapping):
+                return "\n".join(f"{k}={_text_of(v)}"
+                                  for k, v in sorted(value.items()))
+            return str(value)
+
+        request_text = _text_of(messages) + "\n" + _text_of(system)
+
+        selected = []
+        rendered = []
+        if ctx is not None:
+            selected = [e.experience_id
+                        for e in (getattr(ctx, "critical_observations", ()) or ())]
+            rendered_text = ""
+            try:
+                rendered_text = ctx.to_text()
+            except Exception:                                 # noqa: BLE001
+                rendered_text = ""
+            rendered = [eid for eid in selected if eid in rendered_text]
+
+        # 🔑 真正的判据：id 是否出现在**最终请求文本**里
+        found = [eid for eid in selected if eid in request_text]
+
+        digest = hashlib.sha256(
+            request_text.encode("utf-8", "replace")).hexdigest()[:16]
+
+        return {
+            "context_snapshot_id": (
+                f"ctx_{digest}" if ctx is not None else None),
+            "critical_observation_ids_selected": selected,
+            "critical_observation_ids_rendered": rendered,
+            "critical_observation_ids_found_in_final_request": found,
+            # 期望 == 实际命中。没有期望时也视为「没有被丢掉」。
+            "final_request_contains_expected_critical_observation":
+                bool(selected) == bool(found),
+            # 🔒 规范化请求摘要：覆盖 messages + effective_system 的拼接文本。
+            "request_sha256_16": digest,
+            "request_chars": len(request_text),
+            "call_purpose": call_purpose,
+            "cognition_turn_id": cognition_turn_id,
+            "experiment_run_id": experiment_run_id,
+        }
+
     def generate(
         self,
         messages: Union[str, Sequence[Message], None] = None,
@@ -314,6 +385,14 @@ class Brain:
         requested_cognitive_budget: Optional[int] = None,
         context_query: Optional[dict] = None,
         cognitive: bool = True,
+        #: 🔴 Telemetry Repair V2：这次调用的**用途**，由调用方声明。
+        #: 见 `LLMCallRecorder.PURPOSE_*`。缺省是 `unspecified` ——
+        #: 一个会被审计查询暴露出来的**错误标记**，不是正常值。
+        call_purpose: Optional[str] = None,
+        #: 认知轮次 id（**仅**认知调用有值）。由生产 `_turn()` 生成并透传。
+        cognition_turn_id: Optional[str] = None,
+        #: 本次实验运行的唯一 id。
+        experiment_run_id: Optional[str] = None,
         **kwargs: Any,
     ) -> LLMResponse:
         """
@@ -364,6 +443,11 @@ class Brain:
         # 🔒 不改变 messages；不改变 provider；只是把「我目前持有的
         #    相关认知」放进 system 的最前面。
         self.last_context_stats = None
+        #: 本次调用的 llm_call_id（recorder 生成并返回）。
+        #: 🔒 失败路径也会赋值 —— 「这次失败了」同样要可追踪（§5.1）。
+        self.last_call_id: Optional[str] = None
+        #: Provider 请求边界的证据（§7）。
+        self.last_request_evidence: Optional[dict] = None
         # 🔴 必须区分 None 与 {} —— 这是两种不同的意思：
         #      None = 「这次不要 Context」
         #      {}   = 「要 Context，但不限定检索情境」
@@ -375,10 +459,12 @@ class Brain:
             query = context_query
         else:
             query = self.default_context_query          # 可能是 {}
+        built_ctx: Any = None      # §7：真正构建出来的 Context（供边界取证）
         if self.context_builder is not None and query is not None:
             try:
                 ctx = self.context_builder.build(
                     self.settings.agent_id, **query)
+                built_ctx = ctx
                 self.last_context_stats = ctx.stats()
                 rendered = ctx.to_text()
                 if rendered:
@@ -447,6 +533,27 @@ class Brain:
 
         # --- 调用 ---
         try:
+                # ============================================================
+            # §7 Provider 请求边界取证 —— **最重要的一环**
+            # ============================================================
+            #
+            # 🔒 为什么必须在**这里**：
+            #    `ctx.to_text()` 只证明「构造过一个含关键观察的 Context」，
+            #    不证明「它真的进了这次请求」。中间还有拼接、截断、
+            #    以及 `effective_system` 是否被真正使用。
+            #
+            #    所以证据必须取自**最终交给 router 的那两个值**：
+            #        messages  +  effective_system
+            #
+            # 🔒 只记**摘要与命中情况**，不记原文（体积/隐私），
+            #    并保存足以核对「关键观察确实在请求里」的最小证据。
+            #    绝不记 Authorization / API key。
+            self.last_request_evidence = self._capture_request_evidence(
+                messages=messages, system=effective_system, ctx=built_ctx,
+                call_purpose=call_purpose, cognition_turn_id=cognition_turn_id,
+                experiment_run_id=experiment_run_id,
+            )
+
             response = self.router.generate(
                 messages=messages,
                 provider=effective_provider,
@@ -455,16 +562,16 @@ class Brain:
                 model=effective_model,
                 temperature=effective_temperature,
                 max_tokens=effective_max_tokens,
-            requested_cognitive_budget=requested_cognitive_budget,
-                **kwargs,
-            )
+                    requested_cognitive_budget=requested_cognitive_budget,
+                    **kwargs,
+                )
         except Exception as exc:
             self.failure_count += 1
 
             if record and self.recorder is not None:
                 # 失败也记一笔。注意这里用的是「请求的」provider/model，
                 # 因为调用根本没成功，拿不到实际使用的模型名。
-                self.recorder.record(
+                self.last_call_id = self.recorder.record(
                     agent_id=self.agent_id,
                     response=None,
                     task_id=task_id,
@@ -472,6 +579,9 @@ class Brain:
                     error=f"{type(exc).__name__}: {exc}",
                     provider=effective_provider,
                     model=effective_model or "",
+                    call_purpose=call_purpose,
+                    cognition_turn_id=cognition_turn_id,
+                    experiment_run_id=experiment_run_id,
                     **self._credential_meta(effective_provider),
                 )
 
@@ -488,11 +598,14 @@ class Brain:
         self.last_response = response
 
         if record and self.recorder is not None:
-            self.recorder.record(
+            self.last_call_id = self.recorder.record(
                 agent_id=self.agent_id,
                 response=response,
                 task_id=task_id,
                 success=True,
+                call_purpose=call_purpose,
+                cognition_turn_id=cognition_turn_id,
+                experiment_run_id=experiment_run_id,
                 # 🔒 只记**元信息**（ref / source / 变量名），**绝不记 key 本身**。
                 **self._credential_meta(effective_provider),
             )

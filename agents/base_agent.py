@@ -365,11 +365,15 @@ class BaseAgent:
         #    🔒 放在 `generate()` 是**唯一不重复**的位置：
         #       `act()` 内部经 `run_cognition()` → `self.generate()`，
         #       所以它自动被覆盖，不需要在 `act()` 里再记一次。
-        self._record_truncation_if_needed(response)
+        self.last_call_id = getattr(self.brain, "last_call_id", None)
+        self.last_request_evidence = getattr(
+            self.brain, "last_request_evidence", None)
+
+        self._record_truncation_if_needed(response, **kwargs)
 
         return response
 
-    def _record_truncation_if_needed(self, response: Any) -> None:
+    def _record_truncation_if_needed(self, response: Any, **kwargs: Any) -> None:
         """
         认知输出被截断时，记一条 **Critical Observation Experience**。
 
@@ -383,6 +387,31 @@ class BaseAgent:
         🔒 记录失败**不能**破坏主要 Cognition。
         """
         if getattr(response, "cognitive_status", None) != "TRUNCATED":
+            return
+
+        # ============================================================
+        # 🔴 §8 截断观察的**创建边界**
+        # ============================================================
+        #
+        # 只有**认知调用**的截断才算「Agent 这一轮没想完」，
+        # 才允许写进它的 Cognitive History。
+        #
+        # 非认知调用（utility / diagnostic）的截断**仍然**会作为一次
+        # Provider 截断留在 `llm_calls` 遥测里（`finish_reason=length`
+        # 是原始技术事实，不动它）—— 但它**不得**被误记成
+        # Agent 的一段认知经历。
+        #
+        # 🔒 判据是**调用方声明的 purpose**，不是 `finish_reason`
+        #    （§5.3：不得从 length 反推 cognition）。
+        from llm.recorder import LLMCallRecorder as _R
+
+        purpose = kwargs.get("call_purpose")
+        if purpose != _R.PURPOSE_COGNITION:
+            logger.debug(
+                "截断发生在非认知调用上（purpose=%s）—— 记入 llm_calls "
+                "遥测，但**不**写进 Agent Cognitive History。",
+                purpose or _R.PURPOSE_UNSPECIFIED,
+            )
             return
         store = getattr(self, "experience_store", None)
         if store is None:

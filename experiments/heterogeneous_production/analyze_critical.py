@@ -33,6 +33,72 @@ DB = HERE / "data" / "hetero.db"
 RESULT_JSON = RESULTS / "heterogeneous_production_result.json"
 
 
+def validate_result_file(path: Path, *,
+                         expected_wall_limit: float = 3600.0,
+                         max_lag_seconds: float = 300.0) -> tuple:
+    """
+    校验一份实验结果文件**是不是这一轮的、而且是最终结果**（§3）。
+
+    返回 `(ok, problems)`。
+
+    🔴 为什么必须有这个函数：
+       我上一轮只判断「文件存在」，就把**上一轮 run 的 JSON**
+       当成了本轮结果，差点报出假结论。`heterogeneous_production_result.json`
+       是**固定文件名、会被后一次运行覆盖**的，所以「存在」不构成证据。
+
+    校验四件事：
+        ① `state` 必须是 `FINALIZED`（`RUNNING` 说明实验还没结束）
+        ② `run_id` 必须存在（没有 run id 的结果无法归属）
+        ③ `total_wall_limit` 必须等于本轮期望值（旧 run 是 7200）
+        ④ mtime 不能比最后一次 LLM 调用早太多（容差见 max_lag_seconds）
+    """
+    problems = []
+    if not path.exists():
+        return False, [f"结果文件不存在：{path}"]
+
+    try:
+        log = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:                              # noqa: BLE001
+        return False, [f"结果文件无法解析（可能是半写入）：{exc}"]
+
+    state = log.get("state")
+    if state != "FINALIZED":
+        problems.append(
+            f"state={state!r} —— 只有 FINALIZED 才是最终结果"
+            f"（RUNNING 说明实验尚未结束）")
+
+    if not log.get("run_id"):
+        problems.append("结果文件没有 run_id —— 无法归属到某一次运行")
+
+    limit = log.get("total_wall_limit")
+    if limit is not None and float(limit) != float(expected_wall_limit):
+        problems.append(
+            f"total_wall_limit={limit}（本轮应为 {expected_wall_limit}）"
+            f" —— 这是**别的轮次**的产物")
+
+    # mtime vs 最后一次 LLM 调用
+    try:
+        if DB.exists():
+            con = sqlite3.connect(str(DB))
+            try:
+                last = con.execute(
+                    "SELECT MAX(created_at) FROM llm_calls").fetchone()[0]
+            finally:
+                con.close()
+            if last:
+                import datetime as _dt
+                last_ts = _dt.datetime.fromisoformat(last).timestamp()
+                if last_ts - path.stat().st_mtime > max_lag_seconds:
+                    problems.append(
+                        f"结果 JSON 比最后一次 LLM 调用早 "
+                        f"{last_ts - path.stat().st_mtime:.0f} 秒"
+                        f"（> {max_lag_seconds:.0f}s）—— 疑似上一轮产物")
+    except Exception:                                     # noqa: BLE001
+        pass
+
+    return (not problems), problems
+
+
 def _db_finish_reasons():
     if not DB.exists():
         return {}, 0
@@ -58,40 +124,15 @@ def main() -> int:
     log = json.loads(RESULT_JSON.read_text(encoding="utf-8"))
     db, _ = _db_finish_reasons()
 
-    # 🔴 **陈旧产物检测**（我第一轮轮询就栽在这上面）。
-    #
-    #    `heterogeneous_production_result.json` 是**复写**的：
-    #    上一轮 run 的文件会一直留在那里。只判断「文件存在」
-    #    会把上一轮的结果当成这一轮 —— 实测踩过，差点报出假的结论。
-    #
-    #    两个独立信号：
-    #      ① `total_wall_limit` 必须是本轮的 3600（旧的是 7200）
-    #      ② 文件 mtime 必须比 DB 里最后一次调用**更晚**（不然是旧的）
-    problems = []
-    if float(log.get("total_wall_limit") or 0) != 3600.0:
-        problems.append(
-            f"total_wall_limit={log.get('total_wall_limit')}（本轮应为 3600）")
-    try:
-        import sqlite3 as _sq
-        _c = _sq.connect(str(DB))
-        last = _c.execute("SELECT MAX(created_at) FROM llm_calls").fetchone()[0]
-        _c.close()
-        if last:
-            import datetime as _dt
-            last_ts = _dt.datetime.fromisoformat(last).timestamp()
-            # 🔒 容差 5 分钟：最后一次在途调用可能在 JSON 写出**之后**
-            #    才落库（实测差 69 秒）。只要不是差出一整轮就没事。
-            if last_ts - RESULT_JSON.stat().st_mtime > 300:
-                problems.append(
-                    "结果 JSON 比最后一次 LLM 调用早 5 分钟以上 —— "
-                    "这是**上一轮**的产物")
-    except Exception:                                     # noqa: BLE001
-        pass
-    if problems:
-        print("🔴 结果文件疑似陈旧，拒绝分析：")
+    # 🔴 结果文件必须**可校验**（§3）。
+    ok, problems = validate_result_file(RESULT_JSON,
+                                        expected_wall_limit=3600.0)
+    if not ok:
+        print("🔴 结果文件不可用，拒绝分析：")
         for x in problems:
             print(f"   · {x}")
-        print("   → 实验可能仍在运行。等它写出本轮 JSON 再跑。")
+        print("   → 见 validate_result_file()：它校验 run_id / state / "
+              "mtime / wall limit，而不是只判断「文件存在」。")
         return 2
 
     print("=" * 72)

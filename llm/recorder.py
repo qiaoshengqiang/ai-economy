@@ -106,10 +106,39 @@ class LLMCallRecorder:
     # ------------------------------------------------------------
     # 写
     # ------------------------------------------------------------
+    #: 这次调用的**用途** —— 由**调用方显式声明**（§5.3）。
+    #:
+    #: 🔒 绝不允许根据返回内容 / token 数 / finish_reason 反推用途。
+    #:    `PURPOSE_COGNITION` 只能由真正做认知的生产入口传入。
+    #:
+    #: 审计结论（V2 §4）：当前**唯一**的生产认知入口是
+    #:     production.py::_turn → BaseAgent.generate → Brain.generate
+    #: `think()` / `run_cognition()` 目前**未被任何生产路径调用**。
+    PURPOSE_COGNITION = "cognition"
+
+    #: 非认知调用（诊断 / 摘要 / 预检……）。
+    #:
+    #: ⚠️ 当前生产路径里**没有**已证实的 utility 调用 ——
+    #:    这个值是为「确实存在时」准备的，不是为「猜一个」准备的。
+    PURPOSE_UTILITY = "utility"
+
+    #: 调用方没有声明用途。
+    #:
+    #: 🔴 这是一个**遥测错误标记**，不是正常值（§5.3）：
+    #:    它会原样落库，并且**必须能被审计查询暴露出来** ——
+    #:    绝不静默当成 cognition。
+    PURPOSE_UNSPECIFIED = "unspecified"
+
+    ALL_PURPOSES = frozenset({PURPOSE_COGNITION, PURPOSE_UTILITY,
+                              PURPOSE_UNSPECIFIED})
+
     def record(
         self,
         agent_id: str,
         response: Optional[LLMResponse] = None,
+        call_purpose: Optional[str] = None,
+        cognition_turn_id: Optional[str] = None,
+        experiment_run_id: Optional[str] = None,
         task_id: Optional[str] = None,
         success: bool = True,
         error: Optional[str] = None,
@@ -175,9 +204,10 @@ class LLMCallRecorder:
                     requested_cognitive_budget, actual_max_tokens,
                     finish_reason, output_status,
                     requested_credential_ref, requested_credential_source,
-                    requested_credential_env
+                    requested_credential_env,
+                    call_purpose, cognition_turn_id, experiment_run_id
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                          ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     call_id,
@@ -212,6 +242,12 @@ class LLMCallRecorder:
                     credential_ref,
                     credential_source,
                     credential_env,
+                    # 🔴 调用归属（Telemetry Repair V2）：
+                    #    用途由**调用方**声明；turn id 只在认知调用上有值。
+                    call_purpose if call_purpose is not None
+                    else self.PURPOSE_UNSPECIFIED,
+                    cognition_turn_id,
+                    experiment_run_id,
                 ),
             )
 

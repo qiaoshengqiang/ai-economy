@@ -277,7 +277,7 @@ class TestD_NextTurnVisibility:
             content='{"thought": "写第一章"}', provider="mock",
             model="mock_model", finish_reason=finish_reason,
             total_tokens=100, token_source="api")
-        return agent.generate(messages="hi")
+        return agent.generate(messages="hi", call_purpose="cognition")
 
     def test_truncation_is_persisted_as_observation(self, real_agent):
         self._generate(real_agent, "length")

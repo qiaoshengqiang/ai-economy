@@ -308,7 +308,7 @@ class TestE_TruncatedReachesNextContext:
     def test_truncated_observation_reaches_next_turn_context(self, agent):
         stub, target = agent
         stub("length")
-        response = target.generate(messages="hi")   # ← 生产路径的入口
+        response = target.generate(messages="hi", call_purpose="cognition")   # ← 生产路径的入口
 
         assert response.cognitive_status == "TRUNCATED"
 
@@ -330,7 +330,7 @@ class TestE_TruncatedReachesNextContext:
         """截断之后又积累了 30 条普通经历 —— Turn N+1 仍必须看得到。"""
         stub, target = agent
         stub("length")
-        target.generate(messages="hi")
+        target.generate(messages="hi", call_purpose="cognition")
         _ordinary(target.experience_store, 30, agent_id=AGENT_ID)
 
         ctx = CognitiveContextBuilder(
@@ -343,7 +343,7 @@ class TestE_TruncatedReachesNextContext:
         """🔒 阴性对照：正常 stop **不**产生关键观察。"""
         stub, target = agent
         stub("stop")
-        target.generate(messages="hi")
+        target.generate(messages="hi", call_purpose="cognition")
 
         ctx = CognitiveContextBuilder(
             experience_store=target.experience_store).build(AGENT_ID)
@@ -352,7 +352,7 @@ class TestE_TruncatedReachesNextContext:
     def test_truncated_observation_is_marked_critical(self, agent):
         stub, target = agent
         stub("length")
-        target.generate(messages="hi")
+        target.generate(messages="hi", call_purpose="cognition")
 
         rows = target.experience_store.list(AGENT_ID)
         crit = [e for e in rows if e.is_critical_observation]
@@ -368,7 +368,7 @@ class TestE_TruncatedReachesNextContext:
         """
         stub, target = agent
         stub("length")
-        target.act(messages="hi")
+        target.act(messages="hi", call_purpose="cognition")
 
         rows = target.experience_store.list(AGENT_ID)
         crit = [e for e in rows if e.is_critical_observation]

@@ -40,6 +40,8 @@ import os
 import re
 import sys
 import time
+import uuid
+from datetime import datetime, timezone
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -220,6 +222,13 @@ def main() -> int:
     from stage.context import render_stage
 
     RESULTS.mkdir(parents=True, exist_ok=True)
+
+    # 🔴 §3：每次实验一个唯一 run id + 排他运行锁。
+    #    上一轮就是两个进程并行，导致所有遥测无法归因。
+    global EXPERIMENT_RUN_ID
+    EXPERIMENT_RUN_ID = f"run_{uuid.uuid4().hex[:12]}"
+    _run_lock = _acquire_run_lock(EXPERIMENT_RUN_ID)
+    print(f"  🆔 experiment_run_id = {EXPERIMENT_RUN_ID}")
     started_wall = time.time()
     log: Dict[str, Any] = {
         "experiment_id": EXPERIMENT_ID, "task_id": TASK_ID,
@@ -329,9 +338,28 @@ def main() -> int:
 
     log["wall_seconds"] = round(time.time() - started_wall, 1)
     log["wall_minutes"] = round(log["wall_seconds"] / 60, 1)
+
+    # 🔴 §3：结果文件必须能区分 RUNNING / FINALIZED，且**写入是原子的**。
+    #
+    #    ⚠️ 上一轮我在实验仍在运行时读了这个文件两次，拿到不同的
+    #       turn 数，还一度当成「文件损坏」。真实原因是两个进程
+    #       各写各的。现在：
+    #         · 每个结果带 run_id
+    #         · 带 state（本函数只在**真正结束**时写 FINALIZED）
+    #         · 先写 .tmp 再 os.replace —— 不产生半写入文件
+    log["run_id"] = EXPERIMENT_RUN_ID
+    log["state"] = "FINALIZED"
+    log["finalized_at"] = datetime.now(timezone.utc).isoformat()
     out = RESULTS / "heterogeneous_production_result.json"
-    out.write_text(json.dumps(log, ensure_ascii=False, indent=2),
+    tmp = out.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(log, ensure_ascii=False, indent=2),
                    encoding="utf-8")
+    os.replace(tmp, out)          # 原子替换
+
+    try:
+        _run_lock.unlink(missing_ok=True)
+    except Exception:                                     # noqa: BLE001
+        pass
 
     print("\n" + "=" * 60)
     print(f"  退出原因: {log.get('exit_reason')}")
@@ -834,6 +862,60 @@ def _workspace_revision(gw: Any) -> str:
 _CONTEXT_SINK: Dict[str, Dict[str, Any]] = {}
 
 
+#: 本次实验运行的唯一 id。`main()` 启动时生成。
+#:
+#: 🔴 为什么必须有它：上一轮出现了**两个进程同时跑**同一份 DB，
+#:    导致 163 条调用 vs 85 条 turn 无法归因，我还把它误判成
+#:    「遥测缺口」。有了 run id，任何一条记录都能归属到某一次运行。
+EXPERIMENT_RUN_ID = ""
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def _acquire_run_lock(run_id: str) -> Path:
+    """
+    取得**排他运行锁**，防止两个实验进程同时写同一份 DB（§3）。
+
+    🔒 这不是「新的持久化系统」—— 只是一个 O_EXCL 创建的锁文件。
+       它解决的正是上一轮真实发生的事故：
+       我用 nohup 启动了一个进程、以为它死了（沙箱里 ps 不可用，无法确认），
+       又启动了第二个 —— 两者并行，共用同一份 hetero.db 与结果文件。
+
+    ⚠️ 陈旧锁（进程已死）会被接管并告知，不会永久卡住。
+    """
+    lock = RESULTS / ".hetero_run.lock"
+    if lock.exists():
+        content = lock.read_text(encoding="utf-8").strip()
+        pid = None
+        for part in content.split():
+            if part.startswith("pid="):
+                try:
+                    pid = int(part[4:])
+                except ValueError:
+                    pid = None
+        if pid and _pid_alive(pid):
+            raise RuntimeError(
+                f"已有实验在运行，拒绝并发启动。\n"
+                f"  锁文件：{lock}\n"
+                f"  内容  ：{content}\n"
+                f"  （两个进程写同一份 DB 会让所有遥测无法归因 —— "
+                f"上一轮就是这样失去结论的。）")
+        print(f"  ⚠️ 发现陈旧 run lock（{content}）—— 进程已不在，接管")
+        lock.unlink(missing_ok=True)
+    fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+    try:
+        os.write(fd, f"run_id={run_id} pid={os.getpid()}".encode())
+    finally:
+        os.close(fd)
+    return lock
+
+
 class _RecordingContextBuilder:
     """透传式包装：记录 `build()` 的**实际产物**，行为与内层完全一致。"""
 
@@ -846,8 +928,13 @@ class _RecordingContextBuilder:
         ctx = self._inner.build(agent_id, **kwargs)
         try:
             text = ctx.to_text()
+            import hashlib as _h
+            snap_id = "snap_" + _h.sha256(
+                text.encode("utf-8", "replace")).hexdigest()[:16]
             self._sink[self._agent_id] = {
-                # 关键通道里到底有哪几条（§12：只存 id，不存全文）
+                # §9：这一轮 Context 的快照 id（由**实际渲染文本**派生）
+                "context_snapshot_id": snap_id,
+                # 关键通道里到底有哪几条（只存 id，不存全文）
                 "critical_ids": [e.experience_id
                                  for e in ctx.critical_observations],
                 "critical_count": len(ctx.critical_observations),
@@ -923,10 +1010,23 @@ def _turn(rt: Any, bridge: Any, st: Any, stage: Any, aid: str, rnd: int,
 
     a = next(x for x in rt.economy.all_agents() if x.agent_id == aid)
     a.brain.preflight_credential()
+
+    # 🔴 §5.2 Cognition Turn Identity —— 由**生产认知入口**生成，
+    #    并沿真实调用链显式传递：
+    #        _turn() → BaseAgent.generate() → Brain.generate() → recorder
+    #    🔒 不允许只把它写进返回 JSON 而不传进真实调用记录路径。
+    cognition_turn_id = (f"turn_{EXPERIMENT_RUN_ID}_{aid}_r{rnd}")
+    turn["cognition_turn_id"] = cognition_turn_id
+    turn["experiment_run_id"] = EXPERIMENT_RUN_ID
+
     t0 = time.perf_counter()
     try:
         r = a.generate(messages=prompt, task_id=TASK_ID,
-                       requested_cognitive_budget=COGNITIVE_BUDGET)
+                       requested_cognitive_budget=COGNITIVE_BUDGET,
+                       # §5.3 purpose 由**调用方**声明，绝不从结果反推
+                       call_purpose="cognition",
+                       cognition_turn_id=cognition_turn_id,
+                       experiment_run_id=EXPERIMENT_RUN_ID)
     except Exception as exc:                                  # noqa: BLE001
         turn["error"] = f"{type(exc).__name__}: {exc}"
         stats[aid]["calls"] += 1
@@ -946,6 +1046,19 @@ def _turn(rt: Any, bridge: Any, st: Any, stage: Any, aid: str, rnd: int,
                  "cognitive_status": getattr(r, "cognitive_status", None),
                  "ms": round((time.perf_counter() - t0) * 1000, 1),
                  "chars": len(content)})
+
+    # ---- §5.1/§7：这次调用的 llm_call_id 与 Provider 边界证据 ----
+    #
+    #   🔒 记录的是**这一次调用自己的** id 与证据，
+    #      不是「某个时间点上最近的一次」—— 那样 Turn 与 Call 就分不开了。
+    turn["llm_call_id"] = getattr(a, "last_call_id", None)
+    evidence = getattr(a, "last_request_evidence", None)
+    if evidence:
+        turn["request_evidence"] = {
+            k: v for k, v in evidence.items()
+            if k != "request_sha256_16"     # 摘要单独放，便于核对
+        }
+        turn["request_sha256_16"] = evidence.get("request_sha256_16")
 
     # ---- §9/§10/§11：截断事实 + **下一轮真实 Context** 的证据 ----
     #
