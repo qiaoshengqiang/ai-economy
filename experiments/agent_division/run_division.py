@@ -93,9 +93,30 @@ AGENTS: List[str] = list(NEUTRAL_AGENTS)
 #      和 `novel_world_builder` 那种"名字即分工"是同一类问题。
 TASK_ID = "task_0001"
 WS_ID = "WS-0001"
+#: 🔴 **本实验自己的根 Stage id** —— 不许借 `production.ROOT_STAGE_ID`。
+#:
+#:    【为什么（实测踩到）】
+#:        `production.ROOT_STAGE_ID` 是**固定常量** `"stage_hetero_root"`，
+#:        而 `production_stages.stage_id` 是 **UNIQUE** 的。
+#:        于是同一个 DB 里换一个 `TASK_ID` 再跑：
+#:            `list_stages(TASK_ID)` 返回空（按 **task_id** 查）
+#:            → 去建 stage → **撞上别的 task 留下的同一个 stage_id**
+#:            → `UNIQUE constraint failed`
+#:        ⇒ stage_id 必须**跟着 task 走**。
+ROOT_STAGE_ID = f"stage_{TASK_ID}_root"
 EXPERIMENT_ID = "agent_division"
-DB: Path = ROOT / "experiments" / "agent_division" / "data" / "division.db"
-RESULTS: Path = ROOT / "experiments" / "agent_division" / "results"
+#: 🔴 **每次运行一个独立目录** —— 这是**观察实验**，不是累计系统。
+#:
+#:    默认 DB 跨运行共用的话，第二次跑会**继承上一次的
+#:    Task / Workspace / Stage** ⇒ 观察结果被污染
+#:    （实测踩到：第二次跑直接 `UNIQUE constraint failed`）。
+#:
+#:    ⇒ 与 `experiments/user_demand/run_demand.py` 同一做法：
+#:      默认在 `runs/<HHMM>-<hash>/` 下开一份全新的 DB。
+#:      想复用请显式给 `--out`。
+RUNS: Path = ROOT / "experiments" / "agent_division" / "runs"
+DB: Path = RUNS / "_unset.db"
+RESULTS: Path = RUNS / "_unset"
 
 #: 人类 Demand（由 CLI 覆盖）
 DEMAND = "写一个短篇小说的第一章。"
@@ -171,7 +192,7 @@ def _setup(rt: Any) -> None:
         st.create_stage(TASK_ID, DEMAND.strip(),
                         deliverables=[{"name": "task deliverables"}],
                         status=STATUS_ACTIVE,
-                        stage_id=P.ROOT_STAGE_ID)
+                        stage_id=ROOT_STAGE_ID)
 
     print(f"  环境就绪：")
     print(f"    Task       : {TASK_ID}")
@@ -379,6 +400,14 @@ def main() -> int:
     if args.out:
         out = Path(args.out)
         DB, RESULTS = out / "division.db", out / "results"
+    else:
+        # 🔒 每次一个全新目录 —— 别让上一次的观察污染这一次
+        import hashlib
+        import time as _time
+        stamp = _time.strftime("%m%d-%H%M")
+        tag = hashlib.sha1(DEMAND.encode("utf-8")).hexdigest()[:8]
+        out = RUNS / f"{stamp}-{tag}"
+        DB, RESULTS = out / "division.db", out / "results"
     DB.parent.mkdir(parents=True, exist_ok=True)
     RESULTS.mkdir(parents=True, exist_ok=True)
     P.DB, P.RESULTS = DB, RESULTS
@@ -395,6 +424,7 @@ def main() -> int:
     print(f"  Demand   : {DEMAND.splitlines()[0][:60]}")
     print(f"  第一个 Agent: {AGENTS[0]}")
     print(f"  上限     : {WALL_LIMIT/60:.0f} 分钟 / {MAX_ROUNDS} 轮 / {BUDGET_AIC} AIC")
+    print(f"  本次目录 : {DB.parent}   ← **每次运行独立**，不与上次混淆")
 
     rt = build_runtime(db_path=DB, agent_ids=list(AGENTS))
     log: Dict[str, Any] = {"experiment_id": EXPERIMENT_ID,

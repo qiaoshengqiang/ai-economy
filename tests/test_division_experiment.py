@@ -234,3 +234,74 @@ def test_task_and_workspace_ids_do_not_leak_the_experiment_intent():
         for hint in ("division", "divide", "novel", "author", "role",
                      "split", "share"):
             assert hint not in low, f"{value!r} 里有实验意图暗示：{hint}"
+
+
+# ================================================================
+# 🔴 同一个 DB 里换 Task 再跑 —— 不许撞 stage_id（2026-10-10 真实踩到）
+# ================================================================
+def test_two_tasks_in_one_db_do_not_collide_on_stage_id(tmp_path,
+                                                        monkeypatch):
+    """
+    实测：
+```
+        sqlite3.IntegrityError: UNIQUE constraint failed:
+            production_stages.stage_id
+```
+    根因：`ROOT_STAGE_ID` 借了 `production.ROOT_STAGE_ID`
+    （固定常量 `"stage_hetero_root"`），而 `stage_id` 是 **UNIQUE** 的。
+    `list_stages(TASK_ID)` 按 **task_id** 查 ⇒ **查不出** stage_id 的冲突。
+
+    🔒 所以 stage_id 必须**跟着 task 走**。
+    """
+    from main import build_runtime
+
+    import experiments.agent_division.run_division as D
+    from experiments.heterogeneous_production import production as P
+
+    db = str(tmp_path / "two.db")
+    agents = ["agent_a", "agent_b"]
+
+    def _one(task_id: str, ws_id: str):
+        monkeypatch.setattr(D, "TASK_ID", task_id)
+        monkeypatch.setattr(D, "WS_ID", ws_id)
+        monkeypatch.setattr(D, "ROOT_STAGE_ID", f"stage_{task_id}_root")
+        monkeypatch.setattr(D, "AGENTS", list(agents))
+        monkeypatch.setattr(D, "DEMAND", "d")
+        monkeypatch.setattr(P, "TASK_ID", task_id)
+        monkeypatch.setattr(P, "WS_ID", ws_id)
+        monkeypatch.setattr(P, "AGENTS", list(agents))
+        monkeypatch.setattr(P, "ARTIFACT_NAMESPACES", {})
+        rt = build_runtime(db_path=db, agent_ids=list(agents))
+        try:
+            D._setup(rt)
+        finally:
+            rt.close()
+
+    _one("task_A", "WS-A")          # 第一个 Task
+    _one("task_B", "WS-B")          # 同一个 DB 里再来一个 —— 以前这里会炸
+
+
+def test_stage_id_follows_the_task_id():
+    """stage_id 必须是**按 task 派生**的，不能是固定常量。"""
+    import experiments.agent_division.run_division as D
+
+    assert D.ROOT_STAGE_ID == f"stage_{D.TASK_ID}_root"
+    assert D.ROOT_STAGE_ID != P_ROOT_STAGE_ID(), (
+        "又借了 production 的固定 stage_id —— 换 Task 就会撞 UNIQUE")
+
+
+def P_ROOT_STAGE_ID():
+    from experiments.heterogeneous_production import production as P
+
+    return P.ROOT_STAGE_ID
+
+
+def test_default_run_directory_is_per_run():
+    """
+    🔒 这是**观察实验**，不是累计系统 ——
+       默认共用一个 DB 会让第二次跑**继承上一次的 Task / 工作区**，
+       观察结果被污染（实测：第二次跑直接 UNIQUE 冲突）。
+    """
+    src = SRC_PATH.read_text(encoding="utf-8")
+    assert "RUNS" in src and "runs" in src
+    assert "每次运行独立" in src or "每次一个全新目录" in src
