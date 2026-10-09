@@ -216,7 +216,10 @@ def _setup(rt: Any) -> None:
 
     first = AGENTS[0]
     if rt.tasks.get(TASK_ID) is None:
-        rt.tasks.save(Task.create(
+        # 🔴 走 `Runtime.create_task` —— 它**同时**建 Task 和它的空
+        #    Shared Context。少了容器，`assign_acceptance` 会报
+        #    `no_shared_context`（实测撞到过：agent_a 想指派验收人却做不成）。
+        rt.create_task(Task.create(
             creator=first,                 # 第一个 Agent = Creator
             description=DEMAND,            # Task 的目标（共享事实）
             workspace_id=WS_ID, task_id=TASK_ID,

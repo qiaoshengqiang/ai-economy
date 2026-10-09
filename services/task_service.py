@@ -110,6 +110,8 @@ class TaskService:
         mapper: Optional[TaskMessageMapper] = None,
         handlers: Optional[TaskHandlerRegistry] = None,
         execution: Optional[TaskExecutionService] = None,
+        *,
+        alignment: Any = None,
     ):
         self.store = store
         self.directory = directory
@@ -118,8 +120,12 @@ class TaskService:
         # 议价业务组件。它持有 policies —— 门面通过属性代理过去，
         # 这样 `task_service.policies[...] = ...` 这种写法仍然有效
         # （组合根的演示会临时替换某个 Agent 的策略）。
+        # 🔴 把对齐层传下去 —— 议价服务在**新建任务**时会顺手建它的
+        #    Shared Context 容器（用户：「Agent 创建任务的时候就该把这个
+        #    给创建好了」）。少传它就等于又把容器漏掉。
         self.negotiation = TaskNegotiationService(
-            store=store, policies=policies, mapper=self.mapper
+            store=store, policies=policies, mapper=self.mapper,
+            alignment=alignment,
         )
 
         # 执行阶段的业务组件（Step 4D）。

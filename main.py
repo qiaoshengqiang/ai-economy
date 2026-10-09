@@ -206,6 +206,41 @@ class Runtime:
     def agent(self, agent_id: str):
         return self.economy.agent(agent_id)
 
+    def create_task(self, task: Any, *, by: Optional[str] = None) -> Any:
+        """
+        🔴 **建 Task 的唯一入口**（2026-10-10）。
+
+        【为什么必须有它 —— 用户指出的缺陷】
+
+            「这明显之前实现任务创建的时候把它漏了。
+              Agent 创建任务的时候就该把这个给创建好了。」
+
+            `Task` 和它的 `TaskSharedContext` 本该**一起诞生** ——
+            Shared Context 是「这个 Task 的共同认知」的**容器**。
+            但之前任务创建**散落在 ~10 处**，各自直接
+            `rt.tasks.save(Task.create(...))` ⇒ **谁也没建容器**。
+
+            后果（实测）：观察实验里 agent_a 想指派验收人，
+            `assign_acceptance` 报 `no_shared_context` 失败 ——
+            **它想合作，环境只给了它「会失败」的告知，没给「能做到」的路径。**
+
+        🔒 **建的是空容器**：`objective` 空 · 无 acceptance_criteria · 无 ASSIGN。
+           容器是**环境形状**（和 `ensure_workspace` 同类），
+           **内容全归 Agent** —— 不预设任何分工（§0.5）。
+
+        🔒 **幂等**：已经有容器就**不动它** —— 绝不覆盖 Agent 写进去的东西。
+
+        🔴 失败**不吞** —— 见下。
+        """
+        saved = self.tasks.save(task)
+        # 🔴 失败**不吞** —— 少了容器会让 Agent 之后「连验收人都指派不了」
+        #    （`assign_acceptance` 报 `no_shared_context`），而那时它根本
+        #    追不到这里。任务和它的容器**一起诞生**：建不成就是建不成。
+        if self.alignment.current(task.task_id) is None:
+            self.alignment.create_context(task.task_id, by=by or task.creator)
+        return saved
+
+
     def close(self) -> None:
         """
         关掉所有资源。
@@ -1129,6 +1164,8 @@ def build_runtime(
         directory=directory,
         policies=decision_policies,
         execution=task_execution,
+        # 🔴 任务创建时同时建 Shared Context（Agent 收到 TASK_OFFER 那条路径）
+        alignment=alignment,
     )
 
     # 把 Task 的业务处理器接到通信层的类型处理器上。

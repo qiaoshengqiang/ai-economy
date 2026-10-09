@@ -88,6 +88,8 @@ class TaskNegotiationService(TaskApplicationService):
         store: TaskStore,
         policies: Optional[Mapping[str, DecisionPolicy]] = None,
         mapper: Optional[TaskMessageMapper] = None,
+        *,
+        alignment: Any = None,
     ):
         # store / mapper 由基类持有 —— 幂等、trace 缝合、协议违规回复
         # 都在基类里，议价和执行两个服务共用同一份实现（不复制）。
@@ -105,6 +107,40 @@ class TaskNegotiationService(TaskApplicationService):
         #     策略由**组合根**按每个 Agent 的配置构造，
         #     这里只负责查表 —— 它不认识任何具体 Agent。
         self.policies: Dict[str, DecisionPolicy] = dict(policies or {})
+
+        #: 🔴 TaskAlignmentService —— **任务创建时同时建它的 Shared Context**。
+        #
+        #  【为什么放在这里（用户指出的缺陷）】
+        #      「这明显之前实现任务创建的时候把它漏了。
+        #        Agent 创建任务的时候就该把这个给创建好了。」
+        #
+        #      **收到 TASK_OFFER 就是「Agent 创建任务」的那条路径。**
+        #      而 Shared Context 是「这个 Task 的共同认知」的容器 ——
+        #      少了它 Agent **连验收人都指派不了**
+        #      （`assign_acceptance` 报 `no_shared_context`，实测撞到过）。
+        #
+        #  🔒 `None` = 没接对齐层（老构造方式 / 单元测试）⇒ **不假装**，
+        #     只是不建容器。因为它是**可选**的，现有调用方一行都不用改。
+        self.alignment = alignment
+
+    def _ensure_shared_context(self, task: Any) -> None:
+        """
+        🔴 **Task 建出来了，它的 Shared Context 也该诞生**（2026-10-10）。
+
+        🔒 建**空容器**：objective 空 · 无 acceptance_criteria · 无 ASSIGN。
+           容器是**环境形状**，内容全归 Agent —— 不预设任何分工（§0.5）。
+
+        🔒 **幂等**：已经有容器就**不动它**，绝不覆盖 Agent 写进去的东西。
+
+        🔴 失败**不吞**：少了容器会让 Agent 之后「连验收人都指派不了」，
+           而那时它只看到一个 `no_shared_context`，根本追不到这里。
+           ⇒ 任务和它的容器**一起诞生**：建不成就是建不成，**当场报**。
+        """
+        if self.alignment is None:
+            return
+        if self.alignment.current(task.task_id) is None:
+            self.alignment.create_context(task.task_id, by=task.creator)
+
 
     # ============================================================
     # 一、业务规则（校验）
@@ -439,6 +475,18 @@ class TaskNegotiationService(TaskApplicationService):
             task.offer()
 
         self.store.save(task)
+
+        # 🔴 **新建** → 同时也建它的 Shared Context 容器。
+        #
+        #    ⚠️ 必须在 `store.save(task)` **之后** —— `create_context` 会
+        #       `_require_task(task_id)` 去库里查；放在前面会
+        #       `KeyError: 找不到任务`。（我第一版就插在前面，
+        #       然后被 except 吞掉，多绕了好几步才看出来。）
+        #
+        #    🔒 只在 `created` 时建：已有任务的容器该由**它诞生的那一刻**
+        #       决定；这里不擅自补建，也不覆盖。
+        if created:
+            self._ensure_shared_context(task)
 
         logger.debug(
             "处理 TASK_OFFER：task=%s from=%s message=%s",

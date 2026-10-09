@@ -614,7 +614,10 @@ def _ensure_environment(rt: Any) -> None:
         #
         #    🔒 现在 `DEMAND` 是**唯一来源**：Task 描述、Stage goal
         #       都从它派生。覆盖 `DEMAND` 就等于同时改了这两处。
-        rt.tasks.save(Task.create(
+        # 🔴 走 `Runtime.create_task`（同时建 Task + 空 Shared Context）。
+        #    下面 `_ensure_completion_setup` 还会往容器里写 DoD 与验收人 ——
+        #    那是**这个实验**的内容，不是容器本身。
+        rt.create_task(Task.create(
             creator=PRODUCER,          # ADR-0024：Creator 始终是 Agent
             description=DEMAND,
             workspace_id=WS_ID, task_id=TASK_ID, participants=list(AGENTS)))
