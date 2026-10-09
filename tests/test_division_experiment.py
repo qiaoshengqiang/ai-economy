@@ -1,3 +1,7 @@
+# 🔴 2026-10-10：删掉「思考过程显示」的 3 条守卫 —— 功能本身已按用户要求**移除**。
+#    它在真实终端上不稳定（擦除依赖 TTY 时序），用户实测看不到。
+#    **不留无功能的守卫。**
+
 """
 观察实验（agent_division）—— **结构守卫**，不调 LLM
 
@@ -168,52 +172,6 @@ def test_neutral_agents_have_a_workable_output_budget():
         mt = ((cfg["agents"][a].get("brain") or {}).get("max_tokens"))
         assert mt is not None and int(mt) >= 8192, (
             f"{a} 的 max_tokens={mt} 太小 —— 推理模型会把 content 挤空")
-
-
-# ================================================================
-# 思考过程显示 —— 只显示，**不保存**（2026-10-10）
-# ================================================================
-def test_thinking_display_exists_behind_a_flag():
-    src = SRC_PATH.read_text(encoding="utf-8")
-    assert "--show-thinking" in src
-    assert "_show_thinking(" in src
-    assert "LLMResponse" in src or "last_response" in src, (
-        "没有从 response 读思考 —— 那 `turn[\"reasoning\"]` 是信封字段，不是思考")
-
-
-def test_thinking_is_never_persisted(code):
-    """
-    🔴 用户的要求：「我只需要**看到**怎么思考的，**不需要他的思考数据**」。
-
-    ⇒ 思考**不许**有任何落盘路径：
-        不进 `turn`、不进 `log`、不进结果 JSON、不进 `llm_calls` 表。
-
-    🔒 设计 §十三 讲的是「不记录**上下文原文** / Memory / **Prompt**」——
-       推理是**输出**，但它**可能复述 prompt 内容**，
-       所以进生产表等于间接把输入也记下来了。
-    """
-    # 纯代码里不许出现"把思考写进 log/turn"的赋值
-    for bad in ('turn["thinking"]', "turn['thinking']",
-                'log["thinking"]', "log['thinking']",
-                'turn["reasoning_text"]', '"thinking":'):
-        assert bad not in code, f"思考有落盘路径：{bad}"
-    # `_show_thinking` 的调用点必须**不接收**存储容器
-    import re
-
-    src = SRC_PATH.read_text(encoding="utf-8")
-    for m in re.finditer(r"_show_thinking\((.*?)\)\n", src):
-        args = m.group(1)
-        assert "log" not in args, f"_show_thinking 拿到了 log：{args}"
-
-
-def test_erase_only_on_a_tty():
-    """
-    🔒 输出被重定向到文件时（`> run.log` / `tee`），
-       ANSI 控制码会变成乱码 —— 所以擦除**只对 TTY 生效**。
-    """
-    code = _code_only(SRC_PATH.read_text(encoding="utf-8"))
-    assert "isatty" in code, "擦除没有判断 TTY"
-    assert "\\x1b[" in SRC_PATH.read_text(encoding="utf-8") or "x1b[" in code
 
 
 def test_task_and_workspace_ids_do_not_leak_the_experiment_intent():

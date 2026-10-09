@@ -127,7 +127,7 @@ BUDGET_AIC = float(os.environ.get("DIVISION_BUDGET", "50"))
 COGNITIVE_BUDGET = int(os.environ.get("DIVISION_COGNITIVE", "16384"))
 
 # ================================================================
-# 🔴 **测试注入的假履历** —— 不是真实历史，**不得当作真实数据**
+# 🔴 **测试注入的假履历** —— 随机生成，**不是真实历史**
 # ================================================================
 #
 # 【为什么要注入】
@@ -143,18 +143,55 @@ COGNITIVE_BUDGET = int(os.environ.get("DIVISION_COGNITIVE", "16384"))
 #   而 §0.5.7 又说「不要预先规定 A 是程序员、B 是测试 Agent」——
 #   所以也不能拿 `skills` 标签去充当区分度（那是预设角色表）。
 #
-#   ⇒ 暂时用**假履历**注入，专门测一件事：
-#        **Agent 会不会用这些公开事实来做选择？**
+# 【🔴 为什么改成随机生成】
 #
-#   ⚠️ 每个 Agent 的履历**刻意不同** —— 全同的话"找谁"就变成瞎猜，
-#      测不出"选择"。这里给的是：老手 / 新人 / 高成功率 / 有失败记录。
-FAKE_HISTORY: Dict[str, Dict[str, float]] = {
-    "agent_a": {"reputation_score": 0.86, "completed_tasks": 7, "failed_tasks": 1},
-    "agent_b": {"reputation_score": 0.00, "completed_tasks": 0, "failed_tasks": 0},
-    "agent_c": {"reputation_score": 0.55, "completed_tasks": 3, "failed_tasks": 2},
-    "agent_d": {"reputation_score": 0.92, "completed_tasks": 2, "failed_tasks": 0},
-    "agent_e": {"reputation_score": 0.21, "completed_tasks": 1, "failed_tasks": 4},
-}
+#   原来是 5 份**固定**的履历。实测 3 次运行，Agent 每次都选择自己完成 ——
+#   但那**说明不了履历没影响**：固定履历下，「换个履历会不会改变结果」
+#   这个问题**根本没被问到**。
+#
+#   ⇒ 随机生成，才能观测 **履历差异是否影响选择**。
+#     每次运行都不一样 —— 多跑几次就能看出结果有没有跟着履历变。
+#
+#   🔒 **seed 会被记录**（进结果 JSON + 控制台）：
+#      `--history-seed N` 可以**复现**某一次；不给就是随机的。
+#
+#   ⚠️ 它**仍然不是真实数据** —— 每一条都进 `injected_fake_history`，
+#      控制台也会打印。就是为了让任何人回头看时都不会当成真的。
+
+
+def _make_fake_history(agents: List[str], *,
+                       seed: Any = None) -> tuple:
+    """
+    随机生成一组假履历。返回 `(履历表, 实际使用的 seed)`。
+
+    🔒 形态跟着 `Reputation` 走（它就三个最朴素的计数）：
+       `score` / `completed_tasks` / `failed_tasks`。
+
+    🔒 `score` **大体跟成功率相关**（真实声誉会相关），但带一点噪声 ——
+       完全无关的话，Agent 面对的就是一组自相矛盾的数字，
+       那测的就不是「看不看履历」而是「能不能容忍矛盾」了。
+    """
+    import random
+
+    if seed is None:
+        seed = random.randrange(1 << 30)
+    rnd = random.Random(int(seed))
+
+    out: Dict[str, Dict[str, Any]] = {}
+    for aid in agents:
+        total = rnd.choice([0, 0, 1, 2, 3, 4, 6, 8, 10])
+        failed = rnd.randint(0, min(4, total))
+        completed = total - failed
+        if total == 0:
+            score = 0.0
+        else:
+            rate = completed / total
+            score = round(min(1.0, max(0.0, rate + rnd.uniform(-0.12, 0.12))), 2)
+        out[aid] = {"reputation_score": score,
+                    "completed_tasks": completed,
+                    "failed_tasks": failed}
+    return out, int(seed)
+
 
 #: 人类这个 Actor 的名字（ADR-0022：Human 是正式协作 Actor）
 HUMAN = "human"
@@ -243,78 +280,10 @@ def _seed(rt: Any, bridge: Any) -> None:
 # ================================================================
 # ③ 只跑**被消息唤醒**的 Agent
 # ================================================================
-# ================================================================
-# 思考过程显示 —— **只显示，不保存**
-# ================================================================
-#
-# 【用户的要求】
-#     「我只需要看到怎么思考的，**不需要他的思考数据**」
-#
-# 【怎么做到"新的出现、旧的消失"】
-#
-#     模型的思考已经拿到了（`LLMResponse.reasoning`）—— 只是没人打印它。
-#
-#     🔒 **不落盘**：它**不进** `log` / 结果 JSON / `llm_calls` 表。
-#        设计 §十三 说的是「不记录上下文原文 / Memory / Prompt」——
-#        推理是**输出**，但它**可能复述 prompt 内容**，
-#        所以进生产表等于间接把输入也记下来了。
-#        ⇒ 只在屏幕上过一遍，调用结束就没了。
-#
-#     🔒 **擦除只对 TTY 生效**：输出被重定向到文件时
-#        （`> run.log` / `tee`），ANSI 控制码会变成乱码。
-#
-#     ⚠️ **不是逐字滚动**：`llm/openai_compatible.py` 明确
-#        `"stream": False`（注释："本项目目前不需要"），所以思考是
-#        **调用结束后一次性拿到**的。屏幕效果是「显示 → 被下一次思考
-#        替换」，不是逐字往外冒。要逐字必须给 `llm/` 开流式 ——
-#        那是生产层改动。
-_THINKING_REGION = {"lines": 0}
-
-
-def _erase_thinking() -> None:
-    """把上一次打印的思考块从屏幕上擦掉（仅 TTY）。"""
-    n = _THINKING_REGION["lines"]
-    _THINKING_REGION["lines"] = 0
-    if n <= 0:
-        return
-    import sys as _sys
-    if not _sys.stdout.isatty():
-        return
-    # 光标上移 n 行，然后清到屏幕末尾
-    _sys.stdout.write("\x1b[%dA\x1b[J" % n)
-    _sys.stdout.flush()
-
-
-def _show_thinking(agent_id: str, reasoning: Any, *,
-                   max_lines: int = 24) -> None:
+def _inject_fake_history(rt: Any, *, seed: Any = None
+                        ) -> tuple:
     """
-    显示某个 Agent 这一轮的思考。
-
-    🔒 先擦掉上一份（**任意时刻屏幕上只有一份思考**），再在**最底部**
-       打印 —— 这样擦除才能精确到「它自己那几行」。
-    """
-    import sys as _sys
-    text = str(reasoning or "").strip()
-    _erase_thinking()
-    if not text:
-        return
-
-    raw = text.split("\n")
-    shown = raw[:max_lines]
-    _THINKING_REGION["lines"] = len(shown) + 3
-    tail = ("（前 %d 行）" % max_lines) if len(raw) > max_lines else ""
-    print("\n  +--- [thinking] %s %s" % (agent_id, tail))
-    for line in shown:
-        print("  | " + line)
-    if len(raw) > max_lines:
-        print("  | ...（还有 %d 行：不显示，也不保存）" % (len(raw) - max_lines))
-    print("  +" + "-" * 46)
-    _sys.stdout.flush()
-
-
-def _inject_fake_history(rt: Any) -> Dict[str, Any]:
-    """
-    把 `FAKE_HISTORY` 注入成每个 Agent 的**公开履历**。
+    随机生成一组假履历，注入成每个 Agent 的**公开履历**。
 
     🔒 注入的是 `Reputation` 对象本身（`Reputation` 有三个最朴素的计数：
        `score` / `completed_tasks` / `failed_tasks`，还有 `success_rate`）。
@@ -326,8 +295,9 @@ def _inject_fake_history(rt: Any) -> Dict[str, Any]:
     """
     from agents.base_agent import Reputation
 
+    history, seed = _make_fake_history(list(AGENTS), seed=seed)
     done: Dict[str, Any] = {}
-    for aid, fake in FAKE_HISTORY.items():
+    for aid, fake in history.items():
         if aid not in AGENTS:
             continue
         try:
@@ -344,14 +314,16 @@ def _inject_fake_history(rt: Any) -> Dict[str, Any]:
                      "failed_tasks": rep.failed_tasks,
                      "success_rate": rep.success_rate}
     if done:
-        print("\n  🔴 **测试注入的假履历**（不是真实历史，不得当作真实数据）：")
+        print(f"\n  🔴 **测试注入的假履历**（随机生成；不是真实历史，"
+              f"不得当作真实数据）· seed={seed}")
         for aid, v in done.items():
             print(f"       {aid:10s} 完成任务={v['completed_tasks']} "
                   f"失败={v['failed_tasks']} "
                   f"成功率={v['success_rate']} 声誉={v['reputation_score']}")
         print("    依据 §0.5.8「OS 提供…信誉·历史」；真实反馈回路尚未实现"
               "（审计 A-11）")
-    return done
+        print(f"    🔒 随机 seed={seed} —— 复现同一次请加 `--history-seed {seed}`")
+    return done, seed
 
 
 def _is_woken(rt: Any, agent_id: str) -> bool:
@@ -378,12 +350,12 @@ def main() -> int:
     ap.add_argument("--cognitive-budget", type=int, default=None)
     ap.add_argument("--out", default=None)
     ap.add_argument("--reuse-db", action="store_true")
-    ap.add_argument("--show-thinking", action="store_true",
-                    help="显示模型这一轮的思考过程（只显示，不保存；"
-                         "新的出现时旧的从屏幕消失）")
+    ap.add_argument("--history-seed", type=int, default=None,
+                    help="固定随机履历的 seed（便于复现某一次）；"
+                         "不给就是每次随机")
     args = ap.parse_args()
-    # 🔒 只影响**显示**，不影响任何落盘路径
-    show_thinking = bool(args.show_thinking)
+    # 🔒 seed 只影响**注入什么履历**，不影响任何落盘路径
+    history_seed = args.history_seed
 
     if args.demand and args.demand_file:
         ap.error("--demand 与 --demand-file 只能给一个")
@@ -425,6 +397,7 @@ def main() -> int:
     print(f"  第一个 Agent: {AGENTS[0]}")
     print(f"  上限     : {WALL_LIMIT/60:.0f} 分钟 / {MAX_ROUNDS} 轮 / {BUDGET_AIC} AIC")
     print(f"  本次目录 : {DB.parent}   ← **每次运行独立**，不与上次混淆")
+    print(f"  履历 seed: {history_seed if history_seed is not None else '（随机）'}")
 
     rt = build_runtime(db_path=DB, agent_ids=list(AGENTS))
     log: Dict[str, Any] = {"experiment_id": EXPERIMENT_ID,
@@ -443,8 +416,9 @@ def main() -> int:
     stop_reason = "UNKNOWN"
     try:
         _setup(rt)
-        injected = _inject_fake_history(rt)
+        injected, history_seed = _inject_fake_history(rt, seed=history_seed)
         log["injected_fake_history"] = injected
+        log["history_seed"] = history_seed
         dispatcher, experience_store = P._action_seam(rt, bridge)
         _seed(rt, bridge)
 
@@ -486,7 +460,6 @@ def main() -> int:
                 if (time.time() - t0) >= WALL_LIMIT:
                     stop_reason = "WALL_LIMIT"
                     break
-                _erase_thinking()          # 旧的思考从屏幕消失
                 turn = P._turn(rt, bridge, st, stage, aid, rnd, stage_txt,
                                log, stats, dispatcher=dispatcher,
                                experience_store=experience_store,
@@ -497,13 +470,6 @@ def main() -> int:
                                        "Task 目标、以及工作区里的事实。）"))
                 log["turns"].append(turn)
                 P._print_turn(aid, turn)
-                if show_thinking:
-                    # 从 **response** 读思考 —— 不是 turn["reasoning"]
-                    # （那是模型在信封里自己填的"简短判断"，两回事）。
-                    # 读完只用于打印：不进 turn / log / 任何表。
-                    _resp = getattr(rt.economy.agent(aid),
-                                    "last_response", None)
-                    _show_thinking(aid, getattr(_resp, "reasoning", None))
             if stop_reason == "WALL_LIMIT":
                 break
         else:
@@ -525,14 +491,6 @@ def main() -> int:
         log["budget"] = _safe_budget(rt)
         rt.close()
 
-    # 🔴 **结束前不擦。**
-    #
-    #    原先这里也擦一次 —— 而观察实验**总在第 2 轮就结束**
-    #    （第一轮写完、没人被唤醒），于是刚显示的思考**立刻被抹掉**，
-    #    用户在终端上什么也看不到。
-    #
-    #    🔒 要的是「**旧的**不显示」—— **最后一份是最新的，应该留着**，
-    #       它就摆在报告上面。擦除只发生在「下一次思考要显示之前」。
     _report(log)
     out = RESULTS / "division_result.json"
     out.write_text(json.dumps(log, ensure_ascii=False, indent=2),

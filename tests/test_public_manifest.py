@@ -148,24 +148,51 @@ def test_fake_history_is_recorded_and_labelled():
        但**必须被记录**，否则任何人回头看都会把它当成真实数据。
     """
     src = DIV.read_text(encoding="utf-8")
-    assert "FAKE_HISTORY" in src
+    assert "_make_fake_history" in src
     assert "injected_fake_history" in src, "假履历没有进结果 JSON"
+    assert "history_seed" in src, "seed 没记 —— 跑出异常结果就没法回看"
     assert "不是真实历史" in src, "没有明确标注它是假的"
     # 控制台也要说
     assert "测试注入的假履历" in src
 
 
-def test_fake_histories_are_deliberately_different():
+def test_fake_histories_are_randomised_and_reproducible():
     """
-    🔒 全同就变成瞎猜 —— 测不出"选择"。
-       这里要的是：老手 / 新人 / 高成功率 / 有失败记录。
+    🔴 固定履历说明不了「履历有没有影响」——
+       实测 3 次运行 Agent 每次都自己完成，但那**不是**证据：
+       履历没变，问题就没被问到。
+
+    ⇒ 随机生成，才能观测 **履历差异是否改变选择**。
+    ⇒ 同时 seed 必须**可复现**（否则跑出异常结果没法回看）。
     """
     import experiments.agent_division.run_division as D
 
-    vals = [(v["reputation_score"], v["completed_tasks"], v["failed_tasks"])
-            for v in D.FAKE_HISTORY.values()]
-    assert len(set(vals)) == len(vals), f"假履历有重复：{vals}"
-    assert len(vals) >= 3
+    agents = ["agent_a", "agent_b", "agent_c", "agent_d", "agent_e"]
+
+    h1, s1 = D._make_fake_history(agents)
+    h2, s2 = D._make_fake_history(agents)
+    assert s1 != s2, "两次随机的 seed 一样 —— 那不是随机"
+
+    # 🔒 同一个 seed 必须给出**逐字节一样**的履历
+    h1b, s1b = D._make_fake_history(agents, seed=s1)
+    assert (h1b, s1b) == (h1, s1), "同 seed 不可复现"
+
+    # 形态跟着 Reputation 走
+    for v in h1.values():
+        assert set(v) == {"reputation_score", "completed_tasks",
+                          "failed_tasks"}
+        assert 0.0 <= v["reputation_score"] <= 1.0
+        assert v["completed_tasks"] >= 0 and v["failed_tasks"] >= 0
+
+
+def test_fake_history_can_be_pinned_from_the_cli():
+    """`--history-seed N` 要能复现某一次。"""
+    import experiments.agent_division.run_division as D
+
+    src = D.__file__
+    text = Path(src).read_text(encoding="utf-8")
+    assert "--history-seed" in text
+    assert "log[\"history_seed\"]" in text, "seed 没有进结果 JSON"
 
 
 def test_observation_experiment_uses_neutral_names():
