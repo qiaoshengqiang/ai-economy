@@ -68,6 +68,9 @@ from dotenv import load_dotenv                             # noqa: E402
 
 load_dotenv(ROOT / ".env")
 
+from experiments.agent_division.prompt import (  # noqa: E402
+    NO_DIRECT_ORDER, PROMPT as DIVISION_PROMPT,
+)
 from experiments.heterogeneous_production import production as P   # noqa: E402
 
 # ================================================================
@@ -474,11 +477,13 @@ def main() -> int:
                 turn = P._turn(rt, bridge, st, stage, aid, rnd, stage_txt,
                                log, stats, dispatcher=dispatcher,
                                experience_store=experience_store,
-                               # 🔴 **人类命令只给第一个 Agent**
-                               demand=(DEMAND if aid == AGENTS[0] else
-                                       "（人类**没有**直接给你命令。"
-                                       "你只知道自己收到的消息、"
-                                       "Task 目标、以及工作区里的事实。）"))
+                               # 🔴 **只给第一个 Agent 人类命令**
+                               demand=(DEMAND if aid == AGENTS[0]
+                                       else NO_DIRECT_ORDER),
+                               # 🔴 **用本实验自己的模板** —— 不复用
+                               #    `production.PROMPT`（它塞了 Stage /
+                               #    Session / 结项待办 / 「轮」）。
+                               prompt_template=DIVISION_PROMPT)
                 log["turns"].append(turn)
                 P._print_turn(aid, turn)
             if stop_reason == "WALL_LIMIT":

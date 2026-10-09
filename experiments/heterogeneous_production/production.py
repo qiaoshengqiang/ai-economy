@@ -1423,7 +1423,8 @@ def _turn(rt: Any, bridge: Any, st: Any, stage: Any, aid: str, rnd: int,
           stage_txt: str, log: Dict[str, Any],
           stats: Dict[str, Any], *, dispatcher: Any = None,
           experience_store: Any = None,
-          demand: Any = None) -> Dict[str, Any]:
+          demand: Any = None,
+          prompt_template: Any = None) -> Dict[str, Any]:
     import channels
 
     comm, gw = rt.communication, rt.workspace_gateway
@@ -1437,9 +1438,11 @@ def _turn(rt: Any, bridge: Any, st: Any, stage: Any, aid: str, rnd: int,
         log["comm_events"].append({"kind": "wakeup", "agent_id": aid,
                                    "round": rnd})
 
-    prompt = PROMPT.format(
+    # 🔒 `prompt_template` 可换：让**别的实验**用它**自己的**环境事实，
+    #    而不是继承本实验的整套（Stage / Session / 结项待办 / 「轮」…）。
+    _template = (prompt_template if prompt_template is not None else PROMPT)
+    prompt = _template.format(
         # 🔴 `demand` 可覆盖：**「人类命令」只递给被指定的那个 Agent**。
-        #    默认仍是模块级的 `DEMAND`（老实验行为完全不变）。
         demand=DEMAND if demand is None else demand,
         stage=stage_txt, ws=WS_ID,
         completion=_completion_facts(rt),

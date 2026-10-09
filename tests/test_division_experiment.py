@@ -263,3 +263,70 @@ def test_default_run_directory_is_per_run():
     src = SRC_PATH.read_text(encoding="utf-8")
     assert "RUNS" in src and "runs" in src
     assert "每次运行独立" in src or "每次一个全新目录" in src
+
+
+# ================================================================
+# 🔴 prompt 里**不许出现**「轮 / 回合 / 下一步 / 后续」（2026-10-10）
+# ================================================================
+def test_the_prompt_does_not_contain_any_next_step_language():
+    """
+    【用户的原话】
+
+        「轮次是旧的那个实验里的概念，和新的实验没关系。
+          我们想观察到的场景是第一个 agent **什么时候能想到把活进行分工**，
+          而不是**想着下一轮给谁**。」
+
+    🔴 而实测：旧模板（`production.PROMPT`）里塞了这些「你还有下一步」的暗示——
+
+        「你**这一轮**做什么」
+        「**一轮**一个动作……想都做就分**两轮**」
+        「只有在收到消息时，才会有你的**下一个回合**」
+        「结果会进入你的经历，在**下一轮**认知里才可见」
+        `Session: … **最多再跑 6 轮** · 到点后不再有新的回合`
+        `距离结项还差：没有 DoD、没有 Completion Proposal、没有验收责任人…`
+
+    ⇒ 环境**反复告诉它"还有下一步"** ⇒ 它把「分工」想成「下一轮给谁」。
+      **那不是分工，是拖延。**
+
+    🔒 所以这个实验用自己的模板，并且**这些词一个都不许有**。
+    """
+    import re
+
+    from experiments.agent_division.prompt import PROMPT as T
+
+    for word in ("轮", "回合", "下一步", "后续"):
+        assert not re.search(word, T), (
+            f"观察实验的 prompt 里出现了「{word}」—— 那会把分工变成「下一轮给谁」")
+
+
+def test_the_prompt_has_no_leftovers_from_the_old_experiment():
+    """旧实验的框架**不许**跟过来（Stage · Session · 结项待办）。"""
+    from experiments.agent_division.prompt import PROMPT as T
+
+    for leftover in ("当前 Stage", "Session:", "距离结项还差",
+                     "Definition of Done", "Completion Proposal",
+                     "Acceptance Responsibility"):
+        assert leftover not in T, f"旧实验的残留跟过来了：{leftover}"
+
+
+def test_it_uses_its_own_template():
+    """`_turn` 必须收到本实验的模板，而不是 `production.PROMPT`。"""
+    src = SRC_PATH.read_text(encoding="utf-8")
+    assert "prompt_template=DIVISION_PROMPT" in src
+    # 而且 `_turn` 要支持这个参数（默认行为不变）
+    prod = (ROOT / "experiments" / "heterogeneous_production"
+            / "production.py").read_text(encoding="utf-8")
+    assert "prompt_template: Any = None" in prod
+    assert "prompt_template if prompt_template is not None else PROMPT" in prod
+
+
+def test_other_agents_are_told_they_got_no_direct_order():
+    """
+    🔒 「人类命令」只给第一个 Agent。其他人看到的是**事实**
+       （"人类没有直接给你命令"），不是"你该去问别人"。
+    """
+    from experiments.agent_division.prompt import NO_DIRECT_ORDER
+
+    assert "没有" in NO_DIRECT_ORDER
+    for nudge in ("你该", "你应该", "去找", "建议"):
+        assert nudge not in NO_DIRECT_ORDER
