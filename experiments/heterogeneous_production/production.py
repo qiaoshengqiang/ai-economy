@@ -1655,7 +1655,7 @@ def _print_turn(aid: str, turn: Dict[str, Any]) -> None:
 
 
 # ================================================================
-def _describe_entry(e: Dict[str, Any]) -> str:
+def _describe_entry(e: Dict[str, Any], *, with_name: bool = True) -> str:
     """
     🔴 M4：把 `gateway.list()` 的一个条目渲染成一行。
 
@@ -1669,6 +1669,8 @@ def _describe_entry(e: Dict[str, Any]) -> str:
         于是 Agent 只能看到「这个文件在」，看不到「它已经是 R2」——
         无法区分「这是我上轮改的」和「这是别人刚建的」。
         实测：`novel_plot_architect` 5 轮重复 `CREATE` 同一路径。
+    🔒 `with_name=False` 给**已经自己打印了路径**的调用方用 ——
+       名字只出现一次，而格式化逻辑仍然只有这一份。
     """
     name = str(e.get("name") or "")
     facts: List[str] = []
@@ -1680,7 +1682,8 @@ def _describe_entry(e: Dict[str, Any]) -> str:
         facts.append(f"controller={e['effective_controller']}")
     if e.get("effective_lock_holder"):
         facts.append(f"lock={e['effective_lock_holder']}")
-    return f"{name}（{', '.join(facts)}）" if facts else name
+    body = f"（{', '.join(facts)}）" if facts else ""
+    return f"{name}{body}" if with_name else (body or name)
 
 
 def _completion_facts(rt: Any) -> str:
@@ -1751,48 +1754,81 @@ def _completion_facts(rt: Any) -> str:
     return "\n".join(lines)
 
 
+#: 事实块最多列多少条 / 递归多深。
+#: 🔒 超了就**如实说截断了**，不静默少列。
+_WORKSPACE_FACT_MAX_ENTRIES = 60
+_WORKSPACE_FACT_MAX_DEPTH = 4
+
+
 def _workspace_facts(gw: Any, agent: str) -> str:
     """
     §七：把 Workspace 的**真实环境事实**给 Agent。
 
-    🔴 **空命名空间也必须列出来** —— D/E smoke 已证明：
-       不列出来 Agent 就不知道 `/manuscript/` 存在，只能瞎猜路径，
-       然后全部 `locked_by_other`。那是**事实投递问题**，不是 Agent 行为问题。
+    🔴 **2026-10-10 重写：列真实存在的树，不再遍历预设的命名空间清单。**
 
-    🔴 M4：每个条目带上 Gateway 已经给出的 `type` / `revision` /
-       `effective_controller` / `effective_lock_holder` ——
-       否则 Agent 不知道当前状态，只知道「有这么个名字」。
+    【为什么必须改 —— 实测证据】
 
-    🔒 只陈述事实，不写「你应该写 /world/」，也不写「这个文件是你的」。
+        旧实现只遍历 `ARTIFACT_NAMESPACES`。而观察实验为了**不预设分工**
+        把它清空了（`P.ARTIFACT_NAMESPACES = {}`）——
+        于是它**只列根目录**，而根目录下只有一个 `manuscript` 目录、没有文件。
+
+        实测（本地构造，证据确凿）：
+            真实树:  /manuscript  (directory)
+                     /manuscript/chapter_001.md  (file, R1)
+            而 **agent_a 和 agent_b 看到的 facts 块一模一样**：
+                workspace_id = WS-0001
+                  / 根目录文件: （无）
+
+        ⇒ 一个**已经存在**的文件，在**任何** Agent 的 facts 块里
+          **完全不可见**。实测 agent_b 因此判断
+          「agent_a 已声明完成，但根目录事实显示无文件 —— 存在**信息不一致**」
+          然后去读了一次（好行为）；但如果它**相信** facts 块，就会**重复劳动**。
+
+    🔒 事实 = **环境里真实有什么**，不是我们预设的清单。
+       预设清单还有一个更糟的副作用：它**本身就是分工暗示**
+       （`world/plot/chapters/...` 等于替 Agent 规定"有哪些角色"）。
+
+    🔒 只陈述 Gateway 已经给出的字段
+       （`type` / `revision` / `effective_controller` / `effective_lock_holder`），
+       不新增、不推断、不做权限判断。
+
+    ⚠️ **路径不带前导 `/`** —— 显示的就是 `workspace_write` 的 `path` 参数该写的形状。
+       历史教训（真实运行 1009-2100）：这里原先显示 `/plot/`，于是 4 个 Agent
+       全照着写了 `/plot/outline.md`，而 `validate_artifact_path` 把**以 `/` 开头**
+       当成宿主绝对路径拒绝 ⇒ 全员 `bad_path`。
+       （根因是 `services/artifacts.py` 与 `WorkspaceGateway` 的语法不一致，
+         属于策略问题，**没有**在这里改。）
     """
     lines = [f"workspace_id = {WS_ID}"]
-    for d, owner in ARTIFACT_NAMESPACES.items():
-        got = gw.list(WS_ID, "/" + d, agent)
-        entries = ([e for e in (got.result or {}).get("entries", []) or []]
-                   if got.success else [])
-        mine = "（你的命名空间）" if owner == agent else ""
-        body = (", ".join(_describe_entry(e) for e in entries)
-                if entries else "（空）")
-        # 🔴 显示的是**写入时要用的格式** —— 不带前导 `/`。
-        #
-        #    历史教训（真实运行 1009-2100）：这里原先显示 `/plot/`，
-        #    于是 4 个 Agent 全都照着写了 `/plot/outline.md`，
-        #    而 `validate_artifact_path` 把**以 `/` 开头**当成宿主绝对路径拒绝
-        #    ⇒ 全员 `bad_path`。
-        #
-        #    ⚠️ 注意这是**显示侧**的修法。根因是 `services/artifacts.py`
-        #       与 `WorkspaceGateway`（它的规范语法是 `/plot`）**不一致** ——
-        #       那属于策略问题，**没有**在这里改。
-        lines.append(f"  {d}/  负责人={owner}{mine}  内容: {body}")
+    seen = 0
+    truncated = False
 
-    # 根目录下的既有 Artifact
-    root = gw.list(WS_ID, "/", agent)
-    if root.success:
-        files = [e for e in (root.result or {}).get("entries", []) or []
-                 if e.get("type") == "file"]
-        body = (", ".join(_describe_entry(e) for e in files)
-                if files else "（无）")
-        lines.append(f"  / 根目录文件: {body}")
+    def walk(path: str, depth: int) -> None:
+        nonlocal seen, truncated
+        got = gw.list(WS_ID, path, agent)
+        if not got.success:
+            lines.append(f"  {'  ' * depth}（{path} 读不到："
+                         f"{getattr(got, 'code', None) or '未知原因'}）")
+            return
+        for e in (got.result or {}).get("entries", []) or []:
+            if seen >= _WORKSPACE_FACT_MAX_ENTRIES:
+                truncated = True
+                return
+            seen += 1
+            name = str(e.get("name") or "")
+            child = f"/{name}" if path == "/" else f"{path}/{name}"
+            is_dir = str(e.get("type") or "") == "directory"
+            shown = child.lstrip("/")            # ⚠️ 不带前导 `/`（见 docstring）
+            lines.append(f"  {'  ' * depth}{shown}"
+                         f"{'/' if is_dir else ''}  "f"{_describe_entry(e, with_name=False)}")
+            if is_dir and depth + 1 < _WORKSPACE_FACT_MAX_DEPTH:
+                walk(child, depth + 1)
+
+    walk("/", 0)
+    if not seen:
+        lines.append("  （整个 Workspace 是空的）")
+    if truncated:
+        lines.append(f"  …（只列了前 {_WORKSPACE_FACT_MAX_ENTRIES} 条，还有更多）")
     return "\n".join(lines)
 
 

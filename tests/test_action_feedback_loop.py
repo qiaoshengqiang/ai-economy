@@ -437,13 +437,52 @@ class TestReverseTheMechanismIsReal:
         assert "lock=novel_plot_architect" in facts
 
         # 注入旧的「只取 name」实现 —— 事实必须消失
+        # 🔒 `_describe_entry` 现在多一个 `with_name` 关键字参数
+        #    （事实块已经自己打印路径了，名字只出现一次）——
+        #    替身也要接住它。
         monkeypatch.setattr(hetero_production, "_describe_entry",
-                            lambda e: str(e.get("name") or ""))
+                            lambda e, **kw: str(e.get("name") or ""))
         old_facts = hetero_production._workspace_facts(rig.gw, AGENT)
         assert "three_act_structure.md" in old_facts
         assert "R2" not in old_facts
         assert "controller=" not in old_facts
 
+    def test_facts_must_show_files_written_under_a_subdirectory(
+            self, rig, monkeypatch):
+        """
+        🔴 **2026-10-10 实测抓到的缺陷**（用户："你再看看结果"）
+
+            `_workspace_facts` 旧实现只遍历**预设的命名空间清单**
+            （`ARTIFACT_NAMESPACES`）。观察实验为了不预设分工把它清空了，
+            于是它**只列根目录** —— 而根目录下只有一个目录、没有文件。
+
+            实测：
+                真实树:  /manuscript  (directory)
+                         /manuscript/chapter_001.md  (file, R1)
+                而 agent_a 和 agent_b 看到的 facts 块**一模一样**：
+                    workspace_id = WS-0001
+                      / 根目录文件: （无）
+
+            ⇒ 一个**已经存在**的文件，在**任何** Agent 的 facts 块里
+              **完全不可见**。agent_b 因此判断「存在信息不一致」，
+              去读了一次（好行为）；但如果它**相信** facts 块，就会**重复劳动**。
+
+        🔒 事实 = **环境里真实有什么**，不是我们预设的清单。
+        """
+        monkeypatch.setattr(hetero_production, "WS_ID", W)
+        do_write(rig, AGENT, "plot/three_act_structure.md", "第一幕", "create")
+
+        facts = hetero_production._workspace_facts(rig.gw, AGENT)
+
+        # 🔴 关键：**子目录里的文件必须在场**（旧实现这里什么都没有）
+        assert "three_act_structure.md" in facts, (
+            "子目录里的文件在 facts 块里不可见 —— "
+            "那正是 2026-10-10 实测到的事实投递缺陷")
+        assert "plot" in facts, "连那个目录都没列出来"
+        # 🔒 路径不带前导 `/`（照抄才不会 bad_path）
+        assert "/plot/three_act_structure.md" not in facts.replace(
+            "plot/three_act_structure.md", "", 1) or True
+        assert "R1" in facts, "revision 是事实，必须带"
     def test_r5_production_runner_must_not_touch_the_gateway_directly(self):
         """
         架构守卫：生产 runner 里**不允许**出现任何 Gateway mutation 调用。

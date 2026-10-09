@@ -458,17 +458,27 @@ def test_prompt_states_the_read_capability_as_a_fact():
         assert banned not in src, f"prompt 开始规定行为了：{banned!r}"
 
 
-def test_prompt_forbids_dumping_prose_into_messages():
+def test_artifacts_go_through_the_workspace_not_through_messages():
     """
-    🔒 现有 prompt 明确写着「不要整篇复制进 message —— 正文属于 Workspace」。
+    🔒 **正文的正规通道是 Workspace，不是消息。**
 
-       这条正好说明：**正文的正规通道是 Workspace，不是消息**。
-       所以「让作者把正文贴进消息」那种做法不但违反 §1，
-       连现有契约都不同意它。
+    【2026-10-10 改写】原先这条断言的是 prompt 里那句话：
+        「不要整篇复制进 message —— 正文属于 Workspace」。
+    用户指出那是**规范性句子**（分发"你该/不要"给 Agent），
+    违反 §0.5「不要设计行为本身」，已删。
+
+    ⇒ 但它想守的**是设计**，不是那句话。所以改成断言**环境事实在场**：
+       · `workspace_write` 的说明里写着它是"把产物写进共享 Workspace"
+       · `message_send` 的说明里写着它是"发一条消息"
+     两个通道的分工由**动作清单**陈述，不靠一句"不要"。
     """
     src = PROD.read_text(encoding="utf-8")
-    assert "不要整篇复制进 message" in src, (
-        "这条约束被删掉了？它正是读动作存在的理由")
+    assert "把一个产物写进共享 Workspace" in src, (
+        "workspace_write 的说明丢了 —— 那才是「正文走 Workspace」的依据")
+    assert "发一条消息" in src, "message_send 的说明丢了"
+    # 🔒 而那句"不要"**不该**回来
+    assert "不要整篇复制进 message" not in src, (
+        "规范性句子又回来了 —— prompt 只该陈述环境事实")
 
 
 # ======================================================================
