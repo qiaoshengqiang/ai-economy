@@ -52,12 +52,14 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from actions import (  # noqa: E402
-    ACTION_MESSAGE_SEND, ACTION_WORKSPACE_READ, ACTION_WORKSPACE_WRITE,
-    ActionDispatcher, ActionIntent, MessageSendExecutor,
+    ACTION_MESSAGE_SEND, ACTION_PUBLIC_QUERY, ACTION_WORKSPACE_READ,
+    ACTION_WORKSPACE_WRITE, ActionDispatcher, ActionIntent,
+    MessageSendExecutor, PublicQueryExecutor,
     WorkspaceReadExecutor, WorkspaceWriteExecutor,
     build_intent, new_intent_id,
 )
 from services.messaging import send_message_as  # noqa: E402
+from services.public_reference import PublicReference  # noqa: E402
 from services.artifacts import (  # noqa: E402
     MODE_APPEND, MODE_CREATE, MODE_REPLACE,
     provision_namespaces, read_artifact, write_artifact,
@@ -263,6 +265,17 @@ PROMPT = """你是这次长期生产任务的一名参与者。这是**正式生
             不合规会返回结构化错误，不会静默丢弃；
           - 发消息会同时把对方的唤醒信号置位（Wakeup ≠ Message：
             信号不携带内容，对方仍然要自己去信箱取）。
+
+  · "public_query"
+        parameters: {{"name": "资料名"}}   ← 读一份
+                    或 {{"list": true}}     ← 列出有哪些
+
+        作用：查**公共资料区**（只读，没有人能改它）。
+        里面有一份 **SYSTEM_MAP.md** —— 这个环境里存在哪些结构、
+        各自的边界在哪、你能发起哪些动作，都写在里面。
+
+        🔒 如果你对所处的环境有不清楚的地方（比如「我能做什么」
+           「这个边界是谁在管」），**先去查它**。
 
 🔒 这些都只是**能力**。用不用、什么时候用、读哪个文件、
    给谁发什么类型的消息 —— **完全由你自己判断** ——
@@ -852,6 +865,10 @@ def _close_stage(rt: Any, log: Dict[str, Any]) -> None:
         log["stage_complete_error"] = f"{type(exc).__name__}: {exc}"
 
 
+#: 公共资料区的访问器（模块级一份即可 —— 它是只读的，无状态）。
+_PUBLIC = PublicReference()
+
+
 def _send_fn(bridge: Any) -> Any:
     """
     把**异步**的 `send_message_as` 适配成执行器要的**同步** `send_fn`。
@@ -927,7 +944,13 @@ def _action_seam(rt: Any, bridge: Any = None) -> tuple:
         # —— 尤其 **TASK_OFFER**（`handle_offer` 会用它建 Task，
         # `creator = 发起方 Agent`）—— 在组合根里接好了却从没被触发。
         # 🔒 这是「Agent 自己组织生产」唯一的现成通道。
-        MessageSendExecutor(_send_fn(bridge), comm=rt.communication)])
+        MessageSendExecutor(_send_fn(bridge), comm=rt.communication),
+        # 2026-10-09 加入 public_query：查**公共资料区**（只读）。
+        # 🔒 它**不是 Workspace** —— 没有锁/修订/审计/参与者，
+        #    因为没有需要 Agent 改的东西。只是一份可查的资料。
+        #    入口是「系统地图」：告诉 Agent 这个环境里有什么、
+        #    边界在哪、它能发起哪些动作。
+        PublicQueryExecutor(_PUBLIC.query)])
     try:
         experience_store = ExperienceStore(rt.economy.db)
     except Exception as exc:                              # noqa: BLE001

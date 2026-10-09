@@ -33,6 +33,9 @@ from actions.parse import (
     ENVELOPE_INSTRUCTION, build_intent, decision_from_text,
     extract_envelope,
 )
+from actions.public_query import (
+    ACTION_PUBLIC_QUERY, PublicQueryExecutor,
+)
 from actions.message_send import (
     ACTION_MESSAGE_SEND, MessageSendExecutor,
 )
@@ -53,6 +56,7 @@ __all__ = [
     "ACTION_WORKSPACE_WRITE", "WorkspaceWriteExecutor",
     "ACTION_WORKSPACE_READ", "WorkspaceReadExecutor",
     "ACTION_MESSAGE_SEND", "MessageSendExecutor",
+    "ACTION_PUBLIC_QUERY", "PublicQueryExecutor",
     "BUILTIN_ACTION_TYPES", "DECISION_ACT", "DECISION_REPLY",
     "VALID_DECISION_KINDS", "new_intent_id", "new_decision_id",
 ]
