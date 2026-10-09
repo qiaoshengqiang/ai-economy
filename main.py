@@ -41,7 +41,7 @@ import sys
 import uuid
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 # ------------------------------------------------------------
 # 让 Python 能找到项目内的模块
@@ -468,6 +468,38 @@ def _pending_offer_facts(store: Any, agent_id: str) -> list:
             "price_aic": o.price_aic,
             "status": o.status,
         })
+    return out
+
+
+
+def _agent_context_query(base: Mapping[str, Any],
+                         resolved_agent: Any) -> Dict[str, Any]:
+    """
+    把**这个 Agent 自己的** Constitution 合进 Context 检索参数。
+
+    【V1 务实取舍（2026-10-09）】
+
+        🔴 **只读 `constitution`，不读 `drives`。**
+           Core Drives 属于**经济/激励层** —— 设计的最终形态是让 Agent
+           因为 AIC 的成本/收益自然倾向于某些行为（§0.5.3），
+           而不是靠一段文字。AIC 经济系统尚未完成，所以这一层先不做。
+
+        🔴 设计 §14 说「**不要把 Constitution 简单理解成 System Prompt**」。
+           V1 放进提示词是为了**便于测试**，是**有意的取舍，不是定稿**。
+
+    🔒 读的是 `ResolvedAgent.raw`（保留的原始 agent 段）——
+       因此**不需要给 `config_resolver` 加字段**：新配置项天然通过。
+
+    🔒 `identity` 也支持（`to_text()` 的 head 段里它和 constitution 并列），
+       只是当前没有 Agent 配它。
+    """
+    out: Dict[str, Any] = dict(base or {})
+    cog = dict((getattr(resolved_agent, "raw", None) or {}).get("cognition")
+               or {})
+    for key in ("identity", "constitution"):
+        val = cog.get(key)
+        if val is not None and str(val).strip():
+            out[key] = str(val).strip()
     return out
 
 
@@ -898,7 +930,11 @@ def build_runtime(
                 "api_key_env": resolved_agent.credential.env},
             # §五：默认路径自动接入 —— 调用方不必手写 context_query
             context_builder=context_builder,
-            default_context_query=default_context_query,
+            # 🔴 **每个 Agent 一份** —— 不能共用循环外那个 dict：
+            #    Constitution 是**每个 Agent 自己的**（§14），
+            #    共用会让 5 个 Agent 拿到同一份身份。
+            default_context_query=_agent_context_query(
+                default_context_query, resolved_agent),
         )
         agent.attach_brain(brain)
         # §二十：生产路径 —— Agent 的 Cognitive Run 能检索 Experience，
