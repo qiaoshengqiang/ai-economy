@@ -165,7 +165,9 @@ def main() -> int:
         from core.task import Task
         existing = rt.tasks.get(TASK_ID)
         if existing is None:
-            rt.tasks.save(Task.create(
+            # 🔴 走 `rt.create_task` —— 同时建 Task 和它的空 Shared Context。
+            #    少了容器，任何「对齐 / 分工」动作都会报 `no_shared_context`。
+            rt.create_task(Task.create(
                 creator="human_demand",
                 description=f"异质多 Agent 原创中文科幻悬疑小说。主题：{TOPIC}",
                 workspace_id=WS_ID, task_id=TASK_ID,

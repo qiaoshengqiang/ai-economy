@@ -2524,7 +2524,7 @@ def cmd_task_demo(runtime: Runtime, args: argparse.Namespace) -> int:
         workspace_id="WS-001",
         acceptance={"type": "tests"},
     )
-    store.save(task)
+    runtime.create_task(task)
 
     print(f"  task_id          : {task.task_id}")
     print(f"  current_trace_id : {task.current_trace_id}   ← 这一次执行")
@@ -2821,7 +2821,7 @@ def cmd_capability_demo(runtime: Runtime, args: argparse.Namespace) -> int:
         required_capabilities=required,
         acceptance={"type": "tests"},
     )
-    runtime.tasks.save(task)
+    runtime.create_task(task)
 
     print(f"  task_id              : {task.task_id}")
     print(f"  description          : {task.description}")
@@ -3085,11 +3085,25 @@ def _reset_demo_tasks(runtime: Runtime, task_ids) -> int:
     with runtime.tasks.db.transaction() as conn:
         for task_id in task_ids:
             # 【顺序很重要：先删子表，再删 tasks】
-            #     task_executions / task_offers / task_agreements
-            #     都有指向 tasks 的外键。
-            #     先删 tasks 会撞上 FOREIGN KEY constraint failed ——
-            #     （这个坑演示重跑时才暴露出来。）
-            for table in ("task_executions", "task_agreements",
+            #     下面这些子表都有指向 tasks 的外键（全部是 NO ACTION，
+            #     没有 CASCADE）。先删 tasks 会撞上
+            #     FOREIGN KEY constraint failed。
+            #
+            # 🔴 2026-10-10：`task_shared_contexts` /
+            #     `task_context_revisions` / `task_context_changes`
+            #     是 Step 4F 加的表，**当时漏加进了这个列表**。
+            #     以前没暴露，是因为以前建 Task 根本不建 Shared Context；
+            #     现在 `Runtime.create_task` 会建 ——
+            #     于是第二次跑演示就会在清理时崩（实测：
+            #     workspace-demo 跑完全部十步，死在最后一行清理）。
+            #
+            #     ⚠️ 这个列表会随新表腐烂，所以有守卫盯着：
+            #     `test_shared_context_guards.py` 里
+            #     `test_demo_cleanup_covers_every_table_that_points_at_tasks`
+            #     用 PRAGMA 把「所有指向 tasks 的表」跟这个列表对账。
+            for table in ("task_context_changes", "task_context_revisions",
+                          "task_shared_contexts",
+                          "task_executions", "task_agreements",
                           "task_offers", "tasks"):
                 cursor = conn.execute(
                     f"DELETE FROM {table} WHERE task_id = ?", (task_id,)
@@ -3161,7 +3175,7 @@ def cmd_negotiation_demo(runtime: Runtime, args: argparse.Namespace) -> int:
         participants=["agent_a", "agent_b"],
     )
     task1.offer()
-    store.save(task1)
+    runtime.create_task(task1)
 
     print(f"  Budget（预算上限）: {task1.budget}")
     print()
@@ -3247,7 +3261,7 @@ def cmd_negotiation_demo(runtime: Runtime, args: argparse.Namespace) -> int:
         participants=["agent_a", "agent_b"],
     )
     task2.offer()
-    store.save(task2)
+    runtime.create_task(task2)
 
     async def run_scenario_2():
         offer = await runtime.communication.send(
@@ -3296,7 +3310,7 @@ def cmd_negotiation_demo(runtime: Runtime, args: argparse.Namespace) -> int:
         participants=["agent_a", "agent_b"],
     )
     task3.offer()
-    store.save(task3)
+    runtime.create_task(task3)
 
     async def run_scenario_3():
         offer = await runtime.communication.send(
@@ -4127,7 +4141,7 @@ def cmd_workspace_demo(runtime: Runtime, args: argparse.Namespace) -> int:
         workspace_id=workspace_id,
         participants=[a_id, b_id],
     )
-    runtime.tasks.save(task)
+    runtime.create_task(task)
 
     r = gw.ensure_workspace(workspace_id, a_id)
     if not r.success:
@@ -4550,7 +4564,7 @@ def _run_hello_demo(
         participants=[agent.agent_id, other.agent_id],
         note="hello-demo",
     )
-    runtime.tasks.save(task)
+    runtime.create_task(task)
 
     # ---------- 4：Task Workspace ----------
     gw = runtime.workspace_gateway
@@ -5162,7 +5176,7 @@ async def _run_three_agent_demo(runtime: Runtime, *, keep=None) -> dict:
         participants=["agent_a", "agent_b", "agent_c"],
         note="three-agent-demo",
     )
-    runtime.tasks.save(task)
+    runtime.create_task(task)
 
     # 🔒 【实测踩到的 Workspace Core 语义】
     #
@@ -6019,7 +6033,7 @@ def _run_snake_demo(
         participants=[agent.agent_id],
         note="snake-demo",
     )
-    runtime.tasks.save(task)
+    runtime.create_task(task)
 
     gw = runtime.workspace_gateway
     ws = SNAKE_DEMO_WORKSPACE

@@ -1054,3 +1054,537 @@ class TestReverseVerification:
             "core/economy.py 里没有 Workspace —— "
             "那说明检测目标本身有问题"
         )
+
+
+# ============================================================
+# 十、守卫：Task 诞生时，必须同时诞生它的 Shared Context
+# ============================================================
+#
+# 【为什么有这一节 —— 用户指出的缺陷】
+#
+#     「这明显之前实现任务创建的时候把它漏了。
+#       Agent 创建任务的时候就该把这个给创建好了。」
+#
+#   之前建 Task 的地方散落在 `main.py` / `experiments/`，
+#   各自直接 `rt.tasks.save(Task.create(...))` ⇒ **谁也没建容器**。
+#
+#   后果（实测）：观察实验里 agent_a 想指派验收人，
+#   `assign_acceptance` 报 `no_shared_context` 失败 ——
+#   它想合作，环境只给了它「会失败」的告知，没给「能做到」的路径。
+#
+# 【这条守卫防什么】
+#   防「新写的 runner / 脚本又绕过一次」。
+#   文本匹配做不到 —— `task = Task.create(...)` 和
+#   `rt.tasks.save(task)` 隔着几行，子串匹配看不出来。所以用 AST。
+#
+# 【判定规则】每个 `Task.create(...)` 必须满足其中一条：
+#
+#     (a) 直接嵌套       `rt.create_task(Task.create(...))`
+#     (b) 同函数内交接   `X = Task.create(...)` 且调用了 `create_task(X)`
+#     (c) 自己建了容器   同函数内调用了 `create_context(`
+#     (d) 裸 store 演示  同函数内自建 `TaskStore(` —— 那是**独立数据库**，
+#                        根本接不到 Runtime 的 Alignment
+#
+#   否则 ⇒ 违规（除非函数在豁免名单里，且**豁免本身被反向测试证明**）。
+
+#: 只要函数里出现这些调用，「整函数」就算过关（对应规则 c / d）。
+#:
+#: 🔴 **`create_task` 刻意不在这里。**
+#:    它是规则 (a)/(b)，必须**精确到每一次创建** ——
+#:    放进来的话，「函数里给别的 task 建了容器」就会让整函数免检。
+#:    第一版就是这么写的，被反向测试
+#:    `test_a_container_for_SOMEONE_ELSE_does_not_count` 抓住了。
+FUNCTION_LEVEL_CONTAINER_CALLS = frozenset({"create_context"})
+
+#: 允许「建 Task 但不建容器」的函数 —— 每条都由 `TestExemptionsAreEarned`
+#: 证明它确实另有出路。**这不是白名单，是待证明的断言。**
+CREATE_WITHOUT_CONTAINER_EXEMPTIONS = {
+    "open_offer": (
+        "收到 TASK_OFFER 这条路径：容器由紧跟在 `store.save(task)` 之后的 "
+        "`_ensure_shared_context(task)` 建立。**顺序不能反** —— "
+        "`create_context` 会 `_require_task()` 去库里查，Task 还没落盘就 "
+        "`KeyError`（实测踩到过，而且当时被 `try/except` 吞了，"
+        "多绕了好几步才看出来）。"
+    ),
+}
+
+
+def _callee_name(node):
+    """`f(...)` → "f" · `a.b(...)` → "b" · 其余 → None。"""
+    if not isinstance(node, ast.Call):
+        return None
+    func = node.func
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    return getattr(func, "id", None)
+
+
+def _is_task_create(node):
+    """
+    是不是 `Task.create(...)`。
+
+    【为什么不能只看 `.create`】
+        `create_stage(` / `create_context(` 里都没有 `create`，
+        但 `Task.create` 必须是 `Task` 这个**名字**上的 `create` ——
+        否则 `Something.create(...)` 会被误判。
+    """
+    if not isinstance(node, ast.Call):
+        return False
+    func = node.func
+    return (
+        isinstance(func, ast.Attribute)
+        and func.attr == "create"
+        and isinstance(func.value, ast.Name)
+        and func.value.id == "Task"
+    )
+
+
+def _handed_to_create_task(create_call, parents, fn):
+    """
+    这一次 `Task.create(...)` 有没有**当场**交给 `create_task(...)`。
+
+    【为什么要管到赋值】
+        本项目的真实写法是两行，不是嵌套：
+
+            task = Task.create(...)
+            runtime.create_task(task)
+
+        所以要看「**这个名字**有没有被传给 `create_task`」，
+        而不是「函数里有没有出现 `create_task`」——
+        后者会被「给别的 task 建了容器」骗过去。
+    """
+    parent = parents.get(id(create_call))
+
+    # (a) 直接嵌套：`rt.create_task(Task.create(...))`
+    if _callee_name(parent) == "create_task":
+        return True
+
+    # 名字来源：`X = Task.create(...)`
+    names = set()
+    if isinstance(parent, ast.Assign) and parent.value is create_call:
+        names = {t.id for t in parent.targets if isinstance(t, ast.Name)}
+    if not names:
+        return False
+
+    # (b) `create_task(X)` —— 传的必须**就是这个名字**
+    for call in ast.walk(fn):
+        if _callee_name(call) != "create_task":
+            continue
+        passed = list(call.args) + [k.value for k in call.keywords]
+        if any(isinstance(a, ast.Name) and a.id in names for a in passed):
+            return True
+    return False
+
+
+def task_creations_without_a_container(source):
+    """
+    返回 `[(函数名, 行号)]` —— 建了 Task，却没建它的 Shared Context。
+
+    【为什么两种粒度混用】
+        (a)(b) 必须**精确到这一次创建** —— 否则「函数里恰好有
+        `create_task`」就蒙混过关（见反向测试
+        `test_a_container_for_SOMEONE_ELSE_does_not_count`）。
+        (c)(d) 天然是「这个函数整体在做什么」，只能函数级判断。
+    """
+    tree = ast.parse(source)
+    parents = {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            parents[id(child)] = node
+
+    found = []
+    for fn in ast.walk(tree):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        creates = [n for n in ast.walk(fn) if _is_task_create(n)]
+        if not creates:
+            continue
+        if fn.name in CREATE_WITHOUT_CONTAINER_EXEMPTIONS:
+            continue
+
+        called = {_callee_name(n) for n in ast.walk(fn) if isinstance(n, ast.Call)}
+        if called & FUNCTION_LEVEL_CONTAINER_CALLS or "TaskStore" in called:
+            continue
+
+        for create_call in creates:
+            if not _handed_to_create_task(create_call, parents, fn):
+                found.append((fn.name, create_call.lineno))
+    return found
+
+
+def runtime_entry_files():
+    """真正会「建 Task」的入口：组合根 + 实验 + 应用服务。"""
+    files = [PROJECT_ROOT / "main.py"]
+    for folder in ("experiments", "services"):
+        files.extend(sorted((PROJECT_ROOT / folder).rglob("*.py")))
+    return [p for p in files if p.is_file()]
+
+
+def _called_names_in(node):
+    return {_callee_name(n) for n in ast.walk(node) if isinstance(n, ast.Call)}
+
+
+class TestEveryTaskGetsItsContainer:
+    def test_no_entry_point_creates_a_task_without_its_container(self):
+        offenders = []
+        for path in runtime_entry_files():
+            for fn_name, lineno in task_creations_without_a_container(
+                path.read_text(encoding="utf-8")
+            ):
+                rel = path.relative_to(PROJECT_ROOT)
+                offenders.append(
+                    f"  {rel}:{lineno}  in {fn_name}()\n"
+                    f"      → 请用 `Runtime.create_task(...)`，"
+                    f"否则这个 Task 永远没有 Shared Context，"
+                    f"它之后**连验收人都指派不了**"
+                )
+        assert not offenders, (
+            "有 Task 被建出来，却没有同时建它的 Shared Context：\n\n"
+            + "\n".join(offenders)
+        )
+
+    def test_the_scan_is_not_vacuous(self):
+        """
+        反向：守卫真的扫到了 `Task.create`。
+
+        否则「一个违规都没有」可能只是因为扫错了路径 ——
+        这类**空转的守卫**比没有守卫更危险。
+        """
+        total = 0
+        for path in runtime_entry_files():
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            total += sum(1 for n in ast.walk(tree) if _is_task_create(n))
+
+        assert total >= 10, (
+            f"扫描范围里只找到 {total} 个 `Task.create` —— "
+            f"扫描路径或 AST 判定坏了，断言变成空转"
+        )
+
+    def test_a_store_level_demo_must_not_touch_the_runtime_alignment(self):
+        """
+        规则 (d) 不是漏洞：豁免掉的那两个 demo **真的**只操作独立库。
+
+        它们自建 `TaskStore(db_b)` —— 那是一个独立 SQLite 文件，
+        上面根本没有 Alignment / Shared Context 这回事。
+        但如果它们同时又去用 `runtime.tasks` / `runtime.alignment`，
+        那规则 (d) 就成了后门。
+        """
+        tree = ast.parse((PROJECT_ROOT / "main.py").read_text(encoding="utf-8"))
+        demos = {
+            "cmd_reliability_demo",
+            "cmd_reliability_multiprocess_demo",
+        }
+        checked = 0
+        for fn in ast.walk(tree):
+            if not isinstance(fn, ast.FunctionDef) or fn.name not in demos:
+                continue
+            checked += 1
+            touched = {
+                n.attr
+                for n in ast.walk(fn)
+                if isinstance(n, ast.Attribute)
+                and isinstance(n.value, ast.Name)
+                and n.value.id in ("runtime", "rt")
+            }
+            assert "tasks" not in touched and "alignment" not in touched, (
+                f"`{fn.name}` 既自建裸 TaskStore，又碰 runtime.tasks/"
+                f"runtime.alignment —— 规则 (d) 在这里是漏洞"
+            )
+            assert "TaskStore" in _called_names_in(fn), (
+                f"`{fn.name}` 没有自建 TaskStore —— 规则 (d) 不成立"
+            )
+        assert checked == len(demos), (
+            f"只找到 {checked}/{len(demos)} 个裸 store 演示 —— "
+            f"函数被改名或删掉了，这条测试不再有效"
+        )
+
+
+class TestTheGuardIsNotFooled:
+    """反向测试 —— 把违规注入进去，确认守卫**真的变红**。"""
+
+    def test_it_flags_a_direct_save_of_a_fresh_task(self):
+        src = "def f(rt):\n    rt.tasks.save(Task.create(creator='x'))\n"
+
+        assert task_creations_without_a_container(src) == [("f", 2)]
+
+    def test_it_flags_the_two_statement_form_without_create_task(self):
+        """真实踩到的形状：先建、几行后再 save。"""
+        src = (
+            "def f(rt):\n"
+            "    task = Task.create(creator='x')\n"
+            "    task.offer()\n"
+            "    rt.tasks.save(task)\n"
+        )
+
+        assert task_creations_without_a_container(src) == [("f", 2)]
+
+    def test_it_accepts_the_nested_form(self):
+        src = "def f(rt):\n    rt.create_task(Task.create(creator='x'))\n"
+
+        assert task_creations_without_a_container(src) == []
+
+    def test_it_accepts_the_two_statement_form(self):
+        src = (
+            "def f(rt):\n"
+            "    task = Task.create(creator='x')\n"
+            "    rt.create_task(task)\n"
+        )
+
+        assert task_creations_without_a_container(src) == []
+
+    def test_a_container_for_SOMEONE_ELSE_does_not_count(self):
+        """
+        本守卫最容易写歪的一条。
+
+        第一版规则是「函数里出现 `create_task` 就算过」——
+        那样下面这段就能蒙混过关。正确行为是**只放过第 2 行**。
+        """
+        src = (
+            "def f(rt):\n"
+            "    other = Task.create(creator='y')\n"
+            "    rt.create_task(other)\n"
+            "    mine = Task.create(creator='x')\n"
+            "    rt.tasks.save(mine)\n"
+        )
+
+        assert task_creations_without_a_container(src) == [("f", 4)]
+
+    def test_a_similar_method_name_is_not_mistaken_for_an_exemption(self):
+        """
+        `create_stage(` 里没有 `create`，但反向也要成立：
+        它**不能**被当成建了容器。
+        """
+        src = (
+            "def f(rt):\n"
+            "    create_stage(stage_id='S')\n"
+            "    rt.tasks.save(Task.create(creator='x'))\n"
+        )
+
+        assert task_creations_without_a_container(src) == [("f", 3)]
+
+    def test_other_classes_create_is_not_task_create(self):
+        """`Workspace.create(...)` 不是 `Task.create(...)`。"""
+        src = (
+            "def f(rt):\n"
+            "    Workspace.create(agent_id='a')\n"
+            "    rt.tasks.save(Task.create(creator='x'))\n"
+        )
+
+        assert task_creations_without_a_container(src) == [("f", 3)]
+
+
+class TestExemptionsAreEarned:
+    """豁免名单不是白名单 —— 每条都要证明它**确实另有出路**。"""
+
+    def test_every_exemption_still_points_at_a_real_function(self):
+        names = set()
+        for path in runtime_entry_files():
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            names |= {
+                n.name
+                for n in ast.walk(tree)
+                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+            }
+        missing = set(CREATE_WITHOUT_CONTAINER_EXEMPTIONS) - names
+
+        assert not missing, (
+            f"豁免名单指向了不存在的函数：{sorted(missing)} —— "
+            f"函数被改名/删掉了，豁免就变成了永久免罪符"
+        )
+
+    def test_open_offer_really_builds_the_container_itself(self):
+        service = PROJECT_ROOT / "services" / "task_negotiation_service.py"
+        called = _called_names_in(function_named(service, "open_offer"))
+
+        assert "_ensure_shared_context" in called, (
+            "`open_offer` 被豁免了，却没有自己建容器 —— 豁免失效"
+        )
+
+    def test_the_context_demo_builds_its_own_container_too(self):
+        """
+        `cmd_context_demo` 走规则 (c)：它自己 `create_context(...)`。
+
+        它演示的就是 Alignment 机制本身，所以**故意**手工建 Revision 1
+        并带上 objective / constraints / acceptance_criteria ——
+        结束后状态是完整的（Task + 带内容的容器），不是缺一块。
+        """
+        called = _called_names_in(function_named(PROJECT_ROOT / "main.py",
+                                                "cmd_context_demo"))
+
+        assert "create_context" in called, (
+            "`cmd_context_demo` 既不交给 create_task 也没自己 create_context —— "
+            "那它建的 Task 就是没有容器的"
+        )
+
+
+# ============================================================
+# 十一、守卫：清 Task 的清单必须覆盖**所有**指向 tasks 的表
+# ============================================================
+#
+# 【这条守卫在钉一个**真实发生过的崩溃**（2026-10-10）】
+#
+#     `_reset_demo_tasks` 里那张清单的注释自己写着
+#     「顺序很重要：先删子表，再删 tasks」—— 作者是知道这个坑的。
+#     但 Step 4F 加的 `task_shared_contexts` 系列**从没加进去**。
+#
+#     以前不暴露，是因为以前建 Task 根本不建 Shared Context。
+#     `Runtime.create_task` 开始建容器之后：
+#         · `workspace-demo`  跑完十步，死在**最后一行清理**
+#         · `negotiation-demo` **第二次**跑必崩
+#     错误都是 `IntegrityError: FOREIGN KEY constraint failed`。
+#
+# 【为什么用 PRAGMA 而不是把表名抄进测试】
+#     手写表名会随新表再次腐烂 —— 那正是这个 bug 的成因。
+#     PRAGMA 直接问数据库「谁指向 tasks」，答案永远是最新的。
+
+
+def cleanup_lists_covering_tasks(source):
+    """
+    `main.py` 里所有「包含 `'tasks'` 的表名元组」→ `[(函数名, [表名…])]`。
+
+    形状是 `for table in ("a", "b", "tasks"):`。用 AST 找，
+    不看注释、不看字符串匹配。
+    """
+    tree = ast.parse(source)
+    parents = {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            parents[id(child)] = node
+
+    found = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.For) or not isinstance(node.iter, ast.Tuple):
+            continue
+        names = [
+            e.value
+            for e in node.iter.elts
+            if isinstance(e, ast.Constant) and isinstance(e.value, str)
+        ]
+        if "tasks" not in names:
+            continue
+
+        owner, cursor = "<module>", parents.get(id(node))
+        while cursor is not None:
+            if isinstance(cursor, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                owner = cursor.name
+                break
+            cursor = parents.get(id(cursor))
+        found.append((owner, names))
+    return found
+
+
+def tables_pointing_at_tasks(db):
+    """数据库里**所有**外键指向 `tasks` 的表名（PRAGMA 问出来的）。"""
+    everything = {
+        row["name"]
+        for row in db.fetchall(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        )
+    }
+    children = set()
+    for table in sorted(everything):
+        for fk in db.fetchall(f"PRAGMA foreign_key_list({table})"):
+            if fk["table"] == "tasks":
+                children.add(table)
+    return children
+
+
+class TestTaskCleanupStaysInSyncWithTheSchema:
+    def test_every_cleanup_list_covers_every_table_that_points_at_tasks(
+        self, tmp_path
+    ):
+        from storage.database import Database
+
+        db = Database(str(tmp_path / "schema.db"))
+        db.initialize()
+        try:
+            children = tables_pointing_at_tasks(db)
+        finally:
+            db.close()
+
+        assert children, "没有任何表指向 tasks —— 测试前提不成立"
+
+        lists = cleanup_lists_covering_tasks(
+            (PROJECT_ROOT / "main.py").read_text(encoding="utf-8")
+        )
+        assert lists, (
+            "main.py 里找不到任何「清 Task」的表名清单 —— "
+            "函数被改名或重构成别的形状了，这条守卫已经失效"
+        )
+
+        problems = []
+        for owner, declared in lists:
+            missing = children - set(declared)
+            if missing:
+                problems.append(
+                    f"  {owner}() 漏了：{sorted(missing)}\n"
+                    f"      当前清单：{declared}"
+                )
+            elif declared[-1] != "tasks":
+                problems.append(
+                    f"  {owner}() 的 `tasks` 不在最后 —— "
+                    f"必须先删子表（现在最后一项是 {declared[-1]!r}）"
+                )
+
+        assert not problems, (
+            "清 Task 的清单和 schema 不一致，演示重跑会崩在\n"
+            "`IntegrityError: FOREIGN KEY constraint failed`：\n\n"
+            + "\n".join(problems)
+            + f"\n\n  数据库里指向 tasks 的表：{sorted(children)}"
+        )
+
+
+class TestTheCleanupGuardIsNotFooled:
+    def test_it_finds_the_list(self):
+        src = (
+            "def f(conn):\n"
+            "    for table in ('a', 'tasks'):\n"
+            "        conn.execute(table)\n"
+        )
+
+        assert cleanup_lists_covering_tasks(src) == [("f", ["a", "tasks"])]
+
+    def test_a_tuple_without_tasks_is_ignored(self):
+        src = (
+            "def f(conn):\n"
+            "    for table in ('a', 'b'):\n"
+            "        conn.execute(table)\n"
+        )
+
+        assert cleanup_lists_covering_tasks(src) == []
+
+    def test_it_is_not_fooled_by_a_comment_mentioning_tasks(self):
+        """注释里写 `tasks` 不算 —— 必须是真的元组元素。"""
+        src = (
+            "def f(conn):\n"
+            "    # 顺序很重要：先删子表，再删 tasks\n"
+            "    for table in ('a', 'b'):\n"
+            "        conn.execute(table)\n"
+        )
+
+        assert cleanup_lists_covering_tasks(src) == []
+
+    def test_a_missing_table_is_really_reported(self, tmp_path):
+        """
+        反向：故意漏一张表，确认**真的会被判为不一致**。
+
+        这条很关键 —— 上面那个「全过」的断言可能只是因为
+        `children` 算空了，而不是因为清单真的完整。
+        """
+        from storage.database import Database
+
+        db = Database(str(tmp_path / "schema.db"))
+        db.initialize()
+        try:
+            children = tables_pointing_at_tasks(db)
+        finally:
+            db.close()
+
+        # 抄一份**故意漏掉** `task_shared_contexts` 的假清单
+        fake = [c for c in sorted(children) if c != "task_shared_contexts"] + [
+            "tasks"
+        ]
+
+        assert children - set(fake) == {"task_shared_contexts"}, (
+            "反向测试前提不成立：`task_shared_contexts` 没有指向 tasks"
+        )

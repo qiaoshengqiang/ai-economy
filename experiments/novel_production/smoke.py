@@ -92,7 +92,9 @@ def cmd_setup(_args) -> int:
                 #    没有这一步，5 个 Agent 谁都写不进共享 Workspace。
                 participants=list(AGENTS),
             )
-            rt.tasks.save(task)
+            # 🔴 走 `rt.create_task` —— 同时建 Task 和它的空 Shared Context。
+            #    少了容器，任何「对齐 / 分工」动作都会报 `no_shared_context`。
+            rt.create_task(task)
             print(f"  ✅ Task 已创建: {TASK_ID}（participants={len(AGENTS)}）")
         else:
             # 本次实验前建的 Task 没有 participants —— 补上（幂等）
