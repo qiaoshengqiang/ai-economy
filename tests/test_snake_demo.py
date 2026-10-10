@@ -26,9 +26,11 @@ import main as main_module
 from change import GitManager, WorktreeManager, WorkspaceSnapshot
 from change.materializer import MaterializationError, WorktreeMaterializer
 from change.worktree_store import WorktreeStore
+from core.task_context_store import TaskContextStore
 from core.task_store import TaskStore
 from core.workspace_store import WorkspaceStore
 from llm.base import LLMResponse
+from services.task_alignment_service import TaskAlignmentService
 from services.workspace_concurrency import ResourceLockRegistry
 from services.workspace_gateway import WorkspaceGateway
 from storage.database import Database
@@ -103,14 +105,37 @@ class Rig:
             store=self.wt_store, registry=self.locks, actor="demo")
 
         self.tasks = TaskStore(db=self.db)
+        # 🔴 `_run_snake_demo` 现在走 `runtime.create_task` —— Task 和它的
+        #    Shared Context **一起诞生**。本 rig 是 Runtime 的**替身**，
+        #    所以必须把这两个也接上。
+        #
+        #    为什么不能省：少了容器，Agent 之后**连验收人都指派不了**
+        #    （`assign_acceptance` 报 `no_shared_context`）——
+        #    demo 会看起来正常，实际环境缺一块。
+        self.alignment = TaskAlignmentService(
+            tasks=self.tasks,
+            contexts=TaskContextStore(db=self.db),
+        )
+
         self.runtime = SimpleNamespace(
             economy=SimpleNamespace(all_agents=lambda: [self.agent]),
-            tasks=self.tasks, workspace_gateway=self.gateway,
+            tasks=self.tasks,
+            alignment=self.alignment,
+            create_task=self._create_task,
+            workspace_gateway=self.gateway,
             worktree_manager=self.wt_manager, worktrees=self.wt_store,
             router=SimpleNamespace(
                 registry=SimpleNamespace(implemented=[]),
                 provider_config=lambda n: {}, available_providers=[]),
         )
+
+    def _create_task(self, task, *, by=None):
+        """与 `Runtime.create_task` **同语义**（本 rig 是它的替身）。"""
+        saved = self.tasks.save(task)
+        if self.alignment.current(task.task_id) is None:
+            self.alignment.create_context(task.task_id,
+                                          by=by or task.creator)
+        return saved
 
     def _git(self, *a):
         subprocess.run(["git", *a], cwd=self.repo, check=True,

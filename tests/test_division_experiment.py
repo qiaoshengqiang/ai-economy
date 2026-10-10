@@ -380,3 +380,262 @@ def test_the_prompt_does_not_prescribe_a_write_mode():
     for text in (D, P.PROMPT):
         assert '"append"  = 末尾追加' in text, "mode 的语义（事实）不能删"
         assert "不要用 \"replace\"" not in text
+
+
+# ============================================================
+# 🔴 报告必须统计**全部**动作，不能只统计第一个
+# ============================================================
+#
+# 【为什么有这一节 —— 2026-10-10，用户说「显示与实际不符」】
+#
+#     `turn["action"]` 是**兼容属性，只等于第一个动作**
+#     （`production._turn` 里 `turn["action"] = actions_out[0]`），
+#     复数在 `turn["actions"]`。
+#
+#     多动作信封上线后，**一次**决定里可以同时
+#
+#         workspace_write ✅ + message_send ✅ + assign_acceptance ✅
+#
+#     而报告里 ③④⑤ 三节全都只读第一个 ⇒
+#
+#         · ③ 「每个 Agent 发起的动作」漏掉后两个
+#         · ④ 第二个动作若是 handoff ⇒ 打印「**没有任何交接**」
+#         · ⑤ `message_send` / `assign_acceptance` **恒为 0**
+#
+#     ⇒ 一次**明确发生了分工**的运行，会被报告写成
+#       「它只写了个文件、谁也没找」——**结论整个反过来**。
+#
+#     「Agent 什么时候想到把活分工」这个问题就是这么被答反的。
+
+
+def _log_with(actions, **over):
+    """一个最小可用的 log：`agent_a` 跑过一轮，信封里有 actions 个动作。"""
+    turn = {
+        "round": 1, "agent_id": "agent_a", "ok": True, "tokens": 100,
+        "action": actions[0], "actions": list(actions),
+    }
+    log = {
+        "first_agent": "agent_a",
+        "agents": ["agent_a", "agent_b", "agent_c"],
+        "stop_reason": "NOBODY_WOKEN",
+        "rounds": 2, "wall_seconds": 5.0, "task_status": "CREATED",
+        "turns": [turn],
+        "comm_events": [], "final_workspace": [],
+    }
+    log.update(over)
+    return log
+
+
+#: 一次**真的发生了分工**的决定：写产物 + 发消息 + 指派验收人。
+_THREE_ACTIONS = [
+    {"type": "workspace_write", "ok": True, "path": "manuscript/a.md"},
+    {"type": "message_send", "ok": True, "path": None},
+    {"type": "assign_acceptance", "ok": True, "path": None},
+]
+
+
+def test_the_report_counts_every_action_not_just_the_first(capsys):
+    """③ 必须列出全部三个动作。"""
+    import experiments.agent_division.run_division as D
+
+    D._report(_log_with(_THREE_ACTIONS))
+    out = capsys.readouterr().out
+
+    for want in ("workspace_write", "message_send", "assign_acceptance"):
+        assert want in out, (
+            f"报告 ③ 漏掉了 {want} —— 它只统计了第一个动作")
+
+
+def test_the_report_counts_the_completion_chain_across_all_actions(capsys):
+    """
+    ⑤ 的 `message_send` / `assign_acceptance` 不能恒为 0。
+
+    🔴 这是最致命的一条：只读第一个动作时，这两个计数**永远是 0**，
+       哪怕 Agent 明明发了消息、明明指派了验收人。
+    """
+    import experiments.agent_division.run_division as D
+
+    D._report(_log_with(_THREE_ACTIONS))
+    out = capsys.readouterr().out
+
+    assert "message_send         1 次" in out, (
+        "⑤ 的 message_send 计数把非首个动作漏了")
+    assert "assign_acceptance    1 次" in out, (
+        "⑤ 的 assign_acceptance 计数把非首个动作漏了")
+    assert "workspace_write      1 次" in out
+
+
+def test_the_report_sees_a_handoff_that_is_not_the_first_action(capsys):
+    """
+    ④ 不能因为「交接不是第一个动作」就打印「没有任何交接」。
+
+    🔴 多动作信封下这非常容易发生：先写产物、再交出责任。
+    """
+    import experiments.agent_division.run_division as D
+
+    actions = [
+        {"type": "workspace_write", "ok": True, "path": "manuscript/a.md"},
+        {"type": "resource_create", "ok": True, "path": "manuscript"},
+        {"type": "resource_handoff", "ok": True, "path": "manuscript"},
+    ]
+    D._report(_log_with(actions))
+    out = capsys.readouterr().out
+
+    assert "没有任何交接" not in out, (
+        "报告说「没有任何交接」，但那一轮真的交接了 —— "
+        "它只看了第一个动作")
+    assert "交接   : 1 次" in out
+    assert "建目录 : 1 次" in out
+
+
+def test_a_failed_action_is_counted_as_failed(capsys):
+    """成败也要逐个动作判 —— 不能拿第一个的 `ok` 代表整轮。"""
+    import experiments.agent_division.run_division as D
+
+    actions = [
+        {"type": "workspace_write", "ok": True, "path": "a.md"},
+        {"type": "assign_acceptance", "ok": False, "code": "no_shared_context"},
+    ]
+    D._report(_log_with(actions))
+    out = capsys.readouterr().out
+
+    assert "assign_acceptance(失败)" in out, (
+        "第二个动作失败了，报告里没有 (失败) 标记")
+
+
+def test_old_logs_with_only_the_single_action_field_still_work(capsys):
+    """
+    向后兼容：多动作之前的旧日志只有 `action`、没有 `actions`。
+
+    分析旧结果时不能崩，也不能把旧日志的动作丢掉。
+    """
+    import experiments.agent_division.run_division as D
+
+    log = _log_with(_THREE_ACTIONS)
+    del log["turns"][0]["actions"]                 # 退回旧格式
+
+    D._report(log)
+    out = capsys.readouterr().out
+
+    assert "workspace_write      1 次" in out, "旧格式（只有 action）读不出来了"
+
+
+def test_build_report_also_runs_over_every_action():
+    """机器可读的那份（进结果 JSON）不能和终端那份不一致。"""
+    import experiments.agent_division.run_division as D
+
+    report = D._build_report(_log_with(_THREE_ACTIONS))
+    counted = report["per_agent_actions"]["agent_a"]
+
+    assert counted.get("workspace_write") == 1
+    assert counted.get("message_send") == 1, "结果 JSON 漏了 message_send"
+    assert counted.get("assign_acceptance") == 1, (
+        "结果 JSON 漏了 assign_acceptance —— 事后复算会得出反的结论")
+
+
+def test_the_report_source_never_reads_the_single_action_field():
+    """
+    源码级守卫：`run_division.py` 里**不许**出现 `X.get("action")`。
+
+    🔴 功能测试只能证明**这一处**被修了；这条钉住的是
+       「以后新加的分析别再退回去读单数」。`turn` 的形状由
+       `production._turn_actions` 一家定义。
+    """
+    tree = ast.parse(_src())
+    offenders = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if not (isinstance(func, ast.Attribute) and func.attr == "get"):
+            continue
+        if any(isinstance(a, ast.Constant) and a.value == "action"
+               for a in node.args):
+            offenders.append(node.lineno)
+
+    assert not offenders, (
+        f"run_division.py 第 {offenders} 行还在读 `get(\"action\")` —— "
+        f"那是**只等于第一个动作**的兼容字段。请用 `_actions_of(turn)`。"
+    )
+
+
+def test_that_guard_would_really_catch_a_regression():
+    """反向：把违规注入进去，确认上面那条守卫**真的会红**。"""
+    bad = (
+        "def f(turns):\n"
+        "    return [t for t in turns\n"
+        "            if (t.get('action') or {}).get('type') == 'x']\n"
+    )
+    tree = ast.parse(bad)
+    hits = [
+        n.lineno for n in ast.walk(tree)
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Attribute) and n.func.attr == "get"
+        and any(isinstance(a, ast.Constant) and a.value == "action"
+                for a in n.args)
+    ]
+
+    assert hits == [3], f"反向测试前提不成立：{hits}"
+
+
+# ------------------------------------------------------------
+# 逐轮那一行也一样：`_print_turn` 原来只渲染 `turn["action"]`
+# ------------------------------------------------------------
+
+def _turn_for_print(actions):
+    return {
+        "ok": True, "tokens": 100, "agent_id": "agent_a",
+        "action": actions[0], "actions": list(actions),
+        "write": {"ok": True, "mode": "create", "path": "a.md",
+                  "revision": 1, "appended_chars": None},
+    }
+
+
+def test_the_per_turn_line_shows_every_action(capsys):
+    """
+    逐轮那一行必须看得见**全部**动作。
+
+    🔴 原来只渲染 `turn["action"]`（第一个），于是
+       「写 + 发消息 + 指派验收人」这一轮会显示成
+       「📝 + 📖workspace_write」——**后两个动作凭空消失**。
+       用户就是在这种「显示与实际不符」上做判断的。
+    """
+    from experiments.heterogeneous_production import production as P
+
+    P._print_turn("agent_a", _turn_for_print([
+        {"type": "workspace_write", "ok": True, "path": "a.md"},
+        {"type": "message_send", "ok": True},
+        {"type": "assign_acceptance", "ok": True},
+    ]))
+    out = capsys.readouterr().out
+
+    assert "message_send" in out, "逐轮显示漏了发消息"
+    assert "assign_acceptance" in out, "逐轮显示漏了指派验收人"
+
+
+def test_the_per_turn_line_marks_a_failed_action(capsys):
+    """失败的第二个动作也要看得见失败 —— 不能拿第一个的 ok 代表整轮。"""
+    from experiments.heterogeneous_production import production as P
+
+    P._print_turn("agent_a", _turn_for_print([
+        {"type": "workspace_write", "ok": True, "path": "a.md"},
+        {"type": "assign_acceptance", "ok": False,
+         "code": "no_shared_context"},
+    ]))
+    out = capsys.readouterr().out
+
+    assert "⚙️assign_acceptance ❌no_shared_context" in out, (
+        f"第二个动作失败了，逐轮显示里看不出来：{out!r}")
+
+
+def test_the_per_turn_line_still_renders_a_single_action_as_before(capsys):
+    """单动作（最常见）的输出形态不能退化 —— 只是多了不漏动作的保证。"""
+    from experiments.heterogeneous_production import production as P
+
+    P._print_turn("agent_a", _turn_for_print([
+        {"type": "workspace_write", "ok": True, "path": "a.md"},
+    ]))
+    out = capsys.readouterr().out
+
+    assert "📝create a.md ✅" in out, f"写产物的细节没了：{out!r}"
+    assert out.count("📝") == 1, "写产物被渲染了两次"

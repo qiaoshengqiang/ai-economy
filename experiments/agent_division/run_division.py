@@ -561,6 +561,28 @@ def AGENTS_FIRST(log: Dict[str, Any]) -> str:
     return str(log.get("first_agent") or "")
 
 
+def _actions_of(turn: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """
+    这一轮里的**全部**动作。
+
+    🔴 **不许用 `turn["action"]`** —— 那是**兼容属性，只等于第一个动作**
+       （`production._turn` 里 `turn["action"] = actions_out[0]`）。
+
+    【为什么这是个真 bug，而不是洁癖】
+        多动作信封上线后，**一次**决定里可以同时
+
+            workspace_write ✅ + message_send ✅ + assign_acceptance ✅
+
+        只读第一个 ⇒ 报告会显示「只写了个文件」，
+        而它其实**也把活分出去了**。
+        下面 ③④⑤ 三节（「有没有分工」）的结论全部会被推翻。
+
+    🔒 实现在 `production._turn_actions` —— **turn 的形状由那边定义**，
+       真相只留一份。这里是转发，不是复制。
+    """
+    return P._turn_actions(turn)
+
+
 def _build_report(log: Dict[str, Any]) -> Dict[str, Any]:
     """
     把控制台那份分析做成**机器可读**的，进结果 JSON。
@@ -588,9 +610,12 @@ def _build_report(log: Dict[str, Any]) -> Dict[str, Any]:
     for t in turns:
         aid = t.get("agent_id")
         per_action.setdefault(aid, Counter())
-        act = t.get("action") or {}
-        per_action[aid][f"{act.get('type') or '(无动作)'}"
-                        f"{'' if act.get('ok') else '(失败)'}"] += 1
+        acts = _actions_of(t)
+        if not acts:
+            per_action[aid]["(无动作)"] += 1
+        for act in acts:
+            per_action[aid][f"{act.get('type') or '(无动作)'}"
+                            f"{'' if act.get('ok') else '(失败)'}"] += 1
 
     first_ran = first in acted
     first_broken = any(t.get("agent_id") == first for t in broken)
@@ -715,34 +740,35 @@ def _report(log: Dict[str, Any]) -> None:
     for t in turns:
         aid = t.get("agent_id")
         per.setdefault(aid, Counter())
-        act = t.get("action") or {}
-        if act:
-            per[aid][f"{act.get('type')}{'' if act.get('ok') else '(失败)'}"] += 1
-        else:
+        acts = _actions_of(t)
+        if not acts:
             per[aid]["（没有发起动作）"] += 1
+        for act in acts:
+            per[aid][f"{act.get('type')}{'' if act.get('ok') else '(失败)'}"] += 1
     for a, c in per.items():
         print(f"       {a:22s} {dict(c)}")
 
     # ---- 4. 分工的**结构证据**：谁建了目录、交给了谁 ----
     print(f"\n  ── ④ 工作区的结构与责任变化")
-    handoffs = [t for t in turns
-                if (t.get("action") or {}).get("type") == "resource_handoff"
-                and (t.get("action") or {}).get("ok")]
-    creates = [t for t in turns
-               if (t.get("action") or {}).get("type") == "resource_create"
-               and (t.get("action") or {}).get("ok")]
-    print(f"       建目录 : {len(creates)} 次 "
-          f"{[ (t['agent_id'], (t['action'] or {}).get('path')) for t in creates ]}")
-    print(f"       交接   : {len(handoffs)} 次 "
-          f"{[ (t['agent_id'], (t['action'] or {}).get('path')) for t in handoffs ]}")
+    # 🔴 遍历**全部**动作，不是 `turn["action"]`（只等于第一个）——
+    #    否则一轮里第二个动作是 handoff 时，这里会打印
+    #    「没有任何交接」，而它明明交接了。
+    creates = [(t.get("agent_id"), a.get("path"))
+               for t in turns for a in _actions_of(t)
+               if a.get("type") == "resource_create" and a.get("ok")]
+    handoffs = [(t.get("agent_id"), a.get("path"))
+                for t in turns for a in _actions_of(t)
+                if a.get("type") == "resource_handoff" and a.get("ok")]
+    print(f"       建目录 : {len(creates)} 次 {creates}")
+    print(f"       交接   : {len(handoffs)} 次 {handoffs}")
     if not handoffs:
         print("       ⇒ **没有任何交接** —— 分工没走到「把责任交出去」这一步。")
 
     # ---- 5. 完成链有没有被 Agent 自己走 ----
     print(f"\n  ── ⑤ 完成链（runner **一律没发**）")
     for want in ("workspace_write", "message_send", "assign_acceptance"):
-        n = sum(1 for t in turns
-                if (t.get("action") or {}).get("type") == want)
+        n = sum(1 for t in turns for a in _actions_of(t)
+                if a.get("type") == want)
         print(f"       {want:20s} {n} 次")
     print(f"       Task 状态 = {log.get('task_status')}")
     print(f"       （runner 没有发过 START / SUBMIT / VERIFY / COMPLETE）")

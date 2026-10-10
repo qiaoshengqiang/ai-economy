@@ -1635,25 +1635,86 @@ def _turn(rt: Any, bridge: Any, st: Any, stage: Any, aid: str, rnd: int,
     return turn
 
 
+def _turn_actions(turn: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """
+    这一轮里的**全部**动作。
+
+    🔴 **不许用 `turn["action"]`** —— 它是**兼容属性，只等于第一个动作**
+       （见上面 `turn["action"] = actions_out[0]`）。
+
+    【为什么这是个真 bug，不是洁癖】
+        多动作信封上线后，**一次**决定里可以同时
+
+            workspace_write ✅ + message_send ✅ + assign_acceptance ✅
+
+        只读第一个 ⇒ 显示「它只写了个文件」，
+        而它其实**把活分出去了**。
+        「Agent 什么时候想到把活分工」这个问题就会被答反。
+
+    【为什么兜底到单数】
+        多动作之前的旧日志里只有 `action`、没有 `actions` ——
+        分析旧结果时不能崩。
+
+    🔒 这里 turn 的形状由本模块定义，所以**真相只有这一份**：
+       `run_division._actions_of` 直接转发到它。
+    """
+    actions = turn.get("actions")
+    if actions:
+        return [a for a in actions if isinstance(a, dict)]
+    one = turn.get("action")
+    return [one] if isinstance(one, dict) else []
+
+
 def _print_turn(aid: str, turn: Dict[str, Any]) -> None:
     if not turn.get("ok"):
         print(f"    ❌ {aid:22s} {turn.get('error', '')[:60]}")
         return
     bits = [f"tokens={turn['tokens']}"]
+
+    # 🔴 **一个动作都不能漏。**
+    #
+    #    `turn["write"]` / `turn["message"]` 是「**最后一次**写 /
+    #    **最后一次**发消息」的快照（每轮循环里被覆盖），
+    #    所以它们**不构成**「这一轮做了什么」的完整证据。
+    #    多动作信封下，一轮可以 write + send + assign_acceptance 同时发生。
+    #
+    #    ⇒ 先按**全部**动作算次数，再逐个渲染。
+    acts = _turn_actions(turn)
+    n_write = sum(1 for a in acts if a.get("type") == ACTION_WORKSPACE_WRITE)
+    n_send = sum(1 for a in acts if a.get("type") == ACTION_MESSAGE_SEND)
+
     w = turn.get("write")
     if w:
         mark = "✅" if w["ok"] else f"❌{w.get('code')}"
         extra = ""
         if w["mode"] == MODE_APPEND and w["ok"]:
             extra = f" (+{w.get('appended_chars')}→R{w.get('revision')})"
-        bits.append(f"📝{w['mode']} {w['path']} {mark}{extra}")
-    a = turn.get("action")
-    if a:
-        mark = "✅" if a["ok"] else f"❌{a.get('code')}"
-        bits.append(f"📖{a['type']} {a.get('path')} "
-                    f"({a.get('chars')}字) {mark}")
+        times = f" ×{n_write}" if n_write > 1 else ""
+        bits.append(f"📝{w['mode']} {w['path']} {mark}{extra}{times}")
     if turn.get("message"):
-        bits.append(f"✉️→{turn['message']['to']}")
+        times = f" ×{n_send}" if n_send > 1 else ""
+        bits.append(f"✉️→{turn['message']['to']}{times}")
+
+    for a in acts:
+        atype = str(a.get("type") or "?")
+        mark = "✅" if a.get("ok") else f"❌{a.get('code')}"
+        if atype == ACTION_WORKSPACE_WRITE:
+            if n_write == 1 and w:
+                continue          # 唯一一次写：上面 📝 已带 mode/revision
+            bits.append(f"📝{a.get('path')} {mark}")
+        elif atype == ACTION_MESSAGE_SEND:
+            if n_send == 1 and turn.get("message"):
+                continue          # 唯一一次发消息：上面 ✉️ 已带收件人
+            bits.append(f"✉️message_send {mark}")
+        elif atype == ACTION_WORKSPACE_READ:
+            bits.append(f"📖{a.get('path')} ({a.get('chars')}字) {mark}")
+        else:
+            parts = [f"⚙️{atype}"]
+            if a.get("path"):
+                parts.append(str(a["path"]))
+            parts.append(mark)
+            bits.append(" ".join(parts))
+
     print(f"    ✅ {aid:22s} {'  '.join(bits)}")
 
 

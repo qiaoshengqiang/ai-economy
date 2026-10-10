@@ -225,19 +225,25 @@ def _report_turns(results_dir: Path, agents) -> None:
 
     # ---- 这一轮**什么都没做**的 turn ----
     #
-    #   🔴 2026-10-09：实验改走**生产信封**之后是**一轮一个动作**，
-    #      所以「没有 write」**不再**等于「什么都没做」——
-    #      Agent 这一轮可能选择的是**读 / 发消息 / 查资料**。
+    #   🔴 2026-10-09：实验改走**生产信封**之后，「没有 write」**不再**
+    #      等于「什么都没做」—— Agent 这一轮可能选择的是
+    #      **读 / 发消息 / 查资料**。
     #
     #      旧判据（`w is None` ⇒ NO_WRITE）会把那些正常轮次全部报成 🔴
     #      —— 报告开始**说谎**。判据改成「**整轮没有发起任何动作**」。
+    #
+    #   🔴 2026-10-10：**一轮可以有多个动作**了（多动作信封）。
+    #      所以判据必须看**整个动作列表**，不能只看 `turn["action"]`
+    #      （那只是第一个）—— 「有第一个」不代表「没有第二个」。
+    from experiments.heterogeneous_production import production as P
+
     silent = []
     for t in turns:
         w = t.get("write")
         if w is not None and not w.get("ok"):
             silent.append((t, str(w.get("code") or "WRITE_FAILED"),
                            f"想写 {w.get('path')}（mode={w.get('mode')}）但被拒"))
-        elif t.get("action") is None:
+        elif not P._turn_actions(t):
             silent.append((t, "NO_ACTION",
                            "这一轮没有发起任何动作（也没有写产物）"))
 
