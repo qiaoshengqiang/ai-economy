@@ -183,6 +183,29 @@ PROMPT = """你是这次生产任务的一名参与者。这是正式生产。
           - 指派**立即生效**，且**当前不能被拒绝**；
           - 这个 Task 还没有 Shared Context 时会失败。
 
+  · "shared_context_read"
+        无参数。
+
+        作用：读这个 Task 的**共同认知**（Shared Context）**当前**那一版。
+        里面是这个 Task 的参与者共同留下/确认的东西：
+        objective · constraints · acceptance_criteria · decisions ·
+        assumptions · open_questions · assignments · facts ·
+        terminology · artifact_refs，以及它的 revision。
+
+        同时附带两块**不是**共同认知本身的东西：
+          - 这个 Task 在 Task Core 里的**客观状态**
+            （status / creator / contractor / participants /
+             budget / agreed_price / is_open / is_terminal）——
+            它是**读的这一刻现场取的引用**，不是存在共同认知里的一份副本；
+          - 最近的几条变更摘要（谁提了什么、批了没有、变成第几版）。
+
+        约束（环境事实）：
+          - 只有**这条 Task 的人**能读；不是参与者读不到；
+          - 读**不受**任何锁影响；
+          - 读到的内容**不会**立刻回到你手上 —— 它进入你的经历，
+            和 `workspace_read` 是同一条反馈回路；
+          - 它**只读**：不会改变任何状态、不产生新 revision。
+
 🔒 这些都只是**能力**。用不用、什么时候用、读哪个文件、
    给谁发什么类型的消息 —— **完全由你自己判断** ——
    环境不替你决定，也不会因为你不做而催你。

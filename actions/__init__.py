@@ -58,6 +58,9 @@ from actions.workspace_read import (
 from actions.workspace_write import (
     ACTION_WORKSPACE_WRITE, WorkspaceWriteExecutor,
 )
+from actions.shared_context_read import (
+    ACTION_SHARED_CONTEXT_READ, SharedContextReadExecutor,
+)
 
 __all__ = [
     "ActionIntent", "ActionResult", "Decision", "CognitiveRunResult",
@@ -70,6 +73,7 @@ __all__ = [
     "ACTION_MESSAGE_SEND", "MessageSendExecutor",
     "ACTION_PUBLIC_QUERY", "PublicQueryExecutor",
     "ACTION_ASSIGN_ACCEPTANCE", "AssignAcceptanceExecutor",
+    "ACTION_SHARED_CONTEXT_READ", "SharedContextReadExecutor",
     "ACTION_RESOURCE_CREATE", "ACTION_RESOURCE_HANDOFF",
     "ACTION_RESOURCE_RELEASE",
     "ResourceCreateExecutor", "ResourceHandoffExecutor",

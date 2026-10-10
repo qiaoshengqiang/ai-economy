@@ -56,7 +56,7 @@ from actions import (  # noqa: E402
     ACTION_WORKSPACE_WRITE, ActionDispatcher,
     MessageSendExecutor, PrivateDeleteExecutor, PrivateListExecutor,
     PrivateReadExecutor, PrivateWriteExecutor, PublicQueryExecutor,
-    AssignAcceptanceExecutor,
+    AssignAcceptanceExecutor, SharedContextReadExecutor,
     ResourceCreateExecutor, ResourceHandoffExecutor,
     ResourceReleaseExecutor,
     WorkspaceReadExecutor, WorkspaceWriteExecutor,
@@ -67,6 +67,7 @@ from services.private_workspace import (  # noqa: E402
 )
 from services.public_reference import PublicReference  # noqa: E402
 from services.assignment_ops import assign_acceptance  # noqa: E402
+from services.context_ops import read_shared_context  # noqa: E402
 from services.resource_control import (  # noqa: E402
     create_directory, handoff_resource, release_resource,
 )
@@ -347,6 +348,23 @@ PROMPT = """你是这次长期生产任务的一名参与者。这是**正式生
           - **不能派给自己** —— 那等于自验（VERIFY 时也会被拒）；
           - 指派**立即生效**，且**当前不能被拒绝**；
           - 这个 Task 还没有 Shared Context 时会失败。
+
+  · "shared_context_read"
+        无参数。
+
+        作用：读这个 Task 的**共同认知**（Shared Context）**当前**那一版 ——
+        objective · constraints · acceptance_criteria · decisions ·
+        assumptions · open_questions · assignments · facts ·
+        terminology · artifact_refs，以及它的 revision。
+        同时附带这个 Task 在 Task Core 里的**客观状态**（现场读的引用）
+        与最近几条变更摘要。
+
+        约束（环境事实）：
+          - 只有**这条 Task 的人**能读；不是参与者读不到；
+          - 读**不受**任何锁影响；
+          - 读到的内容**不会**立刻回到你手上 —— 它进入你的经历，
+            与 `workspace_read` 是同一条反馈回路；
+          - 它**只读**：不改变任何状态、不产生新 revision。
 
 🔒 这些都只是**能力**。用不用、什么时候用、读哪个文件、
    给谁发什么类型的消息 —— **完全由你自己判断** ——
@@ -971,6 +989,22 @@ def _bind_align(rt: Any, fn: Any) -> Any:
     return _bound
 
 
+def _bind_context_read(rt: Any, fn: Any) -> Any:
+    """
+    把 `fn(alignment, task_id, *, by, is_participant)` 绑定成本实验的形状。
+
+    🔒 `alignment` 与 `task_id` 在这里绑定掉 —— Agent **没有任何参数**。
+       它读到的永远是**这一条** Task 的**当前**共同认知，
+       既指不了别的 Task，也翻不了历史。
+    """
+    def _bound(*, by: str) -> Any:
+        return fn(rt.alignment, TASK_ID, by=by,
+                  # 🔒 同 `_bind_align`：fail-closed，
+                  #    不是这条 Task 的人读不到它的共同认知。
+                  is_participant=_TASK_PEOPLE(rt))
+    return _bound
+
+
 def _bind_gw(rt: Any, fn: Any) -> Any:
     """
     把一个 `fn(gateway, workspace_id, agent_id, ...)` 绑定成本实验的形状。
@@ -1111,7 +1145,17 @@ def _action_seam(rt: Any, bridge: Any = None) -> tuple:
         #    所以以前只能由 runner 代做 ⇒「Agent 自主完成任务」断在这里
         #    （能发 SUBMIT，却没人能被授权 VERIFY）。
         # 🔒 alignment 与 task_id 在组合根**绑定**掉，Agent 只说要给谁。
-        AssignAcceptanceExecutor(_bind_align(rt, assign_acceptance))])
+        AssignAcceptanceExecutor(_bind_align(rt, assign_acceptance)),
+        # 2026-10-10 加入 shared_context_read：**Agent 自己**读共同认知。
+        # 🔴 依据（用户指出的缺陷）：「Task 的共同认知应该有 Action 给
+        #    Agent 查」—— 在此之前它**只有写通道**（assign_acceptance），
+        #    Agent 写下的 objective / constraints / decisions /
+        #    assumptions / facts / assignments **自己一个字都读不到**。
+        #    `alignment.snapshot()` 早就写着自己是「可消费的读取视图」，
+        #    缺的只是 Agent 够得到的入口。
+        # 🔒 **无参数**：读哪条 Task 由组合根绑定，
+        #    以什么身份读由 intent.agent_id 决定 —— 两者 Agent 都指定不了。
+        SharedContextReadExecutor(_bind_context_read(rt, read_shared_context))])
     try:
         experience_store = ExperienceStore(rt.economy.db)
     except Exception as exc:                              # noqa: BLE001
