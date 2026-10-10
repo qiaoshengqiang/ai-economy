@@ -273,7 +273,9 @@ PROMPT = """你是这次长期生产任务的一名参与者。这是**正式生
         约束（同样是环境事实）：
           - 只有本 Task 的参与者能读；
           - 读**不受** Write Lock 影响（锁约束的是修改与删除）；
-          - 读到的内容**不会**立刻回到你手上 —— 它进入你的经历。
+          - 读到的内容会**当场**回到你手上（作为紧接着的一条新输入），
+            你可以在**同一次判断里**继续决定做什么。这也意味着：
+            一次「读了东西」的判断实际上会让模型被调用**两次**。
 
   · "message_send"
         parameters: {{"to": "收件人 agent_id", "text": "要说的话",
@@ -362,8 +364,8 @@ PROMPT = """你是这次长期生产任务的一名参与者。这是**正式生
         约束（环境事实）：
           - 只有**这条 Task 的人**能读；不是参与者读不到；
           - 读**不受**任何锁影响；
-          - 读到的内容**不会**立刻回到你手上 —— 它进入你的经历，
-            与 `workspace_read` 是同一条反馈回路；
+          - 读到的内容会**当场**回到你手上（与 `workspace_read` 同一条路径），
+            你可以在**同一次判断里**继续决定做什么；
           - 它**只读**：不改变任何状态、不产生新 revision。
 
 🔒 这些都只是**能力**。用不用、什么时候用、读哪个文件、
@@ -1544,7 +1546,16 @@ def _turn(rt: Any, bridge: Any, st: Any, stage: Any, aid: str, rnd: int,
                     # §5.3 purpose 由**调用方**声明，绝不从结果反推
                     call_purpose="cognition",
                     cognition_turn_id=cognition_turn_id,
-                    experiment_run_id=EXPERIMENT_RUN_ID)
+                    experiment_run_id=EXPERIMENT_RUN_ID,
+                    # 🔴 2026-10-10（用户决定「形状 2」）：
+                    #    Agent 读到东西之后，**读取的真实内容当场回喂**，
+                    #    它在**同一次认知里**接着决定做什么。
+                    #
+                    #    🔒 为什么由**实验**显式打开：它会让「读」的那一轮
+                    #       多一次完整 LLM 调用（实测单次 4k–11k tokens）。
+                    #       这种成本必须由调用方明说要不要付，
+                    #       所以 `run_cognition` 的默认是**关闭**。
+                    follow_up_on_reads=True)
     except Exception as exc:                                  # noqa: BLE001
         turn["error"] = f"{type(exc).__name__}: {exc}"
         stats[aid]["calls"] += 1
@@ -1558,11 +1569,28 @@ def _turn(rt: Any, bridge: Any, st: Any, stage: Any, aid: str, rnd: int,
     r = getattr(a, "last_response", None)
     content = getattr(r, "content", None) or ""
 
+    # 🔴 **这一轮花掉多少 tokens = 所有段之和。**
+    #
+    #    `last_response` 只保留**最后一次**调用 —— 发生 follow-up 时
+    #    直接用它会把这一轮的成本算成**只有第二段**，而两段都是真实的
+    #    付费调用。逐段记在 `run.segments[i].tokens` 上。
+    #
+    #    🔒 权威成本仍然在 `llm_calls` 表（每次调用一行）——
+    #       这里修的是**逐轮显示**，不是记账。
+    _segs = list(getattr(run, "segments", None) or [])
+    _tok_each = [s.tokens for s in _segs]
+    turn_tokens = (sum(int(t or 0) for t in _tok_each) if _segs
+                   else getattr(r, "total_tokens", None))
+
     s = stats[aid]
-    s["calls"] += 1
-    s["tokens"] += int(getattr(r, "total_tokens", 0) or 0)
+    # 🔒 `calls` 记的是**LLM 调用次数**，不是 turn 数 ——
+    #    发生 follow-up 的一轮真的调了两次。
+    s["calls"] += max(1, len(_segs))
+    s["tokens"] += int(turn_tokens or 0)
     turn.update({"ok": True,
-                 "tokens": getattr(r, "total_tokens", None),
+                 "tokens": turn_tokens,
+                 # 🔴 逐段的 tokens —— 让「一轮多调了一次」看得见。
+                 "tokens_by_segment": _tok_each,
                  "requested_model": getattr(r, "requested_model", None),
                  "response_model": getattr(r, "response_model", None),
                  # 🔴 生产层读出来的契约状态
@@ -1607,6 +1635,31 @@ def _turn(rt: Any, bridge: Any, st: Any, stage: Any, aid: str, rnd: int,
     turn["reasoning"] = reasoning[:400]
     if "完成" in reasoning and "未" not in reasoning:
         turn["claims_done"] = True
+
+    # ---- 🔴 段：一次认知可能有 2 段（读到了 → 当场接着决定）----
+    #
+    #   🔒 `turn["reasoning"]` 只放**第一段**的 —— 它是「Agent 看到
+    #      prompt 时怎么判断的」，语义不变（向后兼容）。
+    #      第二段的判断在 `turn["segments"][1]`，另外汇总一份到
+    #      `turn["reasonings"]`，好让报告不用钻进 segments。
+    #
+    #   🔴 不记「它读了什么」的**内容** —— 那是上下文，不是本轮事实；
+    #      本轮事实是「它发起了哪些动作、结果如何」，在 actions 里。
+    segments = list(getattr(run, "segments", None) or [])
+    turn["follow_up_used"] = bool(getattr(run, "follow_up_used", False))
+    if segments:
+        turn["segments"] = [
+            {"index": s.index,
+             "reasoning": str(getattr(s.decision, "reasoning", "") or "")[:400],
+             "decision": getattr(s.decision, "kind", None),
+             "action_count": len(s.action_intents),
+             "output_status": s.output_status,
+             "cognitive_status": s.cognitive_status,
+             "finish_reason": s.finish_reason}
+            for s in segments
+        ]
+        turn["reasonings"] = [s["reasoning"] for s in turn["segments"]
+                              if s["reasoning"]]
 
     # ---- 🔴 唯一的动作通道（一轮一个）----
     #
@@ -1727,6 +1780,13 @@ def _print_turn(aid: str, turn: Dict[str, Any]) -> None:
         print(f"    ❌ {aid:22s} {turn.get('error', '')[:60]}")
         return
     bits = [f"tokens={turn['tokens']}"]
+
+    # 🔴 这一轮**读到了东西** ⇒ 环境把真实返回当场回喂，模型又调了一次。
+    #    🔒 必须显示出来：否则「一轮花了两次调用的钱」看不出原因。
+    segs = turn.get("segments") or []
+    if turn.get("follow_up_used"):
+        bits.append(f"🔁读到内容→当场回喂（{len(segs)}段"
+                    f" tokens={turn.get('tokens_by_segment')}）")
 
     # 🔴 **一个动作都不能漏。**
     #

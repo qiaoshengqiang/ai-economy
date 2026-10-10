@@ -4,6 +4,8 @@ Action Seam —— 一次 Cognitive Run 的完整通道
 
     Stimulus → Cognitive Context → LLM → Agent Decision
              → ActionIntent → Runtime → Executor → ActionResult
+             →（读取类动作）→ 结果当场回喂 → LLM → 再决定一次
+             → ActionIntent → Runtime → Executor → ActionResult
 
 【§十六：ActionResult 必须能被上层看见】
 
@@ -26,18 +28,44 @@ Action Seam —— 一次 Cognitive Run 的完整通道
         ② 把 LLM 的**结构化输出**翻译成 Decision（不猜，见 parse.py）
         ③ 如果 Agent 决定了 Action，就交给 Dispatcher 执行
     「要不要行动、行动什么」永远来自 Agent 的决定。
+
+【🔴 2026-10-10：读取结果**当场**回喂（用户决定「形状 2」）】
+
+    实测缺口（运行 1010-1009，真实数据）：
+
+        `workspace_read` 的 `ActionResult.output.content` 里
+        完整存着 2521 字符的正文，而 Agent **下一轮看到的只有**
+        `action=workspace_read … chars=2521` —— **正文一个字都没有**。
+        ⇒ 「读」这件事在结构上成功了，语义上是**空转**。
+
+    ✅ 现在：Agent 在一次认知里发起读取之后，环境把**真实返回**
+       作为下一条 user 消息回喂，它**在同一次认知里接着决定做什么**。
+
+    🔒 **最多一次**（硬上限 2 次 LLM 调用）——
+       不做循环。理由：每次调用都要花钱（AIC），一个没有上限的
+       tool-loop 会把成本变成不可预测的东西。
+
+    🔒 **不是 tool calling** —— 只是普通消息。
+       `actions/__init__.py` 明列「❌ DSH Tool Bridge / Tool Registry」，
+       走原生 `tools` 会撞那条边界。
+
+    🔒 **默认关闭**（`follow_up_on_reads=False`）：
+       它会让「读」的那一轮**多一次完整 LLM 调用**，
+       这种成本必须由**调用方**明说要不要付。
+       实验侧（`production._turn`）显式打开。
 """
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, List, Optional
 
 from actions.executor import ActionDispatcher
 from actions.intent import (
-    ActionIntent, ActionResult, CognitiveRunResult, Decision,
-    new_decision_id,
+    ActionIntent, ActionResult, CognitiveRunResult, CognitiveSegment,
+    Decision, new_decision_id,
 )
 from actions.parse import decision_from_text
+from actions.read_payload import render_read_results
 from core.logging_setup import get_logger
 
 logger = get_logger(__name__)
@@ -50,6 +78,7 @@ def run_cognition(
     dispatcher: Optional[ActionDispatcher] = None,
     execute: bool = True,
     write_service: Optional[Any] = None,
+    follow_up_on_reads: bool = False,
     **generate_kwargs: Any,
 ) -> CognitiveRunResult:
     """
@@ -64,11 +93,109 @@ def run_cognition(
         write_service SelfModelWriteService。传了才会把 Agent 提出的
                       Reflection Proposal 走**受控写入**。
                       🔒 不传 = 只观察 Agent 想改什么，不落库。
+        follow_up_on_reads
+                      🔴 True 时：Agent 这一轮发起的**读取类**动作
+                      （`workspace_read` / `shared_context_read` / …）
+                      如果真的读到了东西，就把**真实返回**作为下一条
+                      user 消息回喂，让它**在同一次认知里**接着决定。
 
-    返回：CognitiveRunResult（含 decision / intent / result）
+                      🔒 **最多一次**（2 次 LLM 调用封顶）。
+                      🔒 默认 False —— 它多花一次调用，由调用方决定。
+
+    返回：CognitiveRunResult（含 decision / intent / result / segments）
     """
     agent_id = _agent_id_of(agent)
 
+    # ---- 第 1 段 ------------------------------------------------------
+    seg0 = _run_one_segment(agent, agent_id, messages, generate_kwargs)
+    segments: List[CognitiveSegment] = [seg0]
+
+    # ---- 执行第 1 段的动作 --------------------------------------------
+    intents: List[ActionIntent] = list(seg0.action_intents)
+    results: List[Optional[ActionResult]] = _dispatch_all(
+        agent_id, seg0.action_intents, dispatcher=dispatcher,
+        execute=execute, truncated=seg0.is_truncated)
+
+    # ---- 可选：把读取结果当场回喂，再决定一次 --------------------------
+    #
+    # 🔒 判据是**「真的读到了载荷」**，不是「有没有发起读取」——
+    #    读取失败 / 读到空文件时**不**触发 follow-up：
+    #    那会白花一次调用，而且模型看到的还是一句「什么都没有」，
+    #    与它下一轮从 Experience 里看到的信息重复。
+    follow_up_used = False
+    if follow_up_on_reads:
+        prompt2 = render_read_results(list(zip(seg0.action_intents, results)))
+        base = _as_message_list(messages)
+        if prompt2 and base is not None:
+            follow_up_used = True
+            follow_up_messages = base + [
+                # 🔒 把模型**自己那段原文**放回去 —— 否则它不知道自己
+                #    上一句说了什么，就会把这次读取当成一个新任务的开头。
+                {"role": "assistant",
+                 "content": str(getattr(seg0, "content", "") or "")},
+                {"role": "user", "content": prompt2},
+            ]
+            seg1 = _run_one_segment(agent, agent_id, follow_up_messages,
+                                   generate_kwargs, index=1)
+            segments.append(seg1)
+            intents.extend(seg1.action_intents)
+            results.extend(_dispatch_all(
+                agent_id, seg1.action_intents, dispatcher=dispatcher,
+                execute=execute, truncated=seg1.is_truncated))
+        elif prompt2:
+            logger.warning(
+                "有几个读取结果可以回喂，但 messages 的形状认不出来"
+                "（%s）—— 跳过 follow-up，不让它冒把原始 prompt 弄坏的风险。",
+                type(messages).__name__)
+
+    # ---- Reflection（§十：**可选**，0..N 个）---------------------------
+    # 🔒 从**所有段**收 —— 第二段里提的反思与第一段一样真实。
+    proposals: list = []
+    for seg in segments:
+        proposals.extend(_reflections_of(agent_id, seg.content))
+    outcomes = []
+    if proposals and write_service is not None:
+        for p in proposals:
+            try:
+                outcomes.append(write_service.apply(p))
+            except Exception as exc:                      # noqa: BLE001
+                # §十七：Reflection 写入失败**不能**破坏主要 Cognition
+                logger.error("Reflection 写入异常 %s: %s", p.kind, exc)
+                outcomes.append(None)
+
+    return CognitiveRunResult(
+        # 🔒 `decision` 保持**第一段**的语义不变（向后兼容）——
+        #    它是「Agent 看到 prompt 时决定做什么」。
+        #    最后那一版在 `segments[-1].decision`。
+        decision=seg0.decision,
+        action_intents=intents,
+        action_results=results,
+        reflection_proposals=proposals,
+        write_outcomes=outcomes,
+        # §七：把 Provider 输出契约**带出** Cognition，不留在里面被吃掉。
+        # 🔒 这三个保持**第一段**的值（向后兼容）；
+        #    每一段自己的状态在 `segments[i]` 里。
+        output_status=seg0.output_status,
+        cognitive_status=seg0.cognitive_status,
+        finish_reason=seg0.finish_reason,
+        segments=segments,
+        follow_up_used=follow_up_used,
+    )
+
+
+# ================================================================
+# 内部
+# ================================================================
+def _run_one_segment(agent: Any, agent_id: str, messages: Any,
+                     generate_kwargs: dict, *, index: int = 0
+                     ) -> CognitiveSegment:
+    """
+    **一次** LLM 调用 + 解析。不含执行动作（执行由调用方做）。
+
+    🔒 段与段之间**唯一**的差别就是这个 `index` ——
+       第二段走的是**完全同一条**解析路径（同一个信封 parser）。
+       所以「第二段能不能执行动作」不需要另一套规则。
+    """
     response = agent.generate(messages=messages, **generate_kwargs)
     content = getattr(response, "content", None)
 
@@ -88,122 +215,116 @@ def run_cognition(
     #
     #   ✅ 修法**不是**新增一个 Runtime / Stage 状态（§七 明确禁止扩张），
     #      而是让这次 Cognition 的**结果**如实带上契约状态。
-    #      调用方据此可以说出「这次没拿到内容」，
-    #      而不是猜「Agent 是不是不想干」。
     #
     #   🔒 鸭子类型取值，不 import `llm/` —— `actions/` 是叶子层。
-    #      取不到就是 None（「契约未上报」），**不假装成功**。
     output_status = getattr(response, "output_status", None)
     if output_status == "EMPTY_CONTENT":
         logger.warning(
-            "Cognition 拿到 EMPTY_CONTENT：agent=%s —— 这次调用"
+            "Cognition 拿到 EMPTY_CONTENT：agent=%s seg=%d —— 这次调用"
             "没有可用的生产内容。它**不是**「Agent 决定不作答」，"
             "两者必须分开统计。",
-            agent_id,
+            agent_id, index,
         )
 
     # --- 认知输出语义状态（截断检测）----------------------------------
     #
     #   🔴 **「模型返回了内容」不等于「模型完成了认知」。**
-    #
     #   实测（Run 2）：11 turns 的 `finish_reason="length"` 被记成
-    #   `VALID_CONTENT`，看起来是一次成功认知。真实语义是：
-    #   **模型输出撞到 token 上限被截断，本轮认知不完整。**
-    #
-    #   🔒 鸭子类型取值，不 import `llm/` —— `actions/` 是叶子层。
-    #      取不到就是 None（「契约未上报」），**不假装 COMPLETE**。
-    #
-    #   🔒 它**不是** Provider Error：
-    #      provider 正常完成了 API 请求，只是模型输出到了上限。
-    #      所以这里既不抛异常、也不记成失败 —— 只是如实标注。
+    #   `VALID_CONTENT`。真实语义是**撞到 token 上限被截断**。
     cognitive_status = getattr(response, "cognitive_status", None)
     finish_reason = getattr(response, "finish_reason", None)
-    truncated = (cognitive_status == "TRUNCATED")
 
-    if truncated:
+    if cognitive_status == "TRUNCATED":
         logger.warning(
-            "Cognition 输出被**截断**：agent=%s finish_reason=%s "
+            "Cognition 输出被**截断**：agent=%s seg=%d finish_reason=%s "
             "output_status=%s。模型输出达到 token 上限，本轮认知不完整 —— "
-            "即使解析出了合法 Action，也**不执行**（完整认知可能还在后面）。"
+            "即使解析出了合法 Action，也**不执行**。"
             "这不是 provider 失败，provider 调用本身是成功的。",
-            agent_id, finish_reason, output_status,
+            agent_id, index, finish_reason, output_status,
         )
 
-    # --- Action（可选）------------------------------------------------
-    #
-    #   🔴 **TRUNCATED 时默认不执行 Action。**
-    #
-    #      理由：`finish_reason=length` 说明模型**还没输出完**。
-    #      截断点之后可能还有内容 —— 比如一个本该跟着的
-    #      `"reflections"` 段，或者一个更完整的 action 参数。
-    #      「JSON 恰好能解析」**不能**证明「模型已经完成了这一轮认知」。
-    #
-    #   🔒 但**不发明新的「失败行动」**（§6）：
-    #      ActionIntent 仍然**保留**在结果里（那是真实发生的事实），
-    #      只是 `action_result` 为 None。
-    #      没有 ActionFailure / RETRY / ABORT / RECOVER。
-    # 🔴 2026-10-10：**0..N 个动作**，按 Agent 声明的顺序执行。
-    #
-    #    🔒 每个动作**独立**执行、独立留结果 —— 一个失败**不阻止**后面的。
-    #       理由：它们都是 Agent **自己声明的**决定，我们不替它取舍
-    #       （「第 1 个失败了就别发第 2 个消息」是**我们的判断**，不是它的）。
-    #       失败会如实进 Experience，它自己能看到。
-    intents = list(decision.intents)
-    results: List[Optional[ActionResult]] = []
-    if intents and execute and dispatcher is not None:
-        if truncated:
-            logger.warning(
-                "跳过全部 Action 执行（认知输出被截断）：agent=%s %d 个动作 —— "
-                "「JSON 能解析」不等于「这一轮认知已经完成」。",
-                agent_id, len(intents),
-            )
-            results = [None] * len(intents)
-        else:
-            for it in intents:
-                results.append(dispatcher.dispatch(it))
-    elif intents:
-        # 有意图但**没有执行**（execute=False / 没 dispatcher）——
-        # 意图照样保留（那是真实发生的事实），结果如实留空。
-        results = [None] * len(intents)
-
-
-    # --- Reflection（§十：**可选**，0..N 个）---------------------------
-    proposals = _reflections_of(agent_id, response)
-    outcomes = []
-    if proposals and write_service is not None:
-        for p in proposals:
-            try:
-                outcomes.append(write_service.apply(p))
-            except Exception as exc:                      # noqa: BLE001
-                # §十七：Reflection 写入失败**不能**破坏主要 Cognition
-                logger.error("Reflection 写入异常 %s: %s", p.kind, exc)
-                outcomes.append(None)
-
-    return CognitiveRunResult(
+    return CognitiveSegment(
+        index=index,
+        content=str(content or ""),
         decision=decision,
-        action_intents=intents,
-        action_results=results,
-        reflection_proposals=proposals,
-        write_outcomes=outcomes,
-        # §七：把 Provider 输出契约**带出** Cognition，不留在里面被吃掉
+        action_intents=list(decision.intents),
         output_status=output_status,
-        # 🔴 认知输出语义状态也必须带出去 —— 否则「被截断」这个事实
-        #    会在 Cognition 内部被吃掉，下一轮 Agent 看不到。
         cognitive_status=cognitive_status,
         finish_reason=finish_reason,
+        # 🔴 逐段记 tokens —— `last_response` 只保留最后一次调用，
+        #    只看它会把 follow-up 那轮的成本算成**只有第二段**。
+        tokens=getattr(response, "total_tokens", None),
     )
 
 
-def _reflections_of(agent_id: str, response: Any) -> list:
+def _dispatch_all(agent_id: str, intents: List[ActionIntent], *,
+                  dispatcher: Optional[ActionDispatcher], execute: bool,
+                  truncated: bool) -> List[Optional[ActionResult]]:
+    """
+    执行一段里的**全部**动作。
+
+    🔴 **0..N 个动作**，按 Agent 声明的顺序执行。
+
+        🔒 每个动作**独立**执行、独立留结果 —— 一个失败**不阻止**后面的。
+           理由：它们都是 Agent **自己声明的**决定，我们不替它取舍
+           （「第 1 个失败了就别发第 2 个消息」是**我们的判断**，不是它的）。
+           失败会如实进 Experience，它自己能看到。
+
+    🔴 **TRUNCATED 时默认不执行** —— `finish_reason=length` 说明模型
+       **还没输出完**，截断点之后可能还有更完整的参数。
+       「JSON 恰好能解析」**不能**证明「这一轮认知已经完成」。
+
+       🔒 但**不发明新的「失败行动」**：动作照旧**保留**在结果里
+          （那是真实发生的事实），只是结果为 `None`。
+    """
+    if not intents:
+        return []
+    if truncated:
+        logger.warning(
+            "跳过全部 Action 执行（认知输出被截断）：agent=%s %d 个动作 —— "
+            "「JSON 能解析」不等于「这一轮认知已经完成」。",
+            agent_id, len(intents),
+        )
+        return [None] * len(intents)
+    if not execute or dispatcher is None:
+        # 有意图但**没有执行**（execute=False / 没 dispatcher）——
+        # 意图照样保留（那是真实发生的事实），结果如实留空。
+        return [None] * len(intents)
+    return [dispatcher.dispatch(it) for it in intents]
+
+
+def _as_message_list(messages: Any) -> Optional[List[Any]]:
+    """
+    把调用方给的 `messages` 变成**可以往后追加**的列表。
+
+    认不出来的形状返回 `None` —— 调用方据此**跳过** follow-up，
+    而不是冒着把原始 prompt 弄坏的风险去猜。
+
+    🔒 不 import `llm/` —— `actions/` 是叶子层。
+       `normalize_messages` 住在 `llm/base.py`，所以这里只做**最小**适配；
+       真正的归一化仍然由 Brain 那侧做（它本来就会做）。
+    """
+    if messages is None:
+        return []
+    if isinstance(messages, str):
+        return [{"role": "user", "content": messages}]
+    if isinstance(messages, (list, tuple)):
+        return list(messages)
+    return None
+
+
+def _reflections_of(agent_id: str, content: Any) -> list:
     """
     §十：**0..N** 个 Proposal。没有就是空列表 —— **绝不自动补**。
 
-    🔒 这里只解析 LLM 的输出结构；「要不要反思」由 Agent 决定。
+    🔒 从**这一段的信封原文**解析，不从 `Decision` 取 ——
+       `Decision` 里**没有** reflection 字段（实测确认），
+       第一版改成从 `Decision` 取，会让 reflections **静默失效**。
+       原文保存在 `segments[i].content`，所以多段也拿得到各自的 reflection。
     """
     from actions.parse import extract_envelope
     from reflection.parse import parse_reflections
 
-    content = getattr(response, "content", None)
     envelope = extract_envelope(content)
     if envelope is None:
         return []

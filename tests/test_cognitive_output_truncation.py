@@ -446,26 +446,91 @@ class TestGuardsAgainstRegression:
         """
         🔴 `actions/run.py` 的 Action 派发必须被截断挡住。
 
-        🔒 用 AST 检查：`dispatcher.dispatch(...)` 必须位于一个
-           受 `truncated` 保护的 if 里（或其 else 分支里）。
+        🔒 用 AST 检查，**与具体写法无关** —— 接受两种等价的形状：
+
+            ① if truncated:  return [...]      ← 早返回（当前实现）
+               dispatcher.dispatch(...)
+
+            ② if truncated:  results = [None]*n
+               else:          dispatcher.dispatch(...)
+
+        ⚠️ 第一版只认形状 ② （要求 `if` 必须有 `else`）。
+           2026-10-10 把派发抽进 `_dispatch_all()` 并改成早返回之后，
+           它**误报**了 —— 派发其实照样被挡住。
         """
         source = (PROJECT_ROOT / "actions" / "run.py").read_text(
             encoding="utf-8")
         assert "truncated" in source, "run.py 里没有截断判定"
 
         tree = ast.parse(source)
-        # 找到含 dispatch 调用的那个 if（必须有 else 分支）
-        gated = False
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.If):
+        dispatch_lines = [
+            node.lineno for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "dispatch"
+        ]
+        assert dispatch_lines, (
+            "run.py 里找不到 `dispatcher.dispatch(...)` —— 守卫失效了")
+
+        def _exits(body: list) -> bool:
+            """这一段是不是**一定**会退出？"""
+            return any(isinstance(s, (ast.Return, ast.Raise,
+                                      ast.Continue, ast.Break))
+                       for s in body)
+
+        for fn in [n for n in ast.walk(tree)
+                   if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]:
+            if not any(fn.lineno <= line <= (fn.end_lineno or fn.lineno)
+                       for line in dispatch_lines):
                 continue
-            body = ast.unparse(node)
-            if "dispatch(" in body and node.orelse:
-                if "truncated" in ast.unparse(node.test) or \
-                        "truncated" in ast.unparse(node.orelse):
-                    gated = True
-        assert gated, (
-            "dispatcher.dispatch(...) 没有被「截断 → 不执行」的分支保护")
+
+            early_return = False
+            if_else = False
+            for stmt in ast.walk(fn):
+                if not isinstance(stmt, ast.If):
+                    continue
+                if "truncated" not in ast.unparse(stmt.test):
+                    continue
+                # 形状 ①：截断就退出（且必须在派发**之前**）
+                if _exits(stmt.body) and any(
+                        line > stmt.lineno for line in dispatch_lines):
+                    early_return = True
+                # 形状 ②：派发在 else 分支里
+                if stmt.orelse and "dispatch(" in ast.unparse(stmt.orelse):
+                    if_else = True
+
+            assert early_return or if_else, (
+                f"`{fn.name}()` 里 dispatcher.dispatch(...) 没有被"
+                f"「截断 → 不执行」保护（既没有早返回，也没有 if/else）")
+
+    def test_that_gate_guard_would_really_catch_a_regression(self):
+        """反向：拿掉截断判定 ⇒ 上面那条守卫必须变红。"""
+        source = (PROJECT_ROOT / "actions" / "run.py").read_text(
+            encoding="utf-8")
+        broken = source.replace("if truncated:", "if False:", 1)
+
+        tree = ast.parse(broken)
+        dispatch_lines = [
+            node.lineno for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "dispatch"
+        ]
+        still_gated = False
+        for stmt in ast.walk(tree):
+            if not (isinstance(stmt, ast.If)
+                    and "truncated" in ast.unparse(stmt.test)):
+                continue
+            if stmt.orelse and "dispatch(" in ast.unparse(stmt.orelse):
+                still_gated = True
+            if any(isinstance(s, (ast.Return, ast.Raise))
+                   for s in stmt.body) and any(
+                       line > stmt.lineno for line in dispatch_lines):
+                still_gated = True
+
+        assert not still_gated, (
+            "把 `if truncated:` 改成 `if False:` 之后仍被判为「有保护」—— "
+            "这条守卫是假绿的")
 
     def test_no_retry_engine_introduced(self):
         """§15：本轮不许出现自动 retry / RetryEngine。"""

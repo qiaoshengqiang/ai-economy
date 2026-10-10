@@ -181,6 +181,74 @@ class Decision:
 
 
 @dataclass(frozen=True)
+class CognitiveSegment:
+    """
+    一次认知里的**一段** —— 一次 LLM 调用 + 它决定的动作。
+
+    【为什么需要它】
+
+        用户 2026-10-10 决定「形状 2」：Agent 读取环境之后，
+        **读取到的内容当场回喂给模型**，它在**同一次认知里**接着决定。
+
+        ⇒ 一次认知因此可能有 **2 段**（硬上限，见 `run_cognition`）。
+          只记「最后那一段」会丢掉第一段里**它为什么去读**的判断 ——
+          而观察实验要看的正是那个。
+
+    🔒 每段各自的契约状态（`output_status` / `cognitive_status`）
+       独立记录：第二段被截断 ≠ 第一段被截断。
+    """
+
+    #: 第几段（从 0 开始）。
+    index: int = 0
+
+    #: 这一段模型返回的原文。🔒 保留原文 —— 信封解析失败时它是唯一证据。
+    content: str = ""
+
+    #: 这一段解析出来的 Decision。
+    decision: Optional[Decision] = None
+
+    action_intents: List[ActionIntent] = field(default_factory=list)
+    action_results: List[Optional[ActionResult]] = field(default_factory=list)
+
+    output_status: Optional[str] = None
+    cognitive_status: Optional[str] = None
+    finish_reason: Optional[str] = None
+
+    #: 🔴 这一段自己花掉的 tokens。
+    #:
+    #:     【为什么必须逐段记】
+    #:         `BaseAgent.last_response` 只保留**最后一次**调用 ——
+    #:         发生 follow-up 时，「这一轮花了多少」会被算成**只有第二段**。
+    #:         而每一段都是真实的付费调用。
+    #:
+    #:     🔒 权威成本仍然在 `llm_calls` 表（每次调用一行）；
+    #:        这个字段是给**逐轮显示**用的汇总依据。
+    tokens: Optional[int] = None
+
+    @property
+    def is_truncated(self) -> bool:
+        return self.cognitive_status == "TRUNCATED"
+
+    @property
+    def reasoning(self) -> str:
+        return str(getattr(self.decision, "reasoning", "") or "")
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "index": self.index,
+            "content_chars": len(self.content or ""),
+            "decision": self.decision.to_dict() if self.decision else None,
+            "action_intents": [i.to_dict() for i in self.action_intents],
+            "action_results": [(r.to_dict() if r else None)
+                               for r in self.action_results],
+            "output_status": self.output_status,
+            "cognitive_status": self.cognitive_status,
+            "finish_reason": self.finish_reason,
+            "is_truncated": self.is_truncated,
+        }
+
+
+@dataclass(frozen=True)
 class CognitiveRunResult:
     """
     一次 Agent Cognitive Run 的完整结果（§十六）。
@@ -193,6 +261,11 @@ class CognitiveRunResult:
     #: 🔴 **0..N** 个动作及其结果（2026-10-10）。顺序 = Agent 声明的顺序。
     #:    🔒 `action_results[i]` 可能为 `None` —— 表示第 i 个动作**没被执行**
     #:       （例如认知被截断）。「有意图但没执行」是真实事实，不假装。
+    #:
+    #:    🔴 **跨段拼接**：发生 follow-up 时，这里是**两段动作按真实顺序拼起来**
+    #:       的全部结果（先第一段、再第二段）。这样任何
+    #:       「遍历 `zip(action_intents, action_results)`」的调用方
+    #:       **不用改**就能看到全部动作。
     action_intents: List[ActionIntent] = field(default_factory=list)
     action_results: List[Optional[ActionResult]] = field(default_factory=list)
     #: §九 / §十：Agent 本次 Cognition 产生的 **0..N** 个 Reflection Proposal。
@@ -229,6 +302,27 @@ class CognitiveRunResult:
 
     #: provider 报的原始 `finish_reason`（诊断用，保留原值不改写）。
     finish_reason: Optional[str] = None
+
+    #: 🔴 **一次认知里的「段」**（2026-10-10，用户决定「形状 2」）。
+    #:
+    #:     一段 = **一次 LLM 调用 + 它决定的动作**。
+    #:
+    #:     【为什么会有多段】
+    #:         Agent 发起读取（`workspace_read` / `shared_context_read` / …）
+    #:         时，读取到的内容**当场**作为下一条消息回喂给模型，
+    #:         它会**在同一次认知里**接着决定做什么。
+    #:         ⇒ 一次认知最多 **2 段**（硬上限，见 `run_cognition`）。
+    #:
+    #:     🔒 **旧调用方不受影响**：不开这个能力时永远只有 1 段，
+    #:        而且 `decision` / `action_intents` / `action_results`
+    #:        的语义**保持不变**（见下）。
+    #:
+    #:     🔒 `segments[0]` 的第一段永远存在（只要调用成功）。
+    segments: List["CognitiveSegment"] = field(default_factory=list)
+
+    #: 🔴 这次认知**真的做了** follow-up 吗？
+    #:    它是**事实**，不是意图 —— 没触发（没有可回喂的载荷）时是 False。
+    follow_up_used: bool = False
 
     @property
     def action_intent(self) -> Optional[ActionIntent]:
@@ -289,4 +383,8 @@ class CognitiveRunResult:
             "cognitive_status": self.cognitive_status,
             "finish_reason": self.finish_reason,
             "is_truncated": self.is_truncated,
+            # 🔴 段：一次认知可能有 2 段（读到了 → 当场接着决定）。
+            "segments": [s.to_dict() for s in self.segments],
+            "segment_count": len(self.segments),
+            "follow_up_used": self.follow_up_used,
         }

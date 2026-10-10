@@ -26,8 +26,8 @@ from actions.executor import (
 from actions.intent import (
     ACTION_NOOP, ACTION_OBSERVE, ACTION_REPLY, BUILTIN_ACTION_TYPES,
     DECISION_ACT, DECISION_REPLY, VALID_DECISION_KINDS,
-    ActionIntent, ActionResult, CognitiveRunResult, Decision,
-    new_decision_id, new_intent_id,
+    ActionIntent, ActionResult, CognitiveRunResult, CognitiveSegment,
+    Decision, new_decision_id, new_intent_id,
 )
 from actions.parse import (
     ENVELOPE_INSTRUCTION, build_intent, decision_from_text,
@@ -61,9 +61,18 @@ from actions.workspace_write import (
 from actions.shared_context_read import (
     ACTION_SHARED_CONTEXT_READ, SharedContextReadExecutor,
 )
+from actions.read_payload import (
+    CONFIRMATION_ACTIONS, OBSERVABLE_ACTIONS, PER_PAYLOAD_MAX_CHARS,
+    TOTAL_MAX_CHARS, is_observable, observable_results,
+    render_read_results,
+)
 
 __all__ = [
     "ActionIntent", "ActionResult", "Decision", "CognitiveRunResult",
+    "CognitiveSegment",
+    "OBSERVABLE_ACTIONS", "CONFIRMATION_ACTIONS",
+    "PER_PAYLOAD_MAX_CHARS", "TOTAL_MAX_CHARS",
+    "is_observable", "observable_results", "render_read_results",
     "ActionDispatcher", "ActionExecutor", "ReplyExecutor", "NoopExecutor",
     "run_cognition", "reply_decision", "decision_from_text",
     "extract_envelope", "build_intent", "ENVELOPE_INSTRUCTION",

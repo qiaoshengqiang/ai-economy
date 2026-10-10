@@ -641,10 +641,19 @@ def _build_report(log: Dict[str, Any]) -> Dict[str, Any]:
         "workspace_tree": log.get("final_workspace") or [],
         "per_agent_actions": {k: dict(v) for k, v in per_action.items()},
         # 「它打算怎么做」—— 模型在信封里自己写的判断
-        "reasoning_by_turn": [{"round": t.get("round"),
-                               "agent_id": t.get("agent_id"),
-                               "reasoning": t.get("reasoning")}
-                              for t in turns if t.get("reasoning")],
+        "reasoning_by_turn": [
+            {"round": t.get("round"),
+             "agent_id": t.get("agent_id"),
+             # 🔒 第一段的判断（向后兼容 —— 旧日志里只有它）
+             "reasoning": t.get("reasoning"),
+             # 🔴 2026-10-10：读到内容的那些轮**有两段判断**。
+             #    只记第一段会看不到「它是**读到内容之后**才决定分工的」——
+             #    而观察实验要看的正是那个。
+             "reasonings": t.get("reasonings") or (
+                 [t["reasoning"]] if t.get("reasoning") else []),
+             "follow_up_used": bool(t.get("follow_up_used")),
+             "tokens_by_segment": t.get("tokens_by_segment")}
+            for t in turns if t.get("reasoning") or t.get("reasonings")],
     }
 
 
@@ -732,6 +741,27 @@ def _report(log: Dict[str, Any]) -> None:
         print(f"       {src:22s} → {dst}")
     targets = sorted({d for _, d in sent})
     print(f"     被找过的人：{', '.join(targets) if targets else '（无）'}")
+
+    # ---- 2b. 读到内容 ⇒ 当场回喂、再决定一次 ----
+    #
+    #   🔴 2026-10-10（用户决定「形状 2」）：Agent 读到东西之后，
+    #      环境的真实返回**当场**回喂给它，它在**同一次认知里**接着决定。
+    #
+    #   🔒 必须单独列出来，理由有两个：
+    #      ① 它**多花一次 LLM 调用**（钱），不显示就查不出成本为什么涨；
+    #      ② 它把「它读了正文**之后**才决定分工」这件事变成**可观察的** ——
+    #         而只记第一段判断的话，这个因果就看不见了。
+    follow = [t for t in turns if t.get("follow_up_used")]
+    print(f"\n  ── ②b 读到内容 ⇒ 当场回喂、再决定一次（{len(follow)} 轮）")
+    if not follow:
+        print("       **一次都没有** —— 没有人读到过任何内容，")
+        print("       或者读到之后环境没有回喂（那本身就是一个 bug）。")
+    for t in follow:
+        print(f"       r{t.get('round')} {str(t.get('agent_id')):10s} "
+              f"tokens/段={t.get('tokens_by_segment')} "
+              f"（这一轮调了 {len(t.get('segments') or [])} 次模型）")
+        for i, rs in enumerate(t.get("reasonings") or []):
+            print(f"         第{i}段判断：{rs[:160]}")
 
     # ---- 3. 每个 Agent 做了什么（动作分布）----
     print(f"\n  ── ③ 每个 Agent 发起的动作")

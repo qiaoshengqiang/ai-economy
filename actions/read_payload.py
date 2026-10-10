@@ -1,0 +1,279 @@
+"""
+把**读取类动作的结果**渲染成可以当场回喂给模型的一段文本
+================================================================
+
+【🔴 它补的是哪一个缺口（用户 2026-10-10 决定，形状 2「读完立刻动手」）】
+
+    实测（运行 1010-1009）用真实渲染函数跑出来的证据：
+
+        workspace_read → `output.content` = 2521 字符（整章正文），
+                         DB 里完整存下来了
+        Agent 下一轮**实际看到**的：
+            action=workspace_read target=manuscript/chapter_001.md
+            revision=1 chars=2521
+        🔴 正文在里面吗 = False
+
+    ⇒ **Agent 请求读文件，永远收不到文件内容。**
+       「接口成功掩盖语义空转」—— 本项目自己的 bug 类②。
+
+    `actions/workspace_read.py` 的 docstring 当时写着「读到的内容在
+    下一轮 Cognition 才被 Agent 看到」—— **那句话是错的**：
+    `cognition/context.py::_experience_detail` 只渲染一个白名单
+    （`revision` / `chars` / `write_mode` / …），**`content` 不在里面**。
+
+【本模块做什么】
+
+    把「这一轮发起的读取」的真实返回渲染成一段文本，
+    由 `run_cognition` 作为**同一次认知里的下一条 user 消息**回喂给模型。
+
+    🔒 **不是 tool calling** —— 只是普通消息。
+       `actions/__init__.py` 明列「❌ DSH Tool Bridge / Tool Registry」，
+       走原生 `tools` 会撞那条边界；普通消息不会。
+
+【🔴 三件不许做的事】
+
+① **不许加解读**。只呈现环境真实返回的字段。
+   §七：经历/观察只能渲染成**材料**，不能渲染成指令
+   （不写「你应该…」「请据此…」）。
+
+② **不许无上限**。读取可以拿到任意大的正文 ——
+   没有上限的话，一次读取就能把上下文撑爆。
+   超了就**如实说截断了**（含完整长度），不静默少给。
+
+③ **不许猜一个动作的结果**。只渲染 `success=True` 并且**真的有载荷**
+   的结果。失败的动作没有「读到的内容」，编一个空串会让人以为读到了。
+"""
+
+from __future__ import annotations
+
+import json
+from typing import Any, Dict, Iterable, List, Optional, Tuple
+
+from actions.intent import ActionIntent, ActionResult
+from actions.private_workspace import (
+    ACTION_PRIVATE_DELETE, ACTION_PRIVATE_LIST, ACTION_PRIVATE_READ,
+    ACTION_PRIVATE_WRITE,
+)
+from actions.public_query import ACTION_PUBLIC_QUERY
+from actions.resource_control import (
+    ACTION_RESOURCE_CREATE, ACTION_RESOURCE_HANDOFF, ACTION_RESOURCE_RELEASE,
+)
+from actions.assignment import ACTION_ASSIGN_ACCEPTANCE
+from actions.message_send import ACTION_MESSAGE_SEND
+from actions.shared_context_read import ACTION_SHARED_CONTEXT_READ
+from actions.workspace_read import ACTION_WORKSPACE_READ
+from actions.workspace_write import ACTION_WORKSPACE_WRITE
+
+#: 结果里带**新的世界信息**、值得当场回喂给模型的动作。
+#:
+#: 判据是**语义**，不是「有没有 content 字段」：
+#:     这些动作回答的是「环境现在是什么样」—— Agent 拿不到就等于没读。
+OBSERVABLE_ACTIONS = frozenset({
+    ACTION_WORKSPACE_READ,
+    ACTION_PRIVATE_READ,
+    ACTION_PRIVATE_LIST,
+    ACTION_PUBLIC_QUERY,
+    ACTION_SHARED_CONTEXT_READ,
+})
+
+#: 明确**不是**观察类 —— 它们的结果只是「我刚才做了什么」的确认。
+#:
+#: 🔒 显式列出来不是为了「用得上」，而是为了让
+#:    「**新动作必须做一次选择**」成为硬要求：
+#:    守卫 `tests/test_read_payload_feedback.py` 会检查每个注册的
+#:    动作**要么**在 `OBSERVABLE_ACTIONS`、**要么**在这里。
+#:    否则新动作会**静默**落进「不回喂」那一类 —— 那正是这个 bug 的成因。
+CONFIRMATION_ACTIONS = frozenset({
+    ACTION_WORKSPACE_WRITE,
+    ACTION_MESSAGE_SEND,
+    ACTION_ASSIGN_ACCEPTANCE,
+    ACTION_RESOURCE_CREATE,
+    ACTION_RESOURCE_HANDOFF,
+    ACTION_RESOURCE_RELEASE,
+    ACTION_PRIVATE_WRITE,
+    ACTION_PRIVATE_DELETE,
+})
+
+#: 单条读取结果最多回喂多少字符。
+#: 🔒 2521 字符的整章正文在实测里是正常量级；8000 留了余量，
+#:    同时保证「一次读取」不会自己把上下文撑爆。
+PER_PAYLOAD_MAX_CHARS = 8000
+
+#: 这一轮所有读取结果加起来最多多少字符。
+TOTAL_MAX_CHARS = 12000
+
+#: 带 `content` 字段的动作 —— 直接就是那段文本。
+_CONTENT_ACTIONS = frozenset({
+    ACTION_WORKSPACE_READ, ACTION_PRIVATE_READ, ACTION_PUBLIC_QUERY,
+})
+
+#: 结构化载荷 —— 渲染成可读 JSON（保真，不做摘要）。
+_STRUCTURED_ACTIONS = frozenset({ACTION_SHARED_CONTEXT_READ})
+
+
+def is_observable(action_type: Any) -> bool:
+    return str(action_type or "") in OBSERVABLE_ACTIONS
+
+
+def _clip(text: str, limit: int) -> Tuple[str, bool]:
+    """返回 `(文本, 是否被截断)`。截断时**必须**能看出来（调用方会写明）。"""
+    if limit <= 0 or len(text) <= limit:
+        return text, False
+    return text[:limit], True
+
+
+def _payload_of(action_type: str, output: Any) -> Optional[str]:
+    """
+    从 `ActionResult.output` 里取出**可读的那部分**。
+
+    🔒 只认已知形状；认不出来返回 None（＝「没有可回喂的载荷」），
+       **不**把整个 output 一股脑 dump 出去 —— 那会把写动作的
+       回显也带上（那是 Agent 自己刚给的内容，回喂没有意义）。
+    """
+    if not isinstance(output, dict):
+        return None
+
+    if action_type in _CONTENT_ACTIONS:
+        content = output.get("content")
+        return content if isinstance(content, str) and content else None
+
+    if action_type == ACTION_PRIVATE_LIST:
+        paths = output.get("paths")
+        if not paths:
+            return "（这个目录下没有文件）"
+        return "\n".join(f"- {p}" for p in paths)
+
+    if action_type in _STRUCTURED_ACTIONS:
+        parts: List[str] = []
+        context = output.get("context")
+        if isinstance(context, dict):
+            parts.append("共同认知（当前那一版）：")
+            parts.append(json.dumps(context, ensure_ascii=False, indent=2))
+        domain = output.get("domain_state")
+        if isinstance(domain, dict):
+            parts.append("")
+            parts.append(
+                "这个 Task 在 Task Core 里的客观状态"
+                "（读的这一刻现场取的**引用**，不是共同认知的一份副本）：")
+            parts.append(json.dumps(domain, ensure_ascii=False, indent=2))
+        recent = output.get("recent_changes")
+        if recent:
+            parts.append("")
+            parts.append("最近的变更：")
+            parts.append(json.dumps(recent, ensure_ascii=False, indent=2))
+        return "\n".join(parts) if parts else None
+
+    # 认不出来的观察类动作：至少把 output 的**键**如实说出来，
+    # 而不是编一个内容。这比静默什么都不给诚实。
+    return None
+
+
+def _target_of(intent: ActionIntent) -> str:
+    """这一条读取读的是**什么** —— 只从真实字段取，不推断。"""
+    params = dict(getattr(intent, "parameters", None) or {})
+    for key in ("path", "name"):
+        value = params.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _picked(pairs: Iterable[Tuple[ActionIntent, Optional[ActionResult]]]
+            ) -> List[Tuple[str, str, str]]:
+    """
+    `[(action_type, target, 载荷文本)]` —— **一次**遍历定下顺序。
+
+    🔒 顺序 = Agent 声明的顺序。不要在这里排序或去重：
+       「它先读 A 再读 B」是真实发生的事实。
+    """
+    out: List[Tuple[str, str, str]] = []
+    for intent, result in pairs:
+        if result is None or not getattr(result, "success", False):
+            continue
+        action_type = str(getattr(intent, "action_type", "") or "")
+        if not is_observable(action_type):
+            continue
+        text = _payload_of(action_type, getattr(result, "output", None))
+        if text:
+            out.append((action_type, _target_of(intent), text))
+    return out
+
+
+def observable_results(
+    pairs: Iterable[Tuple[ActionIntent, Optional[ActionResult]]],
+) -> List[Tuple[str, str]]:
+    """
+    从 `[(intent, result)]` 里挑出**真的有载荷**的观察类结果。
+
+    返回 `[(action_type, 载荷文本)]` —— 顺序 = Agent 声明的顺序。
+
+    🔒 这里不做长度裁剪 —— 裁剪在 `render_read_results` 里做，
+       因为**总上限**要看全部载荷。
+    """
+    return [(a, t) for a, _target, t in _picked(pairs)]
+
+
+def render_read_results(
+    pairs: Iterable[Tuple[ActionIntent, Optional[ActionResult]]],
+    *,
+    per_payload_max: int = PER_PAYLOAD_MAX_CHARS,
+    total_max: int = TOTAL_MAX_CHARS,
+) -> str:
+    """
+    渲染成一段可以当**下一条 user 消息**发的文本。
+
+    没有可回喂的载荷时返回 `""` —— 调用方据此决定**不做** follow-up
+    （那正是「最多一次」这条硬上限的判据）。
+
+    🔒 措辞纪律：只陈述「这是你刚才请求读取的环境真实返回」，
+       **不写**「你应该据此…」「请继续…」。
+    """
+    picked = _picked(pairs)
+    if not picked:
+        return ""
+
+    lines: List[str] = [
+        "========== 环境对你刚才那次读取的真实返回 ==========",
+        "",
+    ]
+    used = 0
+    dropped = 0
+    shown = 0
+
+    for action_type, target, text in picked:
+        full_len = len(text)
+        body, cut = _clip(text, int(per_payload_max))
+
+        head = f"[{shown + 1}] {action_type}"
+        if target:
+            head += f"  {target}"
+        block = f"{head}\n{'-' * 60}\n{body}"
+        if cut:
+            # 🔒 截断必须**看得出来**，并说清完整长度 ——
+            #    静默少给等于让模型以为「这就是全部」。
+            block += (f"\n（⚠️ 这一条被**截断**了：完整内容 {full_len} 字符，"
+                      f"这里只给出前 {len(body)} 字符。）")
+
+        # 预算检查放在拼好之后 —— 已经给了至少一条时才会丢。
+        if used + len(block) > int(total_max) and shown > 0:
+            dropped += 1
+            continue
+        used += len(block)
+        shown += 1
+        lines.append(block)
+        lines.append("")
+
+    if dropped:
+        lines.append(
+            f"（⚠️ 还有 {dropped} 条读取结果因为**总长度上限**没有列出来 —— "
+            f"它们真实发生过，这里如实说明，不假装只有上面这些。）")
+        lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
+__all__ = [
+    "OBSERVABLE_ACTIONS", "CONFIRMATION_ACTIONS",
+    "PER_PAYLOAD_MAX_CHARS", "TOTAL_MAX_CHARS",
+    "is_observable", "observable_results", "render_read_results",
+]
