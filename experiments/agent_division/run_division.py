@@ -759,10 +759,42 @@ def _report(log: Dict[str, Any]) -> None:
     handoffs = [(t.get("agent_id"), a.get("path"))
                 for t in turns for a in _actions_of(t)
                 if a.get("type") == "resource_handoff" and a.get("ok")]
+
+    # 🔴 **`assign_acceptance` 也是「把责任交出去」。**
+    #
+    #    它交出去的是**验收责任**（谁负责验收），不是资源所有权。
+    #    原来这里的结论只看 `resource_handoff`，于是
+    #    「指派了验收人」的运行会被写成
+    #    「**没有任何交接** —— 分工没走到「把责任交出去」这一步」。
+    #
+    #    实测（1010-0508-8df87c7c）：agent_a 一次决定里
+    #    write + message_send + assign_acceptance，
+    #    而报告说它「分工没走到把责任交出去这一步」——**结论是错的**。
+    assigns = [t.get("agent_id")
+               for t in turns for a in _actions_of(t)
+               if a.get("type") == "assign_acceptance" and a.get("ok")]
+    assign_fails = [(t.get("agent_id"), a.get("code"))
+                    for t in turns for a in _actions_of(t)
+                    if a.get("type") == "assign_acceptance"
+                    and not a.get("ok")]
+
     print(f"       建目录 : {len(creates)} 次 {creates}")
     print(f"       交接   : {len(handoffs)} 次 {handoffs}")
-    if not handoffs:
-        print("       ⇒ **没有任何交接** —— 分工没走到「把责任交出去」这一步。")
+    line = f"       指派验收责任: {len(assigns)} 次成功 {assigns}"
+    if assign_fails:
+        line += f" · {len(assign_fails)} 次失败 {assign_fails}"
+    print(line)
+
+    if not handoffs and not assigns and not assign_fails:
+        print("       ⇒ **既没有资源交接、也没有指派验收责任** —— "
+              "分工没走到「把责任交出去」这一步。")
+    elif not handoffs and not assigns:
+        print("       ⚠️ 没有资源交接、**指派验收责任也失败了** —— "
+              "「把责任交出去」被**尝试**过，但没成。")
+    elif not handoffs:
+        print("       ⚠️ 没有**资源交接**，但**指派验收责任**发生过 —— "
+              "「把责任交出去」走了另一条路（`assign_acceptance`），"
+              "不是 `resource_handoff`。")
 
     # ---- 5. 完成链有没有被 Agent 自己走 ----
     print(f"\n  ── ⑤ 完成链（runner **一律没发**）")

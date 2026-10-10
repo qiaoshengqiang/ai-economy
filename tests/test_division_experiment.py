@@ -484,8 +484,75 @@ def test_the_report_sees_a_handoff_that_is_not_the_first_action(capsys):
     assert "没有任何交接" not in out, (
         "报告说「没有任何交接」，但那一轮真的交接了 —— "
         "它只看了第一个动作")
+    assert "分工没走到「把责任交出去」这一步" not in out
     assert "交接   : 1 次" in out
     assert "建目录 : 1 次" in out
+
+
+def test_the_report_does_not_deny_division_when_acceptance_was_assigned(
+        capsys):
+    """
+    🔴 真实发生过的**错误结论**（运行 1010-0508-8df87c7c）。
+
+    `agent_a` 一次决定里做了
+    `workspace_write + message_send + assign_acceptance`，
+    报告却打印「**没有任何交接** —— 分工没走到「把责任交出去」这一步」。
+
+    它只看 `resource_handoff`。而 `assign_acceptance` 交出去的是
+    **验收责任** —— 同样是「把责任交出去」，只是走的另一条路。
+    """
+    import experiments.agent_division.run_division as D
+
+    actions = [
+        {"type": "workspace_write", "ok": True, "path": "manuscript/a.md"},
+        {"type": "message_send", "ok": True},
+        {"type": "assign_acceptance", "ok": True},
+    ]
+    D._report(_log_with(actions))
+    out = capsys.readouterr().out
+
+    assert "分工没走到「把责任交出去」这一步" not in out, (
+        "指派了验收人，报告却说「没把责任交出去」—— 结论是错的")
+    assert "指派验收责任: 1 次成功" in out
+
+
+def test_the_report_says_so_when_the_assignment_failed(capsys):
+    """
+    失败也要说清楚：**「试图交出去但没成」≠「没试过」**。
+
+    这正是修 Shared Context 之前那次运行的真实形状。
+    """
+    import experiments.agent_division.run_division as D
+
+    actions = [
+        {"type": "workspace_write", "ok": True, "path": "a.md"},
+        {"type": "message_send", "ok": True},
+        {"type": "assign_acceptance", "ok": False,
+         "code": "no_shared_context"},
+    ]
+    D._report(_log_with(actions))
+    out = capsys.readouterr().out
+
+    assert "指派验收责任也失败了" in out
+    assert "no_shared_context" in out, "失败原因必须显示出来"
+    assert "分工没走到「把责任交出去」这一步" not in out
+
+
+def test_the_report_still_says_no_division_when_truly_nothing_happened(
+        capsys):
+    """
+    反向：真的什么都没做时，那句结论**必须还在**。
+
+    否则它就成了永远不会出现的句子 —— 那条分支没人验证过。
+    """
+    import experiments.agent_division.run_division as D
+
+    D._report(_log_with([
+        {"type": "workspace_write", "ok": True, "path": "a.md"},
+    ]))
+    out = capsys.readouterr().out
+
+    assert "分工没走到「把责任交出去」这一步" in out
 
 
 def test_a_failed_action_is_counted_as_failed(capsys):
