@@ -1011,8 +1011,21 @@ def _bind_gw(rt: Any, fn: Any) -> Any:
 
     🔒 **gateway 与 workspace_id 在这里绑定掉** —— Agent 只给路径。
        Agent 永远看不到 gateway 是什么，也不需要知道。
+
+    🔴 2026-10-10：**`task_id` 也在这里绑定掉。**
+       `ResourceHandoffExecutor` 会从 `parameters` 读 `task_id` 并传下来，
+       而它是 **Workspace 审计记录上的标签**（`gateway.handoff(task_id=…)`）。
+       不覆盖的话，Agent 可以把自己的责任交接**记到别的 Task 名下** ——
+       审计就不可信了。这与 `_bind_align` / `_bind_context_read`
+       「task_id 由组合根绑定，Agent 指定不了」是同一条原则。
+
+       ⚠️ 只覆盖**已经传下来**的键（`if "task_id" in kwargs`）——
+          不主动添加，否则 `create_directory` / `release_resource`
+          会因为收到不认识的参数而报错。
     """
     def _bound(agent_id: str, path: Any, *args: Any, **kwargs: Any) -> Any:
+        if "task_id" in kwargs:
+            kwargs["task_id"] = TASK_ID
         return fn(rt.workspace_gateway, WS_ID, str(agent_id), path,
                   *args, **kwargs)
     return _bound

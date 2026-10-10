@@ -16,8 +16,6 @@
 """
 from __future__ import annotations
 
-import ast
-import re
 import sys
 from pathlib import Path
 
@@ -27,26 +25,14 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+# 🔒 「怎么算注册了」只有**一份**真相 —— 见 `tests/action_registry_helpers.py`
+#    （`test_system_map_is_current.py` 也用它）。
+from tests.action_registry_helpers import (                     # noqa: E402
+    action_types_of as _action_types_of,
+    registered_executor_classes as _registered_executor_classes,
+)
+
 PROD = (ROOT / "experiments" / "heterogeneous_production" / "production.py")
-
-
-def _registered_executor_classes() -> set:
-    """从 `_action_seam` 里扫出它注册了哪些执行器类。"""
-    src = PROD.read_text(encoding="utf-8")
-    fn = next(n for n in ast.walk(ast.parse(src))
-              if isinstance(n, ast.FunctionDef) and n.name == "_action_seam")
-    return set(re.findall(r"(\w+Executor)\(", ast.get_source_segment(src, fn)))
-
-
-def _action_types_of(class_names: set) -> set:
-    import actions
-
-    types = set()
-    for name in sorted(class_names):
-        cls = getattr(actions, name, None)
-        assert cls is not None, f"{name} 不在 actions 的导出里"
-        types |= set(getattr(cls, "action_types", ()) or ())
-    return types
 
 
 def test_every_registered_action_type_is_documented_in_the_prompt():
