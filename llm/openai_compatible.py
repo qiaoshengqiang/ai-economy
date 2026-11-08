@@ -62,6 +62,7 @@ from llm.base import (
     LLMTimeoutError,
     Message,
     RateLimitError,
+    messages_have_images,
     normalize_messages,
 )
 
@@ -410,7 +411,7 @@ class OpenAICompatibleProvider(LLMProvider):
     # ------------------------------------------------------------
     def build_payload(
         self,
-        messages: Sequence[Mapping[str, str]],
+        messages: Sequence[Mapping[str, Any]],
         model: str,
         temperature: float,
         max_tokens: int,
@@ -421,7 +422,14 @@ class OpenAICompatibleProvider(LLMProvider):
 
         单独抽成方法，是为了能被测试直接调用 ——
         不用真的发请求就能验证序列化对不对。
+
+        🔒 图片能力由 Provider 自己声明；不支持图片的 Provider
+           在这里**明确拒绝**，不把 image part 静默丢掉。
         """
+        if (messages_have_images(messages)
+                and not getattr(self, "supports_image_input", False)):
+            raise LLMRequestError(
+                f"provider {self.name!r} 不支持图片输入")
         payload: Dict[str, Any] = {
             "model": model,
             "messages": [dict(m) for m in messages],

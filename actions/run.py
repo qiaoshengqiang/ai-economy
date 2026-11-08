@@ -57,7 +57,7 @@ Action Seam —— 一次 Cognitive Run 的完整通道
 
 from __future__ import annotations
 
-from typing import Any, List, Optional
+from typing import Any, Callable, List, Optional
 
 from actions.executor import ActionDispatcher
 from actions.intent import (
@@ -83,6 +83,7 @@ def run_cognition(
     follow_up_on_reads: bool = False,
     follow_up_per_payload_max: int = PER_PAYLOAD_MAX_CHARS,
     follow_up_total_max: int = TOTAL_MAX_CHARS,
+    image_resolver: Optional[Callable[[str, str], Optional[str]]] = None,
     repair_malformed: bool = False,
     work_loop: bool = False,
     max_work_steps: int = 2,
@@ -115,6 +116,11 @@ def run_cognition(
                       推到推理模型的长 reasoning 区间。
 
                       🔒 截断仍然会**如实写明**完整长度，不静默少给。
+        image_resolver
+                      🔴 可选：`(run_id, relative_path) -> data URL`。
+                      传了才会把 `run_tool` 返回里的截图作为
+                      `image_url` content part 附在 follow-up user 消息里。
+                      `actions/` 不读文件 —— 文件解析由调用方注入。
         repair_malformed
                       🔴 True 时：模型输出看起来像结构化信封、但 JSON
                       解析失败（截断/写坏）⇒ **重试一次**，要求它输出
@@ -171,7 +177,8 @@ def run_cognition(
             prompt = render_read_results(
                 list(zip(last_seg.action_intents, last_results)),
                 per_payload_max=int(follow_up_per_payload_max),
-                total_max=int(follow_up_total_max))
+                total_max=int(follow_up_total_max),
+                image_resolver=image_resolver)
             if not prompt:
                 break
             work_messages = base + [
@@ -196,16 +203,24 @@ def run_cognition(
 
         if work_steps:
             # 回到 decision：让 Agent 决定继续工作还是结束。
-            checkpoint_prompt = (
-                last_prompt
-                + "\n\n========== 工作阶段结束 ==========\n"
-                  "上面是工作阶段最后一步的真实返回。\n"
-                  "高优先级：检查一次私有工作记忆（抽象结构 / 分支 / "
-                  "重大问题 / 重大发现）。即使没有变化，也可以做一次空更新。\n"
-                  "如果计划 / 分工 / 完成清单 / 要共享的抽象信息有变化，"
-                  "可以用 public_working_memory_update 更新公共工作记忆"
-                  "（expected_revision 用你看到的 revision）。\n"
-                  "现在回到决策：继续工作、结束、或交付。")
+            checkpoint_text = (
+                "\n\n========== 工作阶段结束 ==========\n"
+                "上面是工作阶段最后一步的真实返回。\n"
+                "高优先级：检查一次私有工作记忆（抽象结构 / 分支 / "
+                "重大问题 / 重大发现）。即使没有变化，也可以做一次空更新。\n"
+                "如果计划 / 分工 / 完成清单 / 要共享的抽象信息有变化，"
+                "可以用 public_working_memory_update 更新公共工作记忆"
+                "（expected_revision 用你看到的 revision）。\n"
+                "现在回到决策：继续工作、结束、或交付。")
+            # 🔒 `last_prompt` 可能是字符串，也可能是带图片的 content parts。
+            #    后者不能直接 `list + str`；把 checkpoint 作为新的 text part 追加。
+            if isinstance(last_prompt, list):
+                checkpoint_prompt = [
+                    *last_prompt,
+                    {"type": "text", "text": checkpoint_text},
+                ]
+            else:
+                checkpoint_prompt = str(last_prompt) + checkpoint_text
             checkpoint_messages = base + [
                 {"role": "assistant",
                  "content": str(getattr(last_seg, "content", "") or "")},
@@ -226,7 +241,8 @@ def run_cognition(
         prompt2 = render_read_results(
             list(zip(seg0.action_intents, results)),
             per_payload_max=int(follow_up_per_payload_max),
-            total_max=int(follow_up_total_max))
+            total_max=int(follow_up_total_max),
+            image_resolver=image_resolver)
         if prompt2 and base is not None:
             follow_up_used = True
             follow_up_messages = base + [

@@ -117,12 +117,47 @@ Agent 的动作：
   "duration_ms": 123.4,
   "code": "tool_exit_nonzero",
   "materialized_files": 4,
-  "output_truncated": false
+  "output_truncated": false,
+  "config_used": "qa/playwright.config.js",
+  "smoke": {"enabled": true, "ok": true, "entry": "site/index.html"},
+  "images": [
+    {"path": "test-results/.../screenshot.png", "mime": "image/png", "bytes": 12345}
+  ]
 }
 ```
 
 `success=True` 表示**工具真的运行了**；`ok=false` 表示测试/命令失败。
 这样失败输出也会回喂给 Agent，而不是被当成“动作没执行”。
+
+### 4.1 Playwright：项目配置发现
+
+Tool Runtime 会在 run 根目录写一个默认 `playwright.config.js`
+（`testDir: '.'`、`channel: chrome`），Playwright 默认只读它。
+Agent 写在 `qa/playwright.config.js` 的 `baseURL` / `webServer`
+因此会被静默忽略。
+
+现在 `_execute()` 会：
+
+- 扫描 run 目录下的子目录 config（排除根 bootstrap）；
+- 优先 `qa/playwright.config.js`；
+- 只有一个候选时自动追加 `--config=<rel>`；
+- 有多个候选时不替 Agent 猜，Agent 仍可显式传 `--config`；
+- 把实际使用的配置写进 `config_used`。
+
+### 4.2 Playwright：冒烟门禁（smoke gate）
+
+在跑全量套件前，先跑一个 ~5 秒的独立 smoke spec：
+
+- 启动一个临时静态服务器（随机端口）指向 run work；
+- 自动识别入口：`site/index.html` / `index.html` / ...；
+- 检查 HTTP 状态、body 非空、`#app` / `#ui-root` 有可见子节点、
+  没有 `pageerror`；
+- 失败时返回 `code="smoke_failed"`，**不执行全量套件**；
+- 可用 `--no-smoke` 或 `PLAYWRIGHT_SMOKE=0` 关闭；
+- 入口可通过 `PLAYWRIGHT_SMOKE_ENTRY` 覆盖。
+
+实测：一个 154 字节的坏 `index.html` 从「5 个用例各等 40 秒」
+变成 **1.8 秒失败**。
 
 ---
 
@@ -186,6 +221,7 @@ Playwright 使用 Node runtime + 本机 Chrome；多个 run 各自有独立 Chro
 
 ```bash
 ./dev.sh test tests/test_tool_runtime.py
+./dev.sh test tests/test_llm_multimodal.py
 ```
 
 真实任务实验：

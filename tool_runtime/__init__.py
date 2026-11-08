@@ -11,7 +11,7 @@ from tool_runtime.runner import (
 )
 from tool_runtime.workspace import (
     RunWorkspace, ToolRunWorkspaceError,
-    materialize_private_workspace, materialize_task_workspace,
+    materialize_private_workspace, materialize_task_workspace, safe_join,
 )
 
 __all__ = [
@@ -19,4 +19,5 @@ __all__ = [
     "ToolRunner", "ToolRunError", "ToolRunResult",
     "RunWorkspace", "ToolRunWorkspaceError",
     "materialize_private_workspace", "materialize_task_workspace",
+    "safe_join",
 ]

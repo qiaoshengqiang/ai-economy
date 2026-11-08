@@ -64,6 +64,7 @@
 | [0038](0038-agent-world-core-boundaries.md) | **Agent / World / Asset / Capability 的核心边界**（10 条架构不变量） | Accepted（**文档，无实现**） | 架构治理补充 | Agent Core Model |
 | [0039](0039-system-level-public-reference.md) | **系统级公开资料**（不是 World / 不是 Task / 不是 Public Manifest） | Accepted（**已实现**） | 架构治理补充 | Agent Core Model |
 | [0040](0040-controlled-code-execution-tool-runtime.md) | **受控代码执行与测试（Tool Runtime V1）** | Accepted（**已实现**） | Tool Runtime V1 | Tool Runtime |
+| [0041](0041-multimodal-visual-observation.md) | **原生多模态视觉观察（Vision Perception V1）** | Accepted（**已实现**） | Vision Perception V1 | LLM / Tool Runtime |
 | [0028](0028-read-visibility-and-native-communication.md) | **Read 靠 Task Participation；Communication 是 Agent 基础能力** | Accepted（实现为 FUTURE） | Read / Visibility / Communication | Workspace / Communication |
 
 ---

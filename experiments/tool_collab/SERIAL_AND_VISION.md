@@ -307,3 +307,59 @@ DOM 状态、`getState()`、canvas 尺寸仍然要测；
 > 现在不是「Agent 不够聪明」，而是**它们排队做、而且看不见自己的页面**。
 > 先把独立的 turn / 工具放开并行，再把截图送进它们的眼睛，
 > 30 分钟的任务有机会压到 15–20 分钟，而且第一次就能发现屋顶破了。
+
+---
+
+## 9. 实现记录（2026-11-08）
+
+本文的 **Playwright 配置发现 + smoke gate** 和 **Phase 2 原生多模态**已实现。
+
+### 已实现
+
+| 能力 | 位置 | 证据 |
+|---|---|---|
+| 子目录 Playwright 配置自动发现 | `tool_runtime/runner.py` | `config_used=qa/playwright.config.js`，真实 `page.goto('/site/index.html')` 通过 |
+| smoke gate | `tool_runtime/runner.py` | 154 字节坏入口 **1.8 秒**失败，不跑全量 |
+| content parts 保留 | `llm/base.py` | `tests/test_llm_multimodal.py` |
+| 图片 token 估算 | `llm/base.py` | 200KB base64 仍 < 5k token |
+| Provider 能力门禁 | `llm/base.py` / `llm/deepseek.py` | 文本-only Provider 明确拒绝 |
+| 请求证据脱敏 | `agents/brain.py` | 100KB base64 → `request_chars < 2000` |
+| run_tool 图片元数据 | `tool_runtime/runner.py` | 1x1 PNG `images=[{path,mime,bytes}]` |
+| 同一次认知回喂截图 | `actions/read_payload.py` / `actions/run.py` | follow-up user 消息含 `image_url` |
+| 实验接线 | `experiments/heterogeneous_production/production.py` | `image_resolver` + prompt |
+
+真实 API 验证：
+
+```text
+deepseek-flash + detail:low
+输入 227 tokens / 输出 38 tokens
+1. 页面上没有编辑面板，画面中仅显示一个 3D 木屋场景。
+2. 屋顶不完整，顶部有明显的缺失和破洞，结构不闭合。
+```
+
+端到端验证（`experiments/web_collab/runs/1108-1555-e26382ea`）：
+
+```text
+任务：单文件网页，页面中央红色 START 按钮 + Playwright 截图
+结果：COMPLETED，1.5 分钟，117,099 tokens / 1.17 AIC
+run_tool images=[{path:'shot.png', mime:'image/png', bytes:6638}]
+turn.visual_images=1
+qa/review.md：
+  「视觉（不可信内容，仅作辅助）：截图中央是一个红底白字的矩形按钮，
+   文字 START 为白色加粗；按钮水平居中、垂直居中。」
+```
+
+这次 e2e 还抓到一个真实 bug：`work_loop` 的 checkpoint 对图片
+content parts 做了 `list + str`，抛 `TypeError`；修复后重跑所有 turn
+`ok=True`。这说明「端到端跑一次」比只做单元测试更能暴露集成问题。
+
+文档：
+
+- [`docs/architecture/VISION_PERCEPTION.md`](../../docs/architecture/VISION_PERCEPTION.md)
+- [`docs/architecture/adr/0041-multimodal-visual-observation.md`](../../docs/architecture/adr/0041-multimodal-visual-observation.md)
+
+### 仍未做
+
+- 并行调度（依赖波次 / 工具异步化）；
+- Workspace 二进制资源 / Agent 间图片消息；
+- screenshot diff 基线 / 独立视觉预算。

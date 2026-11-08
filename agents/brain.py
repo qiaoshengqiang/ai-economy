@@ -426,10 +426,17 @@ class Brain:
             if value is None:
                 return ""
             if isinstance(value, str):
+                # 🔒 图片 base64 不能进请求证据：它会把日志/DB 撑爆，
+                #    而且对「关键观察是否在请求里」没有证明价值。
+                if value.startswith("data:image/"):
+                    return "[image]"
                 return value
             if isinstance(value, (list, tuple)):
                 return "\n".join(_text_of(v) for v in value)
             if isinstance(value, Mapping):
+                # 多模态 content part：只留类型占位，不展开 URL/base64。
+                if str(value.get("type") or "") in ("image_url", "file"):
+                    return "[image]"
                 return "\n".join(f"{k}={_text_of(v)}"
                                   for k, v in sorted(value.items()))
             return str(value)

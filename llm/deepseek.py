@@ -72,6 +72,9 @@ class DeepSeekProvider(OpenAICompatibleProvider):
     # DeepSeek V4 支持 thinking 开关 + reasoning_effort（low/high/max）。
     supports_thinking = True
     supports_reasoning_effort = True
+    # deepseek-flash（V4.1-Flash）原生支持图片输入；
+    # 图片只允许放在 user 消息里（见 llm/base.py 的 normalize）。
+    supports_image_input = True
 
     # ---------------- DeepSeek 特有的错误含义 ----------------
     def _extra_status_hint(self, status: int) -> str:

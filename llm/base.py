@@ -137,7 +137,7 @@ Message = Mapping[str, Any]
 def normalize_messages(
     messages: Union[str, Sequence[Message], None] = None,
     system: Optional[str] = None,
-) -> List[Dict[str, str]]:
+) -> List[Dict[str, Any]]:
     """
     把各种调用姿势统一成一种内部格式：[{"role": ..., "content": ...}, ...]
 
@@ -199,13 +199,90 @@ def normalize_messages(
                 f"合法取值：{sorted(VALID_ROLES)}"
             )
 
-        content = raw.get("content", "")
-        if not isinstance(content, str):
-            content = str(content)
-
+        content = _normalize_content(
+            raw.get("content", ""), role=role, index=index)
         result.append({"role": role, "content": content})
 
     return result
+
+
+def _normalize_content(content: Any, *, role: str, index: int) -> Any:
+    """
+    把一条消息的 `content` 归一化成 **str 或 content parts**。
+
+    🔒 多模态边界（DeepSeek 官方限制）：
+       - 图片只能出现在 `user` 消息里；
+       - `image_url` 只接受 http(s) 或 `data:image/...`；
+       - `detail` 只接受 low / high / original / auto。
+       这些在**进入 Provider 之前**就拒绝，避免把坏请求发出去。
+    """
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, (list, tuple)):
+        # 历史行为：标量内容转成字符串（不把 int / None 当图片）。
+        return str(content)
+
+    parts: List[Dict[str, Any]] = []
+    for part_index, raw_part in enumerate(content):
+        if not isinstance(raw_part, Mapping):
+            raise LLMRequestError(
+                f"第 {index} 条消息的第 {part_index} 个 content part "
+                f"必须是 dict，收到：{type(raw_part).__name__}")
+        part_type = str(raw_part.get("type") or "").strip().lower()
+        if part_type == "text":
+            text = raw_part.get("text")
+            if not isinstance(text, str):
+                raise LLMRequestError(
+                    f"第 {index} 条消息的 text part 缺少字符串 text")
+            parts.append({"type": "text", "text": text})
+            continue
+
+        if part_type == "image_url":
+            if role != ROLE_USER:
+                raise LLMRequestError(
+                    "图片只能出现在 user 消息里"
+                    f"（第 {index} 条是 {role!r}）")
+            image = raw_part.get("image_url")
+            if isinstance(image, str):
+                image = {"url": image}
+            if not isinstance(image, Mapping):
+                raise LLMRequestError(
+                    f"第 {index} 条消息的 image_url 必须是字符串或对象")
+            url = image.get("url")
+            if not isinstance(url, str) or not url:
+                raise LLMRequestError(
+                    f"第 {index} 条消息的 image_url 缺少 url")
+            if not url.startswith(("http://", "https://", "data:image/")):
+                raise LLMRequestError(
+                    "image_url 只支持 http(s) 或 data:image/...")
+            out: Dict[str, Any] = {"type": "image_url",
+                                   "image_url": {"url": url}}
+            detail = image.get("detail")
+            if detail is not None:
+                detail = str(detail).strip().lower()
+                if detail not in ("low", "high", "original", "auto"):
+                    raise LLMRequestError(
+                        f"image_url.detail 非法：{detail!r}")
+                out["image_url"]["detail"] = detail
+            parts.append(out)
+            continue
+
+        if part_type == "file":
+            if role != ROLE_USER:
+                raise LLMRequestError(
+                    "file part 只能出现在 user 消息里"
+                    f"（第 {index} 条是 {role!r}）")
+            file_id = raw_part.get("file_id")
+            if not isinstance(file_id, str) or not file_id:
+                raise LLMRequestError(
+                    f"第 {index} 条消息的 file part 缺少 file_id")
+            parts.append({"type": "file", "file_id": file_id})
+            continue
+
+        raise LLMRequestError(
+            f"第 {index} 条消息包含未知 content part：{part_type!r}")
+
+    return parts
 
 
 # ============================================================
@@ -262,18 +339,58 @@ def estimate_tokens(text: str) -> int:
     return cjk_count + math.ceil(other_count / 4)
 
 
+#: 单张图片的保守 token 估算上限。
+#: DeepSeek 官方：图片会按尺寸换算 token，单图最多约 1024。
+#: 这里用于 MockProvider / 预算估算；真实成本仍以 API usage 为准。
+IMAGE_TOKEN_ESTIMATE = 1024
+
+
 def estimate_messages_tokens(messages: Iterable[Message]) -> int:
     """
     估算一组 messages 的总 token 数。
 
     除了正文，每条消息还加了固定的开销（角色标签、分隔符等）。
     主流模型每条消息大约有 3~4 token 的结构开销，这里取 4。
+
+    🔒 多模态消息：文本 part 按文本估算；图片/文件 part 按
+       `IMAGE_TOKEN_ESTIMATE` 计。**不把 base64 当文本数** ——
+       那会把一张图的 token 估算成几十万。
     """
     total = 0
     for message in messages:
-        total += estimate_tokens(str(message.get("content", "")))
+        total += _estimate_content_tokens(message.get("content", ""))
         total += 4   # 每条消息的结构开销
     return total
+
+
+def _estimate_content_tokens(content: Any) -> int:
+    if isinstance(content, str):
+        return estimate_tokens(content)
+    if isinstance(content, (list, tuple)):
+        total = 0
+        for part in content:
+            if not isinstance(part, Mapping):
+                continue
+            part_type = str(part.get("type") or "")
+            if part_type == "text":
+                total += estimate_tokens(str(part.get("text") or ""))
+            elif part_type in ("image_url", "file"):
+                total += IMAGE_TOKEN_ESTIMATE
+        return total
+    return estimate_tokens(str(content))
+
+
+def messages_have_images(messages: Iterable[Message]) -> bool:
+    """消息里是否有 image / file content part。"""
+    for message in messages:
+        content = message.get("content")
+        if not isinstance(content, (list, tuple)):
+            continue
+        for part in content:
+            if (isinstance(part, Mapping)
+                    and str(part.get("type") or "") in ("image_url", "file")):
+                return True
+    return False
 
 
 # ============================================================
@@ -693,6 +810,9 @@ class LLMProvider(ABC):
     #:    默认 False —— 不认识的 provider 不会被塞入未知字段。
     supports_thinking: bool = False
     supports_reasoning_effort: bool = False
+    #: 是否接受 `content` 里的 image_url / file parts。
+    #: 默认 False —— 不认识的 provider 不会把图片悄悄降级成文本。
+    supports_image_input: bool = False
 
     def __init__(
         self,

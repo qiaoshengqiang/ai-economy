@@ -47,7 +47,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Union
 
 from actions.intent import ActionIntent, ActionResult
 from actions.private_workspace import (
@@ -134,6 +134,12 @@ PER_PAYLOAD_MAX_CHARS = 8000
 #: 这一轮所有读取结果加起来最多多少字符。
 TOTAL_MAX_CHARS = 12000
 
+#: 一次 follow-up 最多附几张图（视觉 token 有成本，不能无限塞）。
+MAX_FEEDBACK_IMAGES = 2
+
+#: 把 `(run_id, relative_path)` 解析成 data URL；返回 None = 这张图不可用。
+VisualResolver = Callable[[str, str], Optional[str]]
+
 #: 带 `content` 字段的动作 —— 直接就是那段文本。
 _CONTENT_ACTIONS = frozenset({
     ACTION_WORKSPACE_READ, ACTION_PRIVATE_READ, ACTION_PUBLIC_QUERY,
@@ -173,6 +179,17 @@ def _tool_output_text(output: Dict[str, Any]) -> str:
         lines.extend(["", "--- stderr ---", stderr])
     if not stdout and not stderr:
         lines.append("（没有 stdout / stderr）")
+
+    images = output.get("images") or []
+    if isinstance(images, list) and images:
+        lines.append("")
+        lines.append(f"images: {len(images)} 张")
+        for image in images:
+            if not isinstance(image, dict):
+                continue
+            lines.append(
+                f"  - {image.get('path')} "
+                f"({image.get('mime') or 'image'}, {image.get('bytes')} bytes)")
     return "\n".join(lines)
 
 
@@ -277,23 +294,75 @@ def observable_results(
     return [(a, t) for a, _target, t in _picked(pairs)]
 
 
+def _feedback_images(
+    pairs: List[Tuple[ActionIntent, Optional[ActionResult]]],
+    resolver: VisualResolver,
+) -> List[Dict[str, Any]]:
+    """
+    把 `run_tool` 返回里的图片元数据解析成 **user 消息的 image parts**。
+
+    🔒 `actions/` 是叶子层：这里**不读文件**，只调用注入的 resolver。
+    🔒 最多 `MAX_FEEDBACK_IMAGES` 张；解析失败就跳过，不编造。
+    """
+    parts: List[Dict[str, Any]] = []
+    for intent, result in pairs:
+        if len(parts) >= MAX_FEEDBACK_IMAGES:
+            break
+        if str(getattr(intent, "action_type", "")) != ACTION_RUN_TOOL:
+            continue
+        output = getattr(result, "output", None)
+        if not isinstance(output, dict):
+            continue
+        run_id = str(output.get("run_id") or "")
+        images = output.get("images") or []
+        if not isinstance(images, list):
+            continue
+        for image in images:
+            if len(parts) >= MAX_FEEDBACK_IMAGES:
+                break
+            if not isinstance(image, dict):
+                continue
+            path = str(image.get("path") or "")
+            if not path:
+                continue
+            try:
+                data_url = resolver(run_id, path)
+            except Exception:                                 # noqa: BLE001
+                # 图片解析失败只影响附件，不影响文本回喂。
+                data_url = None
+            if not data_url:
+                continue
+            parts.append({
+                "type": "image_url",
+                "image_url": {"url": data_url, "detail": "low"},
+            })
+    return parts
+
+
 def render_read_results(
     pairs: Iterable[Tuple[ActionIntent, Optional[ActionResult]]],
     *,
     per_payload_max: int = PER_PAYLOAD_MAX_CHARS,
     total_max: int = TOTAL_MAX_CHARS,
-) -> str:
+    image_resolver: Optional[VisualResolver] = None,
+) -> Union[str, List[Dict[str, Any]]]:
     """
-    渲染成一段可以当**下一条 user 消息**发的文本。
+    渲染成一段可以当**下一条 user 消息**发的文本（或 content parts）。
 
     没有可回喂的载荷时返回 `""` —— 调用方据此决定**不做** follow-up
     （那正是「最多一次」这条硬上限的判据）。
 
-    🔒 措辞纪律：只陈述「这是你刚才请求读取的环境真实返回」，
+    有图片时返回 `[{"type":"text",...}, {"type":"image_url",...}]`；
+    没有图片时仍返回字符串（向后兼容既有调用方）。
+
+    🔒 措辞纪律：只陈述「这是你刚才请求的环境真实返回」，
        **不写**「你应该据此…」「请继续…」。
     """
-    picked = _picked(pairs)
-    if not picked:
+    materialized = list(pairs)
+    picked = _picked(materialized)
+    image_parts = (_feedback_images(materialized, image_resolver)
+                   if image_resolver is not None else [])
+    if not picked and not image_parts:
         return ""
 
     lines: List[str] = [
@@ -333,11 +402,17 @@ def render_read_results(
             f"它们真实发生过，这里如实说明，不假装只有上面这些。）")
         lines.append("")
 
-    return "\n".join(lines).rstrip() + "\n"
+    text = "\n".join(lines).rstrip()
+    if image_parts:
+        if not picked:
+            text += "\n\n（工具返回了截图，见下。）"
+        return [{"type": "text", "text": text}, *image_parts]
+    return text + "\n"
 
 
 __all__ = [
     "OBSERVABLE_ACTIONS", "CONFIRMATION_ACTIONS",
-    "PER_PAYLOAD_MAX_CHARS", "TOTAL_MAX_CHARS",
+    "PER_PAYLOAD_MAX_CHARS", "TOTAL_MAX_CHARS", "MAX_FEEDBACK_IMAGES",
+    "VisualResolver",
     "is_observable", "observable_results", "render_read_results",
 ]

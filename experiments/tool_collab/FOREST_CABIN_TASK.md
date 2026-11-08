@@ -337,3 +337,16 @@ cd experiments/tool_collab/runs/1108-1431-c84b6dc2/probe_ui_root
 ```
 
 提交物（无 UI）：把路径换成 `deliverable/` 即可。
+
+---
+
+## 11. 后续（2026-11-08）
+
+本次暴露的两类问题已经实现修复：
+
+- **Playwright 配置遮蔽**：子目录 `qa/playwright.config.js` 现在会被自动发现并传给 CLI；
+- **smoke gate**：全量套件前先跑 ~5 秒冒烟门禁，坏入口 1.8 秒失败；
+- **原生读图**：`run_tool` 截图作为 `image_url` 回喂到同一次认知，
+  一次 ~1k token 的调用就能看出「没有面板 / 屋顶悬空」。
+
+详见 [`SERIAL_AND_VISION.md`](SERIAL_AND_VISION.md) 第 9 节。

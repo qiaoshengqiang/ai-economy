@@ -167,3 +167,129 @@ test('browser smoke', async ({ page }) => {
         gw, "WS-TEST", "agent_a", tool="playwright", args=["test"])
     assert result.ran and result.ok, result.to_agent_dict()
     assert "1 passed" in result.stdout
+
+
+# ============================================================
+# Playwright：项目配置发现 + 冒烟门禁
+# ============================================================
+def test_playwright_project_config_is_used(runner):
+    """子目录的 qa/playwright.config.js 不能被根 bootstrap 遮蔽。"""
+    spec = (
+        "const { test, expect } = require('@playwright/test');\n"
+        "test('config used', async ({ page }) => {\n"
+        "  await page.setContent('<h1>config-ok</h1>');\n"
+        "  await expect(page.locator('h1')).toHaveText('config-ok');\n"
+        "});\n"
+    )
+    config = (
+        "const { defineConfig } = require('@playwright/test');\n"
+        "module.exports = defineConfig({\n"
+        "  testDir: '.',\n"
+        "  testMatch: '*.spec.js',\n"
+        "  use: { channel: 'chrome', headless: true },\n"
+        "});\n"
+    )
+    gw = _Gateway({
+        "qa/playwright.config.js": config,
+        "qa/smoke.spec.js": spec,
+    })
+    result = runner.run_from_task(
+        gw, "WS-TEST", "agent_a", tool="playwright", args=["test"])
+    assert result.ran and result.ok, result.to_agent_dict()
+    assert result.config_used == "qa/playwright.config.js"
+
+
+def test_playwright_smoke_gate_blocks_broken_entry(runner):
+    """页面只有半个 <head> 时，冒烟门禁必须快速失败，不跑全量。"""
+    broken = (
+        '<!DOCTYPE html><html lang="zh-CN"><head>'
+        '<meta charset="utf-8" />'
+        '<meta name="viewport" content="width=device-width, initial-scale=1, '
+        'viewport-fit=cover'
+    )
+    spec = (
+        "const { test, expect } = require('@playwright/test');\n"
+        "test('should not run', async ({ page }) => {\n"
+        "  await page.setContent('<h1>should-not-run</h1>');\n"
+        "  await expect(page.locator('h1')).toHaveText('should-not-run');\n"
+        "});\n"
+    )
+    gw = _Gateway({
+        "site/index.html": broken,
+        "qa/smoke.spec.js": spec,
+    })
+    result = runner.run_from_task(
+        gw, "WS-TEST", "agent_a", tool="playwright", args=["test"])
+    assert result.ran and not result.ok
+    assert result.code == "smoke_failed"
+    assert result.smoke["enabled"] is True
+    assert result.smoke["ok"] is False
+    # 全量 spec 没有被执行
+    assert "should-not-run" not in result.stdout
+
+
+def test_playwright_smoke_gate_passes_good_entry(runner):
+    good = (
+        "<!DOCTYPE html><html><body>"
+        '<div id="app"><canvas></canvas></div>'
+        '<div id="ui-root"><button>ok</button></div>'
+        "</body></html>"
+    )
+    spec = (
+        "const { test, expect } = require('@playwright/test');\n"
+        "test('runs after smoke', async ({ page }) => {\n"
+        "  await page.setContent('<h1>after-smoke</h1>');\n"
+        "  await expect(page.locator('h1')).toHaveText('after-smoke');\n"
+        "});\n"
+    )
+    gw = _Gateway({
+        "site/index.html": good,
+        "qa/smoke.spec.js": spec,
+    })
+    result = runner.run_from_task(
+        gw, "WS-TEST", "agent_a", tool="playwright", args=["test"])
+    assert result.ran and result.ok, result.to_agent_dict()
+    assert result.smoke["ok"] is True
+    assert "after-smoke" not in result.stdout  # spec 本身不打印内容
+
+
+def test_playwright_smoke_can_be_disabled(runner):
+    broken = "<!DOCTYPE html><html><head></head></html>"
+    spec = (
+        "const { test, expect } = require('@playwright/test');\n"
+        "test('runs without smoke', async ({ page }) => {\n"
+        "  await page.setContent('<h1>no-smoke-ok</h1>');\n"
+        "  await expect(page.locator('h1')).toHaveText('no-smoke-ok');\n"
+        "});\n"
+    )
+    gw = _Gateway({
+        "site/index.html": broken,
+        "qa/smoke.spec.js": spec,
+    })
+    result = runner.run_from_task(
+        gw, "WS-TEST", "agent_a", tool="playwright",
+        args=["test", "--no-smoke"])
+    assert result.ran and result.ok, result.to_agent_dict()
+    assert result.smoke["enabled"] is False
+    assert result.smoke["reason"] == "disabled_by_args"
+
+
+def test_python_tool_surfaces_new_images(runner):
+    """run_tool 新产生的图片要以元数据形式回给 Agent（不含 base64）。"""
+    png_b64 = (
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8"
+        "/x8AAusB9Wl2nXQAAAAASUVORK5CYII="
+    )
+    code = (
+        "import base64\n"
+        f"open('shot.png','wb').write(base64.b64decode('{png_b64}'))\n"
+        "print('image-written')\n"
+    )
+    gw = _Gateway({"make_image.py": code})
+    result = runner.run_from_task(
+        gw, "WS-TEST", "agent_a", tool="python", args=["make_image.py"])
+    assert result.ran and result.ok, result.to_agent_dict()
+    assert len(result.images) == 1
+    assert result.images[0]["path"] == "shot.png"
+    assert result.images[0]["mime"] == "image/png"
+    assert "base64" not in result.to_agent_dict()["images"][0]

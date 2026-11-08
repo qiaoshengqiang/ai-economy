@@ -244,11 +244,25 @@ class MockProvider(LLMProvider):
         return "Mock response generated."
 
     @staticmethod
-    def _last_user_content(messages: Sequence[Mapping[str, str]]) -> str:
-        """取最后一条 user 消息的内容。"""
+    def _last_user_content(messages: Sequence[Mapping[str, Any]]) -> str:
+        """取最后一条 user 消息的**文本**内容；图片只留占位符。"""
         for message in reversed(list(messages)):
-            if message.get("role") == "user":
-                return str(message.get("content", ""))
+            if message.get("role") != "user":
+                continue
+            content = message.get("content", "")
+            if isinstance(content, str):
+                return content
+            if isinstance(content, (list, tuple)):
+                bits = []
+                for part in content:
+                    if not isinstance(part, Mapping):
+                        continue
+                    if part.get("type") == "text":
+                        bits.append(str(part.get("text") or ""))
+                    elif part.get("type") in ("image_url", "file"):
+                        bits.append("[image]")
+                return " ".join(b for b in bits if b)
+            return str(content)
         return ""
 
     # ------------------------------------------------------------
