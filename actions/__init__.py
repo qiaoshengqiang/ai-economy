@@ -62,6 +62,9 @@ from actions.workspace_write import (
 from actions.workspace_edit import (
     ACTION_WORKSPACE_EDIT, WorkspaceEditExecutor,
 )
+from actions.workspace_search import (
+    ACTION_WORKSPACE_SEARCH, WorkspaceSearchExecutor,
+)
 from actions.shared_context_read import (
     ACTION_SHARED_CONTEXT_READ, SharedContextReadExecutor,
 )
@@ -119,6 +122,7 @@ __all__ = [
     "ACTION_REPLY", "ACTION_NOOP", "ACTION_OBSERVE",
     "ACTION_WORKSPACE_WRITE", "WorkspaceWriteExecutor",
     "ACTION_WORKSPACE_EDIT", "WorkspaceEditExecutor",
+    "ACTION_WORKSPACE_SEARCH", "WorkspaceSearchExecutor",
     "ACTION_WORKSPACE_READ", "WorkspaceReadExecutor",
     "ACTION_MESSAGE_SEND", "MessageSendExecutor",
     "ACTION_PUBLIC_QUERY", "PublicQueryExecutor",

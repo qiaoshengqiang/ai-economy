@@ -220,6 +220,8 @@ Events: START → SUBMIT → VERIFY → COMPLETE
 6. **Agent Directory 是启动快照**；运行中上下线不会刷新。
 7. **DemandRun 用 JSON**，没有数据库历史/恢复；`--resume` 未实现。
 8. **失败任务不自动收尾记忆**（Short-term/long-term 仍只在 Task COMPLETED 时处理）。
+9. **工作记忆是 Agent 的自主记录**：系统只注入/提供读写，不自动写、不自动总结；
+   search 结果也不会自动写进工作记忆。
 9. **Workspace root handoff 给 producer** 是 V1 简化；验收人只能读，不能写 root。
 
 ---

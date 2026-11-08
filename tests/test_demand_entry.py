@@ -305,3 +305,45 @@ def test_cli_parse_file_and_defaults():
     assert args.minutes == 5
     assert args.front_agent == "agent_a"
     assert args.max_turns == 30
+
+
+def test_demand_task_dispatcher_includes_memory_and_search():
+    """Demand 的任务阶段必须暴露生产层已有的 Agent 能力。"""
+    from demand.actions import build_task_dispatcher
+    from core.task import Task
+    from core.task_workspace import TaskWorkspaceRef
+
+    class _Bridge:
+        def run(self, coro):
+            return {"ok": True}
+
+    task = Task.create(
+        creator="agent_a", description="x", workspace_id="WS-X",
+        participants=["agent_a", "agent_b"])
+    runtime = SimpleNamespace(
+        workspace_gateway=SimpleNamespace(),
+        communication=SimpleNamespace(),
+        alignment=SimpleNamespace(),
+        economy=SimpleNamespace(),
+        tool_runner=SimpleNamespace(),
+        public_working_memory=SimpleNamespace(),
+        private_working_memory=SimpleNamespace(),
+        private_short_term_memory=SimpleNamespace(),
+        private_long_term_memory=SimpleNamespace(),
+    )
+    dispatcher = build_task_dispatcher(runtime, task=task, bridge=_Bridge())
+    expected = {
+        "workspace_read", "workspace_search", "workspace_write",
+        "workspace_edit", "message_send", "public_query",
+        "private_write", "private_read", "private_list", "private_delete",
+        "run_tool", "resource_create", "resource_handoff",
+        "resource_release", "assign_acceptance", "shared_context_read",
+        "public_working_memory_read", "public_working_memory_update",
+        "private_working_memory_read", "private_working_memory_update",
+        "short_term_memory_read", "short_term_memory_update",
+        "short_term_memory_reinforce",
+        "long_term_memory_search", "long_term_memory_read",
+        "long_term_memory_mark_used", "long_term_memory_consolidate",
+    }
+    got = set(dispatcher.action_types)
+    assert expected <= got, sorted(expected - got)

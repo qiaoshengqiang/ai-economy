@@ -72,7 +72,7 @@ from actions import (  # noqa: E402
     LongTermMemoryMarkUsedExecutor, LongTermMemoryConsolidateExecutor,
     ACTION_SHORT_TERM_MEMORY_UPDATE,
     ACTION_LONG_TERM_MEMORY_MARK_USED,
-    WorkspaceEditExecutor, WorkspaceReadExecutor, WorkspaceWriteExecutor,
+    WorkspaceEditExecutor, WorkspaceReadExecutor, WorkspaceSearchExecutor, WorkspaceWriteExecutor,
 )
 from services.messaging import send_message_as  # noqa: E402
 from services.private_workspace import (  # noqa: E402
@@ -460,6 +460,23 @@ PROMPT = """你是这次长期生产任务的一名参与者。这是**正式生
           - 读到的内容会**当场**回到你手上（作为紧接着的一条新输入），
             你可以在**同一次判断里**继续决定做什么。这也意味着：
             一次「读了东西」的判断实际上会让模型被调用**两次**。
+
+  · "workspace_search"
+        parameters: {{"query": "要搜索的字面文本",
+                     "path": "可选：文件或子目录",
+                     "glob": "可选：*.py / src/*.py",
+                     "max_results": 20,
+                     "case_sensitive": true,
+                     "context_lines": 0}}
+
+        作用：在 Task Workspace 里做**只读字面搜索**，返回
+        path / line / snippet / total_matches / files_scanned / truncated。
+
+        约束（环境事实）：
+          - 不建索引、不写回；
+          - 每次读当前 Workspace；
+          - 最多扫 200 个文件 / 单文件 200k 字符 / 返回 20 条命中；
+          - 适合先定位再 workspace_read(offset/limit) + workspace_edit。
 
   · "workspace_edit"
         parameters: {{"path": "共享 Workspace 里的逻辑路径",
@@ -2006,6 +2023,20 @@ def _edit_fn(rt: Any):
     return _edit
 
 
+def _search_fn(rt: Any):
+    from services.artifacts import search_artifacts
+
+    def _search(agent_id, query, **kwargs):
+        return search_artifacts(
+            rt.workspace_gateway, WS_ID, agent_id, query,
+            path=kwargs.get("path", ""),
+            glob=kwargs.get("glob", ""),
+            max_results=kwargs.get("max_results", 20),
+            case_sensitive=kwargs.get("case_sensitive", True),
+            context_lines=kwargs.get("context_lines", 0))
+    return _search
+
+
 def _action_seam(rt: Any, bridge: Any = None) -> tuple:
     """
     🔴 M3：把「写操作 → ActionResult → Experience」接起来。
@@ -2052,6 +2083,7 @@ def _action_seam(rt: Any, bridge: Any = None) -> tuple:
         WorkspaceReadExecutor(read_artifact,
                               gateway=rt.workspace_gateway,
                               workspace_id=WS_ID),
+        WorkspaceSearchExecutor(_search_fn(rt)),
         # 2026-10-09 加入 message_send：此前 Agent 只能发 MessageType.TEXT
         # （`channels.send` 写死），于是协议里那 8 种业务消息
         # —— 尤其 **TASK_OFFER**（`handle_offer` 会用它建 Task，

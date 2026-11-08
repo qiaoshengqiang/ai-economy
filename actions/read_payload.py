@@ -64,6 +64,7 @@ from actions.shared_context_read import ACTION_SHARED_CONTEXT_READ
 from actions.workspace_read import ACTION_WORKSPACE_READ
 from actions.workspace_write import ACTION_WORKSPACE_WRITE
 from actions.workspace_edit import ACTION_WORKSPACE_EDIT
+from actions.workspace_search import ACTION_WORKSPACE_SEARCH
 from actions.run_tool import ACTION_RUN_TOOL
 from actions.public_working_memory import (
     ACTION_PUBLIC_WORKING_MEMORY_READ,
@@ -91,6 +92,7 @@ from actions.private_long_term_memory import (
 #:     这些动作回答的是「环境现在是什么样」—— Agent 拿不到就等于没读。
 OBSERVABLE_ACTIONS = frozenset({
     ACTION_WORKSPACE_READ,
+    ACTION_WORKSPACE_SEARCH,
     ACTION_PRIVATE_READ,
     ACTION_PRIVATE_LIST,
     ACTION_PUBLIC_QUERY,
@@ -228,6 +230,24 @@ def _payload_of(action_type: str, output: Any) -> Optional[str]:
                 and (start > 1 or end < total)):
             return f"[lines {start}-{end} of {total}]\n{content}"
         return content
+
+    if action_type == ACTION_WORKSPACE_SEARCH:
+        matches = output.get("matches") or []
+        lines = [
+            f"query={output.get('query')!r}  "
+            f"total={output.get('total_matches')}  "
+            f"files={output.get('files_scanned')}  "
+            f"truncated={output.get('truncated')}",
+        ]
+        for m in matches:
+            if not isinstance(m, dict):
+                continue
+            lines.append(
+                f"{m.get('path')}:{m.get('line')}: {m.get('snippet')}")
+            for c in (m.get("context") or []):
+                if isinstance(c, dict):
+                    lines.append(f"  {c.get('line')}: {c.get('text')}")
+        return "\n".join(lines)
 
     if action_type in _CONTENT_ACTIONS:
         content = output.get("content")

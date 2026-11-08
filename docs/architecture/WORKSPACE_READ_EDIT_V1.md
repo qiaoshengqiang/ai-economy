@@ -159,7 +159,7 @@ not_participant
 ## 7. 后续
 
 - `workspace_multi_edit`（多文件/多段）；
-- `workspace_search`（query/glob/行号）降低“找代码”成本；
+- `workspace_search`（已在 V1 实现，见 [`WORKSPACE_SEARCH_V1.md`](WORKSPACE_SEARCH_V1.md)）；
 - Change Pipeline Patch（供 review/merge，而不是日常编辑）；
 - 行号级 edit（`start_line/end_line`）作为 old/new 的补充；
 - 补丁 provenance / applicability。

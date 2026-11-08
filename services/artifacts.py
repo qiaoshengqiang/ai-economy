@@ -35,7 +35,8 @@ Artifact Write Modes —— CREATE / REPLACE / APPEND
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, Mapping
+import fnmatch
+from typing import Any, Dict, List, Optional, Mapping
 
 #: 显式写入模式（§三：Runtime 不猜）。
 MODE_CREATE = "create"
@@ -291,6 +292,148 @@ def read_artifact(
         "limit": applied_limit,
         "start_line": start_line,
         "end_line": end_line,
+        "truncated": truncated,
+    }
+
+
+# ================================================================
+#: 搜索的硬上限（防止一次搜索把整个大仓库读进上下文）。
+SEARCH_MAX_FILES = 200
+SEARCH_MAX_FILE_CHARS = 200_000
+SEARCH_MAX_RESULTS = 20
+SEARCH_MAX_CONTEXT_LINES = 3
+
+
+def search_artifacts(
+    gateway: Any,
+    workspace_id: str,
+    agent_id: str,
+    query: str,
+    *,
+    path: str = "",
+    glob: str = "",
+    max_results: int = SEARCH_MAX_RESULTS,
+    case_sensitive: bool = True,
+    context_lines: int = 0,
+) -> Dict[str, Any]:
+    """
+    在 Task Workspace 里做**只读字面搜索**。
+
+    🔒 不建索引、不缓存、不写回：
+        每次搜索都通过 WorkspaceGateway 读**当前**文件；
+        参与者检查 / 路径校验 / 读取边界全部照旧。
+
+    - query 必须非空；
+    - path 为空 = 整个 Workspace；也可给一个文件或子目录；
+    - glob 可选（例如 "*.py" / "src/*.py"）；
+    - 大小写默认敏感；
+    - 最多扫 SEARCH_MAX_FILES 个文件 / 每个 200k 字符；
+    - 最多返回 max_results 条命中（上限 20）。
+    """
+    text = str(query or "")
+    if not text:
+        return _fail(_norm(path), "bad_query", "query 不能为空")
+
+    try:
+        max_results = int(max_results)
+        context_lines = int(context_lines)
+    except (TypeError, ValueError):
+        return _fail(_norm(path), "bad_argument",
+                     "max_results / context_lines 必须是整数")
+    max_results = max(1, min(max_results, SEARCH_MAX_RESULTS))
+    context_lines = max(0, min(context_lines, SEARCH_MAX_CONTEXT_LINES))
+    case_sensitive = bool(case_sensitive)
+
+    root = str(path or "").strip().strip("/")
+    root_gw = "/" + root if root else "/"
+    root_rel = root
+    files: List[tuple] = []
+    truncated = False
+
+    def _matches_pattern(rel: str) -> bool:
+        if not glob:
+            return True
+        name = rel.rsplit("/", 1)[-1]
+        return (fnmatch.fnmatch(rel, glob)
+                or fnmatch.fnmatch(name, glob))
+
+    def _walk(current: str, rel: str) -> None:
+        nonlocal truncated
+        if len(files) >= SEARCH_MAX_FILES:
+            truncated = True
+            return
+        listed = gateway.list(workspace_id, current, agent_id)
+        if not listed.success:
+            got = gateway.read(workspace_id, current, agent_id)
+            if got.success:
+                data = dict(got.result or {})
+                content = data.get("content")
+                if isinstance(content, str) and _matches_pattern(rel):
+                    files.append((rel, content))
+            return
+        for entry in (listed.result or {}).get("entries", []) or []:
+            if len(files) >= SEARCH_MAX_FILES:
+                truncated = True
+                return
+            name = str(entry.get("name") or "")
+            if not name:
+                continue
+            child = f"{current.rstrip('/')}/{name}" if current != "/" else f"/{name}"
+            child_rel = f"{rel}/{name}" if rel else name
+            if str(entry.get("type") or "") == "directory":
+                _walk(child, child_rel)
+                continue
+            if not _matches_pattern(child_rel):
+                continue
+            got = gateway.read(workspace_id, child, agent_id)
+            if not got.success:
+                continue
+            data = dict(got.result or {})
+            body = data.get("content")
+            if not isinstance(body, str):
+                continue
+            if len(body) > SEARCH_MAX_FILE_CHARS:
+                body = body[:SEARCH_MAX_FILE_CHARS]
+                truncated = True
+            files.append((child_rel, body))
+
+    _walk(root_gw, root_rel)
+
+    needle = text if case_sensitive else text.lower()
+    matches: List[Dict[str, Any]] = []
+    total_matches = 0
+    for rel, content in files:
+        lines = content.splitlines()
+        for i, line in enumerate(lines, start=1):
+            hay = line if case_sensitive else line.lower()
+            if needle not in hay:
+                continue
+            total_matches += 1
+            if len(matches) >= max_results:
+                truncated = True
+                continue
+            item = {
+                "path": rel,
+                "line": i,
+                "snippet": line.strip()[:500],
+            }
+            if context_lines:
+                start = max(0, i - 1 - context_lines)
+                end = min(len(lines), i - 1 + context_lines + 1)
+                item["context"] = [
+                    {"line": n + 1, "text": lines[n][:500]}
+                    for n in range(start, end)
+                ]
+            matches.append(item)
+
+    return {
+        "ok": True,
+        "path": root_rel or "/",
+        "glob": str(glob or ""),
+        "query": text,
+        "matches": matches,
+        "total_matches": total_matches,
+        "files_scanned": len(files),
         "truncated": truncated,
     }
 

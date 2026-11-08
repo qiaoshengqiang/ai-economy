@@ -121,6 +121,13 @@ def _clip(text: str, limit: int) -> str:
     return text[:limit] + f"\n…（截断：完整 {len(text)} 字符；这里只给前 {limit}）"
 
 
+def _safe(render: Any, fallback: str) -> str:
+    try:
+        return str(render())
+    except Exception as exc:                                  # noqa: BLE001
+        return f"{fallback}：{type(exc).__name__}: {exc}"
+
+
 def _envelope_example() -> str:
     return (
         '{"decision":"act","reasoning":"一句话说明你为什么这样做",'
@@ -130,6 +137,12 @@ def _envelope_example() -> str:
 
 def build_intake_prompt(*, run: Any, runtime: Any, front_agent: str) -> str:
     directory = render_directory(runtime)
+    short_term = _safe(
+        lambda: runtime.private_short_term_memory.render(front_agent),
+        "（短期记忆读取失败）")
+    long_term = _safe(
+        lambda: runtime.private_long_term_memory.render_top(front_agent),
+        "（长期记忆读取失败）")
     return f"""你是 {front_agent}，AI Economy OS 里的一名 Agent。这是**正式运行**，不是演示。
 
 ========== Human Demand ==========
@@ -140,6 +153,12 @@ def build_intake_prompt(*, run: Any, runtime: Any, front_agent: str) -> str:
 - 墙钟上限：{run.wall_limit_seconds / 60:.1f} 分钟
 - 最多参与者：{run.max_agents}
 - 当前没有 Task
+
+========== 你的短期记忆（跨任务摘要，只有你能读） ==========
+{short_term}
+
+========== 你的长期记忆（高权重摘要，只有你能读） ==========
+{long_term}
 
 ========== Agent Directory（公开事实，不是“你应该找谁”） ==========
 {directory}
@@ -188,6 +207,18 @@ def build_task_prompt(
     workspace = _render_workspace(runtime, task.workspace.workspace_id
                                  if task.workspace else "", agent_id)
     context = _render_context(runtime, task.task_id)
+    public_working_memory = _safe(
+        lambda: runtime.public_working_memory.render(task.task_id, agent_id),
+        "（公共工作记忆读取失败）")
+    private_working_memory = _safe(
+        lambda: runtime.private_working_memory.render(agent_id, task.task_id),
+        "（私有工作记忆读取失败）")
+    short_term = _safe(
+        lambda: runtime.private_short_term_memory.render(agent_id),
+        "（短期记忆读取失败）")
+    long_term = _safe(
+        lambda: runtime.private_long_term_memory.render_top(agent_id),
+        "（长期记忆读取失败）")
     inbox_text = _render_inbox(inbox)
     try:
         acceptors = sorted(runtime.task_execution.acceptors_of(task))
@@ -223,6 +254,18 @@ def build_task_prompt(
 ========== Task Shared Context（共同认知） ==========
 {context}
 
+========== 公共工作记忆（Task 范围，参与者可见） ==========
+{public_working_memory}
+
+========== 私有工作记忆（只有你自己可见） ==========
+{private_working_memory}
+
+========== 你的短期记忆（跨任务摘要） ==========
+{short_term}
+
+========== 你的长期记忆（高权重摘要） ==========
+{long_term}
+
 ========== Workspace 事实（当前版本） ==========
 {workspace}
 
@@ -235,7 +278,9 @@ def build_task_prompt(
 ========== 你可以使用的动作 ==========
 - `workspace_read`
   可给 `offset`（1-based 起始行）/ `limit`（最多行数）；显式范围最多 400 行。
-  大文件请先读一段，再用 `workspace_edit` 局部修改。
+- `workspace_search`
+  `query` / `path`（可选）/ `glob`（可选）/ `max_results`（可选）/
+  `case_sensitive` / `context_lines`；只读，返回 path/line/snippet。
 - `workspace_write`
   write 必须给 `write_mode`: create / replace / append。
   create/replace 需要输出完整文件；能局部改就不要用 replace。
@@ -252,6 +297,15 @@ def build_task_prompt(
 - `run_tool`
   `tool`: python / pytest / node / playwright；`args` 是字符串列表；
   Playwright 会先跑 smoke gate；截图会在同一次认知的后续消息里回喂给你。
+- `public_query`：读公共资料区（含 SYSTEM_MAP）。
+- `private_write/read/list/delete`：你自己的私有文件空间。
+- `resource_create` / `resource_handoff` / `resource_release`：
+  建目录 / 交接责任 / 释放独立责任。
+- `public_working_memory_read/update`：Task 范围的计划/分工/进度。
+- `private_working_memory_read/update`：你自己的工作结构/发现/问题。
+- `short_term_memory_read/update/reinforce`：跨任务短期记忆。
+- `long_term_memory_search/read/mark_used/consolidate`：长期记忆 + 权重。
+  工作记忆是**你自己的记录**；系统不自动写、不自动总结。
 
 ========== 生命周期规则（协议硬约束） ==========
 - 如果你不是 contractor/producer：**不要发 START / SUBMIT**。
