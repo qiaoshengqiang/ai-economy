@@ -96,6 +96,35 @@ segN  decision checkpoint  → 决定继续 / 结束 / 交付
 
 ---
 
+## 4.5 分相 temperature
+
+`Brain` 也支持按相覆盖 temperature：
+
+```python
+brain.set_temperature(0.2, phase="decision")
+brain.set_temperature(None, phase="work")   # None = 用 config 的 temperature
+```
+
+默认偏好：
+
+| 相 | temperature | 理由 |
+|---|---|---|
+| `decision` | **0.2** | 判断更稳定，减少随机摇摆 |
+| `work` | **None → config（0.7）** | 保留配置值；代码/创意任务可再调 |
+
+**重要技术事实**：DeepSeek 在 `thinking=enabled` 时**忽略 temperature**
+（API 文档明确说明；请求不会报错，但参数无效）。
+
+所以：
+
+- `decision` 默认 `thinking=disabled/low` → **0.2 生效**；
+- `work` 默认 `thinking=enabled/high` → 即使设了 0.7，DeepSeek 也不会用它；
+- 如果希望 work 的温度真正生效，需要 work 关闭思考，或换一个在思考模式下仍尊重 temperature 的 provider。
+
+这是“优先”而不是“强制”：Agent / 实验可以覆盖任一相。
+
+---
+
 ## 5. 小实验（真实运行）
 
 **人类命令**
@@ -154,6 +183,42 @@ agent_b 在一条决策里显式写了：
 
 —— 它保留了决策低思考，同时工作相继续用默认 high。
 Runtime 没有改写它的选择。
+
+### 5.1 加入分相温度后（同一任务）
+
+- Run：`runs/1108-1022-6af5a7b1/`
+- 结果：**COMPLETED**
+- 墙钟：**1.0 分钟**
+- 成本：**94,161 tokens / 0.94161 AIC**
+- 测试：**30 passed，exit_code=0**
+
+温度策略（每一轮 telemetry 都是同一份）：
+
+```text
+temperature_policy = {'decision': 0.2, 'work': None}
+```
+
+解释：
+
+- decision 相实际用 **0.2**；
+- work 相 `None` → 回落到 config 的 **0.7**；
+- 但 work 默认 `thinking=enabled/high`，DeepSeek 会忽略 0.7 ——
+  所以本轮真正生效的温度差异只有 decision 相的 0.2。
+
+phase 轨迹仍然保持：
+
+```text
+S1 R1 agent_a: ['decision', 'work', 'decision']
+S1 R1 agent_b: ['decision', 'work', 'work', 'decision']
+S1 R2 agent_a: ['decision', 'work', 'work', 'decision']
+S1 R2 agent_b: ['decision']
+S1 R3 agent_a: ['decision', 'work', 'decision']
+S1 R3 agent_b: ['decision']
+```
+
+与上一轮（1.2 分钟 / 87,668 tokens / 29 passed）相比，
+没有出现完成率或 phase 结构的退化；差异在正常随机波动范围内。
+一次运行不足以证明“0.2 更好”，但证明**分相温度不会破坏工作循环**。
 
 ---
 

@@ -234,6 +234,10 @@ class CognitiveSegment:
     #: 🔒 它只用于观测与策略选择，不改变消息内容。
     phase: str = "decision"
 
+    #: 这一段**实际**使用的 temperature（来自 Agent 的 Brain 回执）。
+    #: 🔒 `None` = 调用方没有暴露，不代表“没有温度”。
+    temperature: Optional[float] = None
+
     #: 这一段模型返回的原文。🔒 保留原文 —— 信封解析失败时它是唯一证据。
     content: str = ""
 
@@ -275,6 +279,7 @@ class CognitiveSegment:
         return {
             "index": self.index,
             "phase": self.phase,
+            "temperature": self.temperature,
             "content_chars": len(self.content or ""),
             "decision": self.decision.to_dict() if self.decision else None,
             "action_intents": [i.to_dict() for i in self.action_intents],

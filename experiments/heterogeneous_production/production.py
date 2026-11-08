@@ -157,6 +157,18 @@ INITIAL_WORK_THINKING = {"enabled": True, "effort": "high"}
 WORK_LOOP_ENABLED = True
 MAX_WORK_STEPS = 2
 
+#: 🔴 分相 temperature 的**默认偏好**。
+#:
+#:    decision：更低温度 → 判断更稳定（0.2）。
+#:    work：None = 用 config 里的 temperature（当前 0.7）；
+#:          代码任务也可以调低，创意任务可以调高。
+#:
+#:    ⚠️ DeepSeek 在 thinking=enabled 时**忽略 temperature**
+#:       （API 文档明确说明）。所以 work 相若开着思考，
+#:       这个温度值实际不生效；它主要影响 decision 相 / 非思考调用。
+INITIAL_DECISION_TEMPERATURE = 0.2
+INITIAL_WORK_TEMPERATURE = None
+
 #: 是否在读取后**当场回喂**（同一认知里的第二段 LLM 调用）。
 #:
 #: 默认 True（既有实验行为）。当某个参与者的 provider 很慢时，
@@ -662,8 +674,14 @@ def main() -> int:
                 _a.brain.set_thinking(
                     INITIAL_WORK_THINKING["enabled"],
                     INITIAL_WORK_THINKING["effort"], phase="work")
+                _a.brain.set_temperature(
+                    INITIAL_DECISION_TEMPERATURE, phase="decision")
+                _a.brain.set_temperature(
+                    INITIAL_WORK_TEMPERATURE, phase="work")
         print("  🧠 初始思考偏好："
               "decision=disabled/low · work=enabled/high")
+        print(f"  🌡️ 初始温度偏好：decision={INITIAL_DECISION_TEMPERATURE}"
+              f" · work={INITIAL_WORK_TEMPERATURE or 'config default'}")
         # §11：记录**真实送进模型的那一份** Context
         print(f"  🎥 Context telemetry：包装了 "
               f"{_install_context_recorder(rt)} 个 Agent 的 context_builder")
@@ -2015,6 +2033,7 @@ def _turn(rt: Any, bridge: Any, st: Any, stage: Any, aid: str, rnd: int,
         turn["segments"] = [
             {"index": s.index,
              "phase": getattr(s, "phase", "decision"),
+             "temperature": getattr(s, "temperature", None),
              "reasoning": str(getattr(s.decision, "reasoning", "") or "")[:400],
              "decision": getattr(s.decision, "kind", None),
              "envelope_error": getattr(s.decision, "envelope_error", ""),
@@ -2031,9 +2050,13 @@ def _turn(rt: Any, bridge: Any, st: Any, stage: Any, aid: str, rnd: int,
         turn["repair_used"] = any(
             s.get("repair_attempted") for s in turn["segments"])
 
-    # 这一轮结束后的**真实**思考策略（分相；下一步生效）
+    # 这一轮结束后的**真实**策略（分相；下一步生效）
     turn["thinking_state"] = dict(
         getattr(getattr(a, "brain", None), "thinking_policy", {}) or {})
+    turn["temperature_policy"] = dict(
+        getattr(getattr(a, "brain", None), "temperature_policy", {}) or {})
+    turn["last_temperature"] = getattr(
+        getattr(a, "brain", None), "last_temperature", None)
 
     # ---- 🔴 唯一的动作通道（一轮一个）----
     #

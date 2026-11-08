@@ -178,6 +178,20 @@ class Brain:
             "work": None,
         }
 
+        #: 🔴 分相 temperature 策略（None = 用 config 里的 temperature）。
+        #:
+        #:    decision 优先更稳定（低温度）；
+        #:    work 用任务/配置决定的温度（代码任务也偏向低，创意任务可高）。
+        #:
+        #:    🔒 与 thinking 一样：这是**默认偏好**，不是强制；
+        #:       调用方显式传 temperature= 时优先。
+        self.temperature_policy: Dict[str, Optional[float]] = {
+            "decision": None,
+            "work": None,
+        }
+        #: 最近一次实际使用的 temperature（观测用）。
+        self.last_temperature: Optional[float] = None
+
         #: Cognitive Context Builder（可选）。
         #: 🔒 它是**可注入**的 —— Brain 不认识 SelfModelStore，
         #:    只认识「给我一个 query，我还你一段上下文文本」这个契约。
@@ -252,6 +266,32 @@ class Brain:
     def thinking_for(self, phase: str) -> Optional[Dict[str, Any]]:
         """读取某一相的当前策略（None = 不注入）。"""
         return self.thinking_policy.get(str(phase or "").strip().lower())
+
+    def set_temperature(self, value: Optional[float], *,
+                        phase: str = "work") -> None:
+        """
+        设置某一相的 temperature；`None` = 回到 config 的默认值。
+
+        🔒 不 clamp 到某个“正确值”：只做 0..2 的结构校验
+           （与 DeepSeek/OpenAI 兼容 API 的范围一致）。
+        """
+        key = str(phase or "").strip().lower()
+        if key not in self.temperature_policy:
+            raise ValueError(
+                f"未知的 temperature 阶段 {phase!r}；只支持 "
+                f"{sorted(self.temperature_policy)}")
+        if value is None:
+            self.temperature_policy[key] = None
+            return
+        number = float(value)
+        if number < 0.0 or number > 2.0:
+            raise ValueError(
+                f"temperature 必须在 0..2，收到 {value!r}")
+        self.temperature_policy[key] = number
+
+    def temperature_for(self, phase: str) -> Optional[float]:
+        """读取某一相的 temperature 覆盖（None = 用 config 默认值）。"""
+        return self.temperature_policy.get(str(phase or "").strip().lower())
 
     @property
     def thinking_enabled(self) -> Optional[bool]:
@@ -587,9 +627,16 @@ class Brain:
         else:
             effective_model = self.settings.model or None
 
-        effective_temperature = (
-            self.settings.temperature if temperature is None else temperature
-        )
+        # 显式传入 > phase 策略 > config 默认值
+        phase_key = str(phase or "").strip().lower()
+        phase_temperature = self.temperature_policy.get(phase_key)
+        if temperature is not None:
+            effective_temperature = float(temperature)
+        elif phase_temperature is not None:
+            effective_temperature = float(phase_temperature)
+        else:
+            effective_temperature = self.settings.temperature
+        self.last_temperature = effective_temperature
         effective_max_tokens = (
             self.settings.max_tokens if max_tokens is None else max_tokens
         )

@@ -431,6 +431,8 @@ def _run_one_segment(agent: Any, agent_id: str, messages: Any,
     return CognitiveSegment(
         index=index,
         phase=phase,
+        temperature=getattr(getattr(agent, "brain", None),
+                            "last_temperature", None),
         content=str(content or ""),
         decision=decision,
         action_intents=list(decision.intents),

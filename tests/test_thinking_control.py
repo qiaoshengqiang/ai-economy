@@ -157,6 +157,41 @@ class TestBrainThinking:
         assert r.calls[-1]["thinking"] == {"type": "enabled"}
         assert r.calls[-1]["reasoning_effort"] == "high"
 
+    def test_temperature_defaults_to_config(self):
+        r = _CaptureRouter()
+        b = _brain(r)
+        b.generate("hi", phase="decision")
+        b.generate("hi", phase="work")
+        assert r.calls[0]["temperature"] == 0.7
+        assert r.calls[1]["temperature"] == 0.7
+
+    def test_temperature_can_differ_by_phase(self):
+        r = _CaptureRouter()
+        b = _brain(r)
+        b.set_temperature(0.2, phase="decision")
+        b.set_temperature(None, phase="work")      # 回到 config 默认
+        b.generate("d", phase="decision")
+        b.generate("w", phase="work")
+        assert r.calls[0]["temperature"] == 0.2
+        assert r.calls[1]["temperature"] == 0.7
+        assert b.last_temperature == 0.7
+
+    def test_explicit_temperature_wins_over_phase(self):
+        r = _CaptureRouter()
+        b = _brain(r)
+        b.set_temperature(0.2, phase="decision")
+        b.generate("hi", phase="decision", temperature=0.9)
+        assert r.calls[-1]["temperature"] == 0.9
+
+    def test_temperature_range_is_validated(self):
+        b = _brain(_CaptureRouter())
+        try:
+            b.set_temperature(3.0, phase="decision")
+        except ValueError as exc:
+            assert "0..2" in str(exc)
+        else:
+            raise AssertionError("temperature=3.0 应该被拒绝")
+
     def test_provider_capabilities_are_declared_by_providers(self):
         from llm.bailian import BailianProvider
         from llm.deepseek import DeepSeekProvider
@@ -293,7 +328,10 @@ class TestExperimentInitialState:
             "enabled": False, "effort": "low"}
         assert P.INITIAL_WORK_THINKING == {
             "enabled": True, "effort": "high"}
+        assert P.INITIAL_DECISION_TEMPERATURE == 0.2
+        assert P.INITIAL_WORK_TEMPERATURE is None
         src = self._src()
         assert 'phase="decision"' in src
         assert 'phase="work"' in src
+        assert "set_temperature(" in src
         assert "思考模式（环境能力）" in src
