@@ -146,7 +146,7 @@ Agent 写在 `qa/playwright.config.js` 的 `baseURL` / `webServer`
 
 ### 4.2 Playwright：冒烟门禁（smoke gate）
 
-在跑全量套件前，先跑一个 ~5 秒的独立 smoke spec：
+在跑全量套件前，先跑一个独立的 smoke spec（通常 5–10 秒；带 CDN 模块的页面最多约 20 秒）：
 
 - 启动一个临时静态服务器（随机端口）指向 run work；
 - 自动识别入口：`site/index.html` / `index.html` / ...；
@@ -158,6 +158,8 @@ Agent 写在 `qa/playwright.config.js` 的 `baseURL` / `webServer`
 
 实测：一个 154 字节的坏 `index.html` 从「5 个用例各等 40 秒」
 变成 **1.8 秒失败**。
+CDN 页面（Three.js importmap）的 `DOMContentLoaded` 可能到 8 秒，
+所以门禁的 `page.goto` 超时留到 20 秒；太短会把「慢但正常」误判成失败。
 
 ---
 

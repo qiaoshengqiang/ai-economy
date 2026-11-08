@@ -60,7 +60,7 @@ SMOKE_ENTRY_CANDIDATES = (
     "site/index.html", "index.html", "public/index.html",
     "dist/index.html", "app/index.html", "src/index.html",
 )
-SMOKE_TIMEOUT_SECONDS = 30
+SMOKE_TIMEOUT_SECONDS = 45
 
 #: 图片扫描：只把「新产生的、可读的」图片交给上层。
 MAX_IMAGE_BYTES = 4_000_000
@@ -84,7 +84,7 @@ SMOKE_CONFIG_SOURCE = """\
 module.exports = {
   testDir: '.',
   testMatch: 'smoke.spec.js',
-  timeout: 20000,
+  timeout: 35000,
   workers: 1,
   reporter: [['line']],
   use: { channel: 'chrome', headless: true },
@@ -100,7 +100,7 @@ test('smoke gate: page boots', async ({ page }) => {
 
   const response = await page.goto(process.env.SMOKE_URL, {
     waitUntil: 'domcontentloaded',
-    timeout: 8000,
+    timeout: 20000,
   });
   expect(response, '页面没有响应').not.toBeNull();
   expect(response.status(), 'HTTP 状态').toBeLessThan(400);
@@ -112,11 +112,11 @@ test('smoke gate: page boots', async ({ page }) => {
 
   if (await page.$('#app')) {
     await expect(page.locator('#app canvas, #app > *').first())
-      .toBeVisible({ timeout: 8000 });
+      .toBeVisible({ timeout: 10000 });
   }
   if (await page.$('#ui-root')) {
     await expect(page.locator('#ui-root > *').first())
-      .toBeVisible({ timeout: 8000 });
+      .toBeVisible({ timeout: 10000 });
   }
   expect(errors, '页面抛出了 JS 错误').toEqual([]);
 });

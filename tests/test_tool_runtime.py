@@ -293,3 +293,12 @@ def test_python_tool_surfaces_new_images(runner):
     assert result.images[0]["path"] == "shot.png"
     assert result.images[0]["mime"] == "image/png"
     assert "base64" not in result.to_agent_dict()["images"][0]
+
+
+def test_smoke_gate_allows_slow_cdn_pages():
+    """CDN 模块可能让 DOMContentLoaded 超过 8 秒；门禁必须留足余量。"""
+    from tool_runtime.runner import SMOKE_CONFIG_SOURCE, SMOKE_SPEC_SOURCE
+
+    assert "timeout: 20000" in SMOKE_SPEC_SOURCE
+    assert "timeout: 35000" in SMOKE_CONFIG_SOURCE
+    assert "timeout: 8000" not in SMOKE_SPEC_SOURCE
