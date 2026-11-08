@@ -78,6 +78,15 @@ class TestEnvelopeThinking:
         assert d.thinking is None
         assert d.thinking_error == "invalid_thinking"
 
+    def test_intake_phase_is_supported(self):
+        d = decision_from_text("a", json.dumps({
+            "decision": "act",
+            "thinking": {"intake": {"enabled": True, "effort": "max"}},
+            "action": {"type": "workspace_read",
+                       "parameters": {"path": "x"}},
+        }))
+        assert d.thinking == {"intake": {"enabled": True, "effort": "max"}}
+
     def test_partial_phase_map_is_allowed(self):
         d = decision_from_text("a", json.dumps({
             "decision": "act",
@@ -156,6 +165,14 @@ class TestBrainThinking:
         b.generate("hi", phase="decision")
         assert r.calls[-1]["thinking"] == {"type": "enabled"}
         assert r.calls[-1]["reasoning_effort"] == "high"
+
+    def test_intake_can_use_max_thinking(self):
+        r = _CaptureRouter()
+        b = _brain(r)
+        b.set_thinking(True, "max", phase="intake")
+        b.generate("hi", phase="intake")
+        assert r.calls[-1]["thinking"] == {"type": "enabled"}
+        assert r.calls[-1]["reasoning_effort"] == "max"
 
     def test_temperature_defaults_to_config(self):
         r = _CaptureRouter()
@@ -273,6 +290,17 @@ class TestRunCognitionPhases:
         assert a.generates[1][1]["work"] == (True, "high")
         assert run.thinking == {"work": {"enabled": True, "effort": "high"}}
 
+    def test_initial_phase_can_be_intake(self):
+        a = _Agent(script=[FIRST, "读完了。"])
+        run = run_cognition(
+            a, [{"role": "user", "content": "go"}],
+            dispatcher=_ReadDispatcher(),
+            follow_up_on_reads=True,
+            initial_phase="intake")
+        assert a.generates[0][0] == "intake"
+        assert run.segments[0].phase == "intake"
+        assert a.generates[1][0] == "work"
+
     def test_work_loop_runs_decision_work_decision(self):
         # decision → read；work → read；checkpoint → message
         work = json.dumps({
@@ -328,10 +356,15 @@ class TestExperimentInitialState:
             "enabled": False, "effort": "low"}
         assert P.INITIAL_WORK_THINKING == {
             "enabled": True, "effort": "high"}
+        assert P.INITIAL_INTAKE_THINKING == {
+            "enabled": True, "effort": "max"}
+        assert P.INITIAL_INTAKE_TEMPERATURE == 0.2
         assert P.INITIAL_DECISION_TEMPERATURE == 0.2
         assert P.INITIAL_WORK_TEMPERATURE is None
         src = self._src()
+        assert 'phase="intake"' in src
         assert 'phase="decision"' in src
         assert 'phase="work"' in src
         assert "set_temperature(" in src
         assert "思考模式（环境能力）" in src
+        assert "intake 首轮" in src

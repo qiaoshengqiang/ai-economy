@@ -161,7 +161,8 @@ class Brain:
 
         #: 🔴 Agent 的**分相**思考策略（phase → 设置）。
         #:
-        #:    "decision" = 决策阶段（初始认知 / 工作后的决策检查点）
+        #:    "intake"   = 接收人类命令的首次理解（优先高强度思考）
+        #:    "decision" = 决策阶段（后续决策 / 工作后的检查点）
         #:    "work"     = 工作阶段（多轮工具/读写/测试）
         #:
         #:    每个槽：
@@ -170,10 +171,12 @@ class Brain:
         #:        {"enabled": True, "effort": "high"} = 开启并指定强度。
         #:
         #:    🔴 **默认偏好**不是硬限制：
-        #:        · 实验把 decision 设为 off/low（优先低思考）；
+        #:        · intake 优先高强度（理解人类命令）；
+        #:        · decision 设为 off/low（优先低思考）；
         #:        · work 设为 high（优先高思考）；
         #:        · Agent 可以在信封里覆盖**任一相** —— Runtime 不 clamp。
         self.thinking_policy: Dict[str, Optional[Dict[str, Any]]] = {
+            "intake": None,
             "decision": None,
             "work": None,
         }
@@ -186,6 +189,7 @@ class Brain:
         #:    🔒 与 thinking 一样：这是**默认偏好**，不是强制；
         #:       调用方显式传 temperature= 时优先。
         self.temperature_policy: Dict[str, Optional[float]] = {
+            "intake": None,
             "decision": None,
             "work": None,
         }

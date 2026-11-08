@@ -86,6 +86,7 @@ def run_cognition(
     repair_malformed: bool = False,
     work_loop: bool = False,
     max_work_steps: int = 2,
+    initial_phase: str = "decision",
     **generate_kwargs: Any,
 ) -> CognitiveRunResult:
     """
@@ -128,6 +129,8 @@ def run_cognition(
                       时不会空转。默认 False（向后兼容）。
         max_work_steps
                       工作阶段最多几次 LLM 调用（硬上限，防止失控 loop）。
+        initial_phase 第一段（seg0）的 phase：默认 `decision`；
+                      接收人类命令的首次理解可以传 `intake`。
 
     返回：CognitiveRunResult（含 decision / intent / result / segments）
     """
@@ -135,13 +138,14 @@ def run_cognition(
 
     # ---- 第 1 段 ------------------------------------------------------
     seg0 = _run_one_segment(agent, agent_id, messages, generate_kwargs,
+                            phase=initial_phase,
                             repair_malformed=repair_malformed)
     segments: List[CognitiveSegment] = [seg0]
 
     # 🔴 Agent 对**下一步**思考模式的决定：立刻应用到同一个 Agent 的 Brain。
     #    这样紧接着的读取回喂（seg1）就会用新的思考模式；
     #    不写 `thinking` 就保持当前状态。
-    _apply_thinking(agent, seg0.decision, current_phase="decision")
+    _apply_thinking(agent, seg0.decision, current_phase=initial_phase)
 
     # ---- 执行第 1 段的动作 --------------------------------------------
     intents: List[ActionIntent] = list(seg0.action_intents)

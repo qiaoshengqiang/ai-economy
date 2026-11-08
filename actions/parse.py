@@ -99,7 +99,7 @@ THINKING_EFFORTS = frozenset({
 })
 
 
-THINKING_PHASES = ("decision", "work")
+THINKING_PHASES = ("intake", "decision", "work")
 
 
 def _normalize_single_thinking(raw: Any) -> Optional[Dict[str, Any]]:
@@ -130,8 +130,9 @@ def normalize_thinking(raw: Any) -> Optional[Dict[str, Dict[str, Any]]]:
             {"enabled": true, "effort": "high"}
             → {"*": {"enabled": true, "effort": "high"}}
 
-        · 分相（分别覆盖 decision / work）：
-            {"decision": {"enabled": false, "effort": "low"},
+        · 分相（分别覆盖 intake / decision / work）：
+            {"intake":   {"enabled": true,  "effort": "max"},
+             "decision": {"enabled": false, "effort": "low"},
              "work":     {"enabled": true,  "effort": "high"}}
             → 原样（只保留合法相）
 
@@ -381,7 +382,8 @@ ENVELOPE_INSTRUCTION = (
     ' together (e.g. write a file and notify somebody about it).\n'
     'The single form {"action":{...}} is also accepted.\n'
     'To choose thinking mode, add at the top level '
-    '{"thinking":{"decision":{"enabled":false,"effort":"low"},'
+    '{"thinking":{"intake":{"enabled":true,"effort":"max"},'
+    '"decision":{"enabled":false,"effort":"low"},'
     '"work":{"enabled":true,"effort":"high"}}}; '
     'a single {"enabled":...,"effort":...} overrides the current phase. '
     'Omit it to keep the current mode.\n'

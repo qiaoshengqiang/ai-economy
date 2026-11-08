@@ -8,9 +8,11 @@
 
 ---
 
-## 1. 两相
+## 1. 三相
 
 ```text
+Intake（phase=intake，默认 enabled/max）
+   ↓  接收人类命令 → 理解目标 / 边界 / 第一步
 Decision（phase=decision，默认 off/low）
    ↓
 Work（phase=work，默认 high；最多 N 步）
@@ -22,8 +24,12 @@ Decision checkpoint（phase=decision）
 
 | 相 | 默认偏好 | 用途 |
 |---|---|---|
+| `intake` | `enabled=True, effort=max` | **接收人类命令**的首次理解 |
 | `decision` | `enabled=False, effort=low` | 初始认知、工作后的决策检查点 |
 | `work` | `enabled=True, effort=high` | 读文件、跑测试、修代码等多轮工作 |
+
+intake 只给**接收人类命令的入口 Agent**（默认 `OWNER`）首轮使用；
+不是所有参与者都重新理解一遍。
 
 🔒 **不 clamp**：Agent 可以把 decision 设成 `high`，也可以把 work 设成 `off`。
 “优先低思考”只体现在实验设置的初始值里。
@@ -38,6 +44,7 @@ Decision checkpoint（phase=decision）
 {
   "decision": "act",
   "thinking": {
+    "intake":   {"enabled": true,  "effort": "max"},
     "decision": {"enabled": false, "effort": "low"},
     "work":     {"enabled": true,  "effort": "high"}
   },
@@ -109,6 +116,7 @@ brain.set_temperature(None, phase="work")   # None = 用 config 的 temperature
 
 | 相 | temperature | 理由 |
 |---|---|---|
+| `intake` | **0.2** | 稳定理解人类命令，减少解释漂移 |
 | `decision` | **0.2** | 判断更稳定，减少随机摇摆 |
 | `work` | **None → config（0.7）** | 保留配置值；代码/创意任务可再调 |
 
@@ -219,6 +227,60 @@ S1 R3 agent_b: ['decision']
 与上一轮（1.2 分钟 / 87,668 tokens / 29 passed）相比，
 没有出现完成率或 phase 结构的退化；差异在正常随机波动范围内。
 一次运行不足以证明“0.2 更好”，但证明**分相温度不会破坏工作循环**。
+
+### 5.2 简单网页任务：intake 首轮
+
+**人类命令**
+
+> 完成一个网页待办清单（单文件）：可以添加待办、标记完成、删除；
+> 刷新后数据仍在（localStorage）。用浏览器实际打开验证。
+
+- Run：`experiments/web_collab/runs/1108-1046-a58089a9/`
+- 参与者：`agent_a`（OWNER / 验收）、`agent_b`（生产）
+- 结果：**COMPLETED**
+- 墙钟：**1.3 分钟**
+- 成本：**111,891 tokens / 1.11891 AIC**
+- 测试：`run_tool(playwright) qa/todo.spec.js` → **1 passed，exit_code=0**
+
+协议链：
+
+```text
+START   agent_b  IN_PROGRESS
+SUBMIT  agent_b  SUBMITTED
+VERIFY  agent_a  VERIFIED
+COMPLETE agent_a COMPLETED
+```
+
+`agent_a` 的 phase / temperature：
+
+```text
+init  = intake
+phase = ['intake', 'work', 'decision']
+temp  = [0.2, 0.7, 0.2]
+```
+
+`agent_b` 没有 intake（不是接收人类命令的入口）：
+
+```text
+init  = decision
+phase = ['decision', 'work', 'decision']
+temp  = [0.2, 0.7, 0.2]
+```
+
+#### 一个需要记录的缺口
+
+`agent_a` 试图用 `write_mode=replace` 写 `qa/review.md`，但文件不存在 →
+`not_found`；它没有改用 `create`，随后仍然发 VERIFY / COMPLETE，
+Task 最终 `COMPLETED`，但 `qa/review.md` **不存在**。
+
+这说明：
+
+- 分相思考 / 工作循环本身没问题；
+- 但 **DoD 里的「非实现者写出验收结论」不是协议层硬约束** ——
+  验收人可以跳过它，Task Core 仍然接受 COMPLETE。
+
+这是下一步要补的验收门（在 Task Execution / QA artifact 层），
+不是认知循环自身的问题。
 
 ---
 

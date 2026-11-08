@@ -169,6 +169,21 @@ MAX_WORK_STEPS = 2
 INITIAL_DECISION_TEMPERATURE = 0.2
 INITIAL_WORK_TEMPERATURE = None
 
+#: 🔴 接收人类命令的首次理解（intake）：优先高强度思考。
+#:
+#:    这一步不是普通决策 —— Agent 要把一句人类命令变成
+#:    「任务是什么 / 边界在哪 / 第一步做什么」的理解，
+#:    所以默认开启 max 思考、低温度（稳定理解）。
+INITIAL_INTAKE_THINKING = {"enabled": True, "effort": "max"}
+INITIAL_INTAKE_TEMPERATURE = 0.2
+
+#: 哪些 Agent 会得到 intake 首轮。空 = 只给 OWNER。
+#: 🔒 「接收人类命令」的入口是 Owner；不是所有参与者都重新理解一遍。
+INTAKE_AGENTS: tuple = ()
+
+#: 还没有完成 intake 的 Agent（main 启动时填充）。
+_INTAKE_PENDING: set = set()
+
 #: 是否在读取后**当场回喂**（同一认知里的第二段 LLM 调用）。
 #:
 #: 默认 True（既有实验行为）。当某个参与者的 provider 很慢时，
@@ -326,12 +341,14 @@ PROMPT = """你是这次长期生产任务的一名参与者。这是**正式生
 
 ========== 思考模式（环境能力）==========
 初始偏好（不是强制规则）：
-  · decision 相：disabled / low（优先低成本决策）
+  · intake 相：enabled / max（接收人类命令的首次理解）
+  · decision 相：disabled / low（后续低成本决策）
   · work 相：enabled / high（优先深度工作）
 
 你可以在信封顶层按相覆盖：
 
-  "thinking": {{"decision": {{"enabled": false, "effort": "low"}},
+  "thinking": {{"intake": {{"enabled": true, "effort": "max"}},
+                "decision": {{"enabled": false, "effort": "low"}},
                 "work": {{"enabled": true, "effort": "high"}}}}
 
 也可以只给一个相，或给单相形式（覆盖**当前相**）：
@@ -664,10 +681,13 @@ def main() -> int:
         rt = build_runtime(db_path=str(DB), agent_ids=AGENTS)
         _ensure_environment(rt)
 
-        # 🔴 思考模式的初始偏好：decision 低、work 高。
+        # 🔴 思考模式的初始偏好：intake 高、decision 低、work 高。
         #    这是**默认值**，Agent 可以在信封里覆盖任一相。
         for _a in rt.economy.all_agents():
             if _a.agent_id in AGENTS:
+                _a.brain.set_thinking(
+                    INITIAL_INTAKE_THINKING["enabled"],
+                    INITIAL_INTAKE_THINKING["effort"], phase="intake")
                 _a.brain.set_thinking(
                     INITIAL_DECISION_THINKING["enabled"],
                     INITIAL_DECISION_THINKING["effort"], phase="decision")
@@ -675,13 +695,23 @@ def main() -> int:
                     INITIAL_WORK_THINKING["enabled"],
                     INITIAL_WORK_THINKING["effort"], phase="work")
                 _a.brain.set_temperature(
+                    INITIAL_INTAKE_TEMPERATURE, phase="intake")
+                _a.brain.set_temperature(
                     INITIAL_DECISION_TEMPERATURE, phase="decision")
                 _a.brain.set_temperature(
                     INITIAL_WORK_TEMPERATURE, phase="work")
+
+        # 只有“接收人类命令”的入口 Agent 需要 intake 首轮。
+        _INTAKE_PENDING.clear()
+        _INTAKE_PENDING.update(
+            INTAKE_AGENTS or ((OWNER,) if OWNER in AGENTS else ()))
         print("  🧠 初始思考偏好："
-              "decision=disabled/low · work=enabled/high")
-        print(f"  🌡️ 初始温度偏好：decision={INITIAL_DECISION_TEMPERATURE}"
+              "intake=enabled/max · decision=disabled/low · "
+              "work=enabled/high")
+        print(f"  🌡️ 初始温度偏好：intake={INITIAL_INTAKE_TEMPERATURE}"
+              f" · decision={INITIAL_DECISION_TEMPERATURE}"
               f" · work={INITIAL_WORK_TEMPERATURE or 'config default'}")
+        print(f"  🎯 intake 首轮：{', '.join(sorted(_INTAKE_PENDING)) or '无'}")
         # §11：记录**真实送进模型的那一份** Context
         print(f"  🎥 Context telemetry：包装了 "
               f"{_install_context_recorder(rt)} 个 Agent 的 context_builder")
@@ -1853,7 +1883,9 @@ def _turn(rt: Any, bridge: Any, st: Any, stage: Any, aid: str, rnd: int,
     import channels
 
     comm, gw = rt.communication, rt.workspace_gateway
-    turn: Dict[str, Any] = {"round": rnd, "agent_id": aid, "ok": False}
+    initial_phase = "intake" if aid in _INTAKE_PENDING else "decision"
+    turn: Dict[str, Any] = {"round": rnd, "agent_id": aid, "ok": False,
+                            "initial_phase": initial_phase}
 
     inbox = channels.drain(comm, bridge, aid)
     turn["inbox"] = {"wakeup": inbox["wakeup"],
@@ -1929,7 +1961,8 @@ def _turn(rt: Any, bridge: Any, st: Any, stage: Any, aid: str, rnd: int,
                     follow_up_total_max=FOLLOW_UP_TOTAL_MAX,
                     repair_malformed=REPAIR_MALFORMED,
                     work_loop=WORK_LOOP_ENABLED,
-                    max_work_steps=MAX_WORK_STEPS)
+                    max_work_steps=MAX_WORK_STEPS,
+                    initial_phase=initial_phase)
     except Exception as exc:                                  # noqa: BLE001
         turn["error"] = f"{type(exc).__name__}: {exc}"
         stats[aid]["calls"] += 1
@@ -2139,6 +2172,11 @@ def _turn(rt: Any, bridge: Any, st: Any, stage: Any, aid: str, rnd: int,
         turn["action"] = actions_out[0]
         turn["actions"] = actions_out
         turn["action_experience"] = actions_out[0].get("experience_id")
+
+    # 只有**成功完成**首轮理解后才消费 intake；
+    # EMPTY_CONTENT / 异常路径会提前 return，下一轮仍然 intake。
+    if initial_phase == "intake":
+        _INTAKE_PENDING.discard(aid)
     return turn
 
 
