@@ -205,6 +205,66 @@ class TestTaskCreationService:
                 acceptance_criteria=[], producer="agent_a",
                 acceptance_assignee=None)
 
+    def test_workspace_plan_root_owner_must_be_producer(self):
+        with pytest.raises(TaskCreationError, match="root_owner"):
+            self._svc()._validate(
+                creator="agent_a", description="d",
+                participants=["agent_a", "agent_b", "agent_c"],
+                acceptance_criteria=["ok"], producer="agent_b",
+                acceptance_assignee="agent_c",
+                workspace_plan={
+                    "root_owner": "agent_a",
+                    "files": {"index.html": "agent_a"},
+                })
+
+    def test_root_file_owner_must_be_root_owner(self):
+        """A 计划写根级 index.html，但 producer/root 是 C → 必须拒绝。"""
+        with pytest.raises(TaskCreationError, match="根级文件"):
+            self._svc()._validate(
+                creator="agent_a", description="d",
+                participants=["agent_a", "agent_b", "agent_c"],
+                acceptance_criteria=["ok"], producer="agent_c",
+                acceptance_assignee="agent_b",
+                workspace_plan={
+                    "root_owner": "agent_c",
+                    "files": {"index.html": "agent_a"},
+                })
+
+    def test_file_under_directory_can_have_different_owner(self):
+        """src/main.js 归 A，但 src/ 归 C：允许，由 C 创建后 handoff。"""
+        values = self._svc()._validate(
+            creator="agent_a", description="d",
+            participants=["agent_a", "agent_b", "agent_c"],
+            acceptance_criteria=["ok"], producer="agent_c",
+            acceptance_assignee="agent_b",
+            workspace_plan={
+                "root_owner": "agent_c",
+                "directories": {"src": "agent_c"},
+                "files": {"src/main.js": "agent_a"},
+            })
+        assert values["workspace_plan"]["root_owner"] == "agent_c"
+        assert values["workspace_plan"]["files"]["src/main.js"] == "agent_a"
+
+    def test_file_parent_directory_must_be_declared(self):
+        with pytest.raises(TaskCreationError, match="父目录"):
+            self._svc()._validate(
+                creator="agent_a", description="d",
+                participants=["agent_a", "agent_b", "agent_c"],
+                acceptance_criteria=["ok"], producer="agent_c",
+                acceptance_assignee="agent_b",
+                workspace_plan={
+                    "root_owner": "agent_c",
+                    "files": {"src/main.js": "agent_a"},
+                })
+
+    def test_workspace_plan_is_required(self):
+        with pytest.raises(TaskCreationError, match="workspace_plan"):
+            self._svc()._validate(
+                creator="agent_a", description="d",
+                participants=["agent_a", "agent_b"],
+                acceptance_criteria=["ok"], producer="agent_a",
+                acceptance_assignee=None)
+
     def test_create_root_task_and_handoff_to_producer(self):
         rt = _Runtime()
         run = _run()
@@ -213,7 +273,12 @@ class TestTaskCreationService:
             creator="agent_a", description="build it",
             participants=["agent_a", "agent_b"],
             acceptance_criteria=["file exists"],
-            producer="agent_b", acceptance_assignee=None)
+            producer="agent_b", acceptance_assignee=None,
+            workspace_plan={
+                "root_owner": "agent_b",
+                "directories": {"src": "agent_b"},
+                "files": {"index.html": "agent_b"},
+            })
         assert out["ok"] is True
         task = rt.tasks[out["task_id"]]
         assert task.creator == "agent_a"
@@ -232,13 +297,21 @@ class TestTaskCreationService:
             creator="agent_a", description="build it",
             participants=["agent_a", "agent_b"],
             acceptance_criteria=["file exists"],
-            producer="agent_a", acceptance_assignee=None)
+            producer="agent_a", acceptance_assignee=None,
+            workspace_plan={
+                "root_owner": "agent_a",
+                "files": {"index.html": "agent_a"},
+            })
         assert first["ok"] is True
         second = svc.create(
             creator="agent_a", description="again",
             participants=["agent_a", "agent_b"],
             acceptance_criteria=["file exists"],
-            producer="agent_a", acceptance_assignee=None)
+            producer="agent_a", acceptance_assignee=None,
+            workspace_plan={
+                "root_owner": "agent_a",
+                "files": {"index.html": "agent_a"},
+            })
         assert second["ok"] is False
         assert second["code"] == "task_already_created"
 

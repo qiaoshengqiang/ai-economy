@@ -57,6 +57,7 @@ class TaskCreateExecutor:
                 acceptance_criteria=params.get("acceptance_criteria"),
                 producer=params.get("producer"),
                 acceptance_assignee=params.get("acceptance_assignee"),
+                workspace_plan=params.get("workspace_plan"),
             )
         except Exception as exc:                              # noqa: BLE001
             return self._fail(intent, f"{type(exc).__name__}: {exc}",

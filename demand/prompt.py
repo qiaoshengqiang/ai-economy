@@ -287,9 +287,58 @@ def _envelope_example() -> str:
     )
 
 
+def build_brief_prompt(*, run: Any, front_agent: str,
+                       previous_error: str = "") -> str:
+    """
+    Stage 1 —— **Front / 解读**。
+
+    🔒 这个阶段**不做架构、不选参与者、不创建 Task**。
+       它只把 Human Demand 变成 Creator 可用的 brief。
+    """
+    retry = ""
+    if previous_error:
+        retry = (
+            "\n上一轮 brief 输出不合法：" + str(previous_error) +
+            "。请只输出一个合法 JSON 对象。\n")
+    return f"""你是 {front_agent}，AI Economy OS 的 Human → OS 入口。
+这是正式运行，不是你直接执行任务的阶段。
+
+========== Human Demand ==========
+{run.demand}
+
+========== 运行约束（环境事实） ==========
+- 生产预算：{run.budget_aic} AIC（观测；不是 Task.price）
+- 墙钟上限：{run.wall_limit_seconds / 60:.1f} 分钟
+- 最多参与者：{run.max_agents}
+
+========== 你现在的角色：Front / 解读 ==========
+你只负责解读 Human Demand：
+- 目标是什么；
+- 交付物有哪些；
+- 约束是什么；
+- 验收期望是什么；
+- 有哪些歧义 / 非目标。
+{retry}
+🔒 不要做架构设计、模块拆分、参与者选择、producer/acceptor 选择，
+不要调用 `task_create`，不要输出 `action`。
+
+========== 输出格式（只输出 JSON，不要 markdown 围栏） ==========
+{{"brief": {{
+  "goal": "一句话目标",
+  "deliverables": ["..."],
+  "constraints": ["..."],
+  "acceptance_expectations": ["..."],
+  "ambiguities": ["..."],
+  "non_goals": ["..."]
+}}}}
+"""
+
+
 def build_intake_prompt(*, run: Any, runtime: Any, front_agent: str,
                         budget_cap: Optional[int] = None,
-                        budget_feedback: Optional[Dict[str, Any]] = None) -> str:
+                        budget_feedback: Optional[Dict[str, Any]] = None,
+                        brief: Optional[Dict[str, Any]] = None,
+                        previous_error: str = "") -> str:
     directory = render_directory(runtime)
     short_term = _safe(
         lambda: runtime.private_short_term_memory.render(front_agent),
@@ -299,11 +348,21 @@ def build_intake_prompt(*, run: Any, runtime: Any, front_agent: str,
         "（长期记忆读取失败）")
     budget = _render_budget(
         runtime, front_agent, cap=budget_cap, feedback=budget_feedback)
+    brief_text = (json.dumps(brief, ensure_ascii=False, indent=2)
+                  if brief else "（没有 Front brief；请直接根据 Human Demand 规划）")
+    error_text = ""
+    if previous_error:
+        error_text = (
+            "\n========== 上一轮 task_create 失败（请修正后重试） ==========\n"
+            + str(previous_error) + "\n")
     return f"""你是 {front_agent}，AI Economy OS 里的一名 Agent。这是**正式运行**，不是演示。
 
 ========== Human Demand ==========
 {run.demand}
 
+========== Front brief（只来自 Human Demand 的解读，不是架构方案） ==========
+{brief_text}
+{error_text}
 ========== 运行约束（环境事实） ==========
 - 生产预算：{run.budget_aic} AIC（观测；不是 Task.price）
 - 墙钟上限：{run.wall_limit_seconds / 60:.1f} 分钟
@@ -321,6 +380,17 @@ def build_intake_prompt(*, run: Any, runtime: Any, front_agent: str,
   `resource_create` / `resource_handoff` 完成。
 - Agent Directory 里的 capabilities 是公开事实，可用于判断谁适合
   承担哪个模块。
+
+========== Workspace 锁与责任（结构事实） ==========
+- Task 创建后，Workspace root 的 Directory Lock 会交给 producer（V1）。
+- 如果 producer 不是你，你不会持有 root lock，不能在根目录下创建
+  index.html / README.md / MODULE_CONTRACT.md 等根级文件。
+- 创建子目录 / 新文件需要父目录的 Directory Lock。
+- 新文件默认继承父目录责任；只有当前持有人能 handoff。
+- `workspace_plan.root_owner` 必须等于 producer。
+- `workspace_plan.files` 里的**根级文件** owner 必须是 root_owner。
+- 目录/文件 owner 必须是 participants 之一；子目录的父目录必须在
+  plan 的 directories 里声明。
 
 ========== 认知预算（观测，不是指令） ==========
 {budget}
@@ -346,6 +416,11 @@ def build_intake_prompt(*, run: Any, runtime: Any, front_agent: str,
   如果你自己生产，填你自己。
 - `acceptance_assignee`（可选）：验收责任人；必须是 participants 之一，
   不能是 creator 自己，也不能和 producer 相同。
+- `workspace_plan`（必填）：责任计划。形状：
+  {{"root_owner":"<producer>",
+    "directories":{{"src":"<owner>","tests":"<owner>"}},
+    "files":{{"index.html":"<root_owner>","src/main.js":"<owner>"}}}}
+  root_owner 必须是 producer；根级文件 owner 必须是 root_owner。
 
 🔒 验收人不能是生产者；生产者不得自验。
 🔒 参与者在创建时**直接指定**（V1）；没有邀请/接受流程。
@@ -361,7 +436,10 @@ def build_intake_prompt(*, run: Any, runtime: Any, front_agent: str,
     "participants":["{front_agent}","agent_b"],
     "acceptance_criteria":["交付物存在且非空","核心功能可运行"],
     "producer":"{front_agent}",
-    "acceptance_assignee":"agent_b"
+    "acceptance_assignee":"agent_b",
+    "workspace_plan":{{"root_owner":"{front_agent}",
+      "directories":{{"src":"{front_agent}"}},
+      "files":{{"index.html":"{front_agent}"}}}}
   }}}}}}
 
 如果任务包含多个独立模块，可以在 `description` 里附上拆分计划，

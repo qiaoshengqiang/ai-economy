@@ -8,7 +8,8 @@ V1 边界：
 - participants 由创建者**直接指定**（V1 TEMPORARY）；
 - Task.budget **不设置**（那是商业价格；人类预算是 TaskBudget，不是 Price）；
 - DoD 写入 TaskSharedContext；
-- 验收责任通过 ASSIGN 写入（可选；没有时完成会被 blocked）。
+- 验收责任通过 ASSIGN 写入（可选；没有时完成会被 blocked）；
+- `workspace_plan` 校验 root/directory/file owner 与 root lock / participants 一致。
 
 🔒 这个服务由**组合根/Demand 层**调用；Task Core 本身不认识 Demand。
 """
@@ -45,6 +46,7 @@ class TaskCreationService:
         acceptance_criteria: Any,
         producer: Any = None,
         acceptance_assignee: Any = None,
+        workspace_plan: Any = None,
     ) -> Dict[str, Any]:
         try:
             values = self._validate(
@@ -54,6 +56,7 @@ class TaskCreationService:
                 acceptance_criteria=acceptance_criteria,
                 producer=producer,
                 acceptance_assignee=acceptance_assignee,
+                workspace_plan=workspace_plan,
             )
         except TaskCreationError as exc:
             return {"ok": False, "code": exc.code, "message": exc.message}
@@ -158,6 +161,7 @@ class TaskCreationService:
 
         self.run.workspace_id = ws_id
         self.run.root_task_id = task.task_id
+        self.run.workspace_plan = values["workspace_plan"]
         self.run.status = "RUNNING"
         return {
             "ok": True,
@@ -167,6 +171,7 @@ class TaskCreationService:
             "participants": list(task.participants),
             "producer": task.contractor,
             "acceptance_assignee": values["acceptor"],
+            "workspace_plan": values["workspace_plan"],
             "status": task.status,
         }
 
@@ -180,6 +185,7 @@ class TaskCreationService:
         acceptance_criteria: Any,
         producer: Any,
         acceptance_assignee: Any,
+        workspace_plan: Any = None,
     ) -> Dict[str, Any]:
         creator = str(creator or "").strip()
         if not creator:
@@ -263,6 +269,9 @@ class TaskCreationService:
                     "acceptor_is_producer",
                     "验收人不能是 producer（生产者不得自验）")
 
+        plan = self._validate_workspace_plan(
+            workspace_plan, people=people, producer=prod)
+
         return {
             "creator": creator,
             "description": text,
@@ -270,7 +279,121 @@ class TaskCreationService:
             "criteria": criteria,
             "producer": prod,
             "acceptor": acceptor,
+            "workspace_plan": plan,
         }
+
+    def _validate_workspace_plan(
+        self, plan: Any, *, people: List[str], producer: str,
+    ) -> Dict[str, Any]:
+        """
+        校验 Creator 的责任计划与 V1 的 root lock / participant 边界一致。
+
+        🔒 这里不创建目录、不 handoff；只拒绝**结构上不可执行**的计划。
+        """
+        if not isinstance(plan, dict):
+            raise TaskCreationError(
+                "missing_workspace_plan",
+                "task_create 必须提供 workspace_plan（root/directory/file owner）")
+
+        root_owner = str(plan.get("root_owner") or "").strip()
+        if not root_owner:
+            raise TaskCreationError(
+                "bad_workspace_plan", "workspace_plan.root_owner 不能为空")
+        if root_owner != producer:
+            raise TaskCreationError(
+                "bad_workspace_plan",
+                (f"workspace_plan.root_owner={root_owner!r} 必须等于 "
+                 f"producer={producer!r}（V1 root lock 交给 producer）"))
+        if root_owner not in people:
+            raise TaskCreationError(
+                "bad_workspace_plan",
+                f"workspace_plan.root_owner={root_owner!r} 不是 participants")
+
+        dirs_raw = plan.get("directories") or {}
+        files_raw = plan.get("files") or {}
+        if not isinstance(dirs_raw, dict) or not isinstance(files_raw, dict):
+            raise TaskCreationError(
+                "bad_workspace_plan",
+                "workspace_plan.directories / files 必须是 path → owner 的对象")
+        if not dirs_raw and not files_raw:
+            raise TaskCreationError(
+                "empty_workspace_plan",
+                "workspace_plan 至少需要声明一个目录或文件")
+
+        declared_dirs: Dict[str, str] = {}
+        for raw_path, raw_owner in dirs_raw.items():
+            path = self._normalize_plan_path(raw_path)
+            if not path:
+                raise TaskCreationError(
+                    "bad_workspace_plan", "workspace_plan 目录路径不能为空")
+            if path in declared_dirs:
+                raise TaskCreationError(
+                    "bad_workspace_plan",
+                    f"workspace_plan 目录重复（规范化后）：{path}")
+            owner = str(raw_owner or "").strip()
+            if owner not in people:
+                raise TaskCreationError(
+                    "bad_workspace_plan",
+                    f"目录 {path!r} 的 owner={owner!r} 不是 participants")
+            declared_dirs[path] = owner
+
+        for path in declared_dirs:
+            parent = path.rsplit("/", 1)[0] if "/" in path else ""
+            if parent and parent not in declared_dirs:
+                raise TaskCreationError(
+                    "bad_workspace_plan",
+                    (f"目录 {path!r} 的父目录 {parent!r} "
+                     "没有在 workspace_plan.directories 里声明"))
+
+        normalized_files: Dict[str, str] = {}
+        for raw_path, raw_owner in files_raw.items():
+            path = self._normalize_plan_path(raw_path)
+            if not path:
+                raise TaskCreationError(
+                    "bad_workspace_plan", "workspace_plan 文件路径不能为空")
+            if path in declared_dirs or path in normalized_files:
+                raise TaskCreationError(
+                    "bad_workspace_plan",
+                    f"workspace_plan 资源重复（规范化后）：{path}")
+            owner = str(raw_owner or "").strip()
+            if owner not in people:
+                raise TaskCreationError(
+                    "bad_workspace_plan",
+                    f"文件 {path!r} 的 owner={owner!r} 不是 participants")
+            parent = path.rsplit("/", 1)[0] if "/" in path else ""
+            if parent:
+                if parent not in declared_dirs:
+                    raise TaskCreationError(
+                        "bad_workspace_plan",
+                        (f"文件 {path!r} 的父目录 {parent!r} "
+                         "没有在 workspace_plan.directories 里声明"))
+            elif owner != root_owner:
+                raise TaskCreationError(
+                    "bad_workspace_plan",
+                    (f"根级文件 {path!r} 的 owner={owner!r} 必须是 "
+                     f"root_owner={root_owner!r}。"
+                     "如果希望别人写根级文件，应由 root_owner 创建后 handoff，"
+                     "或把 producer 改成该 Agent。"))
+            normalized_files[path] = owner
+
+        return {
+            "root_owner": root_owner,
+            "directories": dict(sorted(declared_dirs.items())),
+            "files": dict(sorted(normalized_files.items())),
+        }
+
+    @staticmethod
+    def _normalize_plan_path(raw: Any) -> str:
+        text = str(raw or "").strip().replace("\\", "/").strip("/")
+        parts: List[str] = []
+        for segment in text.split("/"):
+            if segment in ("", "."):
+                continue
+            if segment == "..":
+                raise TaskCreationError(
+                    "bad_workspace_plan", "workspace_plan 路径不能包含 '..'")
+            parts.append(segment)
+        return "/".join(parts)
 
     def _agent_entry(self, agent_id: str) -> Any:
         try:

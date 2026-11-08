@@ -163,6 +163,44 @@ requested / actual / budget_clipped 下一轮可见
 
 ---
 
+## 3.2 两阶段 intake（2026-11-09）
+
+V1 的入口 Agent 同时承担 Front 与 Creator，但**不再在同一次 prompt /
+同一次调用里既解读 Demand，又做架构/分工**。
+
+```text
+Stage 1 Front / 解读
+    Human Demand
+        → brief:
+          goal / deliverables / constraints /
+          acceptance_expectations / ambiguities / non_goals
+    不创建 Task，不选 participants/producer，不输出 action
+
+Stage 2 Creator / 规划
+    brief + Agent Directory + Workspace 锁规则
+        → workspace_plan:
+          root_owner
+          directories: path → owner
+          files: path → owner
+        → task_create
+```
+
+`task_create` 新增**必填** `workspace_plan`，`TaskCreationService` 校验：
+
+- `root_owner` 必须等于 `producer`（V1 root lock 交给 producer）；
+- `workspace_plan` 的目录/文件 owner 必须都是 participants；
+- 根级文件的 owner 必须是 `root_owner`；
+- 文件/子目录的父目录必须在 `directories` 里声明；
+- 不合法返回结构化错误，Creator 带错误重试。
+
+这样 A 计划“自己写根级 index.html，但 producer 是 C”会在 `task_create`
+时被拒绝，而不是等运行时才发现 root lock 不在自己手里。
+
+Front brief 写入 `run.json` 的 `run.brief`；Creator 计划写入
+`run.workspace_plan`，便于事后审计。
+
+---
+
 ## 4. `task_create`
 
 Agent A 在 intake 阶段唯一可用的动作：

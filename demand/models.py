@@ -39,6 +39,10 @@ class DemandRun:
     tokens: int = 0
     cost_ai: float = 0.0
     turns: int = 0
+    #: Front 阶段对 Human Demand 的解读（不是 Task 状态）。
+    brief: Optional[Dict[str, Any]] = None
+    #: Creator 阶段产出的 Workspace 责任计划（root/directory/file owner）。
+    workspace_plan: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -59,6 +63,10 @@ class DemandRun:
             "tokens": self.tokens,
             "cost_ai": self.cost_ai,
             "turns": self.turns,
+            "brief": dict(self.brief) if self.brief else None,
+            "workspace_plan": (
+                dict(self.workspace_plan)
+                if self.workspace_plan else None),
         }
 
 

@@ -21,8 +21,11 @@ from core.identity import utc_now_iso
 from demand.actions import build_intake_dispatcher, build_task_dispatcher
 from demand.channels import SyncBridge, drain
 from demand.images import make_image_resolver
+from demand.intake import fallback_brief, parse_brief
 from demand.models import DemandRun, TurnOutcome
-from demand.prompt import build_intake_prompt, build_task_prompt
+from demand.prompt import (
+    build_brief_prompt, build_intake_prompt, build_task_prompt,
+)
 from demand.scheduler import RunScheduler
 from demand.task_creation import TaskCreationService
 
@@ -81,6 +84,10 @@ class DemandRunner:
         self._seen_reads: Dict[str, set] = {}
         #: 尚未回应的 REQUEST/QUESTION（按 Agent）。
         self._pending_requests: Dict[str, List[Dict[str, Any]]] = {}
+        #: 最近一次 turn 的模型原文（Front brief 解析用）。
+        self._last_turn_content = ""
+        #: 最近一次 task_create 失败原因（Creator 重试时可见）。
+        self._last_create_error = ""
 
     # ------------------------------------------------------------
     def execute(self) -> Dict[str, Any]:
@@ -109,7 +116,23 @@ class DemandRunner:
 
     # ------------------------------------------------------------
     def _intake(self) -> None:
+        """
+        V1 的入口拆成两个阶段：
+
+        ① Front / 解读：只产出 brief，不碰架构、不建 Task；
+        ② Creator / 规划：拿 brief + 锁规则产出 workspace_plan，
+           再调用 task_create。
+
+        同一个 Agent 可以承担两个阶段，但**不能在同一次 prompt 里
+        既解读 Human Demand，又决定架构/分工**。
+        """
+        brief = self._intake_brief()
+        self.run.brief = brief
+        self._write_run()
+        self._event("intake_brief", brief=brief)
+
         dispatcher = build_intake_dispatcher(self._create_task)
+        self._last_create_error = ""
         for attempt in range(1, 4):
             if self.run.root_task_id:
                 return
@@ -118,7 +141,9 @@ class DemandRunner:
                 front_agent=self.run.front_agent,
                 budget_cap=self.cognitive_budget,
                 budget_feedback=self._last_turn_by_agent.get(
-                    self.run.front_agent))
+                    self.run.front_agent),
+                brief=brief,
+                previous_error=self._last_create_error)
             outcome = self._turn(
                 self.run.front_agent, prompt, dispatcher,
                 task_id=None, initial_phase="intake",
@@ -132,13 +157,46 @@ class DemandRunner:
                 break
         self._event("intake_finished_without_task")
 
+    def _intake_brief(self) -> Dict[str, Any]:
+        """Front 阶段：只解读 Human Demand，不创建 Task。"""
+        last_error = ""
+        for attempt in range(1, 3):
+            prompt = build_brief_prompt(
+                run=self.run, front_agent=self.run.front_agent,
+                previous_error=last_error)
+            outcome = self._turn(
+                self.run.front_agent, prompt, None,
+                task_id=None, initial_phase="intake",
+                work_loop=False, follow_up=False,
+                attempt=attempt, execute=False)
+            if not outcome.ok:
+                last_error = outcome.error or "brief_turn_failed"
+                continue
+            brief, error = parse_brief(self._last_turn_content)
+            if brief is not None:
+                self._event(
+                    "intake_brief_parsed", attempt=attempt, brief=brief)
+                return brief
+            last_error = error
+        fallback = fallback_brief(self.run.demand)
+        self._event(
+            "intake_brief_fallback", error=last_error, brief=fallback)
+        return fallback
+
     def _create_task(self, **kwargs: Any) -> Dict[str, Any]:
-        result = self._creation.create(**kwargs)
+        try:
+            result = self._creation.create(**kwargs)
+        except Exception as exc:                              # noqa: BLE001
+            self._last_create_error = f"{type(exc).__name__}: {exc}"
+            raise
         if result.get("ok"):
             self.run.root_task_id = str(result.get("task_id") or "")
             self.run.workspace_id = str(result.get("workspace_id") or "")
             self.run.status = "RUNNING"
             self._write_run()
+        else:
+            self._last_create_error = str(
+                result.get("message") or result.get("code") or "task_create 失败")
         return result
 
     # ------------------------------------------------------------
@@ -215,6 +273,7 @@ class DemandRunner:
         work_loop: bool,
         follow_up: bool,
         attempt: int,
+        execute: bool = True,
     ) -> TurnOutcome:
         before = self._status_string()
         agent = None
@@ -231,6 +290,7 @@ class DemandRunner:
             result = agent.act(
                 messages=prompt,
                 dispatcher=dispatcher,
+                execute=execute,
                 task_id=task_id,
                 # 🔒 Human 给的是**硬上限**，不是“请求值”；
                 #    Agent 可以自己选择更低的偏好，或请求更高（会被 cap）。
@@ -257,6 +317,9 @@ class DemandRunner:
 
         self._turn_index += 1
         segments = list(getattr(result, "segments", None) or [])
+        self._last_turn_content = (
+            str(getattr(segments[-1], "content", "") or "")
+            if segments else "")
         tokens = sum(int(getattr(s, "tokens", 0) or 0) for s in segments)
         intents = list(getattr(result, "action_intents", None) or [])
         results = list(getattr(result, "action_results", None) or [])
