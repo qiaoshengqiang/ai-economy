@@ -197,6 +197,17 @@ Deliverable: hello.py, tests/test_hello.py
 - agent_a（producer）尝试 COMPLETE 被拒（生产者不能自验/结项）；
 - 最终由 agent_e VERIFY + COMPLETE。
 
+修复「turn 开始先 drain 再读 Task」后复跑：
+
+```text
+Run: demand_613968b8
+Result: COMPLETED
+Turns: 24 / max 24
+Tokens: 118,657
+Cost: 1.186570 AIC
+Events: START → SUBMIT → VERIFY → COMPLETE
+```
+
 ---
 
 ## 8. 已知限制
