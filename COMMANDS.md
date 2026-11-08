@@ -59,6 +59,9 @@ python xxx          ❌ 错误 —— 会用到系统 Python，报 "No module na
 # 跑一遍 Step 2 的完整 LLM 链路演示
 ./dev.sh demo
 
+# 人类 Demand → Agent 自己建 Task → 串行执行
+./dev.sh demand --file /tmp/prompt.txt --minutes 20 --budget 20
+
 # 看系统环境是否正常（出问题时先跑这个）
 ./dev.sh doctor
 ```

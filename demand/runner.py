@@ -149,11 +149,11 @@ class DemandRunner:
             turns=result.turns)
 
     def _task_turn(self, agent_id: str) -> TurnOutcome:
+        inbox = drain(self.rt.communication, self.bridge, agent_id)
         task = self._status_task()
         if task is None:
             return TurnOutcome(
                 agent_id=agent_id, ok=False, error="task disappeared")
-        inbox = drain(self.rt.communication, self.bridge, agent_id)
         prompt = build_task_prompt(
             run=self.run, task=task, runtime=self.rt,
             agent_id=agent_id, inbox=inbox.get("received") or [])
