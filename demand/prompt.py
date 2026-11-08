@@ -60,7 +60,10 @@ def _render_workspace(runtime: Any, workspace_id: str,
             name = str(entry.get("name") or "")
             if not name:
                 continue
-            child = f"{path.rstrip('/')}/{name}" if path != "/" else f"/{name}"
+            # 🔒 展示**相对路径** —— 与 workspace_read / write / handoff
+            #    的参数格式一致；带前导 `/` 会被 Artifact 层当成绝对路径拒绝。
+            child = f"{path.rstrip('/')}/{name}" if path not in ("", "/") \
+                else name
             kind = str(entry.get("type") or "")
             # 🔒 责任/锁事实：Agent 需要知道“这个目录/文件归谁、现在谁持有”。
             meta = []
@@ -88,7 +91,7 @@ def _render_workspace(runtime: Any, workspace_id: str,
         controller = root.get("controller") or "（未知）"
         lock = root.get("lock") or "none"
         lines.insert(
-            0, f"- /  [root controller={controller}, root lock={lock}]")
+            0, f"- .  [root controller={controller}, root lock={lock}]")
     text = "\n".join(lines) if lines else "（Workspace 目前为空）"
     return _clip(text, MAX_WORKSPACE_CHARS)
 
@@ -117,19 +120,31 @@ def _render_inbox(messages: Iterable[Any]) -> str:
         return "（这一轮你收到 0 条消息。）"
     lines = [f"这一轮你收到 {len(items)} 条消息：", ""]
     for m in items:
+        message_type = str(getattr(m, "message_type", "TEXT") or "TEXT")
+        payload = getattr(m, "payload", None) or {}
         text = ""
         try:
             text = str(getattr(m, "text", "") or "")
         except Exception:                                     # noqa: BLE001
             text = ""
         if not text:
-            payload = getattr(m, "payload", None) or {}
             text = str(payload.get("text") or payload)[:500]
         lines.append(
-            f"[{getattr(m, 'message_type', 'TEXT')}] "
+            f"[{message_type}] "
             f"{getattr(m, 'from_agent', '?')} → "
             f"{getattr(m, 'to_agent', '?')}:")
         lines.append(text)
+        if message_type == "ERROR":
+            errors = payload.get("errors") or []
+            if isinstance(errors, (list, tuple)) and errors:
+                lines.append("⚠️ 协议拒绝原因：")
+                for err in errors[:6]:
+                    lines.append(f"  - {err}")
+            lines.append(
+                "⚠️ 这是**消息处理器**的拒绝，不是投递失败。"
+                "不要重发同一 message_type；普通协调请用 "
+                "TEXT / INFO / NOTE / QUESTION / REQUEST，"
+                "或等 Task 状态允许再发生命周期消息。")
         lines.append("")
     return _clip("\n".join(lines).rstrip(), MAX_INBOX_CHARS)
 
@@ -198,6 +213,10 @@ def _render_budget(runtime: Any, agent_id: str, *,
         if feedback.get("truncated"):
             lines.append(
                 "  ⚠️ 上一轮有段被截断：该段即使解析出合法 Action 也不会执行。")
+        if feedback.get("repair_truncated"):
+            lines.append(
+                "  ⚠️ 上一轮有一次调用撞到输出上限，但格式修复成功；"
+                "这次调用仍计入工作单元压力。")
         if feedback.get("clipped") in ("above_caller_limit", "above_max"):
             lines.append(
                 "  ⚠️ 上一轮请求的预算被裁剪；actual 才是真正可用的上限。")
@@ -389,8 +408,12 @@ def build_task_prompt(
 ========== 你的长期记忆（高权重摘要） ==========
 {long_term}
 
-========== Workspace 事实（当前版本） ==========
+========== Workspace 事实（当前版本；下面都是相对路径） ==========
 {workspace}
+
+🔒 `workspace_read` / `workspace_search` / `workspace_write` /
+`workspace_edit` / `resource_handoff` 的 `path` **不要带开头 `/`**；
+`.` 表示 Workspace root。
 
 ========== Workspace 责任与验收通道（结构事实） ==========
 - 创建子目录 / 新文件需要**父目录**的有效 Directory Lock。
@@ -423,7 +446,14 @@ def build_task_prompt(
   仍然走锁 / revision / audit；0 或多个命中会失败。
 - `message_send`
   `to` / `message_type` / `text` / `payload`
-  生命周期消息类型：START / SUBMIT / VERIFY / COMPLETE
+  **普通协调消息**用 `TEXT` / `INFO` / `NOTE` / `QUESTION` / `REQUEST`。
+  **生命周期消息**只有四个：
+  `START`（仅 contractor，Task 为 CREATED/ACCEPTED）、
+  `SUBMIT`（仅 contractor，IN_PROGRESS）、
+  `VERIFY`（仅 acceptor，SUBMITTED）、
+  `COMPLETE`（VERIFIED）。
+  **不要用 START 表示“开始一条消息 / 开始一轮沟通 / 开始验收”。**
+  发送成功只代表**已投递**；生命周期是否被接受要看 Task 状态或 ERROR 回执。
 - `assign_acceptance`
   把验收责任指派给另一个 participant（不能给自己）
 - `shared_context_read`
@@ -459,8 +489,13 @@ def build_task_prompt(
   不要用重复 `workspace_read` / `run_tool` 代替验收结论。
 
 ========== 生命周期规则（协议硬约束） ==========
+- START 不是“开始发言/开始验收/发起请求”，它只把 Task 从
+  CREATED/ACCEPTED 推进到 IN_PROGRESS。
+  普通协调一律用 TEXT / INFO / NOTE / QUESTION / REQUEST。
 - 如果你不是 contractor/producer：**不要发 START / SUBMIT**。
   发 START / SUBMIT 会被状态机拒绝。
+- 收到 `ERROR` 回执 = 上一条消息被**协议拒绝**（不是没收到）。
+  不要重发同一 message_type；改用普通类型，或等 Task 状态允许。
 - 如果你是 contractor/producer 且 Task 还是 CREATED：先发 START。
   例：{{"to":"{task.creator}","message_type":"START",
        "payload":{{"task_id":"{task.task_id}"}}}}

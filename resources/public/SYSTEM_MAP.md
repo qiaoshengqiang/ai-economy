@@ -90,6 +90,13 @@
 
 > 其中 `TASK_OFFER` 会让系统**建一个 Task**，并且**你成为它的创建者**。
 
+**普通协调消息**（进度、阻塞、请求、问询）用：
+`TEXT` / `INFO` / `NOTE` / `QUESTION` / `REQUEST`。
+`START` **不是**“开始一条消息/开始验收”；它只把 Task 从
+`CREATED/ACCEPTED` 推进到 `IN_PROGRESS`，且只能由 contractor 发送。
+投递成功只代表**已投递**；生命周期是否被接受，以 Task 状态或
+`ERROR` 回执为准。收到 `ERROR` 时不要重发同一 `message_type`。
+
 ---
 
 ## 3. 边界在哪（这些是**结构**，不是建议）
@@ -123,6 +130,11 @@
 ---
 
 ## 4. 写产物的语义（`write_mode`）
+
+> `workspace_read` / `workspace_search` / `workspace_write` /
+> `workspace_edit` / `resource_handoff` 的 `path` 使用**相对逻辑路径**
+> （`index.html`、`src/app.js`、`tests`），**不要带开头 `/`**；
+> `.` 表示 Workspace root。带前导 `/` 会被 Artifact 层当成绝对路径拒绝。
 
 | 模式 | 含义 |
 |---|---|

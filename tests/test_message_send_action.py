@@ -104,6 +104,50 @@ def test_success_carries_message_id_and_type():
     assert seen["payload"] == {"task_id": "T-1"}
 
 
+def test_delivery_is_not_handler_acceptance():
+    """
+    投递成功 ≠ 生命周期动作被接受。
+
+    🔒 发送层不知道处理器结果时，必须如实说 DEFERRED，
+       不能把“已投递”伪装成“已接受”。
+    """
+    def fake_send(comm, *, from_agent, to_agent, message_type, text, payload):
+        return {"ok": True, "message_id": "msg_2", "to": to_agent,
+                "message_type": message_type, "chars": 1,
+                "wakeup_signalled": True,
+                "delivery": "DELIVERED",
+                "handler_result": "DEFERRED",
+                "handler_note": "处理在收件人取信时运行"}
+
+    res = _executor(fake_send).execute(_intent({
+        "to": "agent_b", "text": "x", "message_type": "START"}))
+    assert res.success is True
+    assert res.output["delivery"] == "DELIVERED"
+    assert res.output["handler_result"] == "DEFERRED"
+    assert "处理" in res.output["handler_note"]
+
+
+def test_send_message_as_reports_deferred_handler_result():
+    import asyncio
+    from types import SimpleNamespace
+    from services.messaging import send_message_as
+
+    class _Comm:
+        async def send(self, **kwargs):
+            return SimpleNamespace(message_id="m1")
+
+        def is_woken(self, agent_id):
+            return False
+
+    out = asyncio.new_event_loop().run_until_complete(
+        send_message_as(_Comm(), from_agent="agent_a", to_agent="agent_b",
+                        message_type="START", text="x"))
+    assert out["ok"] is True
+    assert out["delivery"] == "DELIVERED"
+    assert out["handler_result"] == "DEFERRED"
+    assert "Task 状态" in out["handler_note"]
+
+
 def test_from_agent_comes_from_the_runtime_not_from_parameters():
     """
     🔴 **冒充守卫**：发送方只能取 `intent.agent_id`（运行时填的）。

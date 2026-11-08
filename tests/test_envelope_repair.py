@@ -52,14 +52,18 @@ class _Agent:
     agent_id: str = "agent_b"
     script: List[str] = field(default_factory=list)
     calls: List[Any] = field(default_factory=list)
+    finish_reasons: List[str] = field(default_factory=list)
     _i: int = 0
 
     def generate(self, messages=None, **kwargs):
         self.calls.append(messages)
         content = (self.script[self._i] if self._i < len(self.script)
                    else self.script[-1])
+        finish_reason = (
+            self.finish_reasons[self._i]
+            if self._i < len(self.finish_reasons) else "stop")
         self._i += 1
-        return _Resp(content=content)
+        return _Resp(content=content, finish_reason=finish_reason)
 
 
 def _valid_envelope() -> str:
@@ -86,6 +90,23 @@ class TestRepair:
             "message_send"]
         # 两次调用的 token 都要算进这一段
         assert run.segments[0].tokens == 20
+
+    def test_repair_preserves_original_truncation_fact(self):
+        """
+        原始调用撞到 length 后才修复成功 —— 修复改变的是可用性，
+        不能把“曾经撞上限”这个工作单元压力事实抹掉。
+        """
+        a = _Agent(script=[TRUNCATED, _valid_envelope()],
+                   finish_reasons=["length", "stop"])
+        run = run_cognition(
+            a, [{"role": "user", "content": "go"}],
+            repair_malformed=True)
+
+        seg = run.segments[0]
+        assert seg.repair_succeeded is True
+        assert seg.is_truncated is False
+        assert seg.repair_truncated is True
+        assert seg.original_finish_reason == "length"
 
     def test_repair_is_not_used_for_plain_reply(self):
         a = _Agent(script=["我先说明一下。"])

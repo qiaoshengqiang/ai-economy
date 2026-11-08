@@ -347,6 +347,11 @@ def _run_one_segment(agent: Any, agent_id: str, messages: Any,
     response = agent.generate(messages=messages, phase=phase, **call_kwargs)
     content = getattr(response, "content", None)
     total_tokens = getattr(response, "total_tokens", None)
+    # 🔴 修复前的真实状态。修复只能改变**可用性**，不能抹掉
+    #    “这次调用曾经撞到上限”这个事实（否则压力信号会丢）。
+    original_finish_reason = getattr(response, "finish_reason", None)
+    original_cognitive_status = getattr(response, "cognitive_status", None)
+    original_budget_clipped = getattr(response, "budget_clipped", None)
 
     # 🔒 只认显式信封。没有信封 → 普通回复，不产生 Action。
     decision = decision_from_text(agent_id, content)
@@ -357,6 +362,7 @@ def _run_one_segment(agent: Any, agent_id: str, messages: Any,
     envelope_error = getattr(decision, "envelope_error", "")
     repair_attempted = False
     repair_succeeded = False
+    repair_truncated = False
     if envelope_error:
         logger.warning(
             "Cognition 信封解析失败（%s）：agent=%s seg=%d "
@@ -393,6 +399,10 @@ def _run_one_segment(agent: Any, agent_id: str, messages: Any,
             decision = repaired_decision
             # 🔒 状态以**最后一次**调用为准：第一次已经确定不可用。
             response = repaired
+            repair_truncated = (
+                original_cognitive_status == "TRUNCATED"
+                or str(original_finish_reason or "").strip().lower()
+                == "length")
             repair_succeeded = (
                 bool(str(repaired_content or "").strip())
                 and not getattr(decision, "envelope_error", ""))
@@ -490,6 +500,9 @@ def _run_one_segment(agent: Any, agent_id: str, messages: Any,
         tokens=total_tokens,
         repair_attempted=repair_attempted,
         repair_succeeded=repair_succeeded,
+        repair_truncated=repair_truncated,
+        original_finish_reason=original_finish_reason,
+        original_budget_clipped=original_budget_clipped,
     )
 
 

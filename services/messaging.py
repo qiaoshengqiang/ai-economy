@@ -131,6 +131,13 @@ async def send_message_as(
         "message_type": mtype,
         "chars": len(text or ""),
         "wakeup_signalled": signalled,
+        # 🔒 投递成功 ≠ 任务处理器接受。
+        #    处理发生在收件人取信时；这里不能假装知道结果。
+        "delivery": "DELIVERED",
+        "handler_result": "DEFERRED",
+        "handler_note": (
+            "已投递；任务处理器在收件人取信时运行。"
+            "生命周期是否被接受，以 Task 状态或 ERROR 回执为准。"),
     }
 
 

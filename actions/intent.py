@@ -285,6 +285,15 @@ class CognitiveSegment:
     repair_attempted: bool = False
     #: 修复调用是否成功解析出可用动作。
     repair_succeeded: bool = False
+    #: 🔴 原始调用是否撞到输出上限（即使后来修复成功）。
+    #:
+    #:    `is_truncated` 表示**最终结果**被截断、动作不执行；
+    #:    `repair_truncated` 表示原始调用截断、但修复后动作可以执行。
+    #:    两者都应当计入“工作单元压力”，但语义不能混。
+    repair_truncated: bool = False
+    #: 原始调用（修复前）的 finish_reason / budget_clipped。
+    original_finish_reason: Optional[str] = None
+    original_budget_clipped: Optional[str] = None
 
     @property
     def is_truncated(self) -> bool:
@@ -313,6 +322,9 @@ class CognitiveSegment:
             "is_truncated": self.is_truncated,
             "repair_attempted": self.repair_attempted,
             "repair_succeeded": self.repair_succeeded,
+            "repair_truncated": self.repair_truncated,
+            "original_finish_reason": self.original_finish_reason,
+            "original_budget_clipped": self.original_budget_clipped,
         }
 
 

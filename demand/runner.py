@@ -26,6 +26,14 @@ from demand.prompt import build_intake_prompt, build_task_prompt
 from demand.scheduler import RunScheduler
 from demand.task_creation import TaskCreationService
 
+#: 这些消息类型的“新消息”**不算真实进展**：
+#: 它们的价值应体现在 Task 状态变化上；被拒绝时也不该延长 run。
+#: 否则一条非法 START + ERROR 往返就能骗过 NO_PROGRESS。
+_PROTOCOL_MESSAGE_TYPES = frozenset({
+    "START", "SUBMIT", "VERIFY", "COMPLETE",
+    "TASK_OFFER", "COUNTER_OFFER", "ACCEPT", "REJECT", "ERROR",
+})
+
 
 class DemandRunner:
     def __init__(
@@ -299,24 +307,32 @@ class DemandRunner:
         """把这一段（最后一次调用）的预算 / 截断事实变成下一轮可见的观测。"""
         last = segments[-1] if segments else None
         truncated = [s for s in segments if getattr(s, "is_truncated", False)]
+        repaired_truncated = [
+            s for s in segments if getattr(s, "repair_truncated", False)
+        ]
         clipped_segments = [
             s for s in segments
             if getattr(s, "budget_clipped", None)
+            in ("above_caller_limit", "above_max")
+            or getattr(s, "original_budget_clipped", None)
             in ("above_caller_limit", "above_max")
         ]
         # 🔒 `finish_reason/truncated` 取**最后一个被截断的段**；
         #    `requested/actual/clipped` 取**最后一个被裁剪的段**。
         #    两者分开取，避免“截断段正常、裁剪段别的”时字段互相错配。
         source = (truncated[-1] if truncated
+                  else repaired_truncated[-1] if repaired_truncated
                   else clipped_segments[-1] if clipped_segments
                   else last)
         budget_source = (clipped_segments[-1] if clipped_segments
                          else source)
         clipped = getattr(budget_source, "budget_clipped", None)
-        # 🔴 2026-11-09：工作单元压力 = 输出撞上限，或请求预算被压到
-        #    `above_*`。`below_min` 不是“工作太大”，不算压力。
+        if clipped is None:
+            clipped = getattr(budget_source, "original_budget_clipped", None)
+        # 🔴 2026-11-09：工作单元压力 = 输出撞上限（含修复前截断），
+        #    或请求预算被压到 `above_*`。`below_min` 不是“工作太大”。
         kinds: List[str] = []
-        if truncated:
+        if truncated or repaired_truncated:
             kinds.append("truncated")
         if clipped_segments:
             kinds.append("clipped")
@@ -337,6 +353,8 @@ class DemandRunner:
             "cognitive_status": getattr(source, "cognitive_status", None),
             "truncated": bool(truncated),
             "truncated_segments": len(truncated),
+            "repair_truncated": bool(repaired_truncated),
+            "repair_truncated_segments": len(repaired_truncated),
             "requested": getattr(
                 budget_source, "requested_cognitive_budget", None),
             "actual": getattr(budget_source, "actual_max_tokens", None),
@@ -442,7 +460,13 @@ class DemandRunner:
             elif action_type == "resource_create":
                 reasons.append("resource_create")
             elif action_type == "message_send" and id(intent) in new_message_ids:
-                reasons.append("new_message")
+                params = dict(getattr(intent, "parameters", None) or {})
+                message_type = str(
+                    params.get("message_type") or "TEXT").strip().upper()
+                # 🔒 生命周期/协议消息的进展必须体现在 Task 状态上。
+                #    非法 START / ERROR 往返不能算“新消息进展”。
+                if message_type not in _PROTOCOL_MESSAGE_TYPES:
+                    reasons.append("new_message")
         # 去重但保留第一次出现的顺序
         seen = set()
         unique = [r for r in reasons if not (r in seen or seen.add(r))]

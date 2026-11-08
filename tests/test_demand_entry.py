@@ -378,6 +378,22 @@ class TestDemandProgress:
         assert second == []
         assert progress is False
 
+    def test_lifecycle_message_is_not_new_message_progress(self):
+        """
+        非法 START 的 ActionResult 也可能是 success（已投递）。
+        它不能靠 `new_message` 延长 run；只有 Task 状态变化才算进展。
+        """
+        runner = self._runner()
+        intent = self._intent(
+            "message_send", to="agent_b", message_type="START",
+            text="我要开始协调")
+        result = self._ok("message_send")
+        new = runner._record_messages("agent_a", [intent], [result])
+        progress, reason = runner._progress_of(
+            "IN_PROGRESS", "IN_PROGRESS", [intent], [result], new)
+        assert new == [id(intent)]
+        assert progress is False, reason
+
     def test_status_change_is_progress(self):
         runner = self._runner()
         progress, reason = runner._progress_of(
@@ -473,6 +489,24 @@ class TestDemandProgress:
         assert fb["requested"] == 32768
         assert fb["actual"] == 16384
         assert fb["clipped"] == "above_caller_limit"
+
+    def test_repaired_truncation_is_work_unit_pressure(self):
+        """原始调用截断、修复成功后，压力信号不能消失。"""
+        runner = self._pressure_runner()
+        repaired = SimpleNamespace(
+            phase="decision", finish_reason="stop",
+            output_status="VALID_CONTENT", cognitive_status="COMPLETE",
+            is_truncated=False, repair_truncated=True,
+            requested_cognitive_budget=16384,
+            actual_max_tokens=16384, budget_clipped=None,
+            original_budget_clipped=None,
+        )
+        fb = runner._budget_feedback(
+            [repaired], "decision", "agent_a")
+        assert fb["truncated"] is False
+        assert fb["repair_truncated"] is True
+        assert fb["pressure"] is True
+        assert fb["pressure_kinds"] == "truncated"
 
 
 # ============================================================

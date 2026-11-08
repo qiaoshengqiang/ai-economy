@@ -79,7 +79,8 @@ DEFAULT_MESSAGE_TYPE = "TEXT"
 #:
 #: 🔒 这些**全部**是 `services.messaging.send_message_as()` 真实返回的键。
 _OUTPUT_FIELDS = ("message_id", "to", "message_type", "chars",
-                  "wakeup_signalled")
+                  "wakeup_signalled", "delivery", "handler_result",
+                  "handler_note")
 
 
 class MessageSendExecutor:

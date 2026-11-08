@@ -231,3 +231,33 @@ def test_workspace_prompt_shows_controller_and_acceptance_path():
     assert "父目录" in prompt
     assert "resource_handoff" in prompt
     assert 'run_tool(source="private")' in prompt
+    # 展示相对路径，动作参数也要相对路径
+    assert "- index.html (R4)" in prompt
+    assert "- /index.html" not in prompt
+    assert "不要带开头 `/`" in prompt
+
+
+def test_prompt_separates_lifecycle_and_coordination_messages():
+    prompt = build_task_prompt(
+        run=_run(), task=_task(), runtime=_runtime(),
+        agent_id="agent_a", inbox=[], budget_cap=16384,
+        budget_feedback=None)
+    assert "普通协调消息" in prompt
+    assert "TEXT / INFO / NOTE / QUESTION / REQUEST" in prompt
+    assert "不要用 START" in prompt
+    assert "ERROR 回执" in prompt
+    assert "发送成功只代表**已投递**" in prompt
+
+
+def test_error_inbox_is_explained_as_protocol_rejection():
+    msg = SimpleNamespace(
+        message_type="ERROR", from_agent="agent_c", to_agent="agent_a",
+        text="", payload={"errors": ["缺少 task_id"],
+                          "rejected_message_type": "START"})
+    prompt = build_task_prompt(
+        run=_run(), task=_task(), runtime=_runtime(),
+        agent_id="agent_a", inbox=[msg], budget_cap=16384,
+        budget_feedback=None)
+    assert "协议拒绝原因" in prompt
+    assert "缺少 task_id" in prompt
+    assert "不要重发同一 message_type" in prompt

@@ -134,6 +134,23 @@ requested / actual / budget_clipped 下一轮可见
 **信封失败落盘**：`events.jsonl` 新增 `envelope_error` 事件，含原始输出的
 有界 `head` / `tail`（各 1200 字符），不需要再靠猜。
 
+**消息类型（2026-11-09）**：
+
+- 普通协调消息用 `TEXT / INFO / NOTE / QUESTION / REQUEST`；
+- `START` 只用于 contractor 在 `CREATED/ACCEPTED` 开工，不是“开始说话”；
+- `message_send` 返回 `delivery=DELIVERED` 与 `handler_result=DEFERRED`：
+  投递成功 ≠ 生命周期动作被接受；接受结果以 Task 状态或 `ERROR` 回执为准；
+- prompt 会把 `ERROR` 回执展开成“协议拒绝原因”，并提示不要重发同一类型；
+- 生命周期消息不再计入 `new_message` 进展，避免非法 START/ERROR 往返
+  阻止 `NO_PROGRESS`。
+
+**路径格式**：Workspace 事实展示相对路径（`index.html`、`src/app.js`、
+`tests`），与 `workspace_read/write/edit` / `resource_handoff` 的参数一致；
+不要带前导 `/`。
+
+**修复后的截断**：`repair_truncated` 单独记录“原始调用撞上限、修复成功”，
+仍然计入工作单元压力，但不会误报“动作未执行”。
+
 ---
 
 ## 4. `task_create`

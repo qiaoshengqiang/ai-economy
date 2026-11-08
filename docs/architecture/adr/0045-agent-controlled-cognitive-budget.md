@@ -107,6 +107,29 @@ prompt 的 `truncated=False` 矛盾。
   请持有者 `resource_handoff`，或使用 private workspace +
   `run_tool(source="private")`；不要反复重试被锁拒绝的 `resource_create`。
 
+### 9. 消息类型与路径格式（2026-11-09）
+
+真实 run `demand_050d56dd` 里 10 条 START 只有 1 条是生命周期 START，
+其余 9 条是普通协调消息被标成 START，产生 9 条 ERROR；同时 START/ERROR
+往返被算成 `new_message` 进展，导致 run 烧到 MAX_TURNS。
+
+- prompt 明确区分生命周期类型与普通协调类型；
+- `START` 只允许 contractor 在 `CREATED/ACCEPTED` 使用；
+- `message_send` 返回 `delivery=DELIVERED` / `handler_result=DEFERRED`，
+  明确“投递成功 ≠ 处理接受”；
+- `ERROR` 回执在 prompt 中展开为协议拒绝原因，并提示不要重发同一类型；
+- 生命周期消息（START/SUBMIT/VERIFY/COMPLETE/ERROR 等）不再作为
+  `new_message` 进展，避免非法往返延长 run；
+- Workspace 事实改用相对路径，避免 `/index.html`、`/tests/` 被
+  Artifact 层拒绝。
+
+### 10. 修复后的截断仍计入压力
+
+`repair_malformed` 成功会把 segment 的最终状态替换成修复调用；为了避免
+“修复成功 = 压力消失”，`CognitiveSegment` 增加 `repair_truncated`、
+`original_finish_reason`、`original_budget_clipped`。Demand 的
+`pressure` 同时统计 `is_truncated` 与 `repair_truncated`。
+
 ### 明确不做
 
 - 不由 AIC 余额自动换算 token 预算；
