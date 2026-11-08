@@ -302,6 +302,14 @@ site/main.js 存在但从未被加载
    失败任务也应该留下“为什么没完成”的短期记忆。
 7. **Session/Agent 配比**：复杂任务 5 个 Agent + 6 分钟 Session = 每 Session 1 轮。
    要么延长 Session，要么减少参与者，要么允许并行 turn。
+8. **Playwright 配置被根 bootstrap 遮蔽**：Tool Runtime 在 run 根目录写了一个
+   `playwright.config.js`（`testDir: '.'`，无 `baseURL`），Playwright 默认读它；
+   agent_e 写的 `qa/playwright.config.js`（含 `baseURL` + `webServer`）从未生效，
+   所以 `page.goto('/site/index.html')` 直接报 invalid URL。
+   这也是 4 次 ~205 秒失败套件的主要原因之一。
+
+> 调度与读图的进一步分析见
+> [`SERIAL_AND_VISION.md`](SERIAL_AND_VISION.md)。
 
 ---
 
