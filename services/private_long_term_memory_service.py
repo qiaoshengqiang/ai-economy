@@ -41,11 +41,16 @@ class PrivateLongTermMemoryService:
     def search(self, agent_id: str, query: str = "") -> List[LongTermEntry]:
         return [e for e in self.all(agent_id) if matches(e, query)]
 
-    def read(self, agent_id: str, entry_id: str) -> Dict[str, Any]:
+    def read(self, agent_id: str, entry_id: str,
+             task_id: str = "") -> Dict[str, Any]:
         entry = self.store.get(agent_id, entry_id)
         if entry is None:
             raise LongTermMemoryValidationError(
                 f"找不到 long-term entry {entry_id!r}")
+        # 🔴 通过长期记忆读了对应的短期存档 = 这条长期记忆被使用了。
+        if task_id:
+            self.store.mark_used(agent_id, [entry_id], task_id)
+            entry = self.store.get(agent_id, entry_id) or entry
         archived = self.short_term_store.archived_entries(
             agent_id, long_term_entry_id=entry_id)
         return {"entry": entry.to_dict(), "short_term_entries": archived}

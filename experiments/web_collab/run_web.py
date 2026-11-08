@@ -173,6 +173,8 @@ def _parse_args(argv=None) -> argparse.Namespace:
                     help="Task 预算（AIC），默认 20")
     ap.add_argument("--cognitive-budget", type=int, default=16384,
                     help="单次响应输出上限（tokens），默认 16384")
+    ap.add_argument("--db", default=None,
+                    help="复用已有的 web.db（跨任务记忆实验）")
     ap.add_argument("--out", default=None, help="输出目录")
     return ap.parse_args(argv)
 
@@ -186,7 +188,8 @@ def main(argv=None) -> int:
     outdir.mkdir(parents=True, exist_ok=True)
     results = outdir / "results"
     results.mkdir(parents=True, exist_ok=True)
-    db = outdir / "web.db"
+    db = (Path(args.db).expanduser().resolve() if args.db
+          else outdir / "web.db")
 
     from experiments.heterogeneous_production import production as P
 

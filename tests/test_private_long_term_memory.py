@@ -118,6 +118,17 @@ class TestService:
         decayed = ltm.decay_unused("agent_a", "T2")
         assert decayed[0].weight < 1.5
 
+    def test_read_through_long_term_marks_used(self, db):
+        store = PrivateLongTermMemoryStore(db)
+        store.upsert("agent_a", make_entry(
+            summary="m", weight=1.0, entry_id="ltm-x"))
+        ltm = PrivateLongTermMemoryService(
+            store, PrivateShortTermMemoryStore(db))
+        data = ltm.read("agent_a", "ltm-x", task_id="T1")
+        assert data["entry"]["weight"] == 1.5
+        assert data["entry"]["use_count"] == 1
+        assert data["entry"]["last_used_task_id"] == "T1"
+
     def test_short_term_reinforce(self, db):
         stm = PrivateShortTermMemoryService(PrivateShortTermMemoryStore(db))
         stm.add_from_final("agent_a", "T1",
@@ -159,3 +170,5 @@ class TestPromptWiring:
         assert "long_term_memory_mark_used" in src
         assert "long_term_memory_consolidate" in src
         assert "短期记忆条目数" in src
+        assert "{last_memory_usage}" in src
+        assert "长期记忆使用情况" in src

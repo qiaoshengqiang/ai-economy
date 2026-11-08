@@ -351,6 +351,9 @@ PROMPT = """你是这次长期生产任务的一名参与者。这是**正式生
 （以上只是**当前环境事实**，不是要求。你可以在合法的命名空间里
   创建新的 Artifact，也可以选择已有的路径。）
 
+========== 上次任务长期记忆使用情况 ==========
+{last_memory_usage}
+
 ========== 你的长期记忆（高权重摘要，只有你能读）==========
 {long_term_memory}
 
@@ -1443,6 +1446,42 @@ def _close_stage(rt: Any, log: Dict[str, Any]) -> None:
         log["long_term_memory_decay_error"] = (
             f"{type(exc).__name__}: {exc}")
 
+    # 任务结束：每个 Agent 显式看到“长期记忆使用情况”。
+    try:
+        ltm = _long_term_memory(rt)
+        usage = {}
+        print("\n========== 长期记忆使用情况（任务结束）==========")
+        for aid in AGENTS:
+            entries = ltm.all(aid)
+            used = [e for e in entries if e.last_used_task_id == TASK_ID]
+            unused = [e for e in entries if e.last_used_task_id != TASK_ID]
+            lines = [
+                f"used {len(used)} / {len(entries)} 条",
+            ]
+            if used:
+                lines.append("  used:")
+                for e in used:
+                    lines.append(
+                        f"    [{e.entry_id}] weight={e.weight:.1f} "
+                        f"use_count={e.use_count} summary={e.summary[:80]}")
+            if unused:
+                lines.append(
+                    f"  unused: {len(unused)} 条（权重已下降；"
+                    "可用 long_term_memory_search/read 主动查看）")
+            text = "\n".join(lines)
+            usage[aid] = {
+                "used": [e.to_dict() for e in used],
+                "unused_count": len(unused),
+                "total": len(entries),
+            }
+            _LAST_MEMORY_USAGE[aid] = text
+            print(f"\n{aid}: {text}")
+        log["long_term_memory_usage"] = usage
+        print("=" * 55)
+    except Exception as exc:                              # noqa: BLE001
+        log["long_term_memory_usage_error"] = (
+            f"{type(exc).__name__}: {exc}")
+
     from stage import StageStore
 
     try:
@@ -1750,6 +1789,8 @@ def _working_memory(rt: Any) -> PublicWorkingMemoryService:
 #: 每个 (agent, task) 的短期记忆**只从 DB 读一次**，之后用缓存。
 _SHORT_TERM_CACHE: Dict[tuple, str] = {}
 _LONG_TERM_CACHE: Dict[tuple, str] = {}
+#: 上一次任务结束时每个 Agent 的长期记忆使用报告（下一次 prompt 可见）。
+_LAST_MEMORY_USAGE: Dict[str, str] = {}
 
 
 def _short_term_memory(rt: Any) -> PrivateShortTermMemoryService:
@@ -1787,7 +1828,8 @@ def _ltm_search(rt: Any):
 
 def _ltm_read(rt: Any):
     service = _long_term_memory(rt)
-    return lambda agent_id, entry_id: service.read(agent_id, entry_id)
+    return lambda agent_id, entry_id: service.read(
+        agent_id, entry_id, task_id=TASK_ID)
 
 
 def _ltm_mark_used(rt: Any):
@@ -2397,6 +2439,8 @@ def _turn(rt: Any, bridge: Any, st: Any, stage: Any, aid: str, rnd: int,
     except Exception as exc:                              # noqa: BLE001
         long_term_text = (
             f"（长期记忆读取失败：{type(exc).__name__}: {exc}）")
+    last_memory_usage = _LAST_MEMORY_USAGE.get(
+        aid, "（没有上一次任务的长期记忆使用记录）")
 
     # 维护反馈：当前版本差 + 上一轮以来积累的失误/返工/认知失败信号。
     try:
@@ -2416,6 +2460,7 @@ def _turn(rt: Any, bridge: Any, st: Any, stage: Any, aid: str, rnd: int,
         completion=_completion_facts(rt),
         workspace=_workspace_facts(gw, aid),
         long_term_memory=long_term_text,
+        last_memory_usage=last_memory_usage,
         short_term_memory=short_term_text,
         private_working_memory=private_wm_text,
         maintenance_feedback=feedback,
@@ -2427,11 +2472,13 @@ def _turn(rt: Any, bridge: Any, st: Any, stage: Any, aid: str, rnd: int,
     turn["prompt_chars"] = len(prompt)
     turn["memory_chars"] = {
         "long_term": len(long_term_text),
+        "last_usage": len(last_memory_usage),
         "short_term": len(short_term_text),
         "private": len(private_wm_text),
         "public": len(working_memory_text),
-        "total": (len(long_term_text) + len(short_term_text)
-                  + len(private_wm_text) + len(working_memory_text)),
+        "total": (len(long_term_text) + len(last_memory_usage)
+                  + len(short_term_text) + len(private_wm_text)
+                  + len(working_memory_text)),
     }
 
     a = next(x for x in rt.economy.all_agents() if x.agent_id == aid)

@@ -42,6 +42,34 @@ decay(entry, task_id)      → 如果本轮没使用，weight -= 0.2
 - 其余长期条目自动 `decay_unused`；
 - 权重 clamp 到 `0.1..10`。
 
+### 通过长期记忆读取短期存档 = 使用
+
+`long_term_memory_read` 不只是读：
+
+```text
+read(agent_id, entry_id, task_id)
+  → 返回长期条目 + 对应短期 archive
+  → 自动 mark_used(agent_id, [entry_id], task_id)
+  → weight += 0.5, use_count += 1
+```
+
+因此“通过长期记忆去查询了对应的短期记忆”本身就算一次使用，
+不需要 Agent 额外再发 `mark_used`。
+
+### 任务结束可见报告
+
+任务完成时打印/写入结果：
+
+```text
+========== 长期记忆使用情况（任务结束）==========
+agent_a: used 1 / 6 条
+  used:
+    [ltm-...] weight=2.1 use_count=3 summary=...
+  unused: 5 条（权重已下降；可用 search/read 主动查看）
+```
+
+下一次任务的 prompt 里也会带 `上次任务长期记忆使用情况`。
+
 ### 读取策略
 
 每个任务只注入 **top-N（默认 3）** 高权重条目：
