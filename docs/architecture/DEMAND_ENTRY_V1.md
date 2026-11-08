@@ -202,7 +202,7 @@ Deliverable: hello.py, tests/test_hello.py
 ```text
 Run: demand_613968b8
 Result: COMPLETED
-Turns: 24 / max 24
+Turns: 21 task turns（含 intake 共 22）
 Tokens: 118,657
 Cost: 1.186570 AIC
 Events: START → SUBMIT → VERIFY → COMPLETE
