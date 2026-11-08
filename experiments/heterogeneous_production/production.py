@@ -2059,6 +2059,14 @@ def _turn(rt: Any, bridge: Any, st: Any, stage: Any, aid: str, rnd: int,
         roster=_roster_facts(rt, aid),
         inbox=channels.render_inbox(inbox["received"]))
 
+    # 记忆注入成本的**字符**证据（token 只能按比例估算，见报告）。
+    turn["prompt_chars"] = len(prompt)
+    turn["memory_chars"] = {
+        "private": len(private_wm_text),
+        "public": len(working_memory_text),
+        "total": len(private_wm_text) + len(working_memory_text),
+    }
+
     a = next(x for x in rt.economy.all_agents() if x.agent_id == aid)
     a.brain.preflight_credential()
 
