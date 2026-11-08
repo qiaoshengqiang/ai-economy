@@ -83,3 +83,6 @@ experiments/agent_division/runs/
 experiments/tool_collab/runs/
 experiments/web_collab/runs/
 experiments/user_demand/runs/
+
+# Demand CLI runs (generated)
+runs/demand/

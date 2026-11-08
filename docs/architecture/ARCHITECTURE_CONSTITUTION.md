@@ -11,9 +11,9 @@
 | | |
 |---|---|
 | **文档状态** | 长期维护（不是一次性报告） |
-| **当前阶段** | Post-Change-Pipeline-Phase-1 · Agent Core V1 · Tool Runtime V1 · Vision Perception V1 已实现 |
+| **当前阶段** | Post-Change-Pipeline-Phase-1 · Agent Core V1 · Tool Runtime V1 · Vision Perception V1 · Demand Entry V1 已实现 |
 | **协议版本** | `protocol_version = "1"` |
-| **基线测试** | 以 `./dev.sh test` 当前输出为准（最近：4981 passed, 2 skipped, 30 deselected） |
+| **基线测试** | 以 `./dev.sh test` 当前输出为准（最近：5001 passed, 2 skipped, 30 deselected） |
 | **最后更新** | 文档对齐（Step 4F / Workspace Core v1 / Agent Core v1） |
 
 ---
@@ -971,6 +971,7 @@ Updated Architecture Knowledge      ← ADR + 本文档的更新
 | **Git** | ✅ Worktree Manager：真实 worktree · intent log · 幂等 · reconciliation · 崩溃一致性（ADR-0037） | branch / commit 自动化 · merge · patch 应用 · Test Runner · Acceptance |
 | **代码执行** | ✅ Tool Runtime V1：公共只读工具库（python / pytest / node / playwright）· 独立 run 目录 · `shell=False` · 超时/输出上限 | OS 级 sandbox · 网络出口策略 · 工具安装/checksum · 资源配额（V2） |
 | **视觉感知** | ✅ Vision Perception V1：`run_tool` 截图元数据 · 同一次认知的 `image_url` 回喂 · `deepseek-flash` 原生读图（ADR-0041） | Workspace 二进制资源 · Agent 间图片消息 · screenshot diff 基线 · 独立视觉预算 |
+| **人类入口 / 调度** | ✅ Demand Entry V1：`./dev.sh demand` · Agent 自主 `task_create` · 串行 RunScheduler（ADR-0042） | 邀请/接受 · Child Task · 价格谈判 · 并行调度 · Web UI |
 | **经济** | ✅ Agent · Wallet · Ledger · 余额计算 · `Economy.transfer` 原语 · LLM 成本记账 | Task 的 Payment · Escrow · Settlement（Agreement 只记录约定，不是支付） |
 | **通信可靠性** | ✅ 本地 Transport · Message Journal · Claim Lease | Retry Queue · Retry Scheduler · ACK · Redis · Kafka · Celery · Message Broker |
 | **网络** | ✅ 单机多进程（同一文件系统） | P2P · 多机 · 分布式部署 |
@@ -1026,9 +1027,10 @@ Multi-agent voting protocol · Complex ontology。
 | Agent Core v1 | Actions · Cognition · Experience · Reflection · Self Model · Stage · Production Budget · Delegation | — |
 | Tool Runtime V1 | 公共只读工具库（python / pytest / node / playwright）· 独立 run 目录 · 受控执行 | ADR-0040 |
 | Vision Perception V1 | 原生读图 · `run_tool` 截图回喂 · Playwright 配置发现 + smoke gate | ADR-0041 |
+| Demand Entry V1 | `./dev.sh demand` · Agent 自主 `task_create` · 串行 RunScheduler | ADR-0042 |
 | 实验线 | Human Demand → 多 Agent 协作生产 / 自主分工观察（`experiments/`） | — |
 
-**基线**：以 `./dev.sh test` 当前输出为准（最近：4981 passed）· Protocol `v1` · 25 个命令 · 28 张表
+**基线**：以 `./dev.sh test` 当前输出为准（最近：5001 passed）· Protocol `v1` · 25 个命令 · 28 张表
 
 ### 16.2 已知技术债（`CURRENT` 的真实问题）
 
