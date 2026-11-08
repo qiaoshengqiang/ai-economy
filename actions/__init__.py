@@ -65,6 +65,12 @@ from actions.shared_context_read import (
 from actions.run_tool import (
     ACTION_RUN_TOOL, RunToolExecutor,
 )
+from actions.public_working_memory import (
+    ACTION_PUBLIC_WORKING_MEMORY_READ,
+    ACTION_PUBLIC_WORKING_MEMORY_UPDATE,
+    PublicWorkingMemoryReadExecutor,
+    PublicWorkingMemoryUpdateExecutor,
+)
 from actions.read_payload import (
     CONFIRMATION_ACTIONS, OBSERVABLE_ACTIONS, PER_PAYLOAD_MAX_CHARS,
     TOTAL_MAX_CHARS, is_observable, observable_results,
@@ -88,6 +94,9 @@ __all__ = [
     "ACTION_ASSIGN_ACCEPTANCE", "AssignAcceptanceExecutor",
     "ACTION_SHARED_CONTEXT_READ", "SharedContextReadExecutor",
     "ACTION_RUN_TOOL", "RunToolExecutor",
+    "ACTION_PUBLIC_WORKING_MEMORY_READ",
+    "ACTION_PUBLIC_WORKING_MEMORY_UPDATE",
+    "PublicWorkingMemoryReadExecutor", "PublicWorkingMemoryUpdateExecutor",
     "ACTION_RESOURCE_CREATE", "ACTION_RESOURCE_HANDOFF",
     "ACTION_RESOURCE_RELEASE",
     "ResourceCreateExecutor", "ResourceHandoffExecutor",

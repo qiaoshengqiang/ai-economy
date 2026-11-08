@@ -200,6 +200,9 @@ def run_cognition(
                 last_prompt
                 + "\n\n========== 工作阶段结束 ==========\n"
                   "上面是工作阶段最后一步的真实返回。"
+                  "如果计划 / 分工 / 完成清单 / 要共享的抽象信息有变化，"
+                  "可以用 public_working_memory_update 更新公共工作记忆"
+                  "（expected_revision 用你看到的 revision）。"
                   "现在回到决策：继续工作、结束、或交付。")
             checkpoint_messages = base + [
                 {"role": "assistant",

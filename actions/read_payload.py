@@ -64,6 +64,10 @@ from actions.shared_context_read import ACTION_SHARED_CONTEXT_READ
 from actions.workspace_read import ACTION_WORKSPACE_READ
 from actions.workspace_write import ACTION_WORKSPACE_WRITE
 from actions.run_tool import ACTION_RUN_TOOL
+from actions.public_working_memory import (
+    ACTION_PUBLIC_WORKING_MEMORY_READ,
+    ACTION_PUBLIC_WORKING_MEMORY_UPDATE,
+)
 
 #: 结果里带**新的世界信息**、值得当场回喂给模型的动作。
 #:
@@ -76,6 +80,7 @@ OBSERVABLE_ACTIONS = frozenset({
     ACTION_PUBLIC_QUERY,
     ACTION_SHARED_CONTEXT_READ,
     ACTION_RUN_TOOL,
+    ACTION_PUBLIC_WORKING_MEMORY_READ,
 })
 
 #: 明确**不是**观察类 —— 它们的结果只是「我刚才做了什么」的确认。
@@ -94,6 +99,7 @@ CONFIRMATION_ACTIONS = frozenset({
     ACTION_RESOURCE_RELEASE,
     ACTION_PRIVATE_WRITE,
     ACTION_PRIVATE_DELETE,
+    ACTION_PUBLIC_WORKING_MEMORY_UPDATE,
 })
 
 #: 单条读取结果最多回喂多少字符。
@@ -159,6 +165,9 @@ def _payload_of(action_type: str, output: Any) -> Optional[str]:
 
     if action_type == ACTION_RUN_TOOL:
         return _tool_output_text(output)
+
+    if action_type == ACTION_PUBLIC_WORKING_MEMORY_READ:
+        return json.dumps(output, ensure_ascii=False, indent=2)
 
     if action_type in _CONTENT_ACTIONS:
         content = output.get("content")

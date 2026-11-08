@@ -75,6 +75,19 @@ TABLE_WORKTREE_INTENTS: Final = "worktree_intents"
 #     Worktree Event 的订阅者是 Change Pipeline / CI）。
 TABLE_WORKTREE_EVENTS: Final = "worktree_events"
 
+# ---- Public Working Memory（Task 范围内的公共工作记忆）----
+# 【为什么独立于 Shared Context】
+#     Shared Context 是 Proposal → Alignment 后的**共同认知**；
+#     Public Working Memory 是可写的**操作状态**（计划/分工/清单/进度）。
+#     两者生命周期与写入规则不同，不能混成一张表。
+#
+# 【为什么存整份快照】
+#     工作记忆是**小对象**；快照让 Revision N 的读取是 O(1)，
+#     历史 append-only，便于审计。与 Shared Context 同一模式。
+TABLE_PUBLIC_WORKING_MEMORY: Final = "task_public_working_memory"
+TABLE_PUBLIC_WORKING_MEMORY_REVISIONS: Final = (
+    "task_public_working_memory_revisions")
+
 
 # ============================================================
 # 建表 SQL
@@ -996,6 +1009,35 @@ SCHEMA_STATEMENTS: Final[tuple[str, ...]] = (
         last_error      TEXT,
         created_at      TEXT NOT NULL,
         updated_at      TEXT NOT NULL
+    )
+    """,
+
+    # --------------------------------------------------------
+    # Public Working Memory
+    # --------------------------------------------------------
+    # 🔒 当前指针表：**唯一会被 UPDATE** 的表（CAS 在 revision 上）。
+    #    payload 是整份工作记忆的 JSON 快照。
+    """
+    CREATE TABLE IF NOT EXISTS task_public_working_memory (
+        task_id         TEXT PRIMARY KEY,
+        revision        INTEGER NOT NULL,
+        payload         TEXT NOT NULL,
+        updated_at      TEXT NOT NULL,
+        updated_by      TEXT NOT NULL,
+        FOREIGN KEY (task_id) REFERENCES tasks (task_id)
+    )
+    """,
+
+    # 历史版本：append-only，永不 UPDATE / DELETE。
+    """
+    CREATE TABLE IF NOT EXISTS task_public_working_memory_revisions (
+        task_id         TEXT NOT NULL,
+        revision        INTEGER NOT NULL,
+        payload         TEXT NOT NULL,
+        author          TEXT NOT NULL,
+        created_at      TEXT NOT NULL,
+        PRIMARY KEY (task_id, revision),
+        FOREIGN KEY (task_id) REFERENCES tasks (task_id)
     )
     """,
 )

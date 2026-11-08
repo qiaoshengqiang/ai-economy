@@ -73,6 +73,7 @@ from core.money import Money                                    # noqa: E402
 from core.task import OfferType, Task, TaskStatus               # noqa: E402
 from core.task_store import TaskStore                           # noqa: E402
 from core.task_context_store import TaskContextStore
+from core.public_working_memory_store import PublicWorkingMemoryStore
 from core.workspace_core import normalize_path                 # noqa: E402
 from core.workspace_store import WorkspaceStore                 # noqa: E402
 from change import GitManager, WorktreeManager                   # noqa: E402
@@ -88,6 +89,9 @@ from services import (
     TaskExecutionService,  # noqa: E402
     TaskAlignmentService,  # noqa: E402
     TaskService,  # noqa: E402
+)
+from services.public_working_memory_service import (  # noqa: E402
+    PublicWorkingMemoryService,
 )
 from core.paths import ensure_runtime_dirs                      # noqa: E402
 from llm import LLMCallRecorder, LLMRouter, LLMError            # noqa: E402
@@ -174,6 +178,9 @@ class Runtime:
     decision_policies: Dict[str, Any]
     contexts: TaskContextStore
     alignment: TaskAlignmentService
+    #: Task 范围内的公共工作记忆（计划/分工/清单/进度）。
+    #: 🔒 不是 Task Core，也不是 Shared Context。
+    public_working_memory: PublicWorkingMemoryService
 
     # ---- Workspace Core v1（收尾阶段接入组合根）----
     # 【依赖方向】
@@ -1227,6 +1234,12 @@ def build_runtime(
     contexts = TaskContextStore(db=economy.db)
     alignment = TaskAlignmentService(tasks=tasks, contexts=contexts)
 
+    # ---- Public Working Memory（Task 范围） ----
+    # 🔒 与 Shared Context 平行，但不走 Alignment：
+    #    它是可写的操作状态，不是“已确认的共同认知”。
+    public_working_memory = PublicWorkingMemoryService(
+        PublicWorkingMemoryStore(db=economy.db), tasks=tasks)
+
     task_service = TaskService(
         store=tasks,
         directory=directory,
@@ -1303,6 +1316,7 @@ def build_runtime(
         decision_policies=decision_policies,
         contexts=contexts,
         alignment=alignment,
+        public_working_memory=public_working_memory,
         delegations=delegations,
         delegation_service=delegation_service,
         task_budgets=task_budgets,
@@ -3182,6 +3196,8 @@ def _reset_demo_tasks(runtime: Runtime, task_ids) -> int:
             #     用 PRAGMA 把「所有指向 tasks 的表」跟这个列表对账。
             for table in ("task_context_changes", "task_context_revisions",
                           "task_shared_contexts",
+                          "task_public_working_memory_revisions",
+                          "task_public_working_memory",
                           "task_executions", "task_agreements",
                           "task_offers", "tasks"):
                 cursor = conn.execute(
@@ -6513,8 +6529,11 @@ def cmd_context_demo(runtime: Runtime, args: argparse.Namespace) -> int:
     # 清理上次运行的残留（外键要求先删子表）
     with economy.db.transaction() as conn:
         for table in ("task_context_changes", "task_context_revisions",
-                      "task_shared_contexts", "task_executions",
-                      "task_agreements", "task_offers", "tasks"):
+                      "task_shared_contexts",
+                      "task_public_working_memory_revisions",
+                      "task_public_working_memory",
+                      "task_executions", "task_agreements",
+                      "task_offers", "tasks"):
             conn.execute(f"DELETE FROM {table} WHERE task_id = ?", (task_id,))
 
     print()

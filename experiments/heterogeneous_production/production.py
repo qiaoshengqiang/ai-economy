@@ -60,6 +60,7 @@ from actions import (  # noqa: E402
     AssignAcceptanceExecutor, SharedContextReadExecutor,
     ResourceCreateExecutor, ResourceHandoffExecutor,
     ResourceReleaseExecutor, RunToolExecutor,
+    PublicWorkingMemoryReadExecutor, PublicWorkingMemoryUpdateExecutor,
     WorkspaceReadExecutor, WorkspaceWriteExecutor,
 )
 from services.messaging import send_message_as  # noqa: E402
@@ -75,6 +76,12 @@ from services.resource_control import (  # noqa: E402
 from services.artifacts import (  # noqa: E402
     MODE_APPEND, MODE_CREATE, MODE_REPLACE,
     provision_namespaces, read_artifact, write_artifact,
+)
+from core.public_working_memory_store import (  # noqa: E402
+    PublicWorkingMemoryStore,
+)
+from services.public_working_memory_service import (  # noqa: E402
+    PublicWorkingMemoryService,
 )
 
 HERE = Path(__file__).resolve().parent
@@ -314,6 +321,9 @@ PROMPT = """你是这次长期生产任务的一名参与者。这是**正式生
 （以上只是**当前环境事实**，不是要求。你可以在合法的命名空间里
   创建新的 Artifact，也可以选择已有的路径。）
 
+========== 公共工作记忆（Task 范围，所有参与者可见）==========
+{working_memory}
+
 ========== 参与这个 Task 的其他 Agent（Agent Directory 事实）==========
 {roster}
 
@@ -512,6 +522,28 @@ PROMPT = """你是这次长期生产任务的一名参与者。这是**正式生
           - 读到的内容会**当场**回到你手上（与 `workspace_read` 同一条路径），
             你可以在**同一次判断里**继续决定做什么；
           - 它**只读**：不改变任何状态、不产生新 revision。
+
+  · "public_working_memory_read"
+        无参数。
+        作用：读这个 Task 的**公共工作记忆**当前版本（revision + items）。
+        🔒 它与 Shared Context 不同：Shared Context 是已确认的共同认知；
+           公共工作记忆是可变的操作状态（计划 / 分工 / 清单 / 进度 / 摘要）。
+
+  · "public_working_memory_update"
+        parameters:
+          {{"expected_revision": <当前 revision>,
+            "items": {{"<key>": {{"kind": "plan|assignment|checklist|progress|note",
+                                  "value": <JSON>}}}},
+            "remove_keys": ["<key>", ...]}}
+
+        作用：基于当前 revision 更新公共工作记忆。
+        约束（环境事实）：
+          - 只有**这条 Task 的人**能写；
+          - `expected_revision` 必须等于你读到的 revision，否则会被并发拒绝；
+          - 禁止用 `status` / `agreed_price` / `contractor` / `budget`
+            作为 key —— 这些是 Task Core 的权威字段；
+          - 单条 value 上限 4000 字符，整份上限 32000 字符；
+          - 它**不改变** Task 状态，也不自动成为 Shared Context 的共识。
 
 ========== 结项协议（环境事实）==========
 本 Task 的 task_id = {task_id}
@@ -1425,6 +1457,31 @@ def _send_fn(bridge: Any) -> Any:
     return _send
 
 
+def _working_memory(rt: Any) -> PublicWorkingMemoryService:
+    service = getattr(rt, "public_working_memory", None)
+    if service is not None:
+        return service
+    return PublicWorkingMemoryService(
+        PublicWorkingMemoryStore(rt.economy.db), rt.tasks)
+
+
+def _wm_read(rt: Any):
+    service = _working_memory(rt)
+    return lambda agent_id: service.read(TASK_ID, agent_id)
+
+
+def _wm_update(rt: Any):
+    service = _working_memory(rt)
+
+    def update(agent_id, *, expected_revision, items=None, remove_keys=None):
+        return service.update(
+            TASK_ID, agent_id,
+            expected_revision=expected_revision,
+            items=items, remove_keys=remove_keys)
+
+    return update
+
+
 def _action_seam(rt: Any, bridge: Any = None) -> tuple:
     """
     🔴 M3：把「写操作 → ActionResult → Experience」接起来。
@@ -1522,7 +1579,12 @@ def _action_seam(rt: Any, bridge: Any = None) -> tuple:
         #    缺的只是 Agent 够得到的入口。
         # 🔒 **无参数**：读哪条 Task 由组合根绑定，
         #    以什么身份读由 intent.agent_id 决定 —— 两者 Agent 都指定不了。
-        SharedContextReadExecutor(_bind_context_read(rt, read_shared_context))])
+        SharedContextReadExecutor(_bind_context_read(rt, read_shared_context)),
+        # 2026-11-08 加入公共工作记忆：计划 / 分工 / 完成清单 / 进度。
+        # 🔒 task_id 在组合根绑定；agent_id 只取自 intent。
+        PublicWorkingMemoryReadExecutor(_wm_read(rt)),
+        PublicWorkingMemoryUpdateExecutor(_wm_update(rt)),
+    ])
     try:
         experience_store = ExperienceStore(rt.economy.db)
     except Exception as exc:                              # noqa: BLE001
@@ -1898,12 +1960,20 @@ def _turn(rt: Any, bridge: Any, st: Any, stage: Any, aid: str, rnd: int,
     # 🔒 `prompt_template` 可换：让**别的实验**用它**自己的**环境事实，
     #    而不是继承本实验的整套（Stage / Session / 结项待办 / 「轮」…）。
     _template = (prompt_template if prompt_template is not None else PROMPT)
+    try:
+        working_memory_text = _working_memory(rt).render(TASK_ID, aid)
+    except Exception as exc:                              # noqa: BLE001
+        # Fail-soft ≠ Fail-silent：读不到工作记忆不应让整轮崩掉，
+        # 但必须让 Agent 看到「这次读不到」。
+        working_memory_text = (
+            f"（公共工作记忆读取失败：{type(exc).__name__}: {exc}）")
     prompt = _template.format(
         # 🔴 `demand` 可覆盖：**「人类命令」只递给被指定的那个 Agent**。
         demand=DEMAND if demand is None else demand,
         stage=stage_txt, ws=WS_ID, task_id=TASK_ID,
         completion=_completion_facts(rt),
         workspace=_workspace_facts(gw, aid),
+        working_memory=working_memory_text,
         roster=_roster_facts(rt, aid),
         inbox=channels.render_inbox(inbox["received"]))
 

@@ -30,10 +30,10 @@
 | | |
 |---|---|
 | **阶段** | `Workspace Core V1 已冻结 · Agent Core V1 已实现 · Tool Runtime V1 已实现 · 观察实验` |
-| **测试基线** | 以 `./dev.sh test` 当前输出为准（最近：**4837 passed, 2 skipped, 30 deselected**） |
+| **测试基线** | 以 `./dev.sh test` 当前输出为准（最近：**4867 passed, 2 skipped, 30 deselected**） |
 | **协议版本** | `protocol_version = "1"` |
 | **命令数** | 25（`./dev.sh` 查看全部） |
-| **数据库表** | **21** |
+| **数据库表** | **23** |
 | **工作区状态** | 应当干净 |
 
 ### 已完成
@@ -151,8 +151,8 @@ tool_runtime/   →  core/ + 标准库（subprocess）；不依赖 services/
 | **3** Task Workspace | Task | **`FUTURE`**（完整模型） | 实际共享的文件与代码。Workspace Core v1 已实现资源树 / Controller / Lock / Revision / Audit / Gateway；Patch / Test / Acceptance 等完整生命周期仍为 `FUTURE`。见 [`TASK_WORKSPACE.md`](docs/architecture/TASK_WORKSPACE.md) |
 | **4** External / World State | 系统外 | `FUTURE` | 外部 API / 网络 / Git remote。**无** |
 
-> 注：**Workspace Core v1**（资源树 / Controller / Lock / Revision / Audit / Gateway）是 `CURRENT`；
-> Memory 四层里的 **Task Workspace** 指完整模型（Patch / Test / Acceptance），仍为 `FUTURE`。
+> 注：**Workspace Core v1** 是 `CURRENT`；Memory 四层里的 **Task Workspace** 是完整模型（`FUTURE`）。
+> **Public Working Memory（`CURRENT`）不在这四层里** —— 见 [`PUBLIC_WORKING_MEMORY.md`](docs/architecture/PUBLIC_WORKING_MEMORY.md)。
 
 **`Memory ≠ Alignment`** —— Shared Context 是**结果**，Alignment 是**机制**。
 

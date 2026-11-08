@@ -13,7 +13,7 @@
 | **文档状态** | 长期维护（不是一次性报告） |
 | **当前阶段** | Post-Change-Pipeline-Phase-1 · Agent Core V1 · Tool Runtime V1 已实现 |
 | **协议版本** | `protocol_version = "1"` |
-| **基线测试** | 以 `./dev.sh test` 当前输出为准（最近：4837 passed, 2 skipped, 30 deselected） |
+| **基线测试** | 以 `./dev.sh test` 当前输出为准（最近：4867 passed, 2 skipped, 30 deselected） |
 | **最后更新** | 文档对齐（Step 4F / Workspace Core v1 / Agent Core v1） |
 
 ---
@@ -1026,7 +1026,7 @@ Multi-agent voting protocol · Complex ontology。
 | Tool Runtime V1 | 公共只读工具库（python / pytest / node / playwright）· 独立 run 目录 · 受控执行 | ADR-0040 |
 | 实验线 | Human Demand → 多 Agent 协作生产 / 自主分工观察（`experiments/`） | — |
 
-**基线**：以 `./dev.sh test` 当前输出为准（最近：4837 passed）· Protocol `v1` · 25 个命令 · 21 张表
+**基线**：以 `./dev.sh test` 当前输出为准（最近：4867 passed）· Protocol `v1` · 25 个命令 · 23 张表
 
 ### 16.2 已知技术债（`CURRENT` 的真实问题）
 
