@@ -64,6 +64,8 @@ from actions import (  # noqa: E402
     ResourceReleaseExecutor, RunToolExecutor,
     PublicWorkingMemoryReadExecutor, PublicWorkingMemoryUpdateExecutor,
     PrivateWorkingMemoryReadExecutor, PrivateWorkingMemoryUpdateExecutor,
+    ShortTermMemoryReadExecutor, ShortTermMemoryUpdateExecutor,
+    ACTION_SHORT_TERM_MEMORY_UPDATE,
     WorkspaceReadExecutor, WorkspaceWriteExecutor,
 )
 from services.messaging import send_message_as  # noqa: E402
@@ -91,6 +93,12 @@ from core.private_working_memory_store import (  # noqa: E402
 )
 from services.private_working_memory_service import (  # noqa: E402
     PrivateWorkingMemoryService,
+)
+from core.private_short_term_memory_store import (  # noqa: E402
+    PrivateShortTermMemoryStore,
+)
+from services.private_short_term_memory_service import (  # noqa: E402
+    PrivateShortTermMemoryService,
 )
 
 HERE = Path(__file__).resolve().parent
@@ -329,6 +337,9 @@ PROMPT = """你是这次长期生产任务的一名参与者。这是**正式生
 
 （以上只是**当前环境事实**，不是要求。你可以在合法的命名空间里
   创建新的 Artifact，也可以选择已有的路径。）
+
+========== 你的短期记忆（跨任务摘要，只有你能读）==========
+{short_term_memory}
 
 ========== 你的私有工作记忆（只有你能读）==========
 {private_working_memory}
@@ -584,6 +595,27 @@ PROMPT = """你是这次长期生产任务的一名参与者。这是**正式生
           - 每次决策可以选择是否维护；
           - **每次工作结束**都值得检查一次；没有变化也可以空更新一次；
           - 重大问题 / 重大发现适合记录为 issue / finding。
+
+  · "short_term_memory_read"
+        无参数。
+        作用：读你的跨任务短期记忆（recent tasks / architecture / notable）。
+        🔒 任务开始时系统会把当前短期记忆加载一次到上下文。
+
+  · "short_term_memory_update"
+        parameters:
+          {{"expected_revision": <当前 revision>,
+            "entry_id": "<条目 id>",
+            "summary": "<可选>", "architecture": "<可选>",
+            "notable": "<可选>", "importance": 1..5,
+            "remove": false}}
+
+        作用：后续任务中发现短期记忆内容不正确时，修正或删除那个条目。
+        约束（环境事实）：
+          - 只有**你自己**的短期记忆；
+          - `expected_revision` 必须匹配；
+          - 任务结束时系统会自动追加一条本次任务的摘要；
+          - 短期记忆固定容量 8，超过一半会自动压缩，
+            更抽象的信息进入长期记忆（本版只存不读）。
 
 ========== 结项协议（环境事实）==========
 本 Task 的 task_id = {task_id}
@@ -1330,6 +1362,24 @@ def _close_stage(rt: Any, log: Dict[str, Any]) -> None:
     except Exception as exc:                              # noqa: BLE001
         log["private_working_memory_finalize_error"] = (
             f"{type(exc).__name__}: {exc}")
+        snapshots = {}
+
+    # 任务结束 → 每个 Agent 增加一条短期记忆（abstract summary）。
+    try:
+        stm = _short_term_memory(rt)
+        added = {}
+        for aid in AGENTS:
+            entry = stm.add_from_final(
+                aid, TASK_ID, snapshots.get(aid))
+            added[aid] = {
+                "entry_id": entry.entry_id,
+                "task_id": entry.task_id,
+                "importance": entry.importance,
+            }
+        log["short_term_memory_added"] = added
+    except Exception as exc:                              # noqa: BLE001
+        log["short_term_memory_add_error"] = (
+            f"{type(exc).__name__}: {exc}")
 
     from stage import StageStore
 
@@ -1635,6 +1685,37 @@ def _working_memory(rt: Any) -> PublicWorkingMemoryService:
         PublicWorkingMemoryStore(rt.economy.db), rt.tasks)
 
 
+#: 每个 (agent, task) 的短期记忆**只从 DB 读一次**，之后用缓存。
+_SHORT_TERM_CACHE: Dict[tuple, str] = {}
+
+
+def _short_term_memory(rt: Any) -> PrivateShortTermMemoryService:
+    service = getattr(rt, "private_short_term_memory", None)
+    if service is not None:
+        return service
+    return PrivateShortTermMemoryService(
+        PrivateShortTermMemoryStore(rt.economy.db))
+
+
+def _stm_read(rt: Any):
+    service = _short_term_memory(rt)
+    return lambda agent_id: service.read(agent_id)
+
+
+def _stm_update(rt: Any):
+    service = _short_term_memory(rt)
+
+    def update(agent_id, *, expected_revision, entry_id, summary=None,
+               architecture=None, notable=None, importance=None,
+               remove=False):
+        return service.update(
+            agent_id, expected_revision=expected_revision, entry_id=entry_id,
+            summary=summary, architecture=architecture, notable=notable,
+            importance=importance, remove=remove)
+
+    return update
+
+
 def _private_working_memory(rt: Any) -> PrivateWorkingMemoryService:
     service = getattr(rt, "private_working_memory", None)
     if service is not None:
@@ -1782,6 +1863,9 @@ def _action_seam(rt: Any, bridge: Any = None) -> tuple:
         # 私有工作记忆：只有 intent.agent_id 自己的那份。
         PrivateWorkingMemoryReadExecutor(_pwm_read(rt)),
         PrivateWorkingMemoryUpdateExecutor(_pwm_update(rt)),
+        # 短期记忆：跨任务摘要；任务开始时读一次，任务结束自动追加。
+        ShortTermMemoryReadExecutor(_stm_read(rt)),
+        ShortTermMemoryUpdateExecutor(_stm_update(rt)),
     ])
     try:
         experience_store = ExperienceStore(rt.economy.db)
@@ -2171,6 +2255,16 @@ def _turn(rt: Any, bridge: Any, st: Any, stage: Any, aid: str, rnd: int,
         private_wm_text = (
             f"（私有工作记忆读取失败：{type(exc).__name__}: {exc}）")
 
+    # 短期记忆：每个 (agent, task) **只从 DB 读一次**。
+    try:
+        cache_key = (aid, TASK_ID)
+        if cache_key not in _SHORT_TERM_CACHE:
+            _SHORT_TERM_CACHE[cache_key] = _short_term_memory(rt).render(aid)
+        short_term_text = _SHORT_TERM_CACHE[cache_key]
+    except Exception as exc:                              # noqa: BLE001
+        short_term_text = (
+            f"（短期记忆读取失败：{type(exc).__name__}: {exc}）")
+
     # 维护反馈：当前版本差 + 上一轮以来积累的失误/返工/认知失败信号。
     try:
         public_mem_obj = _working_memory(rt).read(TASK_ID, aid)
@@ -2188,6 +2282,7 @@ def _turn(rt: Any, bridge: Any, st: Any, stage: Any, aid: str, rnd: int,
         stage=stage_txt, ws=WS_ID, task_id=TASK_ID,
         completion=_completion_facts(rt),
         workspace=_workspace_facts(gw, aid),
+        short_term_memory=short_term_text,
         private_working_memory=private_wm_text,
         maintenance_feedback=feedback,
         working_memory=working_memory_text,
@@ -2197,9 +2292,11 @@ def _turn(rt: Any, bridge: Any, st: Any, stage: Any, aid: str, rnd: int,
     # 记忆注入成本的**字符**证据（token 只能按比例估算，见报告）。
     turn["prompt_chars"] = len(prompt)
     turn["memory_chars"] = {
+        "short_term": len(short_term_text),
         "private": len(private_wm_text),
         "public": len(working_memory_text),
-        "total": len(private_wm_text) + len(working_memory_text),
+        "total": (len(short_term_text) + len(private_wm_text)
+                  + len(working_memory_text)),
     }
 
     a = next(x for x in rt.economy.all_agents() if x.agent_id == aid)
@@ -2288,6 +2385,15 @@ def _turn(rt: Any, bridge: Any, st: Any, stage: Any, aid: str, rnd: int,
             f"{type(exc).__name__}: {exc}")
     turn["maintenance_signals_after"] = list(
         _MAINTENANCE_SIGNALS.get(aid, []))
+
+    # 短期记忆被修正后，下一次 prompt 重新从 DB 读。
+    if any(str(getattr(intent, "action_type", ""))
+           == ACTION_SHORT_TERM_MEMORY_UPDATE
+           and result is not None and bool(getattr(result, "success", False))
+           for intent, result in zip(
+               getattr(run, "action_intents", []) or [],
+               getattr(run, "action_results", []) or [])):
+        _SHORT_TERM_CACHE.pop((aid, TASK_ID), None)
 
     # 🔒 act() 内部经 run_cognition() → self.generate()，
     #    所以这次 LLM 调用的事实仍可从 Agent 上取到。

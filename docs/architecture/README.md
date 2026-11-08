@@ -27,6 +27,7 @@
 | [TASK_SHARED_CONTEXT.md](TASK_SHARED_CONTEXT.md) | 中 | Task Shared Context / Alignment 的数据模型规范 | 做 Shared Context 相关工作时 |
 | [PUBLIC_WORKING_MEMORY.md](PUBLIC_WORKING_MEMORY.md) | 中 | **公共工作记忆**：Task 范围计划 / 分工 / 清单 / 进度（`CURRENT`，公共区） | 做工作记忆 / owner 确认清单 / 验收门时 |
 | [PRIVATE_WORKING_MEMORY.md](PRIVATE_WORKING_MEMORY.md) | 中 | **私有工作记忆**：单个 Agent 的抽象结构 / 分支 / 发现 / 问题（`CURRENT`） | 做私有记忆 / 工作结构 / 短期记忆前置时 |
+| [PRIVATE_SHORT_TERM_MEMORY.md](PRIVATE_SHORT_TERM_MEMORY.md) | 中 | **私有短期记忆**：跨任务摘要，固定容量 8，超过一半压缩（`CURRENT`） | 做短期/长期记忆、任务总结时 |
 | [TASK_WORKSPACE.md](TASK_WORKSPACE.md) | 长 | **Task Workspace 正式架构定义**（`FUTURE`） | 做 Workspace / Permission / Write Lock 时 |
 | [TASK_ORIGIN_LINEAGE.md](TASK_ORIGIN_LINEAGE.md) | 中 | **Task Origin / Creator / Lineage / Funding 逻辑模型**（`FUTURE`） | 做 Child Task / 任务谱系 / 外包时 |
 | [RESOURCE_LAYER.md](RESOURCE_LAYER.md) | 中 | **Resource · Controller · Authorization · Delegation · Cascade Revocation**（`FUTURE`） | 做 Workspace 内部资源控制时 |

@@ -72,6 +72,10 @@ from actions.private_working_memory import (
     ACTION_PRIVATE_WORKING_MEMORY_READ,
     ACTION_PRIVATE_WORKING_MEMORY_UPDATE,
 )
+from actions.private_short_term_memory import (
+    ACTION_SHORT_TERM_MEMORY_READ,
+    ACTION_SHORT_TERM_MEMORY_UPDATE,
+)
 
 #: 结果里带**新的世界信息**、值得当场回喂给模型的动作。
 #:
@@ -86,6 +90,7 @@ OBSERVABLE_ACTIONS = frozenset({
     ACTION_RUN_TOOL,
     ACTION_PUBLIC_WORKING_MEMORY_READ,
     ACTION_PRIVATE_WORKING_MEMORY_READ,
+    ACTION_SHORT_TERM_MEMORY_READ,
 })
 
 #: 明确**不是**观察类 —— 它们的结果只是「我刚才做了什么」的确认。
@@ -106,6 +111,7 @@ CONFIRMATION_ACTIONS = frozenset({
     ACTION_PRIVATE_DELETE,
     ACTION_PUBLIC_WORKING_MEMORY_UPDATE,
     ACTION_PRIVATE_WORKING_MEMORY_UPDATE,
+    ACTION_SHORT_TERM_MEMORY_UPDATE,
 })
 
 #: 单条读取结果最多回喂多少字符。
@@ -173,7 +179,8 @@ def _payload_of(action_type: str, output: Any) -> Optional[str]:
         return _tool_output_text(output)
 
     if action_type in (ACTION_PUBLIC_WORKING_MEMORY_READ,
-                       ACTION_PRIVATE_WORKING_MEMORY_READ):
+                       ACTION_PRIVATE_WORKING_MEMORY_READ,
+                       ACTION_SHORT_TERM_MEMORY_READ):
         return json.dumps(output, ensure_ascii=False, indent=2)
 
     if action_type in _CONTENT_ACTIONS:

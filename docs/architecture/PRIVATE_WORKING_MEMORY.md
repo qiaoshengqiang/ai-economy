@@ -255,10 +255,17 @@ agent_a 收到的反馈（第 2/3 轮）：
 
 ---
 
-## 9. 未实现
+## 9. 已做 / 未做
 
-- **短期记忆**：finalize 返回的 snapshot 还没有写入短期记忆存储；
-- **长期记忆**：跨 Task 的沉淀；
-- **自动 consolidation**：当前由 Agent 显式 update；
+已做：
+
+- finalize 的 snapshot 自动写入 **Private Short-Term Memory**
+  （见 [`PRIVATE_SHORT_TERM_MEMORY.md`](PRIVATE_SHORT_TERM_MEMORY.md)）；
+- 短期记忆的固定容量 / 压缩 / long-term digest stub。
+
+未实现：
+
+- **长期记忆检索 / 摘要 / 淘汰**；
+- **自动 consolidation** 的语义质量（当前由 final snapshot 机械生成）；
 - **私有记忆的检索 / 摘要 / 淘汰策略**；
 - **owner checklist 的协议级确认门**（按最高原则，不做硬约束）。

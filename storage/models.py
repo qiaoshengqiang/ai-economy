@@ -96,6 +96,12 @@ TABLE_PRIVATE_WORKING_MEMORY: Final = "agent_private_working_memory"
 TABLE_PRIVATE_WORKING_MEMORY_REVISIONS: Final = (
     "agent_private_working_memory_revisions")
 
+# ---- Private Short / Long-Term Memory（跨 Task）----
+# 【短期】固定容量（8），超过一半时压缩，digest 进入长期。
+# 【长期】本版只存不读，留给后续长期记忆模块。
+TABLE_PRIVATE_SHORT_TERM_MEMORY: Final = "agent_short_term_memory"
+TABLE_PRIVATE_LONG_TERM_MEMORY: Final = "agent_long_term_memory"
+
 
 # ============================================================
 # 建表 SQL
@@ -1073,6 +1079,28 @@ SCHEMA_STATEMENTS: Final[tuple[str, ...]] = (
         created_at      TEXT NOT NULL,
         PRIMARY KEY (agent_id, task_id, revision),
         FOREIGN KEY (task_id) REFERENCES tasks (task_id)
+    )
+    """,
+
+    # --------------------------------------------------------
+    # Private Short / Long-Term Memory（跨 Task）
+    # --------------------------------------------------------
+    """
+    CREATE TABLE IF NOT EXISTS agent_short_term_memory (
+        agent_id        TEXT PRIMARY KEY,
+        revision        INTEGER NOT NULL,
+        payload         TEXT NOT NULL,
+        updated_at      TEXT NOT NULL
+    )
+    """,
+
+    """
+    CREATE TABLE IF NOT EXISTS agent_long_term_memory (
+        agent_id        TEXT NOT NULL,
+        entry_id        TEXT NOT NULL,
+        payload         TEXT NOT NULL,
+        created_at      TEXT NOT NULL,
+        PRIMARY KEY (agent_id, entry_id)
     )
     """,
 )

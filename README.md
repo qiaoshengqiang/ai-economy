@@ -168,7 +168,7 @@ LLM 只能**提出意图**，永远不能**直接改账**。
 | Tool Runtime V1 | 公共只读工具库（python / pytest / node / playwright）· 独立 run 目录 · 受控执行 | ✅ 已实现（ADR-0040） |
 | 实验线 | Human Demand → 多 Agent 协作生产 / 自主分工观察（`experiments/`） | 🚧 进行中 |
 
-**测试基线**：4902 passed / 2 skipped / 30 deselected
+**测试基线**：4929 passed / 2 skipped / 30 deselected
 
 ### ✅ Step 1：最小运行骨架（已完成）
 
@@ -2014,7 +2014,7 @@ ai-economy/
 │   ├── database.py            ← SQLite 连接、事务、迁移
 │   └── models.py              ← 表结构定义
 │
-├── tests/                     ← 4902 个测试 + 30 个真实 API 测试
+├── tests/                     ← 4929 个测试 + 30 个真实 API 测试
 └── data/
     └── economy.db             ← SQLite 数据库（运行产物，不进 git）
 ```

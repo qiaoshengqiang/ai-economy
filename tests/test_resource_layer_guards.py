@@ -604,6 +604,9 @@ class TestNoImplementation:
             # Private Working Memory（2026-11-08 任务书授权）
             "agent_private_working_memory",
             "agent_private_working_memory_revisions",
+            # Private Short / Long-Term Memory（2026-11-08）
+            "agent_short_term_memory",
+            "agent_long_term_memory",
         }
         assert expected_workspace_tables <= names, (
             f"Workspace Core 的 5 张表不全，缺少 "
@@ -625,8 +628,9 @@ class TestNoImplementation:
         # 13（原始）+ 5（Workspace Core v1）
         # + 3（Change Pipeline Phase 1）
         # + 2（Public Working Memory）
-        # + 2（Private Working Memory）= 25
-        assert len(names) == 25, (
-            f"表数应为 13 + 5 + 3 + 2 + 2 = 25，实际 {len(names)}："
+        # + 2（Private Working Memory）
+        # + 2（Private Short / Long-Term Memory）= 27
+        assert len(names) == 27, (
+            f"表数应为 13 + 5 + 3 + 2 + 2 + 2 = 27，实际 {len(names)}："
             f"{sorted(names)}"
         )

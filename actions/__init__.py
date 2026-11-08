@@ -77,6 +77,12 @@ from actions.private_working_memory import (
     PrivateWorkingMemoryReadExecutor,
     PrivateWorkingMemoryUpdateExecutor,
 )
+from actions.private_short_term_memory import (
+    ACTION_SHORT_TERM_MEMORY_READ,
+    ACTION_SHORT_TERM_MEMORY_UPDATE,
+    ShortTermMemoryReadExecutor,
+    ShortTermMemoryUpdateExecutor,
+)
 from actions.read_payload import (
     CONFIRMATION_ACTIONS, OBSERVABLE_ACTIONS, PER_PAYLOAD_MAX_CHARS,
     TOTAL_MAX_CHARS, is_observable, observable_results,
@@ -106,6 +112,8 @@ __all__ = [
     "ACTION_PRIVATE_WORKING_MEMORY_READ",
     "ACTION_PRIVATE_WORKING_MEMORY_UPDATE",
     "PrivateWorkingMemoryReadExecutor", "PrivateWorkingMemoryUpdateExecutor",
+    "ACTION_SHORT_TERM_MEMORY_READ", "ACTION_SHORT_TERM_MEMORY_UPDATE",
+    "ShortTermMemoryReadExecutor", "ShortTermMemoryUpdateExecutor",
     "ACTION_RESOURCE_CREATE", "ACTION_RESOURCE_HANDOFF",
     "ACTION_RESOURCE_RELEASE",
     "ResourceCreateExecutor", "ResourceHandoffExecutor",

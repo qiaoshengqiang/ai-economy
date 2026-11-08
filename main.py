@@ -75,6 +75,7 @@ from core.task_store import TaskStore                           # noqa: E402
 from core.task_context_store import TaskContextStore
 from core.public_working_memory_store import PublicWorkingMemoryStore
 from core.private_working_memory_store import PrivateWorkingMemoryStore
+from core.private_short_term_memory_store import PrivateShortTermMemoryStore
 from core.workspace_core import normalize_path                 # noqa: E402
 from core.workspace_store import WorkspaceStore                 # noqa: E402
 from change import GitManager, WorktreeManager                   # noqa: E402
@@ -96,6 +97,9 @@ from services.public_working_memory_service import (  # noqa: E402
 )
 from services.private_working_memory_service import (  # noqa: E402
     PrivateWorkingMemoryService,
+)
+from services.private_short_term_memory_service import (  # noqa: E402
+    PrivateShortTermMemoryService,
 )
 from core.paths import ensure_runtime_dirs                      # noqa: E402
 from llm import LLMCallRecorder, LLMRouter, LLMError            # noqa: E402
@@ -187,6 +191,8 @@ class Runtime:
     public_working_memory: PublicWorkingMemoryService
     #: 单个 Agent 的私有工作记忆（抽象结构 / 发现 / 问题）。
     private_working_memory: PrivateWorkingMemoryService
+    #: 单个 Agent 的私有短期记忆（跨 Task 摘要）。
+    private_short_term_memory: PrivateShortTermMemoryService
 
     # ---- Workspace Core v1（收尾阶段接入组合根）----
     # 【依赖方向】
@@ -1247,6 +1253,8 @@ def build_runtime(
         PublicWorkingMemoryStore(db=economy.db), tasks=tasks)
     private_working_memory = PrivateWorkingMemoryService(
         PrivateWorkingMemoryStore(db=economy.db), tasks=tasks)
+    private_short_term_memory = PrivateShortTermMemoryService(
+        PrivateShortTermMemoryStore(db=economy.db))
 
     task_service = TaskService(
         store=tasks,
@@ -1326,6 +1334,7 @@ def build_runtime(
         alignment=alignment,
         public_working_memory=public_working_memory,
         private_working_memory=private_working_memory,
+        private_short_term_memory=private_short_term_memory,
         delegations=delegations,
         delegation_service=delegation_service,
         task_budgets=task_budgets,
