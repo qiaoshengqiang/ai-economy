@@ -155,13 +155,18 @@ MIN_PRODUCTIVE_CHARS_PER_SESSION = 400
 
 BUDGET_AIC = 50.0
 
-#: 🔴 **单次响应的输出上限**（`requested_cognitive_budget` → Provider 的 `max_tokens`）。
+#: 🔴 **单次响应的输出硬上限**（`cognitive_budget_cap` → Provider 的 `max_tokens`）。
 #:
 #: 【它到底限制什么】
 #:     **只**限制一次响应的输出 token 数。不影响输入、轮数、墙钟、AIC。
 #:     ⚠️ 而且 **reasoning 与正文共享它** —— 实测 `novel_editor` 一次调用
 #:     用了 11705 output tokens 却只产出 826 字符，差额全在推理上。
 #:     所以「思考得多」会直接挤掉「能写多少」。
+#:
+#: 【2026-11-08 语义调整】
+#:     它现在是 Agent 的**硬上限**，不再是固定请求值。
+#:     Agent 可以在信封里按相设置 `cognitive_budget`；实际值取
+#:     min(Agent 偏好, 本上限)，Provider 再做结构裁剪。
 #:
 #: 【为什么从 8192 抬到 16384】（2026-10-09）
 #:     8192 是 2026-10-07 随 runner 一起引入的一个**保守值**
@@ -172,7 +177,8 @@ BUDGET_AIC = 50.0
 #:          `max_tokens` 从 4096 抬到了 16384（Claude Sonnet 4.5+）。
 #:       ② **Agent 配置本来就是 16384**（`config/config.yaml` 的
 #:          `brain.max_tokens`）—— 8192 反而把它**压低了一半**，
-#:          因为 `requested_cognitive_budget` 优先于配置的 `max_tokens`。
+#:          因为当时的 `requested_cognitive_budget` 优先于配置的
+#:          `max_tokens`（现在它已变成 Agent 自己的偏好）。
 #:       ③ 一次真实截断就是被 8192 撞出来的：作者要把整章写进 JSON 的
 #:          单个 `content` 字段，超了就截断 → `parse_intent` 全失败
 #:          → **整轮不写入、不报错**（RUN2 报告「阻塞点 ①」）。
@@ -2645,7 +2651,10 @@ def _turn(rt: Any, bridge: Any, st: Any, stage: Any, aid: str, rnd: int,
                     dispatcher=dispatcher,
                     task_id=TASK_ID,
                     session_started_at=session_started_at,
-                    requested_cognitive_budget=COGNITIVE_BUDGET,
+                    # 🔴 2026-11-08：这是 Human/实验给的**硬上限**，
+                    #    不是覆盖 Agent 偏好的固定请求。Agent 可以在信封里
+                    #    用 cognitive_budget 选择更低/更高（更高会被 cap）。
+                    cognitive_budget_cap=COGNITIVE_BUDGET,
                     # §5.3 purpose 由**调用方**声明，绝不从结果反推
                     call_purpose="cognition",
                     cognition_turn_id=cognition_turn_id,

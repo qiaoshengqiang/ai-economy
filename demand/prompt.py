@@ -8,7 +8,7 @@ Demand Entry V1 的 Prompt 构造
 from __future__ import annotations
 
 import json
-from typing import Any, Iterable, List
+from typing import Any, Dict, Iterable, List, Optional
 
 MAX_DIRECTORY_CHARS = 4_000
 MAX_WORKSPACE_CHARS = 6_000
@@ -128,6 +128,69 @@ def _safe(render: Any, fallback: str) -> str:
         return f"{fallback}：{type(exc).__name__}: {exc}"
 
 
+def _render_budget(runtime: Any, agent_id: str, *,
+                   cap: Optional[int],
+                   feedback: Optional[Dict[str, Any]]) -> str:
+    """
+    渲染**认知预算事实**。
+
+    🔒 这是观测，不是指令：Agent 自己决定下一轮要不要调整。
+    🔒 必须同时给出 requested / actual / clipped —— 否则 Agent
+       无法知道“我请求了 32k，实际只拿到 16k”。
+    """
+    lines: List[str] = []
+    if cap is not None:
+        lines.append(f"- 本次运行的硬上限（Human）：{int(cap)} tokens")
+    else:
+        lines.append("- 本次运行没有额外的 Human 硬上限（Provider 结构上限仍生效）")
+    try:
+        agent = runtime.economy.agent(agent_id)
+        brain = getattr(agent, "brain", None)
+    except Exception:                                         # noqa: BLE001
+        brain = None
+    prefs = getattr(brain, "cognitive_budget_preferences", None)
+    if callable(prefs):
+        try:
+            state = prefs() or {}
+            lines.append(
+                f"- config 默认偏好：{state.get('config_default')} tokens")
+            per_phase = state.get("per_phase") or {}
+            if per_phase:
+                phase_text = ", ".join(
+                    f"{k}={v}" for k, v in sorted(per_phase.items()))
+                lines.append(f"- 当前分相偏好：{phase_text}")
+            else:
+                lines.append("- 当前分相偏好：（没有覆盖，使用 config 默认）")
+        except Exception as exc:                              # noqa: BLE001
+            lines.append(f"- 预算偏好读取失败：{type(exc).__name__}: {exc}")
+    if feedback:
+        lines.append(
+            f"- 上一轮：turn={feedback.get('turn')} "
+            f"phase={feedback.get('phase')} "
+            f"finish_reason={feedback.get('finish_reason')} "
+            f"output_status={feedback.get('output_status')}")
+        lines.append(
+            f"  requested={feedback.get('requested')} "
+            f"actual={feedback.get('actual')} "
+            f"clipped={feedback.get('clipped') or 'none'} "
+            f"truncated={bool(feedback.get('truncated'))} "
+            f"truncated_segments={feedback.get('truncated_segments') or 0} "
+            f"segments={feedback.get('segments')}")
+        if feedback.get("truncated"):
+            lines.append(
+                "  ⚠️ 上一轮有段被截断：该段即使解析出合法 Action 也不会执行。")
+        if feedback.get("clipped"):
+            lines.append(
+                "  ⚠️ 上一轮请求的预算被裁剪；actual 才是真正可用的上限。")
+    else:
+        lines.append("- 上一轮：这是你这个 Agent 的第一次 turn。")
+    lines.append(
+        "- 你可以在信封顶层用 `cognitive_budget` 调整下一轮偏好："
+        "`32768`（当前相）或 "
+        "`{\"work\":32768,\"decision\":8192}`（分相）。")
+    return "\n".join(lines)
+
+
 def _envelope_example() -> str:
     return (
         '{"decision":"act","reasoning":"一句话说明你为什么这样做",'
@@ -135,7 +198,9 @@ def _envelope_example() -> str:
     )
 
 
-def build_intake_prompt(*, run: Any, runtime: Any, front_agent: str) -> str:
+def build_intake_prompt(*, run: Any, runtime: Any, front_agent: str,
+                        budget_cap: Optional[int] = None,
+                        budget_feedback: Optional[Dict[str, Any]] = None) -> str:
     directory = render_directory(runtime)
     short_term = _safe(
         lambda: runtime.private_short_term_memory.render(front_agent),
@@ -143,6 +208,8 @@ def build_intake_prompt(*, run: Any, runtime: Any, front_agent: str) -> str:
     long_term = _safe(
         lambda: runtime.private_long_term_memory.render_top(front_agent),
         "（长期记忆读取失败）")
+    budget = _render_budget(
+        runtime, front_agent, cap=budget_cap, feedback=budget_feedback)
     return f"""你是 {front_agent}，AI Economy OS 里的一名 Agent。这是**正式运行**，不是演示。
 
 ========== Human Demand ==========
@@ -153,6 +220,9 @@ def build_intake_prompt(*, run: Any, runtime: Any, front_agent: str) -> str:
 - 墙钟上限：{run.wall_limit_seconds / 60:.1f} 分钟
 - 最多参与者：{run.max_agents}
 - 当前没有 Task
+
+========== 认知预算（观测，不是指令） ==========
+{budget}
 
 ========== 你的短期记忆（跨任务摘要，只有你能读） ==========
 {short_term}
@@ -202,6 +272,8 @@ def build_task_prompt(
     runtime: Any,
     agent_id: str,
     inbox: Iterable[Any],
+    budget_cap: Optional[int] = None,
+    budget_feedback: Optional[Dict[str, Any]] = None,
 ) -> str:
     directory = render_directory(runtime)
     workspace = _render_workspace(runtime, task.workspace.workspace_id
@@ -220,6 +292,8 @@ def build_task_prompt(
         lambda: runtime.private_long_term_memory.render_top(agent_id),
         "（长期记忆读取失败）")
     inbox_text = _render_inbox(inbox)
+    budget = _render_budget(
+        runtime, agent_id, cap=budget_cap, feedback=budget_feedback)
     try:
         acceptors = sorted(runtime.task_execution.acceptors_of(task))
     except Exception:                                         # noqa: BLE001
@@ -250,6 +324,9 @@ def build_task_prompt(
 - acceptance assignees: {", ".join(acceptors) or "（还没有）"}
 - workspace_id: {task.workspace.workspace_id if task.workspace else "（无）"}
 - description: {task.description}
+
+========== 认知预算（观测，不是指令） ==========
+{budget}
 
 ========== Task Shared Context（共同认知） ==========
 {context}
@@ -296,8 +373,9 @@ def build_task_prompt(
 - `shared_context_read`
 - `run_tool`
   `tool`: python / pytest / node / playwright；`args` 是字符串列表；
-  Playwright 会先跑 smoke gate；截图会在同一次认知的后续消息里回喂给你。
-- `public_query`：读公共资料区（含 SYSTEM_MAP）。
+  `source`（可选，task/private）与 `path`（可选）决定复制哪些文件到 run 目录；
+  可选 `timeout_seconds`。
+- `public_query`：读公共资料区（含 SYSTEM_MAP 和 tools/*.md）。
 - `private_write/read/list/delete`：你自己的私有文件空间。
 - `resource_create` / `resource_handoff` / `resource_release`：
   建目录 / 交接责任 / 释放独立责任。
@@ -306,6 +384,23 @@ def build_task_prompt(
 - `short_term_memory_read/update/reinforce`：跨任务短期记忆。
 - `long_term_memory_search/read/mark_used/consolidate`：长期记忆 + 权重。
   工作记忆是**你自己的记录**；系统不自动写、不自动总结。
+  `workspace_search` 只读，**不会**把结果写进任何记忆。
+
+========== 工具与执行边界（结构事实） ==========
+- `run_tool` 在**一次性 run 副本**里执行。对副本的写（下载、生成、删除）
+  **不会回写 Task Workspace**。要交付文件，必须用 `workspace_write` /
+  `workspace_edit` 写入 Workspace。
+- Playwright 需要**先写测试文件**：在 Workspace 写 `tests/foo.spec.js`，
+  再 `run_tool(tool="playwright", args=["tests/foo.spec.js"])`；
+  它会先跑 smoke gate。不要用 `run_tool(python/node)` 去导入 Playwright
+  （Python 环境没有这个包）。
+- 工具说明在公共资料区：
+  `public_query(name="tools/python.md")` ·
+  `public_query(name="tools/pytest.md")` ·
+  `public_query(name="tools/node.md")` ·
+  `public_query(name="tools/playwright.md")`。
+- 验收人如果**无法复跑验证**，应发 `VERIFY(passed=false)` 并写明缺口/证据；
+  不要用重复 `workspace_read` / `run_tool` 代替验收结论。
 
 ========== 生命周期规则（协议硬约束） ==========
 - 如果你不是 contractor/producer：**不要发 START / SUBMIT**。
@@ -342,5 +437,7 @@ def build_task_prompt(
 ========== 输出格式 ==========
 只输出 JSON 信封，不要 markdown 围栏：
 {_envelope_example()}
+可选：在信封顶层放 `thinking`（按相设置思考强度）或
+`cognitive_budget`（当前相整数 / 分相对象），只影响**下一步**。
 如果没有动作，可以普通回复（不产生 Action）。
 """

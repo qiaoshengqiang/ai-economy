@@ -179,6 +179,16 @@ class Decision:
     thinking: Optional[Dict[str, Dict[str, Any]]] = None
     #: `thinking` 字段写了但形状不合法时的原因（空字符串 = 没写/合法）。
     thinking_error: str = ""
+    #: 🔴 Agent 对**认知预算**的决定（可选，按 phase）。
+    #:
+    #:    形状：{"work": 32768} / {"decision": 8192, "work": 16384}
+    #:    单相整数会被归一成 `{"*": 32768}`，覆盖当前相。
+    #:
+    #:    🔒 这是 Agent 的**偏好**，不是硬上限；Human / 系统仍可 cap，
+    #:      Provider 还会做 MIN / MAX 的结构裁剪。
+    cognitive_budget: Optional[Dict[str, int]] = None
+    #: `cognitive_budget` 写了但形状不合法时的原因（空字符串 = 没写/合法）。
+    cognitive_budget_error: str = ""
     created_at: str = ""
 
     @property
@@ -205,6 +215,9 @@ class Decision:
             "envelope_error": self.envelope_error,
             "thinking": dict(self.thinking) if self.thinking else None,
             "thinking_error": self.thinking_error,
+            "cognitive_budget": (dict(self.cognitive_budget)
+                                 if self.cognitive_budget else None),
+            "cognitive_budget_error": self.cognitive_budget_error,
             "created_at": self.created_at,
         }
 
@@ -237,6 +250,12 @@ class CognitiveSegment:
     #: 这一段**实际**使用的 temperature（来自 Agent 的 Brain 回执）。
     #: 🔒 `None` = 调用方没有暴露，不代表“没有温度”。
     temperature: Optional[float] = None
+
+    #: 这一段请求的认知预算 / 实际 max_tokens / 裁剪原因。
+    #: 🔒 全部是 Provider 回执的事实；`None` = 没上报。
+    requested_cognitive_budget: Optional[int] = None
+    actual_max_tokens: Optional[int] = None
+    budget_clipped: Optional[str] = None
 
     #: 这一段模型返回的原文。🔒 保留原文 —— 信封解析失败时它是唯一证据。
     content: str = ""
@@ -280,6 +299,9 @@ class CognitiveSegment:
             "index": self.index,
             "phase": self.phase,
             "temperature": self.temperature,
+            "requested_cognitive_budget": self.requested_cognitive_budget,
+            "actual_max_tokens": self.actual_max_tokens,
+            "budget_clipped": self.budget_clipped,
             "content_chars": len(self.content or ""),
             "decision": self.decision.to_dict() if self.decision else None,
             "action_intents": [i.to_dict() for i in self.action_intents],
@@ -375,6 +397,9 @@ class CognitiveRunResult:
     #:    由 Brain 的 provider 适配层决定。
     thinking: Optional[Dict[str, Dict[str, Any]]] = None
 
+    #: 最后一次**明确表态**的认知预算指令（phase → 偏好；None = 没表态）。
+    cognitive_budget: Optional[Dict[str, int]] = None
+
     @property
     def action_intent(self) -> Optional[ActionIntent]:
         """向后兼容：**第一个**动作。"""
@@ -439,4 +464,6 @@ class CognitiveRunResult:
             "segment_count": len(self.segments),
             "follow_up_used": self.follow_up_used,
             "thinking": dict(self.thinking) if self.thinking else None,
+            "cognitive_budget": (dict(self.cognitive_budget)
+                                 if self.cognitive_budget else None),
         }

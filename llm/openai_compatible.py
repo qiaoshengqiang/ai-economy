@@ -537,14 +537,26 @@ class OpenAICompatibleProvider(LLMProvider):
         base = cls._as_budget_int(fallback)
 
         if want is None:
-            return base, None                      # 没请求 → 用调用方的默认
+            # 🔒 没有 Agent 请求 → 原样使用调用方的 `max_tokens`。
+            #    这里**不**套 MIN：直接调用 Provider 的小请求（例如
+            #    `max_tokens=16` 的连通性测试）必须保持 16。
+            return base, None
         if want < cls.MIN_COGNITIVE_BUDGET:
             return cls.MIN_COGNITIVE_BUDGET, "below_min"
+
+        # 🔴 顺序很重要：先把请求压到 Provider 的结构上限，
+        #    再和调用方的硬上限比较。否则 requested=99999 + cap=16384
+        #    会返回 32768 —— **越过调用方上限**。
+        clipped = None
         if want > cls.MAX_COGNITIVE_BUDGET:
-            return cls.MAX_COGNITIVE_BUDGET, "above_max"
-        if base is not None and want > base:
-            return base, "above_caller_limit"
-        return want, None
+            want = cls.MAX_COGNITIVE_BUDGET
+            clipped = "above_max"
+        if base is not None:
+            # 调用方上限本身也不能越过 Provider 的 MAX。
+            base = min(base, cls.MAX_COGNITIVE_BUDGET)
+            if want > base:
+                return base, "above_caller_limit"
+        return want, clipped
 
     def parse_response(
         self,
@@ -636,6 +648,7 @@ class OpenAICompatibleProvider(LLMProvider):
             requested_cognitive_budget=getattr(
                 self, "_last_requested_budget", None),
             actual_max_tokens=self._last_max_tokens,
+            budget_clipped=self._last_budget_clipped,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             total_tokens=total_tokens,
@@ -851,6 +864,14 @@ class OpenAICompatibleProvider(LLMProvider):
         self._last_requested_budget = self._as_budget_int(requested_budget)
         self._last_max_tokens = effective_tokens
         self._last_budget_clipped = clipped
+        if clipped:
+            # 🔒 这是**结构事实**，不是错误：Agent 下一轮会看到
+            #    requested / actual / clipped_reason，自行决定是否调整。
+            logger.info(
+                "认知预算被裁剪：provider=%s requested=%s actual=%s "
+                "reason=%s",
+                self.name, self._last_requested_budget,
+                self._last_max_tokens, clipped)
 
         # 🔒 思考模式是 **Provider 能力**，不是 Agent 层的厂商判断。
         #    不支持的 provider 在这里安静地丢掉这些字段，而不是

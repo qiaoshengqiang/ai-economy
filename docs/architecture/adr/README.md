@@ -68,6 +68,7 @@
 | [0042](0042-demand-entry-agent-task-creation.md) | **Demand Entry V1：Agent 自主建 Task + 串行调度** | Accepted（**已实现**） | Demand Entry V1 | Task / Agent |
 | [0043](0043-workspace-range-read-and-edit.md) | **Workspace 范围读取 + old/new 局部编辑** | Accepted（**已实现**） | Workspace Read/Edit V1 | Workspace |
 | [0044](0044-workspace-search-and-demand-capabilities.md) | **Workspace 只读搜索 + Demand 全能力接线** | Accepted（**已实现**） | Workspace Search V1 | Workspace / Demand |
+| [0045](0045-agent-controlled-cognitive-budget.md) | **Agent 自主认知预算 + 可见的截断/裁剪反馈** | Accepted（**已实现**） | Demand 运行修复 | Agent / LLM / Demand |
 | [0028](0028-read-visibility-and-native-communication.md) | **Read 靠 Task Participation；Communication 是 Agent 基础能力** | Accepted（实现为 FUTURE） | Read / Visibility / Communication | Workspace / Communication |
 
 ---

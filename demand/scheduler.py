@@ -81,7 +81,10 @@ class RunScheduler:
                 turns += 1
                 after = str(self.task_status() or "")
 
-                if after != before or outcome.actions > 0:
+                # 🔴 只有**真实进展**才算 cycle 进展。
+                #    `workspace_read` / `run_tool` 重复执行不算 ——
+                #    这正是两个真实 run 被 MAX_TURNS 拖死的原因。
+                if after != before or outcome.progress:
                     cycle_progress = True
 
                 if after in _TERMINAL:

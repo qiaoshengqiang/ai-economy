@@ -21,6 +21,8 @@ Demand CLI —— 人类直接给 Agent A 一句话
 from __future__ import annotations
 
 import argparse
+import contextlib
+import logging
 import sys
 import uuid
 from datetime import datetime
@@ -36,6 +38,32 @@ load_dotenv(ROOT / ".env")
 
 from demand.models import DemandRun                               # noqa: E402
 from demand.runner import DemandRunner                            # noqa: E402
+
+
+class _Tee:
+    """把 stdout 同时写到终端和 `run.log`（不改变原有输出）。"""
+
+    def __init__(self, *streams) -> None:
+        self.streams = streams
+
+    def write(self, text: str) -> int:
+        for stream in self.streams:
+            try:
+                stream.write(text)
+                stream.flush()
+            except Exception:                                 # noqa: BLE001
+                pass
+        return len(text)
+
+    def flush(self) -> None:
+        for stream in self.streams:
+            try:
+                stream.flush()
+            except Exception:                                 # noqa: BLE001
+                pass
+
+    def isatty(self) -> bool:
+        return False
 
 
 def _read_demand(args: argparse.Namespace) -> str:
@@ -65,8 +93,9 @@ def build_parser() -> argparse.ArgumentParser:
                     help="参与者上限，默认 5")
     ap.add_argument("--front-agent", default="agent_a",
                     help="接收 Human Demand 的 Agent，默认 agent_a")
-    ap.add_argument("--cognitive-budget", type=int, default=16384,
-                    help="单次响应输出上限（tokens），默认 16384")
+    ap.add_argument("--cognitive-budget", type=int, default=32768,
+                    help="单次响应的**硬上限**（tokens）；"
+                         "Agent 可以自己选择更低，默认 32768")
     ap.add_argument("--db", default=None,
                     help="Runtime 数据库路径；默认放在 run 目录下")
     ap.add_argument("--out", default=None,
@@ -81,6 +110,8 @@ def main(argv=None) -> int:
     demand = _read_demand(args)
     if not demand:
         raise SystemExit("Demand 不能为空")
+    if int(args.cognitive_budget) <= 0:
+        raise SystemExit("--cognitive-budget 必须是正整数")
 
     run_id = f"demand_{uuid.uuid4().hex[:8]}"
     if args.out:
@@ -91,52 +122,85 @@ def main(argv=None) -> int:
     run_dir.mkdir(parents=True, exist_ok=True)
     db_path = (Path(args.db).expanduser().resolve()
                if args.db else run_dir / "demand.db")
+    log_path = run_dir / "run.log"
 
     from main import build_runtime
 
-    runtime = build_runtime(db_path=str(db_path))
+    log_file = log_path.open("a", encoding="utf-8", buffering=1)
+    file_handler = None
     try:
-        try:
-            front = runtime.economy.agent(args.front_agent)
-        except Exception:                                     # noqa: BLE001
-            front = None
-        if front is None or not getattr(front, "has_brain", False):
-            print(f"❌ front agent {args.front_agent!r} 不存在或没有 Brain")
-            return 2
+        # 🔒 终端输出 + 日志同时进 `run.log`：
+        #    logging 的 console handler 可能已经绑定旧 stdout，
+        #    所以下面按需再挂一个文件 handler（避免重复写）。
+        with contextlib.redirect_stdout(_Tee(sys.stdout, log_file)):
+            runtime = build_runtime(db_path=str(db_path))
+            logger = logging.getLogger("ai_economy")
+            already_teeing = any(
+                isinstance(h, logging.StreamHandler)
+                and getattr(h, "stream", None) is sys.stdout
+                for h in logger.handlers)
+            if not already_teeing:
+                file_handler = logging.FileHandler(
+                    log_path, encoding="utf-8")
+                file_handler.setFormatter(logging.Formatter(
+                    "%(asctime)s %(levelname)-7s %(message)s",
+                    datefmt="%Y-%m-%d %H:%M:%S"))
+                logger.addHandler(file_handler)
+            try:
+                try:
+                    front = runtime.economy.agent(args.front_agent)
+                except Exception:                             # noqa: BLE001
+                    front = None
+                if front is None or not getattr(front, "has_brain", False):
+                    print(f"❌ front agent {args.front_agent!r} "
+                          f"不存在或没有 Brain")
+                    return 2
 
-        run = DemandRun(
-            run_id=run_id,
-            demand=demand,
-            budget_aic=float(args.budget),
-            wall_limit_seconds=max(60.0, float(args.minutes) * 60.0),
-            max_turns=max(1, int(args.max_turns)),
-            max_agents=max(2, int(args.max_agents)),
-            front_agent=str(args.front_agent),
-            run_dir=str(run_dir),
-        )
-        if not args.quiet:
-            print("=" * 68)
-            print("  AI Economy OS — Demand")
-            print("=" * 68)
-            print(f"  Run        : {run_id}")
-            print(f"  Front Agent: {args.front_agent}")
-            print(f"  Wall       : {run.wall_limit_seconds / 60:.1f} min")
-            print(f"  Budget     : {run.budget_aic} AIC (observe)")
-            print(f"  Output     : {run_dir}")
-            print("=" * 68)
-            print()
+                run = DemandRun(
+                    run_id=run_id,
+                    demand=demand,
+                    budget_aic=float(args.budget),
+                    wall_limit_seconds=max(60.0,
+                                           float(args.minutes) * 60.0),
+                    max_turns=max(1, int(args.max_turns)),
+                    max_agents=max(2, int(args.max_agents)),
+                    front_agent=str(args.front_agent),
+                    run_dir=str(run_dir),
+                )
+                if not args.quiet:
+                    print("=" * 68)
+                    print("  AI Economy OS — Demand")
+                    print("=" * 68)
+                    print(f"  Run        : {run_id}")
+                    print(f"  Front Agent: {args.front_agent}")
+                    print(f"  Wall       : "
+                          f"{run.wall_limit_seconds / 60:.1f} min")
+                    print(f"  Budget     : {run.budget_aic} AIC (observe)")
+                    print(f"  Cognitive  : "
+                          f"{args.cognitive_budget} tokens (hard cap)")
+                    print(f"  Output     : {run_dir}")
+                    print("=" * 68)
+                    print()
 
-        result = DemandRunner(
-            runtime, run,
-            cognitive_budget=int(args.cognitive_budget),
-            quiet=bool(args.quiet)).execute()
-        run_state = (result or {}).get("run", {})
-        return 0 if run_state.get("status") == "COMPLETED" else 1
+                result = DemandRunner(
+                    runtime, run,
+                    cognitive_budget=int(args.cognitive_budget),
+                    quiet=bool(args.quiet)).execute()
+                run_state = (result or {}).get("run", {})
+                return 0 if run_state.get("status") == "COMPLETED" else 1
+            finally:
+                try:
+                    runtime.close()
+                except Exception:                             # noqa: BLE001
+                    pass
     finally:
-        try:
-            runtime.close()
-        except Exception:                                     # noqa: BLE001
-            pass
+        if file_handler is not None:
+            try:
+                logging.getLogger("ai_economy").removeHandler(file_handler)
+                file_handler.close()
+            except Exception:                                 # noqa: BLE001
+                pass
+        log_file.close()
 
 
 if __name__ == "__main__":

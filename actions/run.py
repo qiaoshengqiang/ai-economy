@@ -152,6 +152,7 @@ def run_cognition(
     #    这样紧接着的读取回喂（seg1）就会用新的思考模式；
     #    不写 `thinking` 就保持当前状态。
     _apply_thinking(agent, seg0.decision, current_phase=initial_phase)
+    _apply_cognitive_budget(agent, seg0.decision, current_phase=initial_phase)
 
     # ---- 执行第 1 段的动作 --------------------------------------------
     intents: List[ActionIntent] = list(seg0.action_intents)
@@ -192,6 +193,7 @@ def run_cognition(
                 repair_malformed=repair_malformed)
             segments.append(seg)
             _apply_thinking(agent, seg.decision, current_phase="work")
+            _apply_cognitive_budget(agent, seg.decision, current_phase="work")
             seg_results = _dispatch_all(
                 agent_id, seg.action_intents, dispatcher=dispatcher,
                 execute=execute, truncated=seg.is_truncated)
@@ -232,6 +234,8 @@ def run_cognition(
                 repair_malformed=repair_malformed)
             segments.append(seg)
             _apply_thinking(agent, seg.decision, current_phase="decision")
+            _apply_cognitive_budget(agent, seg.decision,
+                                    current_phase="decision")
             intents.extend(seg.action_intents)
             results.extend(_dispatch_all(
                 agent_id, seg.action_intents, dispatcher=dispatcher,
@@ -300,6 +304,7 @@ def run_cognition(
         segments=segments,
         follow_up_used=follow_up_used,
         thinking=_last_thinking(segments),
+        cognitive_budget=_last_cognitive_budget(segments),
     )
 
 
@@ -412,6 +417,13 @@ def _run_one_segment(agent: Any, agent_id: str, messages: Any,
             "已忽略该指令；同一信封里的动作不受影响。",
             thinking_error, agent_id, index)
 
+    budget_error = getattr(decision, "cognitive_budget_error", "")
+    if budget_error:
+        logger.warning(
+            "Cognition cognitive_budget 指令非法（%s）：agent=%s seg=%d —— "
+            "已忽略该指令；同一信封里的动作不受影响。",
+            budget_error, agent_id, index)
+
     # ============================================================
     # §七：EMPTY_CONTENT **不许悄悄成功**
     # ============================================================
@@ -447,10 +459,14 @@ def _run_one_segment(agent: Any, agent_id: str, messages: Any,
     if cognitive_status == "TRUNCATED":
         logger.warning(
             "Cognition 输出被**截断**：agent=%s seg=%d finish_reason=%s "
-            "output_status=%s。模型输出达到 token 上限，本轮认知不完整 —— "
+            "output_status=%s requested_budget=%s actual_max_tokens=%s "
+            "budget_clipped=%s。模型输出达到 token 上限，本轮认知不完整 —— "
             "即使解析出了合法 Action，也**不执行**。"
             "这不是 provider 失败，provider 调用本身是成功的。",
             agent_id, index, finish_reason, output_status,
+            getattr(response, "requested_cognitive_budget", None),
+            getattr(response, "actual_max_tokens", None),
+            getattr(response, "budget_clipped", None),
         )
 
     return CognitiveSegment(
@@ -458,6 +474,10 @@ def _run_one_segment(agent: Any, agent_id: str, messages: Any,
         phase=phase,
         temperature=getattr(getattr(agent, "brain", None),
                             "last_temperature", None),
+        requested_cognitive_budget=getattr(
+            response, "requested_cognitive_budget", None),
+        actual_max_tokens=getattr(response, "actual_max_tokens", None),
+        budget_clipped=getattr(response, "budget_clipped", None),
         content=str(content or ""),
         decision=decision,
         action_intents=list(decision.intents),
@@ -543,6 +563,48 @@ def _last_thinking(segments: List[CognitiveSegment]) -> Optional[dict]:
     directive = None
     for seg in segments:
         value = getattr(getattr(seg, "decision", None), "thinking", None)
+        if isinstance(value, dict):
+            directive = value
+    return dict(directive) if directive else None
+
+
+def _apply_cognitive_budget(agent: Any, decision: Any, *,
+                            current_phase: str = "decision") -> None:
+    """
+    把 Decision 里的 `cognitive_budget` 指令应用到 Agent 的 Brain。
+
+    🔒 鸭子类型：没有 `brain.set_cognitive_budget` 的调用方静默跳过。
+    🔒 支持 `{"*": N}`（覆盖当前相）与分相 map。
+    🔒 只改**偏好**；Human / 系统 cap 与 Provider 结构裁剪仍然生效。
+    """
+    directive = getattr(decision, "cognitive_budget", None)
+    if not isinstance(directive, dict):
+        return
+    brain = getattr(agent, "brain", None)
+    setter = getattr(brain, "set_cognitive_budget", None)
+    if not callable(setter):
+        return
+    for key, value in directive.items():
+        phase = current_phase if key == "*" else str(key)
+        try:
+            setter(int(value), phase=phase)
+        except (TypeError, ValueError) as exc:
+            logger.warning(
+                "认知预算指令被忽略：agent=%s phase=%s value=%r (%s)",
+                getattr(agent, "agent_id", "?"), phase, value, exc)
+            continue
+        logger.info(
+            "认知预算更新：agent=%s phase=%s preference=%s（下一步生效）",
+            getattr(agent, "agent_id", "?"), phase, value)
+
+
+def _last_cognitive_budget(
+        segments: List[CognitiveSegment]) -> Optional[Dict[str, int]]:
+    """最后一个**明确表态**的预算指令（None = 全程没表态）。"""
+    directive = None
+    for seg in segments:
+        value = getattr(getattr(seg, "decision", None),
+                        "cognitive_budget", None)
         if isinstance(value, dict):
             directive = value
     return dict(directive) if directive else None

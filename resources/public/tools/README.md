@@ -4,14 +4,27 @@
 
 ## 工具清单
 
-| 工具 | 来源 | 说明 |
-|---|---|---|
-| `python` | `.venv/bin/python` | 项目 Python 运行时 |
-| `pytest` | `.venv/bin/python -m pytest` | Python 测试运行器 |
-| `node` | `node` | Node.js 运行时 |
-| `playwright` | `resources/public/tools/playwright/node_modules/@playwright/test` | 浏览器测试运行器，使用本机 Google Chrome |
+| 工具 | 来源 | 说明 | 使用说明 |
+|---|---|---|---|
+| `python` | `.venv/bin/python` | 项目 Python 运行时 | [`python.md`](python.md) |
+| `pytest` | `.venv/bin/python -m pytest` | Python 测试运行器 | [`pytest.md`](pytest.md) |
+| `node` | `node` | Node.js 运行时 | [`node.md`](node.md) |
+| `playwright` | `resources/public/tools/playwright/node_modules/@playwright/test` | 浏览器测试运行器，使用本机 Google Chrome | [`playwright.md`](playwright.md) |
 
 每个工具的声明在 `manifests/*.json`。`command` 是固定可执行文件，Agent 只能追加 `args`。
+
+## 🔒 三条必须先知道的事实
+
+1. **`run_tool` 的写不会回写 Task Workspace。**
+   它把文件只读复制到一次性 run 目录；下载、生成、删除都只发生在副本里。
+   要交付文件，必须用 `workspace_write` / `workspace_edit`。
+2. **Playwright 必须先写 spec，再运行 spec。**
+   正确形状：`run_tool(tool="playwright", args=["tests/foo.spec.js"])`。
+   不要用 `run_tool(python/node)` 导入 Playwright。
+3. **验收人无法复跑时，应发 `VERIFY(passed=false)` 并写明缺口**，
+   不要用重复 `workspace_read` / `run_tool` 代替验收结论。
+
+用 `public_query(name="tools/playwright.md")` 等读取对应文档。
 
 ## 安装（只做一次，不是 Agent 动作）
 

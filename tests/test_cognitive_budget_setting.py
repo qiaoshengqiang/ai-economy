@@ -130,14 +130,16 @@ def test_clip_boundaries_unchanged():
 
 def test_cannot_exceed_the_agent_configured_max_tokens():
     """
-    ⚠️ **一个必须知道的约束**：`requested_cognitive_budget` 超不过
-    Agent 配置的 `max_tokens`。
+    ⚠️ **Provider 层的约束**：只要调用方把 fallback 传成 16384，
+    `requested_cognitive_budget=32768` 就会被压回 16384。
 
         clip_cognitive_budget(32768, fallback=16384)
             → (16384, "above_caller_limit")
 
-    所以想再往上抬（例如 32768），**光加参数没用** —— 还得同时改
-    `config/config.yaml` 里那个 Agent 的 `brain.max_tokens`。
+    🔴 2026-11-08 之后语义变了：`brain.max_tokens` 是 Agent 的**默认偏好**，
+       不是硬上限。Agent 可以按相请求更高；Brain 会把该偏好作为 fallback
+       传给 Provider，因此实际值可能高于 16384（Provider MAX = 32768）。
+       这里测的是 **Provider 不会越过调用方显式给出的 fallback**。
     """
     p = _provider("bailian")
     eff, why = p.clip_cognitive_budget(32768, EXPECTED_DEFAULT)

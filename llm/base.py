@@ -563,6 +563,14 @@ class LLMResponse:
     requested_cognitive_budget: Optional[int] = None
     #: Runtime 裁剪后**真正**使用的 max_tokens。
     actual_max_tokens: Optional[int] = None
+    #: 如果请求值被裁剪，这里是**结构化原因**（None = 没有裁剪）：
+    #:
+    #:     below_min          低于 Provider 的结构下限
+    #:     above_max          高于 Provider 的结构上限
+    #:     above_caller_limit 高于调用方（Human / 系统）给出的硬上限
+    #:
+    #: 🔒 这是**事实**，不是错误：Agent 据此可以自行决定下一轮是否调整预算。
+    budget_clipped: Optional[str] = None
 
     # 允许 None：None 表示「不知道」，0 表示「确实是 0」
     input_tokens: Optional[int] = None
@@ -744,6 +752,9 @@ class LLMResponse:
             "token_source": self.token_source,
             "latency_ms": self.latency_ms,
             "finish_reason": self.finish_reason,
+            "requested_cognitive_budget": self.requested_cognitive_budget,
+            "actual_max_tokens": self.actual_max_tokens,
+            "budget_clipped": self.budget_clipped,
             "simulated": self.simulated,
             "created_at": self.created_at,
             "metadata": dict(self.metadata),

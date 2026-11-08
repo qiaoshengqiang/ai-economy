@@ -73,3 +73,9 @@ class TurnOutcome:
     status_before: str = ""
     status_after: str = ""
     error: str = ""
+    #: 🔴 这一 turn 是否产生了**真实进展**（不是“有动作”）。
+    #:
+    #:    由 DemandRunner 判定：状态变化 / 成功写入或编辑 / 新产物 /
+    #:    首次出现的有意义消息。单纯的 read / run_tool **不算**。
+    progress: bool = False
+    progress_reason: str = ""

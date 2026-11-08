@@ -76,7 +76,7 @@ run 目录 + deliverable + 成本
 | `--max-turns` | 30 | 最多 Agent turn |
 | `--max-agents` | 5 | 参与者上限 |
 | `--front-agent` | `agent_a` | 接收 Demand 的 Agent |
-| `--cognitive-budget` | 16384 | 单次输出上限 |
+| `--cognitive-budget` | 32768 | 单次输出**硬上限**（Agent 可自己选更低） |
 | `--db` | run 目录/demand.db | Runtime 数据库 |
 | `--out` | `runs/demand/<ts>-<id>` | 输出目录 |
 | `--quiet` | false | 只打最终结果 |
@@ -89,8 +89,43 @@ runs/demand/<ts>-<id>/
 ├── run.json
 ├── events.jsonl
 ├── result.json
+├── run.log             ← 终端输出 + logging（warning / 截断 / 工具错误）
 └── deliverable/       ← Task Workspace 导出的文件
 ```
+
+---
+
+## 3.1 预算、截断与无进展（2026-11-08）
+
+**认知预算由 Agent 自主控制，Human 只给硬上限：**
+
+```text
+Agent 偏好（信封 cognitive_budget / Brain phase policy）
+        ↓
+min(偏好, --cognitive-budget)
+        ↓
+Provider 结构裁剪（MIN=256 / MAX=32768）
+        ↓
+requested / actual / budget_clipped 下一轮可见
+```
+
+- 单相：`"cognitive_budget": 32768`（当前相）；
+- 分相：`"cognitive_budget": {"work": 32768, "decision": 8192}`；
+- 截断（`finish_reason=length`）的段**不执行动作**；
+- 下一轮 prompt 显示上一轮 `requested / actual / clipped / truncated`。
+
+**信封修复**：Demand 打开 `repair_malformed=True`，格式坏掉时最多重试一次。
+
+**真实进展**：只有 Task 状态变化 / 成功 `workspace_write|edit` /
+`resource_create` / **首次出现**的消息才算进展。重复 `workspace_read` /
+`run_tool` 不算；连续 3 个 cycle 无进展 → `NO_PROGRESS` 提前停。
+
+**结束报告**：`MAX_TURNS` / `TIME_LIMIT` 时打印当前 Task 状态、
+等待的角色与动作（START / SUBMIT / VERIFY / COMPLETE）、最后进展 turn、
+最近消息；同时写进 `result.json` 的 `blocking`。
+
+**信封失败落盘**：`events.jsonl` 新增 `envelope_error` 事件，含原始输出的
+有界 `head` / `tail`（各 1200 字符），不需要再靠猜。
 
 ---
 
@@ -154,6 +189,8 @@ RunScheduler(
 - 串行 round-robin；
 - Task 进入终态（COMPLETED / FAILED / CANCELLED / REJECTED / EXPIRED）立即停；
 - 墙钟 / 最大 turn / 连续无进展时停；
+- **无进展 = 没有真实进展**：状态变化 / 成功写入或编辑 / 新产物 /
+  首次出现的有意义消息；单纯的 `workspace_read` / `run_tool` 不算；
 - 不建 Task、不选参与者、不设 DoD、不验收。
 
 ---
@@ -168,6 +205,10 @@ RunScheduler(
 - Task Shared Context（objective / DoD / assignments）；
 - Workspace 文件列表；
 - 本轮 inbox 消息；
+- **认知预算事实**：Human 上限 / 当前分相偏好 / 上一轮
+  `requested / actual / clipped / truncated`；
+- **工具边界**：`run_tool` 在一次性副本执行、写不回 Workspace；
+  Playwright 先写 spec；验收人无法复跑时发 `VERIFY(passed=false)`；
 - 可用动作与生命周期载荷示例。
 
 Agent 自己决定：谁生产、怎么分工、写什么文件、何时 SUBMIT/VERIFY/COMPLETE。
@@ -242,6 +283,9 @@ Events: START → SUBMIT → VERIFY → COMPLETE
 
 ```bash
 ./dev.sh test tests/test_demand_entry.py
+./dev.sh test tests/test_demand_prompt_facts.py
+./dev.sh test tests/test_cognitive_budget_autonomy.py
+./dev.sh test tests/test_tool_docs.py
 ./dev.sh test tests/test_tool_runtime.py
 ```
 
@@ -252,4 +296,8 @@ Events: START → SUBMIT → VERIFY → COMPLETE
 - Root Task 创建 + root handoff；
 - 重复 task_create 被拒；
 - Scheduler 终态 / max turns / time limit / no progress；
+- **只有真实进展才重置 no-progress**；
+- 预算偏好 / 硬上限 / Provider 裁剪；
+- prompt 真的投递工具边界 + 预算/截断事实；
+- 每个工具 manifest 都有使用说明；
 - CLI 参数。

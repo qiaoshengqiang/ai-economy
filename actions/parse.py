@@ -87,7 +87,8 @@ def _first_balanced_object(text: str) -> Optional[str]:
 #:    第一版白名单漏了它们，导致合法的 Reflection 被静默丢弃，
 #:    进而把「parser bug」误读成「模型不遵守协议」。
 ENVELOPE_KEYS = {"decision", "action", "action_type",
-                 "reflections", "reflection", "thinking"}
+                 "reflections", "reflection", "thinking",
+                 "cognitive_budget"}
 
 #: `thinking.effort` 允许的值。
 #:
@@ -159,6 +160,59 @@ def normalize_thinking(raw: Any) -> Optional[Dict[str, Dict[str, Any]]]:
     if norm is None:
         return None
     return {"*": norm}
+
+
+def _normalize_single_cognitive_budget(raw: Any) -> Optional[int]:
+    """单个预算值：必须是正整数（bool 不算整数）。"""
+    if raw is None or isinstance(raw, bool):
+        return None
+    if isinstance(raw, int):
+        return raw if raw > 0 else None
+    return None
+
+
+def normalize_cognitive_budget(raw: Any) -> Optional[Dict[str, int]]:
+    """
+    把信封里的 `cognitive_budget` 归一成 **phase → 预算** 的映射。
+
+    接受两种形状：
+
+        · 单相（覆盖**当前相**）：
+            32768
+            → {"*": 32768}
+
+        · 分相（分别覆盖 intake / decision / work）：
+            {"intake": 8192, "decision": 8192, "work": 32768}
+            → 原样（只保留合法相）
+
+    形状不合法返回 None —— 调用方据此记 `cognitive_budget_error`，
+    但**不**因此丢掉同一信封里的动作。
+    """
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, int):
+        value = _normalize_single_cognitive_budget(raw)
+        return {"*": value} if value is not None else None
+    if not isinstance(raw, dict):
+        return None
+
+    # 分相形状：只要出现 intake / decision / work 键，就按分相解析。
+    if any(k in raw for k in THINKING_PHASES):
+        out: Dict[str, int] = {}
+        for phase in THINKING_PHASES:
+            if phase not in raw or raw.get(phase) is None:
+                continue
+            value = _normalize_single_cognitive_budget(raw[phase])
+            if value is None:
+                return None
+            out[phase] = value
+        return out or None
+
+    # 单相形状 → 当前相
+    value = _normalize_single_cognitive_budget(raw)
+    if value is None:
+        return None
+    return {"*": value}
 
 
 def extract_envelope(text: Optional[str]) -> Optional[Dict[str, Any]]:
@@ -317,6 +371,14 @@ def decision_from_text(agent_id: str, text: Optional[str]) -> Decision:
     if raw_thinking is not None and thinking is None:
         thinking_error = "invalid_thinking"
 
+    # 🔴 Agent 也可以决定下一步的**认知预算**（与 thinking 同一层）。
+    #    这里只解析；是否应用、如何与 Human cap 取 min，由 Brain 决定。
+    raw_budget = envelope.get("cognitive_budget")
+    cognitive_budget = normalize_cognitive_budget(raw_budget)
+    cognitive_budget_error = ""
+    if raw_budget is not None and cognitive_budget is None:
+        cognitive_budget_error = "invalid_cognitive_budget"
+
     # 🔴 2026-10-10：**一次决策可以有 0..N 个动作**。
     #
     #    【为什么要多个】
@@ -360,6 +422,8 @@ def decision_from_text(agent_id: str, text: Optional[str]) -> Decision:
             kind=DECISION_REPLY, reasoning=reasoning or (text or ""),
             dropped_actions=dropped, envelope_error=error,
             thinking=thinking, thinking_error=thinking_error,
+            cognitive_budget=cognitive_budget,
+            cognitive_budget_error=cognitive_budget_error,
             created_at=utc_now_iso(),
         )
 
@@ -368,6 +432,8 @@ def decision_from_text(agent_id: str, text: Optional[str]) -> Decision:
         kind=DECISION_ACT, reasoning=reasoning,
         intents=intents, dropped_actions=dropped,
         thinking=thinking, thinking_error=thinking_error,
+        cognitive_budget=cognitive_budget,
+        cognitive_budget_error=cognitive_budget_error,
         created_at=utc_now_iso(),
     )
 
@@ -387,5 +453,9 @@ ENVELOPE_INSTRUCTION = (
     '"work":{"enabled":true,"effort":"high"}}}; '
     'a single {"enabled":...,"effort":...} overrides the current phase. '
     'Omit it to keep the current mode.\n'
+    'You may also choose the cognitive budget (max output tokens) for the '
+    'next call: add {"cognitive_budget":32768} for the current phase, or '
+    '{"cognitive_budget":{"work":32768,"decision":8192}} per phase. '
+    'The runtime may cap it; the actual value is shown next turn.\n'
     'Otherwise just reply normally.'
 )

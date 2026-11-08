@@ -196,6 +196,23 @@ class Brain:
         #: 最近一次实际使用的 temperature（观测用）。
         self.last_temperature: Optional[float] = None
 
+        #: 🔴 分相**认知预算偏好**（phase → max_tokens；None = 用 config 的
+        #: `max_tokens`）。
+        #:
+        #:    “工作相需要更长输出”是 Agent 自己的策略；它可以和 thinking
+        #:    在同一个信封里一起设置。
+        #:
+        #:    🔒 这不是硬限制：Human / 系统给的 `cognitive_budget_cap`
+        #:       仍然优先。实际值 = min(偏好, cap)，Provider 还会做结构裁剪。
+        self.cognitive_budget_policy: Dict[str, Optional[int]] = {
+            "intake": None,
+            "decision": None,
+            "work": None,
+        }
+        #: 最近一次预算解析结果（观测 / prompt 反馈用）。
+        #: 形状：phase / requested / effective / cap / clipped。
+        self.last_cognitive_budget: Optional[Dict[str, Any]] = None
+
         #: Cognitive Context Builder（可选）。
         #: 🔒 它是**可注入**的 —— Brain 不认识 SelfModelStore，
         #:    只认识「给我一个 query，我还你一段上下文文本」这个契约。
@@ -297,6 +314,53 @@ class Brain:
         """读取某一相的 temperature 覆盖（None = 用 config 默认值）。"""
         return self.temperature_policy.get(str(phase or "").strip().lower())
 
+    def set_cognitive_budget(self, value: Optional[int], *,
+                             phase: str = "work") -> None:
+        """
+        设置**某一相**的认知预算偏好（单位：max_tokens）。
+
+        🔒 这是 Agent 自己的偏好，不是硬限制：
+            · `None` = 回到 config 的 `max_tokens`；
+            · 真正的上限由调用方的 `cognitive_budget_cap` 与 Provider
+              的结构边界决定。
+        🔒 不做“推荐值”校验，只做结构性校验（必须是正整数）。
+        """
+        key = str(phase or "").strip().lower()
+        if key not in self.cognitive_budget_policy:
+            raise ValueError(
+                f"未知的认知预算阶段 {phase!r}；只支持 "
+                f"{sorted(self.cognitive_budget_policy)}")
+        if value is None:
+            self.cognitive_budget_policy[key] = None
+            return
+        if isinstance(value, bool):
+            raise ValueError(f"cognitive_budget 必须是整数，收到 {value!r}")
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"cognitive_budget 必须是整数，收到 {value!r}") from None
+        if number <= 0:
+            raise ValueError(
+                f"cognitive_budget 必须是正整数，收到 {value!r}")
+        self.cognitive_budget_policy[key] = number
+
+    def cognitive_budget_for(self, phase: str) -> Optional[int]:
+        """读取某一相的认知预算偏好（None = 用 config 默认值）。"""
+        return self.cognitive_budget_policy.get(
+            str(phase or "").strip().lower())
+
+    def cognitive_budget_preferences(self) -> Dict[str, Any]:
+        """当前分相预算偏好 + config 默认值（观测用，不含 secret）。"""
+        return {
+            "config_default": int(self.settings.max_tokens),
+            "per_phase": {
+                phase: value
+                for phase, value in self.cognitive_budget_policy.items()
+                if value is not None
+            },
+        }
+
     @property
     def thinking_enabled(self) -> Optional[bool]:
         """向后兼容视图：work 相是否开启。"""
@@ -308,6 +372,17 @@ class Brain:
         """向后兼容视图：work 相强度。"""
         policy = self.thinking_policy.get("work") or {}
         return policy.get("effort")
+
+    @staticmethod
+    def _as_budget_int(value: Any) -> Optional[int]:
+        """把预算值规范成正整数；认不出来返回 None（不猜）。"""
+        if value is None or isinstance(value, bool):
+            return None
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            return None
+        return number if number > 0 else None
 
     def _credential_for(self, provider: Optional[str]):
         """
@@ -492,6 +567,9 @@ class Brain:
         #: 🔴 Cognitive Budget V1：Agent 请求的认知预算（max_tokens 上限）。
         #: Runtime 负责裁剪；**禁止**由 AIC 余额换算而来。
         requested_cognitive_budget: Optional[int] = None,
+        #: 🔴 Human / 系统给这次调用的**硬上限**。
+        #: 实际预算 = min(Agent 偏好, cap)；Provider 还会做结构裁剪。
+        cognitive_budget_cap: Optional[int] = None,
         context_query: Optional[dict] = None,
         cognitive: bool = True,
         #: 🔴 Telemetry Repair V2：这次调用的**用途**，由调用方声明。
@@ -539,6 +617,12 @@ class Brain:
         record=False 表示这次调用不记账。
             什么情况下用？比如系统自己发一个「探活」请求，
             那不是 Agent 的经营行为，不该算在它的成本里。
+
+        requested_cognitive_budget / cognitive_budget_cap（Cognitive Budget V1）：
+            Agent 的**偏好**（可来自本相 policy 或显式参数）与
+            Human / 系统给的**硬上限**。实际 `max_tokens` = min(偏好, 上限)，
+            Provider 还会做 MIN / MAX 裁剪；裁剪原因在响应的
+            `budget_clipped` 上，下一轮 prompt 会显示。
 
         失败时会：
             1. 记一条 success=0 的记录（失败也是重要的经济信息）
@@ -648,9 +732,51 @@ class Brain:
         else:
             effective_temperature = self.settings.temperature
         self.last_temperature = effective_temperature
-        effective_max_tokens = (
-            self.settings.max_tokens if max_tokens is None else max_tokens
-        )
+
+        # ---- Cognitive Budget（按 phase 选择 Agent 自己的偏好）---------
+        #
+        #   🔒 三种来源，优先级从高到低：
+        #      ① 调用方显式 `requested_cognitive_budget`（生产 / 实验）
+        #      ② Agent 在本相设置的偏好（信封 → Brain）
+        #      ③ config 的 `brain.max_tokens`（默认偏好）
+        #
+        #   🔒 `max_tokens` 显式参数 / `cognitive_budget_cap` 是**硬上限**，
+        #      不参与“偏好”选择。实际值 = min(偏好, 所有硬上限)。
+        #   🔒 Provider 仍会做自己的结构裁剪（MIN / MAX）；
+        #      被裁剪的原因会出现在响应的 `budget_clipped` 上。
+        phase_key = str(phase or "").strip().lower()
+        preference = self._as_budget_int(requested_cognitive_budget)
+        if preference is None:
+            preference = self.cognitive_budget_for(phase_key)
+        if preference is None:
+            preference = self._as_budget_int(self.settings.max_tokens)
+        effective_max_tokens = preference
+        clipped = None
+        cap_reason = ""
+        hard_caps = []
+        if max_tokens is not None:
+            hard_caps.append((self._as_budget_int(max_tokens),
+                              "above_caller_limit"))
+        if cognitive_budget_cap is not None:
+            hard_caps.append((self._as_budget_int(cognitive_budget_cap),
+                              "above_cap"))
+        for cap_value, reason in hard_caps:
+            if cap_value is None:
+                continue
+            if effective_max_tokens is not None and \
+                    effective_max_tokens > cap_value:
+                effective_max_tokens = cap_value
+                clipped = reason
+                cap_reason = reason
+        self.last_cognitive_budget = {
+            "phase": phase_key,
+            "requested": preference,
+            "effective": effective_max_tokens,
+            "cap": (self._as_budget_int(cognitive_budget_cap)
+                    if cognitive_budget_cap is not None else None),
+            "clipped": clipped,
+            "clipped_by": cap_reason or None,
+        }
 
         # ---- 思考模式（按 phase 选择 Agent 自己的策略）-----------------
         #
@@ -709,7 +835,7 @@ class Brain:
                 model=effective_model,
                 temperature=effective_temperature,
                 max_tokens=effective_max_tokens,
-                    requested_cognitive_budget=requested_cognitive_budget,
+                    requested_cognitive_budget=preference,
                     **kwargs,
                 )
         except Exception as exc:
@@ -802,6 +928,7 @@ class Brain:
             "model": self.model,
             "temperature": self.settings.temperature,
             "max_tokens": self.settings.max_tokens,
+            "cognitive_budget": self.cognitive_budget_preferences(),
             "has_recorder": self.recorder is not None,
             "calls": self.call_count,
             "failures": self.failure_count,

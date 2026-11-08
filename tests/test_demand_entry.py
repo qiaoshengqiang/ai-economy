@@ -18,7 +18,9 @@ from types import SimpleNamespace
 import pytest
 
 from actions import ACTION_TASK_CREATE, ActionIntent, TaskCreateExecutor
+from actions.intent import ActionResult
 from demand.models import DemandRun, TurnOutcome
+from demand.runner import DemandRunner
 from demand.scheduler import RunScheduler
 from demand.task_creation import TaskCreationError, TaskCreationService
 
@@ -293,6 +295,113 @@ class TestRunScheduler:
                          max_turns=20, no_progress_cycles=2)
         assert s.run().exit_reason == "NO_PROGRESS"
 
+    def test_actions_without_real_progress_do_not_reset_the_counter(self):
+        """
+        🔴 真实回归：`workspace_read` / `run_tool` 不是进展。
+
+        旧判据是 `outcome.actions > 0`，于是反复读同一个文件
+        也能把 NO_PROGRESS 一直重置 —— 两个真实 run 都这样被
+        MAX_TURNS 拖死。
+        """
+        s = RunScheduler(
+            participants=["a"],
+            run_turn=lambda a: TurnOutcome(a, actions=3, progress=False),
+            task_status=lambda: "IN_PROGRESS",
+            max_turns=20, no_progress_cycles=2)
+        assert s.run().exit_reason == "NO_PROGRESS"
+
+    def test_real_progress_resets_the_counter(self):
+        s = RunScheduler(
+            participants=["a"],
+            run_turn=lambda a: TurnOutcome(a, actions=1, progress=True),
+            task_status=lambda: "IN_PROGRESS",
+            max_turns=2, no_progress_cycles=1)
+        assert s.run().exit_reason == "MAX_TURNS"
+
+
+# ============================================================
+# DemandRunner 的进展判定
+# ============================================================
+class TestDemandProgress:
+    def _runner(self):
+        runner = object.__new__(DemandRunner)
+        runner._message_signatures = set()
+        runner._recent_messages = []
+        runner._turn_index = 1
+        return runner
+
+    def _intent(self, action_type, **params):
+        return ActionIntent(
+            action_type=action_type, agent_id="agent_a",
+            parameters=dict(params))
+
+    def _ok(self, action_type):
+        return ActionResult(
+            success=True, output={}, action_id="a",
+            action_type=action_type)
+
+    def test_read_and_tool_are_not_progress(self):
+        runner = self._runner()
+        intents = [self._intent("workspace_read", path="index.html"),
+                   self._intent("run_tool", tool="python", args=[])]
+        results = [self._ok("workspace_read"), self._ok("run_tool")]
+        progress, reason = runner._progress_of(
+            "IN_PROGRESS", "IN_PROGRESS", intents, results, [])
+        assert progress is False
+        assert reason == ""
+
+    def test_successful_write_is_progress(self):
+        runner = self._runner()
+        intents = [self._intent("workspace_write", path="x",
+                                write_mode="create", content="hi")]
+        results = [self._ok("workspace_write")]
+        progress, reason = runner._progress_of(
+            "IN_PROGRESS", "IN_PROGRESS", intents, results, [])
+        assert progress is True
+        assert "workspace_write" in reason
+
+    def test_duplicate_message_is_not_new_progress(self):
+        runner = self._runner()
+        intent = self._intent(
+            "message_send", to="agent_b", message_type="TEXT", text="blocked")
+        result = self._ok("message_send")
+        first = runner._record_messages(
+            "agent_a", [intent], [result])
+        runner._progress_of("IN_PROGRESS", "IN_PROGRESS",
+                            [intent], [result], first)
+        assert first == [id(intent)]
+
+        second = runner._record_messages(
+            "agent_a", [intent], [result])
+        progress, _ = runner._progress_of(
+            "IN_PROGRESS", "IN_PROGRESS", [intent], [result], second)
+        assert second == []
+        assert progress is False
+
+    def test_status_change_is_progress(self):
+        runner = self._runner()
+        progress, reason = runner._progress_of(
+            "IN_PROGRESS", "SUBMITTED", [], [], [])
+        assert progress is True
+        assert reason == "task_status"
+
+    def test_blocking_report_names_the_waiter(self):
+        """MAX_TURNS 不能只说“停了”，要回答“在等谁、等什么动作”。"""
+        runner = object.__new__(DemandRunner)
+        runner._last_progress_turn = 4
+        runner._recent_messages = []
+        runner._last_turn_by_agent = {}
+        runner.rt = SimpleNamespace(
+            task_execution=SimpleNamespace(
+                acceptors_of=lambda task: {"agent_b"}))
+        task = SimpleNamespace(
+            status="SUBMITTED", creator="agent_a",
+            contractor="agent_a", task_id="task_x")
+        report = runner._blocking_report(task)
+        assert report["waiting_for"] == "agent_b"
+        assert report["waiting_action"] == "VERIFY"
+        assert report["last_progress_turn"] == 4
+
 
 # ============================================================
 # CLI
@@ -305,6 +414,7 @@ def test_cli_parse_file_and_defaults():
     assert args.minutes == 5
     assert args.front_agent == "agent_a"
     assert args.max_turns == 30
+    assert args.cognitive_budget == 32768
 
 
 def test_demand_task_dispatcher_includes_memory_and_search():

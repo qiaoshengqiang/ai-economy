@@ -65,12 +65,25 @@
 **公共工具库**（只读，由项目预装）：
 `python` · `pytest` · `node` · `playwright`
 
+每个工具的**使用说明和常见失败**在：
+`public_query(name="tools/python.md")` · `tools/pytest.md` ·
+`tools/node.md` · `tools/playwright.md`。
+
 `run_tool` 会把 `source="task"` 或 `source="private"` 的文件只读复制到独立 run
 目录，然后执行工具；没有 shell、没有下载、没有安装。结果包含 `ok` /
 `exit_code` / `stdout` / `stderr` / `timed_out`。
 
+🔒 **副本里的写不会回写 Task Workspace。** 下载依赖、生成文件、删除文件
+都只发生在一次性 run 目录；要交付必须用 `workspace_write` /
+`workspace_edit`。
+
+🔒 **Playwright 必须先写 `*.spec.js`，再运行 spec：**
+`run_tool(tool="playwright", args=["tests/foo.spec.js"])`。
+不要用 `run_tool(python/node)` 导入 Playwright。
+
 `run_tool` **不推进 Task 状态**。测试通过后，生产者仍需发送 `SUBMIT`，
-验收人仍需发送 `VERIFY` / `COMPLETE`。
+验收人仍需发送 `VERIFY` / `COMPLETE`。验收人无法复跑时，应发
+`VERIFY(passed=false)` 并写明缺口，不要用重复读取代替验收结论。
 
 **消息类型**（协议已注册的）：
 `TEXT` · `TASK_OFFER` · `COUNTER_OFFER` · `ACCEPT` · `REJECT` · `START` · `SUBMIT` · `VERIFY` · `COMPLETE`

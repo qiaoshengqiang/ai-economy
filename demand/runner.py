@@ -17,7 +17,6 @@ import json
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-
 from core.identity import utc_now_iso
 from demand.actions import build_intake_dispatcher, build_task_dispatcher
 from demand.channels import SyncBridge, drain
@@ -48,6 +47,16 @@ class DemandRunner:
         self._creation = TaskCreationService(
             runtime, run, max_agents=run.max_agents)
         self._done = False
+        #: 上一 turn 的可观测事实（按 Agent）。下一轮 prompt 会显示它 ——
+        #: 尤其是截断 / 预算裁剪 / zero-action，否则 Agent 无法自主调节。
+        self._last_turn_by_agent: Dict[str, Dict[str, Any]] = {}
+        #: 已经见过的消息签名：重复发送同一条消息不算“有意义的进展”。
+        self._message_signatures: set = set()
+        #: 最近的消息（给 MAX_TURNS / TIME_LIMIT 的阻塞报告用）。
+        self._recent_messages: List[Dict[str, Any]] = []
+        #: 最近一次真实进展发生在第几 turn（0 = 还没有）。
+        self._last_progress_turn = 0
+        self._turn_index = 0
 
     # ------------------------------------------------------------
     def execute(self) -> Dict[str, Any]:
@@ -82,7 +91,10 @@ class DemandRunner:
                 return
             prompt = build_intake_prompt(
                 run=self.run, runtime=self.rt,
-                front_agent=self.run.front_agent)
+                front_agent=self.run.front_agent,
+                budget_cap=self.cognitive_budget,
+                budget_feedback=self._last_turn_by_agent.get(
+                    self.run.front_agent))
             outcome = self._turn(
                 self.run.front_agent, prompt, dispatcher,
                 task_id=None, initial_phase="intake",
@@ -156,7 +168,9 @@ class DemandRunner:
                 agent_id=agent_id, ok=False, error="task disappeared")
         prompt = build_task_prompt(
             run=self.run, task=task, runtime=self.rt,
-            agent_id=agent_id, inbox=inbox.get("received") or [])
+            agent_id=agent_id, inbox=inbox.get("received") or [],
+            budget_cap=self.cognitive_budget,
+            budget_feedback=self._last_turn_by_agent.get(agent_id))
         return self._turn(
             agent_id, prompt, self.task_dispatcher,
             task_id=task.task_id, initial_phase="decision",
@@ -191,7 +205,9 @@ class DemandRunner:
                 messages=prompt,
                 dispatcher=dispatcher,
                 task_id=task_id,
-                requested_cognitive_budget=self.cognitive_budget,
+                # 🔒 Human 给的是**硬上限**，不是“请求值”；
+                #    Agent 可以自己选择更低的偏好，或请求更高（会被 cap）。
+                cognitive_budget_cap=self.cognitive_budget,
                 call_purpose="cognition",
                 experiment_run_id=self.run.run_id,
                 follow_up_on_reads=follow_up,
@@ -199,6 +215,8 @@ class DemandRunner:
                 max_work_steps=2,
                 image_resolver=self.image_resolver,
                 initial_phase=initial_phase,
+                # 🔴 与生产实验对齐：信封坏了先修一次格式。
+                repair_malformed=True,
             )
         except Exception as exc:                              # noqa: BLE001
             after = self._status_string()
@@ -209,16 +227,41 @@ class DemandRunner:
                 agent_id=agent_id, ok=False, status_before=before,
                 status_after=after, error=f"{type(exc).__name__}: {exc}")
 
+        self._turn_index += 1
         segments = list(getattr(result, "segments", None) or [])
         tokens = sum(int(getattr(s, "tokens", 0) or 0) for s in segments)
-        actions = len(getattr(result, "action_intents", None) or [])
+        intents = list(getattr(result, "action_intents", None) or [])
+        results = list(getattr(result, "action_results", None) or [])
+        actions = len(intents)
         self.run.tokens += tokens
         self.run.status = self.run.status if self.run.status != "INTAKE" else "RUNNING"
         after = self._status_string()
 
         action_types: List[str] = []
-        for intent in (getattr(result, "action_intents", None) or []):
+        for intent in intents:
             action_types.append(str(getattr(intent, "action_type", "")))
+
+        budget = self._budget_feedback(segments, initial_phase)
+        envelope_errors = self._record_envelope_errors(agent_id, segments)
+        new_messages = self._record_messages(agent_id, intents, results)
+        progress, progress_reason = self._progress_of(
+            before, after, intents, results, new_messages)
+        if progress:
+            self._last_progress_turn = self._turn_index
+
+        self._last_turn_by_agent[agent_id] = {
+            "turn": self._turn_index,
+            "phase": initial_phase,
+            "status_before": before,
+            "status_after": after,
+            "tokens": tokens,
+            "actions": actions,
+            "action_types": action_types,
+            "progress": progress,
+            "progress_reason": progress_reason,
+            "budget": budget,
+            "envelope_errors": envelope_errors,
+        }
         self._event(
             "turn",
             agent_id=agent_id,
@@ -229,6 +272,10 @@ class DemandRunner:
             action_types=action_types,
             status_before=before,
             status_after=after,
+            progress=progress,
+            progress_reason=progress_reason,
+            budget=budget,
+            envelope_errors=len(envelope_errors),
         )
         return TurnOutcome(
             agent_id=agent_id,
@@ -237,7 +284,131 @@ class DemandRunner:
             actions=actions,
             status_before=before,
             status_after=after,
+            progress=progress,
+            progress_reason=progress_reason,
         )
+
+    # ------------------------------------------------------------
+    def _budget_feedback(self, segments: List[Any],
+                         initial_phase: str) -> Dict[str, Any]:
+        """把这一段（最后一次调用）的预算 / 截断事实变成下一轮可见的观测。"""
+        last = segments[-1] if segments else None
+        truncated = [s for s in segments if getattr(s, "is_truncated", False)]
+        # 🔒 有截断时以**被截断的那一段**为准 —— 否则 work 段被截断、
+        #    checkpoint 段正常时，下一轮会误报“没有截断”。
+        source = truncated[-1] if truncated else last
+        return {
+            "phase": str(getattr(source, "phase", initial_phase)
+                         or initial_phase),
+            "finish_reason": getattr(source, "finish_reason", None),
+            "output_status": getattr(source, "output_status", None),
+            "cognitive_status": getattr(source, "cognitive_status", None),
+            "truncated": bool(truncated),
+            "truncated_segments": len(truncated),
+            "requested": getattr(source, "requested_cognitive_budget", None),
+            "actual": getattr(source, "actual_max_tokens", None),
+            "clipped": getattr(source, "budget_clipped", None),
+            "segments": len(segments),
+        }
+
+    def _record_envelope_errors(self, agent_id: str,
+                                segments: List[Any]) -> List[Dict[str, Any]]:
+        """
+        把信封解析失败的**原始输出 head/tail** 落盘。
+
+        🔒 之前只有一行 warning，无法回答「为什么解析失败」。
+           这里只存有界片段，不存整段超长内容。
+        """
+        records: List[Dict[str, Any]] = []
+        for seg in segments:
+            decision = getattr(seg, "decision", None)
+            error = str(getattr(decision, "envelope_error", "") or "")
+            if not error:
+                continue
+            content = str(getattr(seg, "content", "") or "")
+            record = {
+                "agent_id": agent_id,
+                "index": int(getattr(seg, "index", 0) or 0),
+                "phase": str(getattr(seg, "phase", "") or ""),
+                "error": error,
+                "finish_reason": getattr(seg, "finish_reason", None),
+                "output_status": getattr(seg, "output_status", None),
+                "content_chars": len(content),
+                "head": content[:1200],
+                "tail": content[-1200:] if len(content) > 1200 else "",
+            }
+            records.append(record)
+            self._event("envelope_error", **record)
+        return records
+
+    def _record_messages(self, agent_id: str, intents: List[Any],
+                         results: List[Any]) -> List[int]:
+        """
+        记录成功发送的消息，并返回**首次出现**的消息对应的 intent id 集合。
+
+        🔒 重复发送同一条消息不算进展 —— 否则「反复发同一句阻塞报告」
+           会骗过 NO_PROGRESS。
+        """
+        new_ids: List[int] = []
+        for intent, result in zip(intents, results):
+            if result is None or not getattr(result, "success", False):
+                continue
+            if str(getattr(intent, "action_type", "")) != "message_send":
+                continue
+            params = dict(getattr(intent, "parameters", None) or {})
+            to_agent = str(params.get("to") or "")
+            message_type = str(params.get("message_type") or "TEXT")
+            text = str(params.get("text") or "")
+            payload = params.get("payload") or {}
+            try:
+                payload_text = json.dumps(
+                    payload, ensure_ascii=False, sort_keys=True)
+            except (TypeError, ValueError):
+                payload_text = str(payload)
+            signature = (agent_id, to_agent, message_type, text, payload_text)
+            is_new = signature not in self._message_signatures
+            self._message_signatures.add(signature)
+            record = {
+                "turn": self._turn_index,
+                "from": agent_id,
+                "to": to_agent,
+                "type": message_type,
+                "text": text[:400],
+                "new": is_new,
+            }
+            self._recent_messages.append(record)
+            self._recent_messages = self._recent_messages[-20:]
+            if is_new:
+                new_ids.append(id(intent))
+        return new_ids
+
+    def _progress_of(self, before: str, after: str, intents: List[Any],
+                     results: List[Any], new_messages: List[int]) -> tuple:
+        """
+        判定这一 turn 是否有**真实进展**。
+
+        🔒 判据刻意不包含 `workspace_read` / `run_tool`：
+           它们是观察，不是状态改变。两个真实 run 都是被
+           “反复读 + 反复跑工具”拖到 MAX_TURNS 的。
+        """
+        reasons: List[str] = []
+        if after != before:
+            reasons.append("task_status")
+        new_message_ids = set(new_messages)
+        for intent, result in zip(intents, results):
+            if result is None or not getattr(result, "success", False):
+                continue
+            action_type = str(getattr(intent, "action_type", ""))
+            if action_type in ("workspace_write", "workspace_edit"):
+                reasons.append(action_type)
+            elif action_type == "resource_create":
+                reasons.append("resource_create")
+            elif action_type == "message_send" and id(intent) in new_message_ids:
+                reasons.append("new_message")
+        # 去重但保留第一次出现的顺序
+        seen = set()
+        unique = [r for r in reasons if not (r in seen or seen.add(r))]
+        return bool(unique), ",".join(unique)
 
     # ------------------------------------------------------------
     def _status_task(self) -> Any:
@@ -265,12 +436,14 @@ class DemandRunner:
         self.run.cost_ai = self._cost()
         task = self._status_task()
         deliverable = self._export_deliverable(task)
+        blocking = self._blocking_report(task)
         result = {
             "run": self.run.to_dict(),
             "task": self._task_dict(task),
             "cost": {"tokens": self.run.tokens, "aic": self.run.cost_ai},
             "deliverable": str(deliverable) if deliverable else "",
             "files": self._file_list(deliverable),
+            "blocking": blocking,
         }
         self._write_json("result.json", result)
         self._write_run()
@@ -292,6 +465,17 @@ class DemandRunner:
             print(f"  输出      : {self.run.run_dir}")
             if deliverable:
                 print(f"  交付物    : {deliverable}")
+            if self.run.status != "COMPLETED" and blocking:
+                if blocking.get("waiting_for"):
+                    print(f"  阻塞      : {blocking.get('waiting_for')}")
+                if blocking.get("waiting_action"):
+                    print(f"  等待动作  : {blocking.get('waiting_action')}")
+                print(f"  最后进展  : turn "
+                      f"{blocking.get('last_progress_turn') or 0}")
+                for msg in (blocking.get("recent_messages") or [])[-3:]:
+                    print(f"  最近消息  : {msg.get('from')} → "
+                          f"{msg.get('to')} [{msg.get('type')}] "
+                          f"{msg.get('text')}")
             print("=" * 68)
         return result
 
@@ -313,6 +497,57 @@ class DemandRunner:
             "workspace_id": task.workspace.workspace_id
             if task.workspace else "",
             "description": task.description,
+        }
+
+    def _blocking_report(self, task: Any) -> Dict[str, Any]:
+        """
+        结束时回答「卡在哪」—— 不是只说 `STOPPED / MAX_TURNS`。
+
+        🔒 这里只读 Task Core / 本地观测，不推断 Agent 的动机。
+        """
+        if task is None:
+            return {}
+        status = str(getattr(task, "status", "") or "")
+        contractor = str(getattr(task, "contractor", "") or "")
+        creator = str(getattr(task, "creator", "") or "")
+        acceptors = []
+        try:
+            acceptors = sorted(self.rt.task_execution.acceptors_of(task))
+        except Exception:                                     # noqa: BLE001
+            pass
+        waiting_for = ""
+        waiting_action = ""
+        if status in ("CREATED", "ACCEPTED"):
+            waiting_for = contractor or creator
+            waiting_action = "START"
+        elif status == "IN_PROGRESS":
+            waiting_for = contractor
+            waiting_action = "SUBMIT"
+        elif status == "SUBMITTED":
+            waiting_for = ", ".join(acceptors) or "（还没有验收人）"
+            waiting_action = "VERIFY"
+        elif status == "VERIFIED":
+            waiting_for = creator
+            if acceptors:
+                waiting_for = f"{creator} 或 {', '.join(acceptors)}"
+            waiting_action = "COMPLETE"
+        return {
+            "task_status": status,
+            "waiting_for": waiting_for,
+            "waiting_action": waiting_action,
+            "acceptors": acceptors,
+            "last_progress_turn": self._last_progress_turn,
+            "recent_messages": list(self._recent_messages[-5:]),
+            "last_turns": {
+                agent_id: {
+                    key: value
+                    for key, value in facts.items()
+                    if key in ("turn", "phase", "status_after", "actions",
+                               "action_types", "progress", "progress_reason",
+                               "budget", "envelope_errors")
+                }
+                for agent_id, facts in self._last_turn_by_agent.items()
+            },
         }
 
     def _cost(self) -> float:
@@ -404,4 +639,8 @@ class DemandRunner:
                     f"→{payload.get('status_after')}"]
             if payload.get("action_types"):
                 bits.append("types=" + ",".join(payload["action_types"]))
+            if (payload.get("budget") or {}).get("truncated"):
+                bits.append("TRUNCATED")
+            if payload.get("progress_reason"):
+                bits.append("progress=" + str(payload["progress_reason"]))
             print("  " + "  ".join(bits))
