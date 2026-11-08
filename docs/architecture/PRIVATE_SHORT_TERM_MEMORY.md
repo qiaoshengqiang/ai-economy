@@ -139,6 +139,52 @@ agent_b: 1,034 字符
 本次任务开始时短期记忆为空（prompt 显示“还没有短期记忆”）；
 任务完成后两条条目才被追加。下一次任务会读到它们。
 
+### 7.1 第二个任务：确认跨任务读取
+
+- Run：`experiments/tool_collab/runs/1108-1301-5822a390/`
+- 同一个数据库：`runs/1108-1254-208be94a/tool.db`
+- 同一个 Agent：`agent_a` / `agent_b`
+- 任务：`duration.py`（w/d/h/m/s、组合、小数、前置负号、
+  format_duration、sum_durations；≥25 用例）
+- 结果：**COMPLETED**
+- 墙钟：**3.3 分钟**
+- 成本：**209,618 tokens / 2.09618 AIC**
+- 测试：**82 passed**
+
+任务开始时的 `short_term_loaded`：
+
+```text
+agent_a: revision=1  entry_ids=['stm-3099b6f9f04d']
+agent_b: revision=1  entry_ids=['stm-cfe584fc5f26']
+```
+
+prompt 里的短期记忆字符：
+
+```text
+agent_a: 580 字符 / turn
+agent_b: 743 字符 / turn
+```
+
+任务完成后，短期记忆 revision = **2**：
+
+```text
+agent_a: 2 条，合计 1,367 字符
+agent_b: 2 条，合计 1,578 字符
+```
+
+新条目：
+
+```text
+agent_a: stm-8c549a207579
+agent_b: stm-49fc4ff989b1
+```
+
+long-term：0 条（2 条未超过一半，未触发压缩）。
+
+**这确认了跨任务读取链路真的工作：**
+第二个任务的每个 turn 都加载了第一个任务的 entry_id，
+不是只存在于数据库里。
+
 ---
 
 ## 8. 未实现

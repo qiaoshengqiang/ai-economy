@@ -94,6 +94,9 @@ from core.private_working_memory_store import (  # noqa: E402
 from services.private_working_memory_service import (  # noqa: E402
     PrivateWorkingMemoryService,
 )
+from core.private_short_term_memory import (  # noqa: E402
+    render as render_short_term_memory,
+)
 from core.private_short_term_memory_store import (  # noqa: E402
     PrivateShortTermMemoryStore,
 )
@@ -2258,9 +2261,16 @@ def _turn(rt: Any, bridge: Any, st: Any, stage: Any, aid: str, rnd: int,
     # 短期记忆：每个 (agent, task) **只从 DB 读一次**。
     try:
         cache_key = (aid, TASK_ID)
+        stm_service = _short_term_memory(rt)
+        stm_memory = stm_service.read(aid)
         if cache_key not in _SHORT_TERM_CACHE:
-            _SHORT_TERM_CACHE[cache_key] = _short_term_memory(rt).render(aid)
+            _SHORT_TERM_CACHE[cache_key] = render_short_term_memory(
+                stm_memory)
         short_term_text = _SHORT_TERM_CACHE[cache_key]
+        turn["short_term_loaded"] = {
+            "revision": stm_memory.revision,
+            "entry_ids": [e.entry_id for e in stm_memory.entries],
+        }
     except Exception as exc:                              # noqa: BLE001
         short_term_text = (
             f"（短期记忆读取失败：{type(exc).__name__}: {exc}）")

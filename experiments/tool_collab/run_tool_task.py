@@ -86,6 +86,9 @@ def _parse_args(argv=None) -> argparse.Namespace:
     ap.add_argument("--rounds", type=int, default=3)
     ap.add_argument("--budget", type=float, default=20.0)
     ap.add_argument("--cognitive-budget", type=int, default=16384)
+    ap.add_argument(
+        "--db", default=None,
+        help="复用已有的 tool.db（用于跨任务短期记忆实验）；不传则新建")
     ap.add_argument("--out", default=None)
     return ap.parse_args(argv)
 
@@ -99,7 +102,8 @@ def main(argv=None) -> int:
     outdir.mkdir(parents=True, exist_ok=True)
     results = outdir / "results"
     results.mkdir(parents=True, exist_ok=True)
-    db = outdir / "tool.db"
+    db = (Path(args.db).expanduser().resolve() if args.db
+          else outdir / "tool.db")
 
     from experiments.heterogeneous_production import production as P
 
