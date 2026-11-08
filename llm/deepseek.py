@@ -69,6 +69,10 @@ class DeepSeekProvider(OpenAICompatibleProvider):
     # DeepSeek 有合理的默认模型，用户不填也能用
     requires_explicit_model = False
 
+    # DeepSeek V4 支持 thinking 开关 + reasoning_effort（low/high/max）。
+    supports_thinking = True
+    supports_reasoning_effort = True
+
     # ---------------- DeepSeek 特有的错误含义 ----------------
     def _extra_status_hint(self, status: int) -> str:
         """

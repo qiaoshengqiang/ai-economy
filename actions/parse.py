@@ -87,7 +87,39 @@ def _first_balanced_object(text: str) -> Optional[str]:
 #:    第一版白名单漏了它们，导致合法的 Reflection 被静默丢弃，
 #:    进而把「parser bug」误读成「模型不遵守协议」。
 ENVELOPE_KEYS = {"decision", "action", "action_type",
-                 "reflections", "reflection"}
+                 "reflections", "reflection", "thinking"}
+
+#: `thinking.effort` 允许的值。
+#:
+#: 🔒 这只是**语法白名单**，不是「推荐哪个值」——
+#:    具体映射（medium→high 等）由 provider 决定。
+THINKING_EFFORTS = frozenset({
+    "low", "medium", "high", "max",
+    "minimal", "xhigh", "ultra", "none",
+})
+
+
+def normalize_thinking(raw: Any) -> Optional[Dict[str, Any]]:
+    """
+    把信封里的 `thinking` 归一成 `{"enabled": bool, "effort": str?}`。
+
+    形状不合法返回 None —— 调用方据此记 `thinking_error`，
+    但**不**因此丢掉同一信封里的动作。
+    """
+    if not isinstance(raw, dict):
+        return None
+    enabled = raw.get("enabled")
+    if not isinstance(enabled, bool):
+        return None
+    effort = raw.get("effort")
+    if effort is None:
+        return {"enabled": enabled}
+    if not isinstance(effort, str):
+        return None
+    effort = effort.strip().lower()
+    if effort not in THINKING_EFFORTS:
+        return None
+    return {"enabled": enabled, "effort": effort}
 
 
 def extract_envelope(text: Optional[str]) -> Optional[Dict[str, Any]]:
@@ -238,6 +270,14 @@ def decision_from_text(agent_id: str, text: Optional[str]) -> Decision:
 
     reasoning = str(envelope.get("reasoning") or "")
 
+    # 🔴 Agent 可以决定**下一步**的思考模式。只解析，不在这里注入 ——
+    #    真正是否支持、如何映射到 provider 参数，由 Brain 适配层决定。
+    raw_thinking = envelope.get("thinking")
+    thinking = normalize_thinking(raw_thinking)
+    thinking_error = ""
+    if raw_thinking is not None and thinking is None:
+        thinking_error = "invalid_thinking"
+
     # 🔴 2026-10-10：**一次决策可以有 0..N 个动作**。
     #
     #    【为什么要多个】
@@ -280,6 +320,7 @@ def decision_from_text(agent_id: str, text: Optional[str]) -> Decision:
             decision_id=decision_id, agent_id=agent_id,
             kind=DECISION_REPLY, reasoning=reasoning or (text or ""),
             dropped_actions=dropped, envelope_error=error,
+            thinking=thinking, thinking_error=thinking_error,
             created_at=utc_now_iso(),
         )
 
@@ -287,6 +328,7 @@ def decision_from_text(agent_id: str, text: Optional[str]) -> Decision:
         decision_id=decision_id, agent_id=agent_id,
         kind=DECISION_ACT, reasoning=reasoning,
         intents=intents, dropped_actions=dropped,
+        thinking=thinking, thinking_error=thinking_error,
         created_at=utc_now_iso(),
     )
 
@@ -300,5 +342,8 @@ ENVELOPE_INSTRUCTION = (
     'You may put **more than one** action in the list when they belong'
     ' together (e.g. write a file and notify somebody about it).\n'
     'The single form {"action":{...}} is also accepted.\n'
+    'To choose the next step\'s thinking mode, add '
+    '{"thinking":{"enabled":true,"effort":"low|high|max"}} '
+    'at the top level; omit it to keep the current mode.\n'
     'Otherwise just reply normally.'
 )

@@ -159,6 +159,18 @@ class Brain:
         self.router = router
         self.settings = settings
 
+        #: 🔴 Agent 当前的思考模式（**下一步**生效）。
+        #:
+        #:    None = 不注入，保持 provider 自己的默认行为
+        #:           （向后兼容：别的 Agent 不会因为这次改动改变请求）。
+        #:    False = 关闭思考（provider 支持时注入 thinking.type=disabled）。
+        #:    True  = 开启思考；thinking_effort 决定强度。
+        #:
+        #:    🔒 这是 **Agent 的状态**，不是全局配置 —— 它由 Agent
+        #:       在信封里的 `thinking` 指令更新，下一次调用生效。
+        self.thinking_enabled: Optional[bool] = None
+        self.thinking_effort: Optional[str] = None
+
         #: Cognitive Context Builder（可选）。
         #: 🔒 它是**可注入**的 —— Brain 不认识 SelfModelStore，
         #:    只认识「给我一个 query，我还你一段上下文文本」这个契约。
@@ -208,6 +220,18 @@ class Brain:
     def credential_for(self, provider: Optional[str] = None):
         """拿到（并缓存）某个 provider 上的 Credential。🔒 返回值不可直接打印。"""
         return self._credential_for(provider or self.settings.provider)
+
+    def set_thinking(self, enabled: bool,
+                     effort: Optional[str] = None) -> None:
+        """
+        设置**下一次调用**的思考模式。
+
+        🔒 只改本 Brain 的状态，不改全局配置，也不影响别的 Agent。
+        🔒 provider 不支持时不会报错 —— 是否注入由 `generate()` 决定。
+        """
+        self.thinking_enabled = bool(enabled)
+        self.thinking_effort = (str(effort).strip().lower()
+                                if effort else None)
 
     def _credential_for(self, provider: Optional[str]):
         """
@@ -534,6 +558,21 @@ class Brain:
         effective_max_tokens = (
             self.settings.max_tokens if max_tokens is None else max_tokens
         )
+
+        # ---- 思考模式（Agent 自己的状态；下一步生效）------------------
+        #
+        #   🔒 Brain **不认识厂商**：它只根据 Agent 的状态注入通用字段；
+        #      provider 是否支持、是否丢弃，由 Provider 自己的能力声明
+        #      （`supports_thinking` / `supports_reasoning_effort`）决定。
+        #   🔒 调用方显式传了 `thinking` / `reasoning_effort` 时不覆盖。
+        #   🔒 `enabled=False` 时不注入 `reasoning_effort` ——
+        #      否则会把「关闭思考」和「强度」同时发出去。
+        if "thinking" not in kwargs and self.thinking_enabled is not None:
+            kwargs["thinking"] = {
+                "type": "enabled" if self.thinking_enabled else "disabled"}
+        if ("reasoning_effort" not in kwargs and self.thinking_enabled
+                and self.thinking_effort):
+            kwargs["reasoning_effort"] = self.thinking_effort
 
         logger.debug(
             "%s 的大脑正在思考（provider=%s model=%s）",

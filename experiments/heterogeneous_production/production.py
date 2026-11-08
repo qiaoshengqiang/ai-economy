@@ -146,6 +146,13 @@ BUDGET_AIC = 50.0
 #: 🔒 可覆盖：`HETERO_COGNITIVE_BUDGET`。
 COGNITIVE_BUDGET = int(os.environ.get("HETERO_COGNITIVE_BUDGET", "16384"))
 
+#: 🔴 思考模式的**初始状态**：所有参与者从 disabled 开始。
+#:
+#: 之后由 Agent 在信封里用 `"thinking": {"enabled": ..., "effort": ...}`
+#: 自行决定下一步；不写就保持当前状态。
+INITIAL_THINKING_ENABLED = False
+INITIAL_THINKING_EFFORT = "low"
+
 #: 是否在读取后**当场回喂**（同一认知里的第二段 LLM 调用）。
 #:
 #: 默认 True（既有实验行为）。当某个参与者的 provider 很慢时，
@@ -300,6 +307,16 @@ PROMPT = """你是这次长期生产任务的一名参与者。这是**正式生
 
 🔒 要读多个文件时，用 `actions` 列表**一次**列出；系统会按顺序全部执行。
    只输出 JSON 信封；`<tool_call>` / DSML / `function_call` 等格式不会被解析。
+
+========== 思考模式（环境能力）==========
+初始状态：thinking = disabled（不注入 reasoning_effort）。
+
+你可以在信封顶层加：
+
+  "thinking": {{"enabled": true, "effort": "low|high|max"}}
+
+它改变**下一步**的思考模式；不写就保持当前状态。
+thinking = disabled 时不注入 reasoning_effort。
 
 如果你**不采取动作**（只是想说点什么，或者什么都不做），就直接正常回复 ——
 没有这个信封就是一次普通回复。
@@ -624,6 +641,15 @@ def main() -> int:
         # ---- 环境（Task / Workspace / 命名空间 / 根 Stage）----
         rt = build_runtime(db_path=str(DB), agent_ids=AGENTS)
         _ensure_environment(rt)
+
+        # 🔴 思考模式的初始状态：所有参与者从 disabled 开始。
+        #    之后由 Agent 自己在信封里决定是否开启 / 强度。
+        for _a in rt.economy.all_agents():
+            if _a.agent_id in AGENTS:
+                _a.brain.set_thinking(INITIAL_THINKING_ENABLED,
+                                      INITIAL_THINKING_EFFORT)
+        print(f"  🧠 初始思考模式：disabled"
+              f"（effort={INITIAL_THINKING_EFFORT}）")
         # §11：记录**真实送进模型的那一份** Context
         print(f"  🎥 Context telemetry：包装了 "
               f"{_install_context_recorder(rt)} 个 Agent 的 context_builder")
@@ -1949,6 +1975,8 @@ def _turn(rt: Any, bridge: Any, st: Any, stage: Any, aid: str, rnd: int,
     reasoning = str(getattr(decision, "reasoning", "") or "")
     turn["decision"] = getattr(decision, "kind", None)
     turn["envelope_error"] = getattr(decision, "envelope_error", "")
+    turn["thinking"] = getattr(decision, "thinking", None)
+    turn["thinking_error"] = getattr(decision, "thinking_error", "")
     if turn["envelope_error"]:
         # 只留尾巴：是「写断了」还是「引号没转义」，看结尾最快。
         turn["envelope_preview"] = content[-240:]
@@ -1985,6 +2013,12 @@ def _turn(rt: Any, bridge: Any, st: Any, stage: Any, aid: str, rnd: int,
                               if s["reasoning"]]
         turn["repair_used"] = any(
             s.get("repair_attempted") for s in turn["segments"])
+
+    # 这一轮结束后的**真实**思考状态（下一步生效）
+    turn["thinking_state"] = {
+        "enabled": getattr(getattr(a, "brain", None), "thinking_enabled", None),
+        "effort": getattr(getattr(a, "brain", None), "thinking_effort", None),
+    }
 
     # ---- 🔴 唯一的动作通道（一轮一个）----
     #

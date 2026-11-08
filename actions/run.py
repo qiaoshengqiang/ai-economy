@@ -129,6 +129,11 @@ def run_cognition(
                             repair_malformed=repair_malformed)
     segments: List[CognitiveSegment] = [seg0]
 
+    # 🔴 Agent 对**下一步**思考模式的决定：立刻应用到同一个 Agent 的 Brain。
+    #    这样紧接着的读取回喂（seg1）就会用新的思考模式；
+    #    不写 `thinking` 就保持当前状态。
+    _apply_thinking(agent, seg0.decision)
+
     # ---- 执行第 1 段的动作 --------------------------------------------
     intents: List[ActionIntent] = list(seg0.action_intents)
     results: List[Optional[ActionResult]] = _dispatch_all(
@@ -161,6 +166,7 @@ def run_cognition(
                                    generate_kwargs, index=1,
                                    repair_malformed=repair_malformed)
             segments.append(seg1)
+            _apply_thinking(agent, seg1.decision)
             intents.extend(seg1.action_intents)
             results.extend(_dispatch_all(
                 agent_id, seg1.action_intents, dispatcher=dispatcher,
@@ -203,6 +209,7 @@ def run_cognition(
         finish_reason=seg0.finish_reason,
         segments=segments,
         follow_up_used=follow_up_used,
+        thinking=_last_thinking(segments),
     )
 
 
@@ -304,6 +311,13 @@ def _run_one_segment(agent: Any, agent_id: str, messages: Any,
                     getattr(response, "output_status", None),
                 )
 
+    thinking_error = getattr(decision, "thinking_error", "")
+    if thinking_error:
+        logger.warning(
+            "Cognition thinking 指令非法（%s）：agent=%s seg=%d —— "
+            "已忽略该指令；同一信封里的动作不受影响。",
+            thinking_error, agent_id, index)
+
     # ============================================================
     # §七：EMPTY_CONTENT **不许悄悄成功**
     # ============================================================
@@ -396,6 +410,39 @@ def _dispatch_all(agent_id: str, intents: List[ActionIntent], *,
         # 意图照样保留（那是真实发生的事实），结果如实留空。
         return [None] * len(intents)
     return [dispatcher.dispatch(it) for it in intents]
+
+
+def _apply_thinking(agent: Any, decision: Any) -> None:
+    """
+    把 Decision 里的 `thinking` 指令应用到 Agent 的 Brain。
+
+    🔒 鸭子类型：不 import `agents/`；没有 `brain.set_thinking` 的
+       调用方（测试 / 旧实现）静默跳过。
+    🔒 只改**下一步**的状态，不改本次已经生成的内容。
+    """
+    directive = getattr(decision, "thinking", None)
+    if not isinstance(directive, dict):
+        return
+    brain = getattr(agent, "brain", None)
+    setter = getattr(brain, "set_thinking", None)
+    if not callable(setter):
+        return
+    enabled = bool(directive.get("enabled"))
+    effort = directive.get("effort")
+    setter(enabled, effort)
+    logger.info(
+        "思考模式更新：agent=%s enabled=%s effort=%s（下一步生效）",
+        getattr(agent, "agent_id", "?"), enabled, effort or "-")
+
+
+def _last_thinking(segments: List[CognitiveSegment]) -> Optional[dict]:
+    """最后一个**明确表态**的 thinking 指令（None = 全程没表态）。"""
+    directive = None
+    for seg in segments:
+        value = getattr(getattr(seg, "decision", None), "thinking", None)
+        if isinstance(value, dict):
+            directive = value
+    return dict(directive) if directive else None
 
 
 def _as_message_list(messages: Any) -> Optional[List[Any]]:

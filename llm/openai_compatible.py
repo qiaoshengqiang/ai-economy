@@ -844,6 +844,14 @@ class OpenAICompatibleProvider(LLMProvider):
         self._last_max_tokens = effective_tokens
         self._last_budget_clipped = clipped
 
+        # 🔒 思考模式是 **Provider 能力**，不是 Agent 层的厂商判断。
+        #    不支持的 provider 在这里安静地丢掉这些字段，而不是
+        #    把未知字段发给厂商换一个 400。
+        if not getattr(self, "supports_thinking", False):
+            kwargs.pop("thinking", None)
+        if not getattr(self, "supports_reasoning_effort", False):
+            kwargs.pop("reasoning_effort", None)
+
         payload = self.build_payload(
             messages=normalized,
             model=resolved_model,

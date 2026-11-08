@@ -83,6 +83,11 @@ class DoubaoProvider(OpenAICompatibleProvider):
     DEFAULT_MODEL = ""
     requires_explicit_model = True
 
+    # 豆包支持 `thinking` 开关；`reasoning_effort` 不是它的文档字段，
+    # 所以这里只声明 thinking —— 不把未知字段发过去。
+    supports_thinking = True
+    supports_reasoning_effort = False
+
     # ---------------- 豆包特有的提示 ----------------
     def _missing_model_message(self) -> str:
         """

@@ -165,6 +165,18 @@ class Decision:
     #:    `unparsable_envelope` —— 看起来像信封，但 JSON 解析失败
     #:    `no_valid_actions`    —— 信封能解析，但没有一个动作可用
     envelope_error: str = ""
+    #: 🔴 Agent 对**下一步**思考模式的决定（可选）。
+    #:
+    #:    形状：{"enabled": bool, "effort": "low"|"high"|"max"}
+    #:
+    #:    · `None` = 这次没有表态，保持当前状态；
+    #:    · `{"enabled": False}` = 下一步关闭思考；
+    #:    · `{"enabled": True, "effort": "high"}` = 下一步开启高思考。
+    #:
+    #:    🔒 这是 Agent 的决定，不是 Runtime 的默认策略。
+    thinking: Optional[Dict[str, Any]] = None
+    #: `thinking` 字段写了但形状不合法时的原因（空字符串 = 没写/合法）。
+    thinking_error: str = ""
     created_at: str = ""
 
     @property
@@ -189,6 +201,8 @@ class Decision:
             "intent": self.intent.to_dict() if self.intent else None,
             "dropped_actions": self.dropped_actions,
             "envelope_error": self.envelope_error,
+            "thinking": dict(self.thinking) if self.thinking else None,
+            "thinking_error": self.thinking_error,
             "created_at": self.created_at,
         }
 
@@ -344,6 +358,11 @@ class CognitiveRunResult:
     #:    它是**事实**，不是意图 —— 没触发（没有可回喂的载荷）时是 False。
     follow_up_used: bool = False
 
+    #: 最后一段给出的 thinking 指令（None = 没有表态）。
+    #: 🔒 它只表达「Agent 决定了什么」；真正是否注入、注入给谁，
+    #:    由 Brain 的 provider 适配层决定。
+    thinking: Optional[Dict[str, Any]] = None
+
     @property
     def action_intent(self) -> Optional[ActionIntent]:
         """向后兼容：**第一个**动作。"""
@@ -407,4 +426,5 @@ class CognitiveRunResult:
             "segments": [s.to_dict() for s in self.segments],
             "segment_count": len(self.segments),
             "follow_up_used": self.follow_up_used,
+            "thinking": dict(self.thinking) if self.thinking else None,
         }

@@ -687,6 +687,13 @@ class LLMProvider(ABC):
     # 是否需要 API Key。MockProvider 会把它设成 False。
     requires_api_key: bool = True
 
+    #: 是否支持 `thinking` / `reasoning_effort` 请求字段。
+    #:
+    #: 🔒 这是 **Provider 自己的能力声明**，不是 Agent 层的厂商判断。
+    #:    默认 False —— 不认识的 provider 不会被塞入未知字段。
+    supports_thinking: bool = False
+    supports_reasoning_effort: bool = False
+
     def __init__(
         self,
         provider_config: Optional[Mapping[str, Any]] = None,
