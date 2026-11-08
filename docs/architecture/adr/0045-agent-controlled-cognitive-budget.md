@@ -72,6 +72,41 @@ requested / actual / budget_clipped
 `events.jsonl` 新增 `envelope_error`，含原始输出的有界 `head` / `tail`
 （各 1200 字符）。CLI 同时保存 `run.log`（终端输出 + logging）。
 
+### 6. 工作单元压力反馈（2026-11-09）
+
+真实 run `demand_06244121` 暴露：提高预算解决了截断，但没有解决
+“一次要写太大一块”的架构问题。
+
+- 触发：`truncated` 或 `budget_clipped in (above_caller_limit, above_max)`；
+- Demand prompt 显示连续次数 / 本 run 累计次数；
+- 明确写“提高预算只改变单次上限，不改变工作单元大小”；
+- 给出可选方向：拆文件/模块/步骤、交给其他 participant、继续加预算
+  （硬上限已到时说明无效）；
+- 连续 2 次以上升级提示“优先重新评估工作拆分”。
+
+### 7. 历史坐标：截断/预算压力不再写成“上一轮”
+
+真实 run 里，critical observation 没有过期机制，且 feedback 写成
+“上一轮”，导致 Agent 在之后每一轮都以为上一轮被截断，与 Demand
+prompt 的 `truncated=False` 矛盾。
+
+- 截断 / 预算压力观察写入 `observed_at` 与 `cognition_turn_id`；
+- feedback 写成“在 <时间> 的一次认知中”，并明确“不是对当前轮次的判断”；
+- Context 标题标明 historical facts，可能来自更早的 turn；
+- 旧记录没有 `observed_at` 时，用 `Experience.created_at` 补历史坐标。
+
+### 8. 验收通道的 Workspace 事实
+
+真实 run 里 E（验收人）无法创建 `tests/`，因为 root Directory Lock
+在 A 手里，E 连续 6 次重试 `resource_create`。
+
+- `workspace.list` 返回 target 的 `effective_controller` /
+  `effective_lock_holder`（root 不在 entries 里，必须单独给）；
+- Demand prompt 显示 root controller / lock 与每个子项的责任事实；
+- 明确：创建子目录需要父目录锁；root 不在自己手里时，
+  请持有者 `resource_handoff`，或使用 private workspace +
+  `run_tool(source="private")`；不要反复重试被锁拒绝的 `resource_create`。
+
 ### 明确不做
 
 - 不由 AIC 余额自动换算 token 预算；

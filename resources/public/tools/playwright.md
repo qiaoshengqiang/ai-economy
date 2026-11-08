@@ -46,6 +46,13 @@ test('page boots', async ({ page }) => {
 
 用 `workspace_write` 写入，不要只在 `run_tool(python/node)` 的副本里写。
 
+> 🔒 如果 Workspace root 的 Controller / Directory Lock 不是你（例如你是
+> 验收人），你无法直接在根下创建 `tests/`。请让持有者创建目录并
+> `resource_handoff` 给你；或者把 spec 写进你的 private workspace，
+> 用 `run_tool(tool="playwright", source="private", args=["tests/foo.spec.js"])`
+> 执行（只适用于不依赖 Task Workspace 其他文件的测试）。
+> 不要反复重试被锁拒绝的 `resource_create`。
+
 ### 2. 再运行 spec
 
 ```json

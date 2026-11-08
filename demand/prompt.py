@@ -42,6 +42,7 @@ def _render_workspace(runtime: Any, workspace_id: str,
                       agent_id: str) -> str:
     gateway = runtime.workspace_gateway
     lines: List[str] = []
+    root: Dict[str, Any] = {}
 
     def walk(path: str, depth: int) -> None:
         if len(lines) >= 120:
@@ -49,7 +50,11 @@ def _render_workspace(runtime: Any, workspace_id: str,
         result = gateway.list(workspace_id, path, agent_id)
         if not result.success:
             return
-        for entry in (result.result or {}).get("entries", []) or []:
+        payload = result.result or {}
+        if path == "/" and not root:
+            root["controller"] = payload.get("effective_controller")
+            root["lock"] = payload.get("effective_lock_holder")
+        for entry in payload.get("entries", []) or []:
             if len(lines) >= 120:
                 return
             name = str(entry.get("name") or "")
@@ -57,19 +62,33 @@ def _render_workspace(runtime: Any, workspace_id: str,
                 continue
             child = f"{path.rstrip('/')}/{name}" if path != "/" else f"/{name}"
             kind = str(entry.get("type") or "")
+            # 🔒 责任/锁事实：Agent 需要知道“这个目录/文件归谁、现在谁持有”。
+            meta = []
+            controller = entry.get("effective_controller")
+            if controller:
+                meta.append(f"controller={controller}")
+            holder = entry.get("effective_lock_holder")
+            if holder:
+                meta.append(f"lock={holder}")
+            suffix = f"  [{', '.join(meta)}]" if meta else ""
             if kind == "directory":
-                lines.append(f"- {child}/")
+                lines.append(f"- {child}/{suffix}")
                 if depth < 3:
                     walk(child, depth + 1)
             else:
                 rev = entry.get("revision")
                 r = f" (R{rev})" if rev is not None else ""
-                lines.append(f"- {child}{r}")
+                lines.append(f"- {child}{r}{suffix}")
 
     try:
         walk("/", 0)
     except Exception as exc:                                 # noqa: BLE001
         return f"（Workspace 读取失败：{type(exc).__name__}: {exc}）"
+    if root:
+        controller = root.get("controller") or "（未知）"
+        lock = root.get("lock") or "none"
+        lines.insert(
+            0, f"- /  [root controller={controller}, root lock={lock}]")
     text = "\n".join(lines) if lines else "（Workspace 目前为空）"
     return _clip(text, MAX_WORKSPACE_CHARS)
 
@@ -179,9 +198,36 @@ def _render_budget(runtime: Any, agent_id: str, *,
         if feedback.get("truncated"):
             lines.append(
                 "  ⚠️ 上一轮有段被截断：该段即使解析出合法 Action 也不会执行。")
-        if feedback.get("clipped"):
+        if feedback.get("clipped") in ("above_caller_limit", "above_max"):
             lines.append(
                 "  ⚠️ 上一轮请求的预算被裁剪；actual 才是真正可用的上限。")
+        elif feedback.get("clipped") == "below_min":
+            lines.append(
+                "  ⚠️ 上一轮请求的预算低于 Provider 下限；actual 是抬升后的值。")
+        if feedback.get("pressure"):
+            streak = feedback.get("pressure_streak") or 0
+            total = feedback.get("pressure_total") or 0
+            kinds = feedback.get("pressure_kinds") or "unknown"
+            lines.append(
+                f"  ⚠️ 工作单元压力：连续第 {streak} 次，"
+                f"本 run 累计 {total} 次（{kinds}）。")
+            lines.append(
+                "     事实：提高预算只改变单次输出上限，"
+                "不改变工作单元大小。")
+            if streak >= 2:
+                lines.append(
+                    "     🔴 同类超限已连续发生；优先重新评估工作拆分"
+                    "（文件/模块/步骤/委派），再决定是否继续加预算。")
+            lines.append(
+                "     可选方向（由你决定）：拆成更小的文件/模块/步骤；"
+                "把独立部分交给其他 participant；"
+                "若 clipped=above_*，硬上限已到，再提高请求不会生效。")
+        elif (feedback.get("pressure_total") or 0) >= 2:
+            lines.append(
+                f"  - 本 run 已累计 {feedback.get('pressure_total')} 次"
+                f"预算/输出超限（最近一次 turn "
+                f"{feedback.get('pressure_last_turn')}）。这是历史事实；"
+                "如果当前仍是一次大块写入/生成，可重新评估工作拆分。")
     else:
         lines.append("- 上一轮：这是你这个 Agent 的第一次 turn。")
     lines.append(
@@ -345,6 +391,16 @@ def build_task_prompt(
 
 ========== Workspace 事实（当前版本） ==========
 {workspace}
+
+========== Workspace 责任与验收通道（结构事实） ==========
+- 创建子目录 / 新文件需要**父目录**的有效 Directory Lock。
+- 如果 root controller / root lock 不是你，你无法直接在根下创建 tests/。
+  正确路径：请持有者创建目录并 `resource_handoff` 给你；
+  或把测试文件写进你的 private workspace，再用
+  `run_tool(source="private")` 执行（只适用于不依赖 Task Workspace
+  其他文件的测试）。
+- 被锁拒绝后不要反复重试同一个 `resource_create`；先看上面的
+  root controller / lock，或发消息请持有者 handoff。
 
 ========== 这一轮的信箱 ==========
 {inbox_text}

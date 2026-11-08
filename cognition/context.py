@@ -321,8 +321,11 @@ class CognitiveContext:
             # 🔒 只呈现**事实**，不呈现策略（§11）：
             #    可以说「上一轮输出被截断」，
             #    不可以写「应该加大 max_tokens」/「需要重试」。
+            # 🔴 2026-11-09：这些是**历史事实**，可能来自更早的 turn。
+            #    标题必须说清楚，否则 Agent 会把旧的截断一直当成“上一轮”。
             lines = ["Critical observations from the runtime "
-                     "(facts about what just happened; not instructions):"]
+                     "(historical facts; they may refer to earlier turns, "
+                     "not necessarily the current one):"]
             for e in self.critical_observations:
                 lines.append(_critical_observation_block(e))
             parts.append("\n".join(lines))
@@ -444,6 +447,12 @@ _CRITICAL_FACT_KEYS = (
     "finish_reason",
     "output_status",
     "action_skipped",
+    "observed_at",
+    "cognition_turn_id",
+    "work_unit_pressure",
+    "budget_clipped",
+    "requested_cognitive_budget",
+    "actual_max_tokens",
 )
 
 
@@ -468,6 +477,11 @@ def _critical_observation_block(e: Experience) -> str:
     facts = [f"  {k}: {result[k]}" for k in _CRITICAL_FACT_KEYS if k in result]
     if facts:
         parts.append("  structured facts:\n" + "\n".join(facts))
+    # 🔒 旧记录（2026-11-09 之前）没有 result.observed_at；
+    #    用 Experience 自己的 created_at 补一个**历史坐标**，
+    #    避免它被读成“当前/上一轮”。
+    if "observed_at" not in result and getattr(e, "created_at", ""):
+        parts.append(f"  observed_at: {e.created_at}")
     return "\n".join(parts)
 
 

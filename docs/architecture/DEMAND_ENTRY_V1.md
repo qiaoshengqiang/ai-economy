@@ -112,7 +112,14 @@ requested / actual / budget_clipped 下一轮可见
 - 单相：`"cognitive_budget": 32768`（当前相）；
 - 分相：`"cognitive_budget": {"work": 32768, "decision": 8192}`；
 - 截断（`finish_reason=length`）的段**不执行动作**；
-- 下一轮 prompt 显示上一轮 `requested / actual / clipped / truncated`。
+- 下一轮 prompt 显示上一轮 `requested / actual / clipped / truncated`；
+- **工作单元压力**：截断或 `clipped=above_*` 时，prompt 明确显示
+  “提高预算只改变单次上限，不改变工作单元大小”，并给出可选方向：
+  拆成更小的文件/模块/步骤、交给其他 participant、或继续加预算
+  （硬上限已到时会说明）；连续 2 次以上会升级提示重新评估工作拆分；
+- **历史坐标**：截断 / 预算压力的 critical observation 带
+  `observed_at` 与 `cognition_turn_id`，不再使用永久的“上一轮”措辞；
+  Context 也标明这是历史事实，可能来自更早的 turn。
 
 **信封修复**：Demand 打开 `repair_malformed=True`，格式坏掉时最多重试一次。
 
@@ -204,6 +211,9 @@ RunScheduler(
 - Task Core 事实（status / creator / contractor / participants / acceptors）；
 - Task Shared Context（objective / DoD / assignments）；
 - Workspace 文件列表；
+- **Workspace 责任事实**：root controller / root lock、每个子项的
+  effective controller / lock；创建子目录需要父目录锁；
+  root 不在自己手里时，走 `resource_handoff` 或 private workspace；
 - 本轮 inbox 消息；
 - **认知预算事实**：Human 上限 / 当前分相偏好 / 上一轮
   `requested / actual / clipped / truncated`；

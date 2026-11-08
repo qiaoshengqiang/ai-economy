@@ -402,6 +402,78 @@ class TestDemandProgress:
         assert report["waiting_action"] == "VERIFY"
         assert report["last_progress_turn"] == 4
 
+    def _pressure_runner(self):
+        runner = object.__new__(DemandRunner)
+        runner._turn_index = 1
+        runner._pressure_streak = {}
+        runner._pressure_total = {}
+        runner._pressure_last_turn = {}
+        return runner
+
+    def _segment(self, *, truncated=False, clipped=None):
+        return SimpleNamespace(
+            phase="work", finish_reason="length" if truncated else "stop",
+            output_status="EMPTY_CONTENT" if truncated else "VALID_CONTENT",
+            cognitive_status="TRUNCATED" if truncated else "COMPLETE",
+            is_truncated=truncated,
+            requested_cognitive_budget=32768,
+            actual_max_tokens=16384 if clipped else 32768,
+            budget_clipped=clipped,
+        )
+
+    def test_truncation_increments_work_unit_pressure(self):
+        runner = self._pressure_runner()
+        first = runner._budget_feedback(
+            [self._segment(truncated=True)], "work", "agent_a")
+        assert first["pressure"] is True
+        assert first["pressure_kinds"] == "truncated"
+        assert first["pressure_streak"] == 1
+        assert first["pressure_total"] == 1
+
+        runner._turn_index = 2
+        second = runner._budget_feedback(
+            [self._segment(truncated=True)], "work", "agent_a")
+        assert second["pressure_streak"] == 2
+        assert second["pressure_total"] == 2
+
+        runner._turn_index = 3
+        normal = runner._budget_feedback(
+            [self._segment()], "work", "agent_a")
+        assert normal["pressure"] is False
+        assert normal["pressure_streak"] == 0
+        assert normal["pressure_total"] == 2
+
+    def test_budget_clip_is_work_unit_pressure(self):
+        runner = self._pressure_runner()
+        fb = runner._budget_feedback(
+            [self._segment(clipped="above_caller_limit")],
+            "work", "agent_a")
+        assert fb["pressure"] is True
+        assert "clipped" in fb["pressure_kinds"]
+        assert fb["pressure_total"] == 1
+
+    def test_below_min_is_not_work_unit_pressure(self):
+        runner = self._pressure_runner()
+        fb = runner._budget_feedback(
+            [self._segment(clipped="below_min")], "work", "agent_a")
+        assert fb["pressure"] is False
+
+    def test_truncation_and_clip_keep_their_own_fields(self):
+        """同一个 turn 里两段分别截断/裁剪时，字段不能互相错配。"""
+        runner = self._pressure_runner()
+        clipped = self._segment(clipped="above_caller_limit")
+        truncated = self._segment(truncated=True)
+        fb = runner._budget_feedback(
+            [clipped, truncated], "work", "agent_a")
+        assert fb["truncated"] is True
+        assert fb["pressure"] is True
+        assert set(fb["pressure_kinds"].split(",")) == {
+            "truncated", "clipped"}
+        # requested/actual/clipped 来自 clipped 段
+        assert fb["requested"] == 32768
+        assert fb["actual"] == 16384
+        assert fb["clipped"] == "above_caller_limit"
+
 
 # ============================================================
 # CLI

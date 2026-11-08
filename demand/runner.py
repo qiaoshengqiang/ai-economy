@@ -57,6 +57,10 @@ class DemandRunner:
         #: 最近一次真实进展发生在第几 turn（0 = 还没有）。
         self._last_progress_turn = 0
         self._turn_index = 0
+        #: 工作单元压力（截断 / 预算裁剪）的连续与累计计数。
+        self._pressure_streak: Dict[str, int] = {}
+        self._pressure_total: Dict[str, int] = {}
+        self._pressure_last_turn: Dict[str, int] = {}
 
     # ------------------------------------------------------------
     def execute(self) -> Dict[str, Any]:
@@ -241,7 +245,7 @@ class DemandRunner:
         for intent in intents:
             action_types.append(str(getattr(intent, "action_type", "")))
 
-        budget = self._budget_feedback(segments, initial_phase)
+        budget = self._budget_feedback(segments, initial_phase, agent_id)
         envelope_errors = self._record_envelope_errors(agent_id, segments)
         new_messages = self._record_messages(agent_id, intents, results)
         progress, progress_reason = self._progress_of(
@@ -290,13 +294,41 @@ class DemandRunner:
 
     # ------------------------------------------------------------
     def _budget_feedback(self, segments: List[Any],
-                         initial_phase: str) -> Dict[str, Any]:
+                         initial_phase: str,
+                         agent_id: str = "") -> Dict[str, Any]:
         """把这一段（最后一次调用）的预算 / 截断事实变成下一轮可见的观测。"""
         last = segments[-1] if segments else None
         truncated = [s for s in segments if getattr(s, "is_truncated", False)]
-        # 🔒 有截断时以**被截断的那一段**为准 —— 否则 work 段被截断、
-        #    checkpoint 段正常时，下一轮会误报“没有截断”。
-        source = truncated[-1] if truncated else last
+        clipped_segments = [
+            s for s in segments
+            if getattr(s, "budget_clipped", None)
+            in ("above_caller_limit", "above_max")
+        ]
+        # 🔒 `finish_reason/truncated` 取**最后一个被截断的段**；
+        #    `requested/actual/clipped` 取**最后一个被裁剪的段**。
+        #    两者分开取，避免“截断段正常、裁剪段别的”时字段互相错配。
+        source = (truncated[-1] if truncated
+                  else clipped_segments[-1] if clipped_segments
+                  else last)
+        budget_source = (clipped_segments[-1] if clipped_segments
+                         else source)
+        clipped = getattr(budget_source, "budget_clipped", None)
+        # 🔴 2026-11-09：工作单元压力 = 输出撞上限，或请求预算被压到
+        #    `above_*`。`below_min` 不是“工作太大”，不算压力。
+        kinds: List[str] = []
+        if truncated:
+            kinds.append("truncated")
+        if clipped_segments:
+            kinds.append("clipped")
+        pressure = bool(kinds)
+        if pressure:
+            self._pressure_streak[agent_id] = \
+                self._pressure_streak.get(agent_id, 0) + 1
+            self._pressure_total[agent_id] = \
+                self._pressure_total.get(agent_id, 0) + 1
+            self._pressure_last_turn[agent_id] = self._turn_index
+        else:
+            self._pressure_streak[agent_id] = 0
         return {
             "phase": str(getattr(source, "phase", initial_phase)
                          or initial_phase),
@@ -305,10 +337,16 @@ class DemandRunner:
             "cognitive_status": getattr(source, "cognitive_status", None),
             "truncated": bool(truncated),
             "truncated_segments": len(truncated),
-            "requested": getattr(source, "requested_cognitive_budget", None),
-            "actual": getattr(source, "actual_max_tokens", None),
-            "clipped": getattr(source, "budget_clipped", None),
+            "requested": getattr(
+                budget_source, "requested_cognitive_budget", None),
+            "actual": getattr(budget_source, "actual_max_tokens", None),
+            "clipped": clipped,
             "segments": len(segments),
+            "pressure": pressure,
+            "pressure_kinds": ",".join(kinds),
+            "pressure_streak": self._pressure_streak.get(agent_id, 0),
+            "pressure_total": self._pressure_total.get(agent_id, 0),
+            "pressure_last_turn": self._pressure_last_turn.get(agent_id, 0),
         }
 
     def _record_envelope_errors(self, agent_id: str,

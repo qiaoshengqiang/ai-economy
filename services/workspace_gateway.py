@@ -438,6 +438,11 @@ class WorkspaceGateway:
                 "resource_id": target.resource_id,
                 "path": target.path,
                 "revision": target.revision,
+                # 🔒 列目录时同时给出**这个目录自己**的责任/锁事实。
+                #    `entries` 里每个子项也有；但 root 不在 entries 里，
+                #    Agent 需要它来判断“我能不能在根下建 tests/”。
+                "effective_controller": tree.effective_controller(target),
+                "effective_lock_holder": tree.effective_lock(target),
                 "entries": entries,
             },
         )

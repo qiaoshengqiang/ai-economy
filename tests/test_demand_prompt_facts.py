@@ -32,7 +32,17 @@ class _Directory:
 
 class _Gateway:
     def list(self, workspace_id, path, agent_id):
-        return SimpleNamespace(success=True, result={"entries": []})
+        return SimpleNamespace(success=True, result={
+            "effective_controller": "agent_a",
+            "effective_lock_holder": "agent_a",
+            "entries": [{
+                "name": "index.html",
+                "type": "file",
+                "revision": 4,
+                "effective_controller": "agent_a",
+                "effective_lock_holder": None,
+            }],
+        })
 
 
 class _Alignment:
@@ -149,3 +159,75 @@ def test_intake_prompt_delivers_budget_facts():
     assert "硬上限（Human）：16384" in prompt
     assert "requested=32768" in prompt
     assert "truncated=True" in prompt
+
+
+def test_work_unit_pressure_prompts_rearchitecture():
+    """预算/输出反复撞上限时，必须给 Agent 一个“拆小”的明确信号。"""
+    feedback = {
+        "turn": 9,
+        "phase": "work",
+        "finish_reason": "length",
+        "output_status": "EMPTY_CONTENT",
+        "cognitive_status": "TRUNCATED",
+        "truncated": True,
+        "truncated_segments": 1,
+        "requested": 32768,
+        "actual": 32768,
+        "clipped": None,
+        "segments": 1,
+        "pressure": True,
+        "pressure_kinds": "truncated",
+        "pressure_streak": 2,
+        "pressure_total": 3,
+        "pressure_last_turn": 9,
+    }
+    prompt = build_task_prompt(
+        run=_run(), task=_task(), runtime=_runtime(),
+        agent_id="agent_a", inbox=[], budget_cap=32768,
+        budget_feedback=feedback)
+
+    assert "工作单元压力" in prompt
+    assert "连续第 2 次" in prompt
+    assert "本 run 累计 3 次" in prompt
+    assert "拆成更小的文件/模块/步骤" in prompt
+    assert "重新评估工作拆分" in prompt
+
+
+def test_pressure_history_is_shown_after_budget_increase():
+    """预算提高后即使当前轮正常，也保留本 run 的历史压力事实。"""
+    feedback = {
+        "turn": 10,
+        "phase": "decision",
+        "finish_reason": "stop",
+        "output_status": "VALID_CONTENT",
+        "cognitive_status": "COMPLETE",
+        "truncated": False,
+        "truncated_segments": 0,
+        "requested": 32768,
+        "actual": 32768,
+        "clipped": None,
+        "segments": 1,
+        "pressure": False,
+        "pressure_kinds": "",
+        "pressure_streak": 0,
+        "pressure_total": 3,
+        "pressure_last_turn": 9,
+    }
+    prompt = build_task_prompt(
+        run=_run(), task=_task(), runtime=_runtime(),
+        agent_id="agent_a", inbox=[], budget_cap=32768,
+        budget_feedback=feedback)
+    assert "本 run 已累计 3 次" in prompt
+    assert "重新评估工作拆分" in prompt
+
+
+def test_workspace_prompt_shows_controller_and_acceptance_path():
+    prompt = build_task_prompt(
+        run=_run(), task=_task(), runtime=_runtime(),
+        agent_id="agent_e", inbox=[], budget_cap=16384,
+        budget_feedback=None)
+    assert "root controller=agent_a" in prompt
+    assert "root lock=agent_a" in prompt
+    assert "父目录" in prompt
+    assert "resource_handoff" in prompt
+    assert 'run_tool(source="private")' in prompt

@@ -106,6 +106,20 @@
 
 **⇒ 边界由结构强制。你不需要"先问系统能不能做"—— 做不到就是做不到。**
 
+### 3.1 Directory Lock 与验收目录
+
+`workspace.list` 的返回里会显示 `effective_controller` /
+`effective_lock_holder`（root 和每个子项都有）。
+
+- 创建子目录 / 新文件需要**父目录**的有效 Directory Lock。
+- 如果 root 的 controller / lock 不是你，你无法直接在根下创建 `tests/`。
+- 正确路径：请持有者创建目录并 `resource_handoff` 给你；
+  或把测试文件写进你的 private workspace，再用
+  `run_tool(source="private")` 执行（只适用于不依赖 Task Workspace
+  其他文件的测试）。
+- 被锁拒绝后不要反复重试同一个 `resource_create`；先看 root 锁，
+  或发消息请持有者 handoff。
+
 ---
 
 ## 4. 写产物的语义（`write_mode`）

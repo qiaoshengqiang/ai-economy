@@ -178,6 +178,23 @@ class TestScenarioA:
         assert "RESOURCE_CREATED" in rig.event_types()
         assert "RESOURCE_UPDATED" in rig.event_types()
 
+    def test_list_reports_root_controller_and_lock(self, rig):
+        """
+        Agent 需要知道“根目录归谁、现在谁持锁”才能判断
+        自己能不能创建 tests/。root 不在 entries 里，必须单独给。
+        """
+        listing = rig.gateway.list("W1", "/", "A")
+        assert listing.success
+        assert listing.result["effective_controller"] == "A"
+        assert listing.result["effective_lock_holder"] == "A"
+
+        rig.gateway.create("W1", "/", "src", "directory", "A")
+        again = rig.gateway.list("W1", "/", "A")
+        entry = next(e for e in again.result["entries"]
+                     if e["name"] == "src")
+        assert entry["effective_controller"] == "A"
+        assert entry["effective_lock_holder"] == "A"
+
     def test_read_does_not_produce_event_or_audit(self, rig):
         """🔒 list()/read() **不产生 Event、不记读 Audit**（任务书 §17）。"""
         before_e = len(rig.event_types())
@@ -188,6 +205,7 @@ class TestScenarioA:
 
         assert len(rig.event_types()) == before_e, "读不该产生 Event"
         assert len(rig.audit_actions()) == before_a, "读不该写 Audit"
+
 
     def test_event_has_no_file_content(self, rig):
         """🔒 Event **不含文件内容**（任务书 §20）。"""

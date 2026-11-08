@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from core.config import AgentConfig
-from core.identity import AgentIdentity
+from core.identity import AgentIdentity, utc_now_iso
 from core.logging_setup import get_logger
 from core.wallet import Wallet, WalletRepository
 from core.workspace import Workspace
@@ -387,6 +387,7 @@ class BaseAgent:
         self.last_response = response
 
         self._record_truncation_if_needed(response, **kwargs)
+        self._record_budget_pressure_if_needed(response, **kwargs)
 
         return response
 
@@ -434,29 +435,112 @@ class BaseAgent:
         if store is None:
             return
         finish_reason = getattr(response, "finish_reason", None)
+        observed_at = str(getattr(response, "created_at", "") or utc_now_iso())
+        turn_id = str(kwargs.get("cognition_turn_id") or "")
+        result = {
+            # 🔴 标记成关键观察 —— 保证进入下一轮 Context。
+            #    截断这件事如果丢了，Agent 会以为上一轮
+            #    「正常结束了」，于是基于不完整的认知继续走。
+            "critical_observation": True,
+            "observed_state": "cognitive_output_truncated",
+            "cognitive_output": "TRUNCATED",
+            "finish_reason": finish_reason,
+            "output_status": getattr(response, "output_status", None),
+            "cognitive_status": "TRUNCATED",
+            # 🔴 2026-11-09：时间与轮次是**历史坐标**。
+            #    没有它们，这条观察会在后续每一轮里被读成“上一轮”。
+            "observed_at": observed_at,
+            "work_unit_pressure": True,
+        }
+        if turn_id:
+            result["cognition_turn_id"] = turn_id
+        clipped = getattr(response, "budget_clipped", None)
+        if clipped:
+            result["budget_clipped"] = clipped
+            result["requested_cognitive_budget"] = getattr(
+                response, "requested_cognitive_budget", None)
+            result["actual_max_tokens"] = getattr(
+                response, "actual_max_tokens", None)
         try:
             store.record(
                 self.agent_id if hasattr(self, "agent_id") else self.name,
                 "observation",
-                result={
-                    # 🔴 标记成关键观察 —— 保证进入下一轮 Context。
-                    #    截断这件事如果丢了，Agent 会以为上一轮
-                    #    「正常结束了」，于是基于不完整的认知继续走。
-                    "critical_observation": True,
-                    "observed_state": "cognitive_output_truncated",
-                    "cognitive_output": "TRUNCATED",
-                    "finish_reason": finish_reason,
-                    "output_status": getattr(response, "output_status", None),
-                    "cognitive_status": "TRUNCATED",
-                },
+                result=result,
                 feedback=(
-                    "上一轮认知输出未完整完成：模型输出达到 token 上限"
+                    f"在 {observed_at} 的一次认知中，模型输出达到 token 上限"
                     f"（finish_reason={finish_reason}）。"
-                    "这一轮认知被标记为 TRUNCATED。"),
-                metadata={"finish_reason": finish_reason},
+                    "该次认知被标记为 TRUNCATED，动作未执行。"
+                    "这是一条历史事实，不是对当前轮次的判断。"),
+                metadata={
+                    "finish_reason": finish_reason,
+                    "observed_at": observed_at,
+                    "cognition_turn_id": turn_id,
+                    "work_unit_pressure": True,
+                },
             )
         except Exception as exc:                          # noqa: BLE001
             logger.warning("截断观察记录失败：%s", exc)
+
+    def _record_budget_pressure_if_needed(
+            self, response: Any, **kwargs: Any) -> None:
+        """
+        预算被裁剪时记一条**历史事实**（与截断共用 critical 通道）。
+
+        🔒 只记 `above_caller_limit` / `above_max`：
+           它们是“请求的工作单元大于可分配预算”的信号。
+           `below_min` 是请求太小，不是工作单元太大。
+        🔒 截断已经由 `_record_truncation_if_needed` 记录（且带预算字段），
+           这里不重复记。
+        """
+        clipped = getattr(response, "budget_clipped", None)
+        if clipped not in ("above_caller_limit", "above_max"):
+            return
+        if getattr(response, "cognitive_status", None) == "TRUNCATED":
+            return
+        from llm.recorder import LLMCallRecorder as _R
+
+        if kwargs.get("call_purpose") != _R.PURPOSE_COGNITION:
+            return
+        store = getattr(self, "experience_store", None)
+        if store is None:
+            return
+
+        observed_at = str(getattr(response, "created_at", "") or utc_now_iso())
+        turn_id = str(kwargs.get("cognition_turn_id") or "")
+        requested = getattr(response, "requested_cognitive_budget", None)
+        actual = getattr(response, "actual_max_tokens", None)
+        result = {
+            "critical_observation": True,
+            "observed_state": "cognitive_budget_clipped",
+            "budget_clipped": clipped,
+            "requested_cognitive_budget": requested,
+            "actual_max_tokens": actual,
+            "observed_at": observed_at,
+            "work_unit_pressure": True,
+        }
+        if turn_id:
+            result["cognition_turn_id"] = turn_id
+        try:
+            store.record(
+                self.agent_id if hasattr(self, "agent_id") else self.name,
+                "observation",
+                result=result,
+                feedback=(
+                    f"在 {observed_at} 的一次认知中，请求的认知预算被裁剪"
+                    f"（requested={requested}, actual={actual}, "
+                    f"clipped={clipped}）。"
+                    "这次工作单元超出了可分配的单次输出预算；"
+                    "提高预算只改变单次上限，不改变工作单元大小。"
+                    "这是一条历史事实，不是对当前轮次的判断。"),
+                metadata={
+                    "budget_clipped": clipped,
+                    "observed_at": observed_at,
+                    "cognition_turn_id": turn_id,
+                    "work_unit_pressure": True,
+                },
+            )
+        except Exception as exc:                          # noqa: BLE001
+            logger.warning("预算压力观察记录失败：%s", exc)
 
     def act(self, messages=None, *, dispatcher=None, execute: bool = True,
             write_service=None, **kwargs):

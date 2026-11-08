@@ -296,6 +296,52 @@ class TestD_NextTurnVisibility:
                     if r.result.get("observed_state")
                     == "cognitive_output_truncated"]
 
+    def test_truncation_observation_is_historical_not_previous_turn(
+            self, real_agent):
+        """
+        2026-11-09 真实 run：critical observation 没有时间坐标，
+        于是 Agent 在后续每一轮都读成“上一轮又被截断了”。
+
+        🔒 新观察必须带 observed_at，并且不再声称“上一轮”。
+        """
+        self._generate(real_agent, "length")
+        exp = real_agent.experience_store.list(self.AGENT_ID)[0]
+        assert exp.result.get("observed_at")
+        assert exp.result.get("work_unit_pressure") is True
+        assert "上一轮" not in exp.feedback
+        assert "历史事实" in exp.feedback
+
+    def test_critical_observation_renders_observed_at(self, real_agent):
+        self._generate(real_agent, "length")
+        text = real_agent.brain.context_builder.build(
+            self.AGENT_ID).to_text()
+        assert "historical facts" in text
+        assert "observed_at:" in text
+        assert "上一轮" not in text
+
+    def test_budget_clip_records_pressure_observation(self, real_agent):
+        """预算被裁剪本身也必须进入下一轮可见事实。"""
+        from llm.base import LLMResponse
+        real_agent.brain.generate = lambda messages=None, **kw: LLMResponse(
+            content='{"thought": "写一大块"}', provider="mock",
+            model="mock_model", finish_reason="stop",
+            requested_cognitive_budget=32768,
+            actual_max_tokens=16384,
+            budget_clipped="above_caller_limit",
+            total_tokens=100, token_source="api")
+        real_agent.generate(messages="hi", call_purpose="cognition")
+
+        rows = real_agent.experience_store.list(self.AGENT_ID)
+        obs = next(r for r in rows
+                   if r.result.get("observed_state")
+                   == "cognitive_budget_clipped")
+        assert obs.result.get("budget_clipped") == "above_caller_limit"
+        assert obs.result.get("work_unit_pressure") is True
+        assert "工作单元" in obs.feedback
+        text = real_agent.brain.context_builder.build(
+            self.AGENT_ID).to_text()
+        assert "cognitive_budget_clipped" in text
+
     def test_experience_renders_into_next_context(self, store):
         """
         下一轮 CognitiveContext 必须**看得见**这一事实。
@@ -323,6 +369,22 @@ class TestD_NextTurnVisibility:
         # 🔒 不写策略：不许出现「你必须重试」这类指令
         for banned in ("你必须要", "你必须", "must retry", "应该重试"):
             assert banned not in text, f"Context 里出现了策略指令：{banned}"
+
+    def test_old_observation_without_observed_at_gets_timestamp(self):
+        """旧库里的观察没有 observed_at —— 渲染时用 created_at 补历史坐标。"""
+        from cognition.context import CognitiveContext
+        from experience.models import Experience
+
+        exp = Experience(
+            experience_id="exp_old", agent_id="agent_x",
+            source="observation",
+            result={"observed_state": "cognitive_output_truncated",
+                    "finish_reason": "length"},
+            feedback="旧记录：模型输出达到 token 上限。",
+            created_at="2026-11-08T16:16:50+00:00",
+        )
+        text = CognitiveContext(critical_observations=[exp]).to_text()
+        assert "observed_at: 2026-11-08T16:16:50+00:00" in text
 
 
 # ============================================================
