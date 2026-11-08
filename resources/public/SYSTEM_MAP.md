@@ -17,6 +17,7 @@
 | **Task** | 一件被正式承接的工作。有状态机（`CREATED → OFFERED → … → COMPLETED`） | 可以**邀约**别人（`TASK_OFFER`）、接受/拒绝/还价、提交成果、给出验收结论 |
 | **Task Shared Context** | 这个 Task 的**共同认知**：目标 · 约束 · 验收标准 · 决定 · 假设 · 待解问题 · **验收责任指派** · 事实 · 术语。它**只增不改**，每一版都留着 | `shared_context_read` 读**当前**那一版；`assign_acceptance` 指派验收责任 |
 | **Public Working Memory** | Task 范围内**参与者可见、可更新**的操作状态：总计划 · 分工 · 完成清单 · 进度 · 要共享的抽象信息。它**不是** Shared Context，不自动成为团队决定 | `public_working_memory_read` / `public_working_memory_update` |
+| **Private Working Memory** | **只有你自己可见**的工作结构：抽象分支 · 当前任务 · 重大问题 · 重大发现 · 笔记。任务结项后当前工作记忆清空，历史保留 | `private_working_memory_read` / `private_working_memory_update` |
 | **Task Workspace** | Task 的**共享**文件空间。你写下的产物在这里 | `workspace_read` / `workspace_write`。只有**你参与的那个**；写受锁约束，读不受 |
 | **Resource 责任树** | Task Workspace 里的目录结构 —— 每一块都有**责任人** | `resource_create` 建目录 · `resource_handoff` 把责任交给别人 · `resource_release` 放掉独立责任 |
 | **Private Workspace** | **你自己的**文件空间。别人看不到、也读不到 | `private_write` / `private_read` / `private_list` / `private_delete`。它**不属于任何 Task**，**换任务也还在** |
@@ -38,6 +39,8 @@
 | `shared_context_read` | 读这个 Task 的**共同认知**当前那一版 | **无参数** |
 | `public_working_memory_read` | 读这个 Task 的**公共工作记忆**当前版本 | **无参数** |
 | `public_working_memory_update` | 基于 revision 更新公共工作记忆条目 | `expected_revision` · `items` · `remove_keys` |
+| `private_working_memory_read` | 读**你自己的**私有工作记忆 | **无参数** |
+| `private_working_memory_update` | 维护**你自己的**私有工作结构 / 发现 / 问题 | `expected_revision` · `nodes` · `remove_nodes` |
 | `assign_acceptance` | 把这个 Task 的**验收责任**指派给某个 Agent | `to` · `reason`（可选） |
 | `resource_create` | 在 Task Workspace 里建一个**目录** | `path` |
 | `resource_handoff` | 把你对某个资源的**责任**交给别人 | `path` · `to` · `reason`（可选） |

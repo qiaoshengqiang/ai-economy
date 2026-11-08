@@ -30,10 +30,10 @@
 | | |
 |---|---|
 | **阶段** | `Workspace Core V1 已冻结 · Agent Core V1 已实现 · Tool Runtime V1 已实现 · 观察实验` |
-| **测试基线** | 以 `./dev.sh test` 当前输出为准（最近：**4867 passed, 2 skipped, 30 deselected**） |
+| **测试基线** | 以 `./dev.sh test` 当前输出为准（最近：**4896 passed, 2 skipped, 30 deselected**） |
 | **协议版本** | `protocol_version = "1"` |
 | **命令数** | 25（`./dev.sh` 查看全部） |
-| **数据库表** | **23** |
+| **数据库表** | **25** |
 | **工作区状态** | 应当干净 |
 
 ### 已完成
@@ -152,7 +152,7 @@ tool_runtime/   →  core/ + 标准库（subprocess）；不依赖 services/
 | **4** External / World State | 系统外 | `FUTURE` | 外部 API / 网络 / Git remote。**无** |
 
 > 注：**Workspace Core v1** 是 `CURRENT`；Memory 四层里的 **Task Workspace** 是完整模型（`FUTURE`）。
-> **Public Working Memory（`CURRENT`）不在这四层里** —— 见 [`PUBLIC_WORKING_MEMORY.md`](docs/architecture/PUBLIC_WORKING_MEMORY.md)。
+> **Public / Private Working Memory（`CURRENT`）不在这四层里** —— 见 [`PUBLIC_WORKING_MEMORY.md`](docs/architecture/PUBLIC_WORKING_MEMORY.md) · [`PRIVATE_WORKING_MEMORY.md`](docs/architecture/PRIVATE_WORKING_MEMORY.md)。
 
 **`Memory ≠ Alignment`** —— Shared Context 是**结果**，Alignment 是**机制**。
 

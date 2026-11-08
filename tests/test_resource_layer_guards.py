@@ -601,6 +601,9 @@ class TestNoImplementation:
             # Task 范围内的计划 / 分工 / 清单 / 进度。
             "task_public_working_memory",
             "task_public_working_memory_revisions",
+            # Private Working Memory（2026-11-08 任务书授权）
+            "agent_private_working_memory",
+            "agent_private_working_memory_revisions",
         }
         assert expected_workspace_tables <= names, (
             f"Workspace Core 的 5 张表不全，缺少 "
@@ -621,8 +624,9 @@ class TestNoImplementation:
         #   git_worktrees / worktree_intents / worktree_events）= 21
         # 13（原始）+ 5（Workspace Core v1）
         # + 3（Change Pipeline Phase 1）
-        # + 2（Public Working Memory）= 23
-        assert len(names) == 23, (
-            f"表数应为 13 + 5 + 3 + 2 = 23，实际 {len(names)}："
+        # + 2（Public Working Memory）
+        # + 2（Private Working Memory）= 25
+        assert len(names) == 25, (
+            f"表数应为 13 + 5 + 3 + 2 + 2 = 25，实际 {len(names)}："
             f"{sorted(names)}"
         )

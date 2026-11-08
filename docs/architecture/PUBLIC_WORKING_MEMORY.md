@@ -197,13 +197,17 @@ START → SUBMIT → VERIFY → COMPLETE
 
 ---
 
-## 9. 未实现
+## 9. 已做 / 未做
 
-- **Private Working Memory**（每个 Agent 的私有工作区）；
+已做：
+
+- **Private Working Memory**：见 [`PRIVATE_WORKING_MEMORY.md`](PRIVATE_WORKING_MEMORY.md)。
+
+未实现：
+
 - **短期 / 长期记忆**；
-- **owner checklist 的协议级确认门**；
+- **owner checklist 的协议级确认门**（按最高原则，不做硬约束）；
 - 工作记忆的自动 consolidation（当前由 Agent 显式更新）；
 - 工作记忆的跨 Task 复用。
 
-下一步建议先做 **Private Working Memory**，再决定
-「owner 最终确认」是否要进入 Task Execution 的硬约束。
+下一步：把 finalize 的 snapshot 接入短期记忆。

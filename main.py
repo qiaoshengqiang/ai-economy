@@ -74,6 +74,7 @@ from core.task import OfferType, Task, TaskStatus               # noqa: E402
 from core.task_store import TaskStore                           # noqa: E402
 from core.task_context_store import TaskContextStore
 from core.public_working_memory_store import PublicWorkingMemoryStore
+from core.private_working_memory_store import PrivateWorkingMemoryStore
 from core.workspace_core import normalize_path                 # noqa: E402
 from core.workspace_store import WorkspaceStore                 # noqa: E402
 from change import GitManager, WorktreeManager                   # noqa: E402
@@ -92,6 +93,9 @@ from services import (
 )
 from services.public_working_memory_service import (  # noqa: E402
     PublicWorkingMemoryService,
+)
+from services.private_working_memory_service import (  # noqa: E402
+    PrivateWorkingMemoryService,
 )
 from core.paths import ensure_runtime_dirs                      # noqa: E402
 from llm import LLMCallRecorder, LLMRouter, LLMError            # noqa: E402
@@ -181,6 +185,8 @@ class Runtime:
     #: Task 范围内的公共工作记忆（计划/分工/清单/进度）。
     #: 🔒 不是 Task Core，也不是 Shared Context。
     public_working_memory: PublicWorkingMemoryService
+    #: 单个 Agent 的私有工作记忆（抽象结构 / 发现 / 问题）。
+    private_working_memory: PrivateWorkingMemoryService
 
     # ---- Workspace Core v1（收尾阶段接入组合根）----
     # 【依赖方向】
@@ -1239,6 +1245,8 @@ def build_runtime(
     #    它是可写的操作状态，不是“已确认的共同认知”。
     public_working_memory = PublicWorkingMemoryService(
         PublicWorkingMemoryStore(db=economy.db), tasks=tasks)
+    private_working_memory = PrivateWorkingMemoryService(
+        PrivateWorkingMemoryStore(db=economy.db), tasks=tasks)
 
     task_service = TaskService(
         store=tasks,
@@ -1317,6 +1325,7 @@ def build_runtime(
         contexts=contexts,
         alignment=alignment,
         public_working_memory=public_working_memory,
+        private_working_memory=private_working_memory,
         delegations=delegations,
         delegation_service=delegation_service,
         task_budgets=task_budgets,
@@ -3198,6 +3207,8 @@ def _reset_demo_tasks(runtime: Runtime, task_ids) -> int:
                           "task_shared_contexts",
                           "task_public_working_memory_revisions",
                           "task_public_working_memory",
+                          "agent_private_working_memory_revisions",
+                          "agent_private_working_memory",
                           "task_executions", "task_agreements",
                           "task_offers", "tasks"):
                 cursor = conn.execute(
@@ -6532,6 +6543,8 @@ def cmd_context_demo(runtime: Runtime, args: argparse.Namespace) -> int:
                       "task_shared_contexts",
                       "task_public_working_memory_revisions",
                       "task_public_working_memory",
+                      "agent_private_working_memory_revisions",
+                      "agent_private_working_memory",
                       "task_executions", "task_agreements",
                       "task_offers", "tasks"):
             conn.execute(f"DELETE FROM {table} WHERE task_id = ?", (task_id,))

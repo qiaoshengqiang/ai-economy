@@ -88,6 +88,14 @@ TABLE_PUBLIC_WORKING_MEMORY: Final = "task_public_working_memory"
 TABLE_PUBLIC_WORKING_MEMORY_REVISIONS: Final = (
     "task_public_working_memory_revisions")
 
+# ---- Private Working Memory（单个 Agent、单个 Task）----
+# 【为什么与 Public 分表】
+#     Public 是参与者可见的计划/清单；Private 是 Agent 自己的抽象结构。
+#     读写权限、生命周期、清理时机都不同，不能混表。
+TABLE_PRIVATE_WORKING_MEMORY: Final = "agent_private_working_memory"
+TABLE_PRIVATE_WORKING_MEMORY_REVISIONS: Final = (
+    "agent_private_working_memory_revisions")
+
 
 # ============================================================
 # 建表 SQL
@@ -1037,6 +1045,33 @@ SCHEMA_STATEMENTS: Final[tuple[str, ...]] = (
         author          TEXT NOT NULL,
         created_at      TEXT NOT NULL,
         PRIMARY KEY (task_id, revision),
+        FOREIGN KEY (task_id) REFERENCES tasks (task_id)
+    )
+    """,
+
+    # --------------------------------------------------------
+    # Private Working Memory（每个 Agent 每个 Task 一份）
+    # --------------------------------------------------------
+    """
+    CREATE TABLE IF NOT EXISTS agent_private_working_memory (
+        agent_id        TEXT NOT NULL,
+        task_id         TEXT NOT NULL,
+        revision        INTEGER NOT NULL,
+        payload         TEXT NOT NULL,
+        updated_at      TEXT NOT NULL,
+        PRIMARY KEY (agent_id, task_id),
+        FOREIGN KEY (task_id) REFERENCES tasks (task_id)
+    )
+    """,
+
+    """
+    CREATE TABLE IF NOT EXISTS agent_private_working_memory_revisions (
+        agent_id        TEXT NOT NULL,
+        task_id         TEXT NOT NULL,
+        revision        INTEGER NOT NULL,
+        payload         TEXT NOT NULL,
+        created_at      TEXT NOT NULL,
+        PRIMARY KEY (agent_id, task_id, revision),
         FOREIGN KEY (task_id) REFERENCES tasks (task_id)
     )
     """,

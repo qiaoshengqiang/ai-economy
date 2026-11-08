@@ -61,6 +61,7 @@ from actions import (  # noqa: E402
     ResourceCreateExecutor, ResourceHandoffExecutor,
     ResourceReleaseExecutor, RunToolExecutor,
     PublicWorkingMemoryReadExecutor, PublicWorkingMemoryUpdateExecutor,
+    PrivateWorkingMemoryReadExecutor, PrivateWorkingMemoryUpdateExecutor,
     WorkspaceReadExecutor, WorkspaceWriteExecutor,
 )
 from services.messaging import send_message_as  # noqa: E402
@@ -82,6 +83,12 @@ from core.public_working_memory_store import (  # noqa: E402
 )
 from services.public_working_memory_service import (  # noqa: E402
     PublicWorkingMemoryService,
+)
+from core.private_working_memory_store import (  # noqa: E402
+    PrivateWorkingMemoryStore,
+)
+from services.private_working_memory_service import (  # noqa: E402
+    PrivateWorkingMemoryService,
 )
 
 HERE = Path(__file__).resolve().parent
@@ -321,6 +328,9 @@ PROMPT = """你是这次长期生产任务的一名参与者。这是**正式生
 （以上只是**当前环境事实**，不是要求。你可以在合法的命名空间里
   创建新的 Artifact，也可以选择已有的路径。）
 
+========== 你的私有工作记忆（只有你能读）==========
+{private_working_memory}
+
 ========== 公共工作记忆（Task 范围，所有参与者可见）==========
 {working_memory}
 
@@ -544,6 +554,31 @@ PROMPT = """你是这次长期生产任务的一名参与者。这是**正式生
             作为 key —— 这些是 Task Core 的权威字段；
           - 单条 value 上限 4000 字符，整份上限 32000 字符；
           - 它**不改变** Task 状态，也不自动成为 Shared Context 的共识。
+
+  · "private_working_memory_read"
+        无参数。
+        作用：读**你自己的**私有工作记忆当前版本（revision + 节点树）。
+
+  · "private_working_memory_update"
+        parameters:
+          {{"expected_revision": <当前 revision>,
+            "nodes": {{"<node_id>": {{"kind": "goal|branch|task|finding|issue|note",
+                                      "title": "<短标题>",
+                                      "content": <JSON>,
+                                      "parent_id": "<父节点 id 或 null>"}}}},
+            "remove_nodes": ["<node_id>", ...]}}
+
+        作用：维护你正在做的任务的抽象结构 / 分支 / 重大发现 / 重大问题。
+        约束（环境事实）：
+          - 只有**你自己**能读写；task_id 由运行时绑定；
+          - `expected_revision` 必须等于你读到的 revision；
+          - 不能删除还有子节点的节点；
+          - 单节点 4000 字符、整份 32000 字符；
+          - 它不会自动成为公共事实。
+        维护时机（高优先级，但不是协议硬约束）：
+          - 每次决策可以选择是否维护；
+          - **每次工作结束**都值得检查一次；没有变化也可以空更新一次；
+          - 重大问题 / 重大发现适合记录为 issue / finding。
 
 ========== 结项协议（环境事实）==========
 本 Task 的 task_id = {task_id}
@@ -1278,6 +1313,19 @@ def _close_stage(rt: Any, log: Dict[str, Any]) -> None:
        只表达「Runner 驱动的那一个 Stage 结束了」，
        不去推断「Task 完成是否意味着每个 Stage 都该完成」。
     """
+    # 任务结项：清空每个 Agent 的私有工作记忆当前行；
+    # 历史 revisions 保留（未来短期记忆的输入）。
+    try:
+        snapshots = _private_working_memory(rt).finalize(TASK_ID, AGENTS)
+        log["private_working_memory_finalized"] = {
+            aid: {"revision": snap.get("revision"),
+                  "nodes": len(snap.get("nodes") or {})}
+            for aid, snap in snapshots.items()
+        }
+    except Exception as exc:                              # noqa: BLE001
+        log["private_working_memory_finalize_error"] = (
+            f"{type(exc).__name__}: {exc}")
+
     from stage import StageStore
 
     try:
@@ -1465,6 +1513,31 @@ def _working_memory(rt: Any) -> PublicWorkingMemoryService:
         PublicWorkingMemoryStore(rt.economy.db), rt.tasks)
 
 
+def _private_working_memory(rt: Any) -> PrivateWorkingMemoryService:
+    service = getattr(rt, "private_working_memory", None)
+    if service is not None:
+        return service
+    return PrivateWorkingMemoryService(
+        PrivateWorkingMemoryStore(rt.economy.db), rt.tasks)
+
+
+def _pwm_read(rt: Any):
+    service = _private_working_memory(rt)
+    return lambda agent_id: service.read(agent_id, TASK_ID)
+
+
+def _pwm_update(rt: Any):
+    service = _private_working_memory(rt)
+
+    def update(agent_id, *, expected_revision, nodes=None, remove_nodes=None):
+        return service.update(
+            agent_id, TASK_ID,
+            expected_revision=expected_revision,
+            nodes=nodes, remove_nodes=remove_nodes)
+
+    return update
+
+
 def _wm_read(rt: Any):
     service = _working_memory(rt)
     return lambda agent_id: service.read(TASK_ID, agent_id)
@@ -1584,6 +1657,9 @@ def _action_seam(rt: Any, bridge: Any = None) -> tuple:
         # 🔒 task_id 在组合根绑定；agent_id 只取自 intent。
         PublicWorkingMemoryReadExecutor(_wm_read(rt)),
         PublicWorkingMemoryUpdateExecutor(_wm_update(rt)),
+        # 私有工作记忆：只有 intent.agent_id 自己的那份。
+        PrivateWorkingMemoryReadExecutor(_pwm_read(rt)),
+        PrivateWorkingMemoryUpdateExecutor(_pwm_update(rt)),
     ])
     try:
         experience_store = ExperienceStore(rt.economy.db)
@@ -1967,12 +2043,18 @@ def _turn(rt: Any, bridge: Any, st: Any, stage: Any, aid: str, rnd: int,
         # 但必须让 Agent 看到「这次读不到」。
         working_memory_text = (
             f"（公共工作记忆读取失败：{type(exc).__name__}: {exc}）")
+    try:
+        private_wm_text = _private_working_memory(rt).render(aid, TASK_ID)
+    except Exception as exc:                              # noqa: BLE001
+        private_wm_text = (
+            f"（私有工作记忆读取失败：{type(exc).__name__}: {exc}）")
     prompt = _template.format(
         # 🔴 `demand` 可覆盖：**「人类命令」只递给被指定的那个 Agent**。
         demand=DEMAND if demand is None else demand,
         stage=stage_txt, ws=WS_ID, task_id=TASK_ID,
         completion=_completion_facts(rt),
         workspace=_workspace_facts(gw, aid),
+        private_working_memory=private_wm_text,
         working_memory=working_memory_text,
         roster=_roster_facts(rt, aid),
         inbox=channels.render_inbox(inbox["received"]))
