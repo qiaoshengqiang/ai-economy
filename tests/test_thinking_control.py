@@ -1,22 +1,21 @@
 """
-Agent 自主思考模式：最小开关
-================================
+Agent 自主思考模式：分相 + 最小工作循环
+==========================================
 
 【方案（用户 2026-11-07 确认）】
 
-    初始状态：thinking = disabled
-    之后由 Agent 在结构化信封里决定**下一步**是否开启思考、强度多少。
-
-    {"decision":"act",
-     "thinking":{"enabled":true,"effort":"high"},
-     "action":{...}}
+    · decision 相：优先 disabled / low（不是强制）；
+    · work 相：优先 enabled / high（不是强制）；
+    · Agent 可以在信封里覆盖**任一相**；
+    · 一轮可以是 decision → work（多步）→ decision checkpoint。
 
 本文件锁住：
-    ① 信封解析：合法 / 非法 thinking；
-    ② Brain 注入：disabled 只发 thinking；enabled 才发 reasoning_effort；
-    ③ 默认 None = 不注入（旧 Agent / 旧测试行为不变）；
-    ④ 读取回喂（follow-up）之前就应用指令；
-    ⑤ 实验初始状态确实是 disabled。
+    ① 信封解析：单相 / 分相 / 非法；
+    ② Brain 注入：按 phase 选择策略；默认 None = 不注入；
+    ③ 不 clamp：decision 可以被 Agent 设成 high；
+    ④ 读取回喂 / 工作循环之前就应用指令；
+    ⑤ 最小工作循环的 phase 顺序；
+    ⑥ 实验初始偏好是 decision=off/low、work=on/high。
 """
 
 from __future__ import annotations
@@ -25,7 +24,7 @@ import json
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
@@ -41,7 +40,7 @@ from llm.base import LLMResponse                               # noqa: E402
 # ① 信封解析
 # ------------------------------------------------------------
 class TestEnvelopeThinking:
-    def test_valid_directive_is_parsed(self):
+    def test_single_directive_becomes_current_phase(self):
         d = decision_from_text("a", json.dumps({
             "decision": "act",
             "thinking": {"enabled": True, "effort": "high"},
@@ -49,17 +48,23 @@ class TestEnvelopeThinking:
                        "parameters": {"path": "x"}},
         }))
         assert d.kind == "act"
-        assert d.thinking == {"enabled": True, "effort": "high"}
+        assert d.thinking == {"*": {"enabled": True, "effort": "high"}}
         assert d.thinking_error == ""
 
-    def test_disable_without_effort(self):
+    def test_phase_map(self):
         d = decision_from_text("a", json.dumps({
             "decision": "act",
-            "thinking": {"enabled": False},
+            "thinking": {
+                "decision": {"enabled": False, "effort": "low"},
+                "work": {"enabled": True, "effort": "high"},
+            },
             "action": {"type": "workspace_read",
                        "parameters": {"path": "x"}},
         }))
-        assert d.thinking == {"enabled": False}
+        assert d.thinking == {
+            "decision": {"enabled": False, "effort": "low"},
+            "work": {"enabled": True, "effort": "high"},
+        }
 
     def test_invalid_directive_does_not_drop_actions(self):
         d = decision_from_text("a", json.dumps({
@@ -73,18 +78,18 @@ class TestEnvelopeThinking:
         assert d.thinking is None
         assert d.thinking_error == "invalid_thinking"
 
-    def test_no_directive_keeps_none(self):
+    def test_partial_phase_map_is_allowed(self):
         d = decision_from_text("a", json.dumps({
             "decision": "act",
+            "thinking": {"work": {"enabled": True, "effort": "max"}},
             "action": {"type": "workspace_read",
                        "parameters": {"path": "x"}},
         }))
-        assert d.thinking is None
-        assert d.thinking_error == ""
+        assert d.thinking == {"work": {"enabled": True, "effort": "max"}}
 
 
 # ------------------------------------------------------------
-# ② Brain 注入
+# ② Brain 注入（按 phase）
 # ------------------------------------------------------------
 class _CaptureRouter:
     def __init__(self):
@@ -98,10 +103,10 @@ class _CaptureRouter:
             latency_ms=0.0, simulated=True)
 
 
-def _brain(router, provider="deepseek"):
+def _brain(router):
     return Brain(
         router=router,
-        settings=BrainSettings(agent_id="a", provider=provider,
+        settings=BrainSettings(agent_id="a", provider="deepseek",
                                model="deepseek-flash"),
     )
 
@@ -110,30 +115,49 @@ class TestBrainThinking:
     def test_default_none_does_not_inject(self):
         r = _CaptureRouter()
         b = _brain(r)
-        b.generate("hi")
+        b.generate("hi", phase="decision")
+        b.generate("hi", phase="work")
         assert "thinking" not in r.calls[-1]
         assert "reasoning_effort" not in r.calls[-1]
 
-    def test_disabled_injects_only_thinking(self):
+    def test_decision_disabled_injects_only_thinking(self):
         r = _CaptureRouter()
         b = _brain(r)
-        b.set_thinking(False)
-        b.generate("hi")
+        b.set_thinking(False, phase="decision")
+        b.generate("hi", phase="decision")
         assert r.calls[-1]["thinking"] == {"type": "disabled"}
         assert "reasoning_effort" not in r.calls[-1]
 
-    def test_enabled_injects_effort(self):
+    def test_work_enabled_injects_effort(self):
         r = _CaptureRouter()
         b = _brain(r)
-        b.set_thinking(True, "high")
-        b.generate("hi")
+        b.set_thinking(True, "high", phase="work")
+        b.generate("hi", phase="work")
+        assert r.calls[-1]["thinking"] == {"type": "enabled"}
+        assert r.calls[-1]["reasoning_effort"] == "high"
+
+    def test_phases_are_independent(self):
+        r = _CaptureRouter()
+        b = _brain(r)
+        b.set_thinking(False, "low", phase="decision")
+        b.set_thinking(True, "max", phase="work")
+        b.generate("d", phase="decision")
+        b.generate("w", phase="work")
+        assert r.calls[0]["thinking"] == {"type": "disabled"}
+        assert "reasoning_effort" not in r.calls[0]
+        assert r.calls[1]["thinking"] == {"type": "enabled"}
+        assert r.calls[1]["reasoning_effort"] == "max"
+
+    def test_no_clamp_decision_can_be_high(self):
+        """🔴 “决策优先低思考”是默认值，不是 Runtime 的强制规则。"""
+        r = _CaptureRouter()
+        b = _brain(r)
+        b.set_thinking(True, "high", phase="decision")
+        b.generate("hi", phase="decision")
         assert r.calls[-1]["thinking"] == {"type": "enabled"}
         assert r.calls[-1]["reasoning_effort"] == "high"
 
     def test_provider_capabilities_are_declared_by_providers(self):
-        """
-        🔒 Brain 不认识厂商名；支持与否必须由 Provider 自己声明。
-        """
         from llm.bailian import BailianProvider
         from llm.deepseek import DeepSeekProvider
         from llm.doubao import DoubaoProvider
@@ -147,7 +171,7 @@ class TestBrainThinking:
 
 
 # ------------------------------------------------------------
-# ③ run_cognition：读取回喂之前应用
+# ③ run_cognition：phase 顺序 / 工作循环
 # ------------------------------------------------------------
 @dataclass
 class _Resp:
@@ -161,11 +185,11 @@ class _Resp:
 @dataclass
 class _BrainState:
     calls: List[tuple] = field(default_factory=list)
-    state: Optional[tuple] = None
+    policy: Dict[str, tuple] = field(default_factory=dict)
 
-    def set_thinking(self, enabled, effort=None):
-        self.calls.append((enabled, effort))
-        self.state = (enabled, effort)
+    def set_thinking(self, enabled, effort=None, *, phase="work"):
+        self.calls.append((phase, enabled, effort))
+        self.policy[phase] = (enabled, effort)
 
 
 @dataclass
@@ -176,8 +200,8 @@ class _Agent:
     agent_id: str = "agent_a"
     _i: int = 0
 
-    def generate(self, messages=None, **kwargs):
-        self.generates.append((messages, self.brain.state))
+    def generate(self, messages=None, phase="decision", **kwargs):
+        self.generates.append((phase, self.brain.policy.copy()))
         content = self.script[min(self._i, len(self.script) - 1)]
         self._i += 1
         return _Resp(content)
@@ -194,52 +218,82 @@ class _ReadDispatcher:
 
 FIRST = json.dumps({
     "decision": "act",
-    "thinking": {"enabled": True, "effort": "high"},
+    "thinking": {"work": {"enabled": True, "effort": "high"}},
     "action": {"type": "workspace_read", "parameters": {"path": "x"}},
 })
 
 
-class TestRunCognitionAppliesBeforeFollowUp:
-    def test_directive_is_applied_before_second_call(self):
+class TestRunCognitionPhases:
+    def test_directive_is_applied_before_work_call(self):
         a = _Agent(script=[FIRST, "读完了。"])
         run = run_cognition(
             a, [{"role": "user", "content": "go"}],
             dispatcher=_ReadDispatcher(),
             follow_up_on_reads=True)
 
-        assert a.brain.calls == [(True, "high")]
-        # 第一段生成时仍是初始 None；第二段必须已经看到新状态
-        assert a.generates[0][1] is None
-        assert a.generates[1][1] == (True, "high")
-        assert run.thinking == {"enabled": True, "effort": "high"}
+        assert a.brain.calls == [("work", True, "high")]
+        assert a.generates[0][0] == "decision"
+        assert a.generates[1][0] == "work"
+        assert a.generates[0][1] == {}
+        assert a.generates[1][1]["work"] == (True, "high")
+        assert run.thinking == {"work": {"enabled": True, "effort": "high"}}
 
-    def test_no_directive_keeps_state(self):
-        a = _Agent(script=[
-            json.dumps({"decision": "act",
-                        "action": {"type": "workspace_read",
-                                   "parameters": {"path": "x"}}}),
-            "ok"])
-        a.brain.state = (False, "low")
+    def test_work_loop_runs_decision_work_decision(self):
+        # decision → read；work → read；checkpoint → message
+        work = json.dumps({
+            "decision": "act",
+            "action": {"type": "workspace_read",
+                       "parameters": {"path": "y"}},
+        })
+        checkpoint = json.dumps({
+            "decision": "act",
+            "action": {"type": "message_send",
+                       "parameters": {"to": "agent_b", "text": "done"}},
+        })
+        a = _Agent(script=[FIRST, work, checkpoint])
         run = run_cognition(
             a, [{"role": "user", "content": "go"}],
             dispatcher=_ReadDispatcher(),
-            follow_up_on_reads=True)
-        assert a.brain.calls == []
-        assert a.generates[1][1] == (False, "low")
-        assert run.thinking is None
+            work_loop=True,
+            max_work_steps=1)
+
+        phases = [g[0] for g in a.generates]
+        assert phases == ["decision", "work", "decision"]
+        assert [s.phase for s in run.segments] == phases
+        # 最后一个 decision 的动作也被执行
+        assert [i.action_type for i in run.action_intents] == [
+            "workspace_read", "workspace_read", "message_send"]
+
+    def test_work_loop_does_not_run_without_observable_results(self):
+        a = _Agent(script=[json.dumps({
+            "decision": "act",
+            "action": {"type": "workspace_write",
+                       "parameters": {"path": "x", "write_mode": "create",
+                                      "content": "hi"}},
+        })])
+        run_cognition(
+            a, [{"role": "user", "content": "go"}],
+            dispatcher=_ReadDispatcher(),   # 返回 content，但 write 不是 observable
+            work_loop=True,
+            max_work_steps=2)
+        assert [g[0] for g in a.generates] == ["decision"]
 
 
 # ------------------------------------------------------------
-# ④ 实验初始状态
+# ④ 实验初始偏好
 # ------------------------------------------------------------
 class TestExperimentInitialState:
     def _src(self) -> str:
         return (ROOT / "experiments" / "heterogeneous_production"
                 / "production.py").read_text(encoding="utf-8")
 
-    def test_initial_state_is_disabled(self):
+    def test_initial_preferences(self):
         from experiments.heterogeneous_production import production as P
-        assert P.INITIAL_THINKING_ENABLED is False
+        assert P.INITIAL_DECISION_THINKING == {
+            "enabled": False, "effort": "low"}
+        assert P.INITIAL_WORK_THINKING == {
+            "enabled": True, "effort": "high"}
         src = self._src()
-        assert "set_thinking(INITIAL_THINKING_ENABLED" in src
+        assert 'phase="decision"' in src
+        assert 'phase="work"' in src
         assert "思考模式（环境能力）" in src

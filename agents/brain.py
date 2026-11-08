@@ -159,17 +159,24 @@ class Brain:
         self.router = router
         self.settings = settings
 
-        #: 🔴 Agent 当前的思考模式（**下一步**生效）。
+        #: 🔴 Agent 的**分相**思考策略（phase → 设置）。
         #:
-        #:    None = 不注入，保持 provider 自己的默认行为
-        #:           （向后兼容：别的 Agent 不会因为这次改动改变请求）。
-        #:    False = 关闭思考（provider 支持时注入 thinking.type=disabled）。
-        #:    True  = 开启思考；thinking_effort 决定强度。
+        #:    "decision" = 决策阶段（初始认知 / 工作后的决策检查点）
+        #:    "work"     = 工作阶段（多轮工具/读写/测试）
         #:
-        #:    🔒 这是 **Agent 的状态**，不是全局配置 —— 它由 Agent
-        #:       在信封里的 `thinking` 指令更新，下一次调用生效。
-        self.thinking_enabled: Optional[bool] = None
-        self.thinking_effort: Optional[str] = None
+        #:    每个槽：
+        #:        None = 不注入，保持 provider 自己的默认行为；
+        #:        {"enabled": False} = 关闭；
+        #:        {"enabled": True, "effort": "high"} = 开启并指定强度。
+        #:
+        #:    🔴 **默认偏好**不是硬限制：
+        #:        · 实验把 decision 设为 off/low（优先低思考）；
+        #:        · work 设为 high（优先高思考）；
+        #:        · Agent 可以在信封里覆盖**任一相** —— Runtime 不 clamp。
+        self.thinking_policy: Dict[str, Optional[Dict[str, Any]]] = {
+            "decision": None,
+            "work": None,
+        }
 
         #: Cognitive Context Builder（可选）。
         #: 🔒 它是**可注入**的 —— Brain 不认识 SelfModelStore，
@@ -222,16 +229,41 @@ class Brain:
         return self._credential_for(provider or self.settings.provider)
 
     def set_thinking(self, enabled: bool,
-                     effort: Optional[str] = None) -> None:
+                     effort: Optional[str] = None, *,
+                     phase: str = "work") -> None:
         """
-        设置**下一次调用**的思考模式。
+        设置**某一相**的思考模式（默认 work）。
 
         🔒 只改本 Brain 的状态，不改全局配置，也不影响别的 Agent。
+        🔒 不 clamp：Agent 可以把 decision 设成 high，也可以把 work 设成 off。
+           “决策优先低思考”是实验的**默认值**，不是 Runtime 的强制规则。
         🔒 provider 不支持时不会报错 —— 是否注入由 `generate()` 决定。
         """
-        self.thinking_enabled = bool(enabled)
-        self.thinking_effort = (str(effort).strip().lower()
-                                if effort else None)
+        key = str(phase or "").strip().lower()
+        if key not in self.thinking_policy:
+            raise ValueError(
+                f"未知的思考阶段 {phase!r}；只支持 "
+                f"{sorted(self.thinking_policy)}")
+        self.thinking_policy[key] = {
+            "enabled": bool(enabled),
+            "effort": (str(effort).strip().lower() if effort else None),
+        }
+
+    def thinking_for(self, phase: str) -> Optional[Dict[str, Any]]:
+        """读取某一相的当前策略（None = 不注入）。"""
+        return self.thinking_policy.get(str(phase or "").strip().lower())
+
+    @property
+    def thinking_enabled(self) -> Optional[bool]:
+        """向后兼容视图：work 相是否开启。"""
+        policy = self.thinking_policy.get("work") or {}
+        return policy.get("enabled")
+
+    @property
+    def thinking_effort(self) -> Optional[str]:
+        """向后兼容视图：work 相强度。"""
+        policy = self.thinking_policy.get("work") or {}
+        return policy.get("effort")
 
     def _credential_for(self, provider: Optional[str]):
         """
@@ -419,6 +451,9 @@ class Brain:
         cognition_turn_id: Optional[str] = None,
         #: 本次实验运行的唯一 id。
         experiment_run_id: Optional[str] = None,
+        #: 🔴 认知阶段：decision / work。
+        #: 只决定用哪一相的 thinking 策略；不改变消息或 provider。
+        phase: str = "decision",
         **kwargs: Any,
     ) -> LLMResponse:
         """
@@ -559,20 +594,24 @@ class Brain:
             self.settings.max_tokens if max_tokens is None else max_tokens
         )
 
-        # ---- 思考模式（Agent 自己的状态；下一步生效）------------------
+        # ---- 思考模式（按 phase 选择 Agent 自己的策略）-----------------
         #
-        #   🔒 Brain **不认识厂商**：它只根据 Agent 的状态注入通用字段；
+        #   🔒 Brain **不认识厂商**：它只根据 Agent 的 phase 策略注入通用字段；
         #      provider 是否支持、是否丢弃，由 Provider 自己的能力声明
         #      （`supports_thinking` / `supports_reasoning_effort`）决定。
         #   🔒 调用方显式传了 `thinking` / `reasoning_effort` 时不覆盖。
         #   🔒 `enabled=False` 时不注入 `reasoning_effort` ——
         #      否则会把「关闭思考」和「强度」同时发出去。
-        if "thinking" not in kwargs and self.thinking_enabled is not None:
+        #   🔒 **不做 clamp**：decision 可以是 high，work 可以是 off；
+        #      “决策优先低思考”只体现在实验设置的默认值里。
+        policy = self.thinking_policy.get(str(phase or "").strip().lower())
+        if policy and "thinking" not in kwargs:
+            enabled = bool(policy.get("enabled"))
             kwargs["thinking"] = {
-                "type": "enabled" if self.thinking_enabled else "disabled"}
-        if ("reasoning_effort" not in kwargs and self.thinking_enabled
-                and self.thinking_effort):
-            kwargs["reasoning_effort"] = self.thinking_effort
+                "type": "enabled" if enabled else "disabled"}
+            effort = policy.get("effort")
+            if enabled and effort and "reasoning_effort" not in kwargs:
+                kwargs["reasoning_effort"] = effort
 
         logger.debug(
             "%s 的大脑正在思考（provider=%s model=%s）",

@@ -99,13 +99,11 @@ THINKING_EFFORTS = frozenset({
 })
 
 
-def normalize_thinking(raw: Any) -> Optional[Dict[str, Any]]:
-    """
-    把信封里的 `thinking` 归一成 `{"enabled": bool, "effort": str?}`。
+THINKING_PHASES = ("decision", "work")
 
-    形状不合法返回 None —— 调用方据此记 `thinking_error`，
-    但**不**因此丢掉同一信封里的动作。
-    """
+
+def _normalize_single_thinking(raw: Any) -> Optional[Dict[str, Any]]:
+    """`{"enabled": bool, "effort": str?}` 的单相校验。"""
     if not isinstance(raw, dict):
         return None
     enabled = raw.get("enabled")
@@ -120,6 +118,46 @@ def normalize_thinking(raw: Any) -> Optional[Dict[str, Any]]:
     if effort not in THINKING_EFFORTS:
         return None
     return {"enabled": enabled, "effort": effort}
+
+
+def normalize_thinking(raw: Any) -> Optional[Dict[str, Dict[str, Any]]]:
+    """
+    把信封里的 `thinking` 归一成 **phase → 设置** 的映射。
+
+    接受两种形状：
+
+        · 单相（覆盖**当前相**）：
+            {"enabled": true, "effort": "high"}
+            → {"*": {"enabled": true, "effort": "high"}}
+
+        · 分相（分别覆盖 decision / work）：
+            {"decision": {"enabled": false, "effort": "low"},
+             "work":     {"enabled": true,  "effort": "high"}}
+            → 原样（只保留合法相）
+
+    形状不合法返回 None —— 调用方据此记 `thinking_error`，
+    但**不**因此丢掉同一信封里的动作。
+    """
+    if not isinstance(raw, dict):
+        return None
+
+    # 分相形状：只要出现 decision / work 键，就按分相解析。
+    if any(k in raw for k in THINKING_PHASES):
+        out: Dict[str, Dict[str, Any]] = {}
+        for phase in THINKING_PHASES:
+            if phase not in raw or raw.get(phase) is None:
+                continue
+            norm = _normalize_single_thinking(raw[phase])
+            if norm is None:
+                return None
+            out[phase] = norm
+        return out or None
+
+    # 单相形状 → 当前相
+    norm = _normalize_single_thinking(raw)
+    if norm is None:
+        return None
+    return {"*": norm}
 
 
 def extract_envelope(text: Optional[str]) -> Optional[Dict[str, Any]]:
@@ -342,8 +380,10 @@ ENVELOPE_INSTRUCTION = (
     'You may put **more than one** action in the list when they belong'
     ' together (e.g. write a file and notify somebody about it).\n'
     'The single form {"action":{...}} is also accepted.\n'
-    'To choose the next step\'s thinking mode, add '
-    '{"thinking":{"enabled":true,"effort":"low|high|max"}} '
-    'at the top level; omit it to keep the current mode.\n'
+    'To choose thinking mode, add at the top level '
+    '{"thinking":{"decision":{"enabled":false,"effort":"low"},'
+    '"work":{"enabled":true,"effort":"high"}}}; '
+    'a single {"enabled":...,"effort":...} overrides the current phase. '
+    'Omit it to keep the current mode.\n'
     'Otherwise just reply normally.'
 )

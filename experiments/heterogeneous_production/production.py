@@ -146,12 +146,16 @@ BUDGET_AIC = 50.0
 #: 🔒 可覆盖：`HETERO_COGNITIVE_BUDGET`。
 COGNITIVE_BUDGET = int(os.environ.get("HETERO_COGNITIVE_BUDGET", "16384"))
 
-#: 🔴 思考模式的**初始状态**：所有参与者从 disabled 开始。
+#: 🔴 思考模式的**初始偏好**（不是强制规则）。
 #:
-#: 之后由 Agent 在信封里用 `"thinking": {"enabled": ..., "effort": ...}`
-#: 自行决定下一步；不写就保持当前状态。
-INITIAL_THINKING_ENABLED = False
-INITIAL_THINKING_EFFORT = "low"
+#: 决策相优先低思考；工作相优先高思考。Agent 可以在信封里
+#: 覆盖**任一相** —— Runtime 不做 clamp。
+INITIAL_DECISION_THINKING = {"enabled": False, "effort": "low"}
+INITIAL_WORK_THINKING = {"enabled": True, "effort": "high"}
+
+#: 最小工作循环：decision → work（最多 N 步）→ decision checkpoint。
+WORK_LOOP_ENABLED = True
+MAX_WORK_STEPS = 2
 
 #: 是否在读取后**当场回喂**（同一认知里的第二段 LLM 调用）。
 #:
@@ -309,14 +313,20 @@ PROMPT = """你是这次长期生产任务的一名参与者。这是**正式生
    只输出 JSON 信封；`<tool_call>` / DSML / `function_call` 等格式不会被解析。
 
 ========== 思考模式（环境能力）==========
-初始状态：thinking = disabled（不注入 reasoning_effort）。
+初始偏好（不是强制规则）：
+  · decision 相：disabled / low（优先低成本决策）
+  · work 相：enabled / high（优先深度工作）
 
-你可以在信封顶层加：
+你可以在信封顶层按相覆盖：
+
+  "thinking": {{"decision": {{"enabled": false, "effort": "low"}},
+                "work": {{"enabled": true, "effort": "high"}}}}
+
+也可以只给一个相，或给单相形式（覆盖**当前相**）：
 
   "thinking": {{"enabled": true, "effort": "low|high|max"}}
 
-它改变**下一步**的思考模式；不写就保持当前状态。
-thinking = disabled 时不注入 reasoning_effort。
+不写就保持当前策略；Runtime 不 clamp 你的选择。
 
 如果你**不采取动作**（只是想说点什么，或者什么都不做），就直接正常回复 ——
 没有这个信封就是一次普通回复。
@@ -642,14 +652,18 @@ def main() -> int:
         rt = build_runtime(db_path=str(DB), agent_ids=AGENTS)
         _ensure_environment(rt)
 
-        # 🔴 思考模式的初始状态：所有参与者从 disabled 开始。
-        #    之后由 Agent 自己在信封里决定是否开启 / 强度。
+        # 🔴 思考模式的初始偏好：decision 低、work 高。
+        #    这是**默认值**，Agent 可以在信封里覆盖任一相。
         for _a in rt.economy.all_agents():
             if _a.agent_id in AGENTS:
-                _a.brain.set_thinking(INITIAL_THINKING_ENABLED,
-                                      INITIAL_THINKING_EFFORT)
-        print(f"  🧠 初始思考模式：disabled"
-              f"（effort={INITIAL_THINKING_EFFORT}）")
+                _a.brain.set_thinking(
+                    INITIAL_DECISION_THINKING["enabled"],
+                    INITIAL_DECISION_THINKING["effort"], phase="decision")
+                _a.brain.set_thinking(
+                    INITIAL_WORK_THINKING["enabled"],
+                    INITIAL_WORK_THINKING["effort"], phase="work")
+        print("  🧠 初始思考偏好："
+              "decision=disabled/low · work=enabled/high")
         # §11：记录**真实送进模型的那一份** Context
         print(f"  🎥 Context telemetry：包装了 "
               f"{_install_context_recorder(rt)} 个 Agent 的 context_builder")
@@ -1895,7 +1909,9 @@ def _turn(rt: Any, bridge: Any, st: Any, stage: Any, aid: str, rnd: int,
                     follow_up_on_reads=FOLLOW_UP_ON_READS,
                     follow_up_per_payload_max=FOLLOW_UP_PER_PAYLOAD_MAX,
                     follow_up_total_max=FOLLOW_UP_TOTAL_MAX,
-                    repair_malformed=REPAIR_MALFORMED)
+                    repair_malformed=REPAIR_MALFORMED,
+                    work_loop=WORK_LOOP_ENABLED,
+                    max_work_steps=MAX_WORK_STEPS)
     except Exception as exc:                                  # noqa: BLE001
         turn["error"] = f"{type(exc).__name__}: {exc}"
         stats[aid]["calls"] += 1
@@ -1998,6 +2014,7 @@ def _turn(rt: Any, bridge: Any, st: Any, stage: Any, aid: str, rnd: int,
     if segments:
         turn["segments"] = [
             {"index": s.index,
+             "phase": getattr(s, "phase", "decision"),
              "reasoning": str(getattr(s.decision, "reasoning", "") or "")[:400],
              "decision": getattr(s.decision, "kind", None),
              "envelope_error": getattr(s.decision, "envelope_error", ""),
@@ -2014,11 +2031,9 @@ def _turn(rt: Any, bridge: Any, st: Any, stage: Any, aid: str, rnd: int,
         turn["repair_used"] = any(
             s.get("repair_attempted") for s in turn["segments"])
 
-    # 这一轮结束后的**真实**思考状态（下一步生效）
-    turn["thinking_state"] = {
-        "enabled": getattr(getattr(a, "brain", None), "thinking_enabled", None),
-        "effort": getattr(getattr(a, "brain", None), "thinking_effort", None),
-    }
+    # 这一轮结束后的**真实**思考策略（分相；下一步生效）
+    turn["thinking_state"] = dict(
+        getattr(getattr(a, "brain", None), "thinking_policy", {}) or {})
 
     # ---- 🔴 唯一的动作通道（一轮一个）----
     #

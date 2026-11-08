@@ -165,16 +165,18 @@ class Decision:
     #:    `unparsable_envelope` —— 看起来像信封，但 JSON 解析失败
     #:    `no_valid_actions`    —— 信封能解析，但没有一个动作可用
     envelope_error: str = ""
-    #: 🔴 Agent 对**下一步**思考模式的决定（可选）。
+    #: 🔴 Agent 对思考模式的决定（可选，**按 phase**）。
     #:
-    #:    形状：{"enabled": bool, "effort": "low"|"high"|"max"}
+    #:    形状：{"decision": {"enabled": bool, "effort": ...},
+    #:           "work":     {"enabled": bool, "effort": ...}}
     #:
     #:    · `None` = 这次没有表态，保持当前状态；
-    #:    · `{"enabled": False}` = 下一步关闭思考；
-    #:    · `{"enabled": True, "effort": "high"}` = 下一步开启高思考。
+    #:    · 单相 `{"enabled": ..., "effort": ...}` 会被归一成
+    #:      `{"*": ...}`，表示覆盖**产生这条决策的当前相**。
     #:
-    #:    🔒 这是 Agent 的决定，不是 Runtime 的默认策略。
-    thinking: Optional[Dict[str, Any]] = None
+    #:    🔒 这是 Agent 的决定，不是 Runtime 的强制策略；
+    #:       “决策优先低思考”只应作为默认值，不能 clamp。
+    thinking: Optional[Dict[str, Dict[str, Any]]] = None
     #: `thinking` 字段写了但形状不合法时的原因（空字符串 = 没写/合法）。
     thinking_error: str = ""
     created_at: str = ""
@@ -228,6 +230,10 @@ class CognitiveSegment:
     #: 第几段（从 0 开始）。
     index: int = 0
 
+    #: 这一段属于哪一相：`decision` / `work`。
+    #: 🔒 它只用于观测与策略选择，不改变消息内容。
+    phase: str = "decision"
+
     #: 这一段模型返回的原文。🔒 保留原文 —— 信封解析失败时它是唯一证据。
     content: str = ""
 
@@ -268,6 +274,7 @@ class CognitiveSegment:
     def to_dict(self) -> Dict[str, Any]:
         return {
             "index": self.index,
+            "phase": self.phase,
             "content_chars": len(self.content or ""),
             "decision": self.decision.to_dict() if self.decision else None,
             "action_intents": [i.to_dict() for i in self.action_intents],
@@ -358,10 +365,10 @@ class CognitiveRunResult:
     #:    它是**事实**，不是意图 —— 没触发（没有可回喂的载荷）时是 False。
     follow_up_used: bool = False
 
-    #: 最后一段给出的 thinking 指令（None = 没有表态）。
+    #: 最后一段给出的 thinking 指令（phase → 设置；None = 没有表态）。
     #: 🔒 它只表达「Agent 决定了什么」；真正是否注入、注入给谁，
     #:    由 Brain 的 provider 适配层决定。
-    thinking: Optional[Dict[str, Any]] = None
+    thinking: Optional[Dict[str, Dict[str, Any]]] = None
 
     @property
     def action_intent(self) -> Optional[ActionIntent]:

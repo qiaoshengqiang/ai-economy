@@ -84,6 +84,8 @@ def run_cognition(
     follow_up_per_payload_max: int = PER_PAYLOAD_MAX_CHARS,
     follow_up_total_max: int = TOTAL_MAX_CHARS,
     repair_malformed: bool = False,
+    work_loop: bool = False,
+    max_work_steps: int = 2,
     **generate_kwargs: Any,
 ) -> CognitiveRunResult:
     """
@@ -119,6 +121,13 @@ def run_cognition(
 
                       🔒 只修**格式**，不改 Agent 的决定。
                       🔒 每段**最多一次**，默认 False（会多花一次调用）。
+        work_loop     🔴 True 时启用**最小工作循环**：
+                      decision → work（最多 N 步，phase=work）
+                      → decision checkpoint（phase=decision）。
+                      工作阶段看到的是真实读取/工具返回；没有可回喂载荷
+                      时不会空转。默认 False（向后兼容）。
+        max_work_steps
+                      工作阶段最多几次 LLM 调用（硬上限，防止失控 loop）。
 
     返回：CognitiveRunResult（含 decision / intent / result / segments）
     """
@@ -132,7 +141,7 @@ def run_cognition(
     # 🔴 Agent 对**下一步**思考模式的决定：立刻应用到同一个 Agent 的 Brain。
     #    这样紧接着的读取回喂（seg1）就会用新的思考模式；
     #    不写 `thinking` 就保持当前状态。
-    _apply_thinking(agent, seg0.decision)
+    _apply_thinking(agent, seg0.decision, current_phase="decision")
 
     # ---- 执行第 1 段的动作 --------------------------------------------
     intents: List[ActionIntent] = list(seg0.action_intents)
@@ -140,19 +149,75 @@ def run_cognition(
         agent_id, seg0.action_intents, dispatcher=dispatcher,
         execute=execute, truncated=seg0.is_truncated)
 
-    # ---- 可选：把读取结果当场回喂，再决定一次 --------------------------
+    # ---- 可选：工作循环 / 读取回喂 ------------------------------------
     #
     # 🔒 判据是**「真的读到了载荷」**，不是「有没有发起读取」——
-    #    读取失败 / 读到空文件时**不**触发 follow-up：
-    #    那会白花一次调用，而且模型看到的还是一句「什么都没有」，
-    #    与它下一轮从 Experience 里看到的信息重复。
+    #    读取失败 / 读到空文件时**不**触发 work/follow-up：
+    #    那会白花一次调用，而且模型看到的还是一句「什么都没有」。
     follow_up_used = False
-    if follow_up_on_reads:
+    base = _as_message_list(messages)
+
+    if work_loop and base is not None:
+        # decision → work（最多 N 步）→ decision checkpoint
+        last_seg = seg0
+        last_results = results
+        last_prompt = ""
+        work_steps = 0
+        for _ in range(max(0, int(max_work_steps))):
+            prompt = render_read_results(
+                list(zip(last_seg.action_intents, last_results)),
+                per_payload_max=int(follow_up_per_payload_max),
+                total_max=int(follow_up_total_max))
+            if not prompt:
+                break
+            work_messages = base + [
+                {"role": "assistant",
+                 "content": str(getattr(last_seg, "content", "") or "")},
+                {"role": "user", "content": prompt},
+            ]
+            seg = _run_one_segment(
+                agent, agent_id, work_messages, generate_kwargs,
+                index=len(segments), phase="work",
+                repair_malformed=repair_malformed)
+            segments.append(seg)
+            _apply_thinking(agent, seg.decision, current_phase="work")
+            seg_results = _dispatch_all(
+                agent_id, seg.action_intents, dispatcher=dispatcher,
+                execute=execute, truncated=seg.is_truncated)
+            intents.extend(seg.action_intents)
+            results.extend(seg_results)
+            last_seg, last_results, last_prompt = seg, seg_results, prompt
+            work_steps += 1
+            follow_up_used = True
+
+        if work_steps:
+            # 回到 decision：让 Agent 决定继续工作还是结束。
+            checkpoint_prompt = (
+                last_prompt
+                + "\n\n========== 工作阶段结束 ==========\n"
+                  "上面是工作阶段最后一步的真实返回。"
+                  "现在回到决策：继续工作、结束、或交付。")
+            checkpoint_messages = base + [
+                {"role": "assistant",
+                 "content": str(getattr(last_seg, "content", "") or "")},
+                {"role": "user", "content": checkpoint_prompt},
+            ]
+            seg = _run_one_segment(
+                agent, agent_id, checkpoint_messages, generate_kwargs,
+                index=len(segments), phase="decision",
+                repair_malformed=repair_malformed)
+            segments.append(seg)
+            _apply_thinking(agent, seg.decision, current_phase="decision")
+            intents.extend(seg.action_intents)
+            results.extend(_dispatch_all(
+                agent_id, seg.action_intents, dispatcher=dispatcher,
+                execute=execute, truncated=seg.is_truncated))
+
+    elif follow_up_on_reads:
         prompt2 = render_read_results(
             list(zip(seg0.action_intents, results)),
             per_payload_max=int(follow_up_per_payload_max),
             total_max=int(follow_up_total_max))
-        base = _as_message_list(messages)
         if prompt2 and base is not None:
             follow_up_used = True
             follow_up_messages = base + [
@@ -163,10 +228,10 @@ def run_cognition(
                 {"role": "user", "content": prompt2},
             ]
             seg1 = _run_one_segment(agent, agent_id, follow_up_messages,
-                                   generate_kwargs, index=1,
+                                   generate_kwargs, index=1, phase="work",
                                    repair_malformed=repair_malformed)
             segments.append(seg1)
-            _apply_thinking(agent, seg1.decision)
+            _apply_thinking(agent, seg1.decision, current_phase="work")
             intents.extend(seg1.action_intents)
             results.extend(_dispatch_all(
                 agent_id, seg1.action_intents, dispatcher=dispatcher,
@@ -233,6 +298,7 @@ REPAIR_INSTRUCTION = (
 
 def _run_one_segment(agent: Any, agent_id: str, messages: Any,
                      generate_kwargs: dict, *, index: int = 0,
+                     phase: str = "decision",
                      repair_malformed: bool = False,
                      ) -> CognitiveSegment:
     """
@@ -246,7 +312,9 @@ def _run_one_segment(agent: Any, agent_id: str, messages: Any,
        要求模型输出更短的、只有一个动作的信封。
        只修格式，不替 Agent 决定做什么。
     """
-    response = agent.generate(messages=messages, **generate_kwargs)
+    call_kwargs = dict(generate_kwargs)
+    call_kwargs.pop("phase", None)
+    response = agent.generate(messages=messages, phase=phase, **call_kwargs)
     content = getattr(response, "content", None)
     total_tokens = getattr(response, "total_tokens", None)
 
@@ -280,7 +348,8 @@ def _run_one_segment(agent: Any, agent_id: str, messages: Any,
                 {"role": "user", "content": REPAIR_INSTRUCTION},
             ]
             repaired = agent.generate(messages=repair_messages,
-                                      **generate_kwargs)
+                                      phase=phase,
+                                      **call_kwargs)
             repaired_content = getattr(repaired, "content", None)
             repaired_decision = decision_from_text(agent_id,
                                                    repaired_content)
@@ -361,6 +430,7 @@ def _run_one_segment(agent: Any, agent_id: str, messages: Any,
 
     return CognitiveSegment(
         index=index,
+        phase=phase,
         content=str(content or ""),
         decision=decision,
         action_intents=list(decision.intents),
@@ -412,13 +482,15 @@ def _dispatch_all(agent_id: str, intents: List[ActionIntent], *,
     return [dispatcher.dispatch(it) for it in intents]
 
 
-def _apply_thinking(agent: Any, decision: Any) -> None:
+def _apply_thinking(agent: Any, decision: Any, *,
+                    current_phase: str = "decision") -> None:
     """
     把 Decision 里的 `thinking` 指令应用到 Agent 的 Brain。
 
     🔒 鸭子类型：不 import `agents/`；没有 `brain.set_thinking` 的
        调用方（测试 / 旧实现）静默跳过。
-    🔒 只改**下一步**的状态，不改本次已经生成的内容。
+    🔒 支持 `{"*": ...}`（覆盖当前相）与分相 map。
+    🔒 只改策略，不改本次已经生成的内容。
     """
     directive = getattr(decision, "thinking", None)
     if not isinstance(directive, dict):
@@ -427,12 +499,16 @@ def _apply_thinking(agent: Any, decision: Any) -> None:
     setter = getattr(brain, "set_thinking", None)
     if not callable(setter):
         return
-    enabled = bool(directive.get("enabled"))
-    effort = directive.get("effort")
-    setter(enabled, effort)
-    logger.info(
-        "思考模式更新：agent=%s enabled=%s effort=%s（下一步生效）",
-        getattr(agent, "agent_id", "?"), enabled, effort or "-")
+    for key, value in directive.items():
+        if not isinstance(value, dict):
+            continue
+        phase = current_phase if key == "*" else str(key)
+        enabled = bool(value.get("enabled"))
+        effort = value.get("effort")
+        setter(enabled, effort, phase=phase)
+        logger.info(
+            "思考模式更新：agent=%s phase=%s enabled=%s effort=%s（下一步生效）",
+            getattr(agent, "agent_id", "?"), phase, enabled, effort or "-")
 
 
 def _last_thinking(segments: List[CognitiveSegment]) -> Optional[dict]:
