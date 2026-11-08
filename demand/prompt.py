@@ -233,8 +233,16 @@ def build_task_prompt(
 {directory}
 
 ========== 你可以使用的动作 ==========
-- `workspace_read` / `workspace_write`
-  write 必须给 `write_mode`: create / replace / append
+- `workspace_read`
+  可给 `offset`（1-based 起始行）/ `limit`（最多行数）；显式范围最多 400 行。
+  大文件请先读一段，再用 `workspace_edit` 局部修改。
+- `workspace_write`
+  write 必须给 `write_mode`: create / replace / append。
+  create/replace 需要输出完整文件；能局部改就不要用 replace。
+- `workspace_edit`
+  `path` / `old_string` / `new_string`；old_string 必须唯一命中；
+  可选 `replace_all` / `expected_revision`。
+  仍然走锁 / revision / audit；0 或多个命中会失败。
 - `message_send`
   `to` / `message_type` / `text` / `payload`
   生命周期消息类型：START / SUBMIT / VERIFY / COMPLETE

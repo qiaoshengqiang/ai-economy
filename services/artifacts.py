@@ -162,20 +162,35 @@ def write_artifact(
     return _replace(gateway, workspace_id, agent_id, target, body)
 
 
+#: 范围读取时单次最多返回多少行。
+#: 省略 offset/limit 时仍返回全文（向后兼容）；显式范围时用这个上限防止
+#: “offset=1, limit=100000” 把上下文一次性撑爆。
+MAX_READ_LINES = 400
+
+
 def read_artifact(
     gateway: Any,
     workspace_id: str,
     agent_id: str,
     path: str,
+    *,
+    offset: Optional[int] = None,
+    limit: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
-    读一个 Artifact 的**内容**。
+    读一个 Artifact 的**内容**（可选的**行范围**）。
 
     返回结构与 `write_artifact` **统一**：
 
         成功 → {"ok": True, "path": ..., "revision": ..., "chars": ...,
                 "content": ...}
         失败 → {"ok": False, "path": ..., "code": ..., "message": ...}
+
+    `offset` / `limit`（可选）：
+        - offset 是 **1-based** 起始行；省略 = 从第 1 行开始；
+        - limit 是最多返回多少行；省略 = 读到结尾（旧行为）；
+        - 显式范围最多 `MAX_READ_LINES` 行；
+        - 额外返回 total_lines / start_line / end_line / truncated。
 
     【🔒 为什么返回结构要和 write_artifact 一致】
 
@@ -218,7 +233,44 @@ def read_artifact(
                      gateway_code=err.get("code"))
 
     res = dict(got.get("result") or {})
-    content = res.get("content")
+    full_content = res.get("content")
+    if not isinstance(full_content, str):
+        full_content = "" if full_content is None else str(full_content)
+
+    lines = full_content.splitlines()
+    total_lines = len(lines)
+    total_chars = len(full_content)
+
+    explicit_range = offset is not None or limit is not None
+    if not explicit_range:
+        start_line = 1 if total_lines else 0
+        end_line = total_lines
+        content = full_content
+        truncated = False
+        applied_limit = total_lines
+    else:
+        try:
+            start_line = int(offset) if offset is not None else 1
+            applied_limit = int(limit) if limit is not None else max(
+                1, total_lines - start_line + 1)
+        except (TypeError, ValueError):
+            return _fail(target, "bad_pagination",
+                         "offset / limit 必须是整数行号")
+        if start_line < 1:
+            return _fail(target, "bad_pagination", "offset 必须 >= 1")
+        if applied_limit < 1:
+            return _fail(target, "bad_pagination", "limit 必须 >= 1")
+        if applied_limit > MAX_READ_LINES:
+            applied_limit = MAX_READ_LINES
+
+        end_line = min(total_lines, start_line + applied_limit - 1)
+        if start_line > total_lines and total_lines > 0:
+            end_line = start_line - 1
+        content = "\n".join(lines[start_line - 1:end_line])
+        truncated = (start_line > 1) or (end_line < total_lines)
+        if start_line > total_lines:
+            truncated = True
+
     return {
         "ok": True,
         # 🔒 回**归一化后**的 `target`，不是 Gateway 的 `/plot/x.md`。
@@ -230,9 +282,125 @@ def read_artifact(
         "path": target,
         "revision": res.get("revision"),
         # 🔒 字符数在这里算一次 —— 免得每个调用方各算一遍（算法还可能不同）。
-        "chars": len(content) if isinstance(content, str) else 0,
+        "chars": len(content),
         "content": content,
+        # 范围读取的可观察事实（全文读取时也是同一组字段）。
+        "total_chars": total_chars,
+        "total_lines": total_lines,
+        "offset": start_line,
+        "limit": applied_limit,
+        "start_line": start_line,
+        "end_line": end_line,
+        "truncated": truncated,
     }
+
+
+# ================================================================
+def edit_artifact(
+    gateway: Any,
+    workspace_id: str,
+    agent_id: str,
+    path: str,
+    old_string: str,
+    new_string: str,
+    *,
+    replace_all: bool = False,
+    expected_revision: Optional[int] = None,
+) -> Dict[str, Any]:
+    """
+    用 `old_string → new_string` **局部修改**一个已存在的 Artifact。
+
+    🔒 语义（V1，严格匹配，不做模糊/正则）：
+        - old_string 必须**唯一命中**；0 个或多个都失败；
+        - replace_all=True 时才允许多个；
+        - 不匹配就失败，绝不猜“最接近的那一段”；
+        - 修改仍走 Workspace Gateway 的 `edit`，锁 / revision / audit 不变。
+
+    返回：
+        成功 → {"ok": True, "mode": "edit", "path": ..., "revision": ...,
+                "previous_revision": ..., "previous_chars": ...,
+                "chars": ..., "matched": ..., "replaced": ...}
+        失败 → {"ok": False, "path": ..., "code": ..., "message": ...}
+    """
+    target = _norm(path)
+    path_err = validate_artifact_path(path)
+    if path_err:
+        return _fail(target, "bad_path", path_err)
+
+    if not isinstance(old_string, str) or not old_string:
+        return _fail(target, "bad_argument",
+                     "old_string 必须是非空字符串")
+    if not isinstance(new_string, str):
+        return _fail(target, "bad_argument", "new_string 必须是字符串")
+
+    cur = _read(gateway, workspace_id, agent_id, target)
+    if not cur.get("ok"):
+        err = dict(cur.get("error") or {})
+        return _fail(target,
+                     "not_found" if "NOT_FOUND" in str(err.get("code") or "")
+                     else map_gateway_code(str(err.get("code") or "")),
+                     str(err.get("message") or "读取失败"),
+                     gateway_code=err.get("code"))
+
+    result = dict(cur.get("result") or {})
+    content = result.get("content")
+    if not isinstance(content, str):
+        content = "" if content is None else str(content)
+    base_revision = int(result.get("revision") or 0)
+
+    if expected_revision is not None:
+        try:
+            expected = int(expected_revision)
+        except (TypeError, ValueError):
+            return _fail(target, "bad_revision",
+                         "expected_revision 必须是整数")
+        if expected != base_revision:
+            return _fail(
+                target, "stale_revision",
+                f"文件当前 revision 是 {base_revision}，不是你看到的 {expected}；"
+                f"请重新读取后再修改",
+                current_revision=base_revision,
+                expected_revision=expected)
+
+    matched = content.count(old_string)
+    if matched == 0:
+        return _fail(
+            target, "no_match",
+            "old_string 在文件里没有找到；请重新读取相关片段，"
+            "并带上足够的上下文再试")
+    if matched > 1 and not replace_all:
+        return _fail(
+            target, "multiple_matches",
+            f"old_string 命中了 {matched} 处；请带更多上下文让它唯一，"
+            f"或显式设置 replace_all=true",
+            matched=matched)
+
+    replaced = matched if replace_all else 1
+    new_content = content.replace(
+        old_string, new_string, -1 if replace_all else 1)
+    if new_content == content:
+        return _fail(target, "no_change",
+                     "old_string 与 new_string 相同，文件没有变化")
+
+    res = gateway.edit(
+        workspace_id, "/" + target, base_revision, new_content, agent_id)
+    if res.success:
+        data = dict(res.result or {})
+        return {
+            "ok": True,
+            "mode": "edit",
+            "path": target,
+            "revision": int(data.get("revision", base_revision + 1)),
+            "previous_revision": base_revision,
+            "previous_chars": len(content),
+            "chars": len(new_content),
+            "matched": matched,
+            "replaced": replaced,
+        }
+    err = dict(res.error or {})
+    return _fail(target, map_gateway_code(str(err.get("code") or "")),
+                 str(err.get("message") or "修改失败"),
+                 gateway_code=err.get("code"))
 
 
 # ================================================================

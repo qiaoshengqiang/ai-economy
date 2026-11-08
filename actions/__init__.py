@@ -59,6 +59,9 @@ from actions.workspace_read import (
 from actions.workspace_write import (
     ACTION_WORKSPACE_WRITE, WorkspaceWriteExecutor,
 )
+from actions.workspace_edit import (
+    ACTION_WORKSPACE_EDIT, WorkspaceEditExecutor,
+)
 from actions.shared_context_read import (
     ACTION_SHARED_CONTEXT_READ, SharedContextReadExecutor,
 )
@@ -115,6 +118,7 @@ __all__ = [
     "extract_envelope", "build_intent", "ENVELOPE_INSTRUCTION",
     "ACTION_REPLY", "ACTION_NOOP", "ACTION_OBSERVE",
     "ACTION_WORKSPACE_WRITE", "WorkspaceWriteExecutor",
+    "ACTION_WORKSPACE_EDIT", "WorkspaceEditExecutor",
     "ACTION_WORKSPACE_READ", "WorkspaceReadExecutor",
     "ACTION_MESSAGE_SEND", "MessageSendExecutor",
     "ACTION_PUBLIC_QUERY", "PublicQueryExecutor",

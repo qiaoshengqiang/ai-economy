@@ -168,9 +168,10 @@ LLM 只能**提出意图**，永远不能**直接改账**。
 | Tool Runtime V1 | 公共只读工具库（python / pytest / node / playwright）· 独立 run 目录 · 受控执行 | ✅ 已实现（ADR-0040） |
 | Vision Perception V1 | 原生读图（deepseek-flash）· run_tool 截图回喂 · Playwright 配置发现 + smoke gate | ✅ 已实现（ADR-0041） |
 | Demand Entry V1 | `./dev.sh demand` · Agent 自主 `task_create` · 串行 RunScheduler · CLI | ✅ 已实现（ADR-0042） |
+| Workspace Read/Edit V1 | 范围读取（offset/limit）· `workspace_edit` old/new 局部替换 | ✅ 已实现（ADR-0043） |
 | 实验线 | Human Demand → 多 Agent 协作生产 / 自主分工观察（`experiments/`） | 🚧 进行中 |
 
-**测试基线**：5001 passed / 2 skipped / 30 deselected
+**测试基线**：5021 passed / 2 skipped / 30 deselected
 
 ### ✅ Step 1：最小运行骨架（已完成）
 
@@ -2016,7 +2017,7 @@ ai-economy/
 │   ├── database.py            ← SQLite 连接、事务、迁移
 │   └── models.py              ← 表结构定义
 │
-├── tests/                     ← 5001 个测试 + 30 个真实 API 测试
+├── tests/                     ← 5021 个测试 + 30 个真实 API 测试
 └── data/
     └── economy.db             ← SQLite 数据库（运行产物，不进 git）
 ```

@@ -72,7 +72,7 @@ from actions import (  # noqa: E402
     LongTermMemoryMarkUsedExecutor, LongTermMemoryConsolidateExecutor,
     ACTION_SHORT_TERM_MEMORY_UPDATE,
     ACTION_LONG_TERM_MEMORY_MARK_USED,
-    WorkspaceReadExecutor, WorkspaceWriteExecutor,
+    WorkspaceEditExecutor, WorkspaceReadExecutor, WorkspaceWriteExecutor,
 )
 from services.messaging import send_message_as  # noqa: E402
 from services.private_workspace import (  # noqa: E402
@@ -443,8 +443,16 @@ PROMPT = """你是这次长期生产任务的一名参与者。这是**正式生
 
 
   · "workspace_read"
-        parameters: {{"path": "共享 Workspace 里的逻辑路径"}}
+        parameters: {{"path": "共享 Workspace 里的逻辑路径",
+                     "offset": 120, "limit": 80}}   ← offset/limit 可省
+
         作用：读取该文件**当前**的内容与 revision。
+
+        范围读取（大文件可减少返回行数）：
+          - offset 是 1-based 起始行；省略 = 第 1 行；
+          - limit 是最多行数；省略 = 读到结尾；
+          - 显式范围最多 400 行；返回 start_line / end_line / total_lines /
+            truncated，方便你继续读下一段。
 
         约束（同样是环境事实）：
           - 只有本 Task 的参与者能读；
@@ -452,6 +460,24 @@ PROMPT = """你是这次长期生产任务的一名参与者。这是**正式生
           - 读到的内容会**当场**回到你手上（作为紧接着的一条新输入），
             你可以在**同一次判断里**继续决定做什么。这也意味着：
             一次「读了东西」的判断实际上会让模型被调用**两次**。
+
+  · "workspace_edit"
+        parameters: {{"path": "共享 Workspace 里的逻辑路径",
+                     "old_string": "要替换的原文（必须唯一命中）",
+                     "new_string": "替换后的文本",
+                     "replace_all": false,
+                     "expected_revision": 3}}   ← 后两个可省
+
+        作用：**局部修改**一个已存在的文件，不需要重新输出全文。
+
+        约束（同样是环境事实）：
+          - old_string 必须**唯一命中**；0 个或多个都会失败；
+          - replace_all=true 才允许多个命中；
+          - 严格字符串匹配，不做正则/模糊/空白归一化；
+          - 仍然经过 Workspace Gateway 的锁 / revision / audit；
+          - expected_revision 可选；给了就必须等于当前 revision，
+            否则返回 stale_revision。
+          - 修改成功后，下一轮读到的是新 revision。
 
   · "message_send"
         parameters: {{"to": "收件人 agent_id", "text": "要说的话",
@@ -1969,6 +1995,17 @@ def _wm_update(rt: Any):
     return update
 
 
+def _edit_fn(rt: Any):
+    def _edit(agent_id, path, old_string, new_string, *,
+              replace_all=False, expected_revision=None):
+        from services.artifacts import edit_artifact
+        return edit_artifact(
+            rt.workspace_gateway, WS_ID, agent_id, path,
+            old_string, new_string, replace_all=replace_all,
+            expected_revision=expected_revision)
+    return _edit
+
+
 def _action_seam(rt: Any, bridge: Any = None) -> tuple:
     """
     🔴 M3：把「写操作 → ActionResult → Experience」接起来。
@@ -2011,6 +2048,7 @@ def _action_seam(rt: Any, bridge: Any = None) -> tuple:
         WorkspaceWriteExecutor(write_artifact,
                                gateway=rt.workspace_gateway,
                                workspace_id=WS_ID),
+        WorkspaceEditExecutor(_edit_fn(rt)),
         WorkspaceReadExecutor(read_artifact,
                               gateway=rt.workspace_gateway,
                               workspace_id=WS_ID),

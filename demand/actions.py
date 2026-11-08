@@ -18,10 +18,11 @@ from actions import (
     RunToolExecutor,
     SharedContextReadExecutor,
     TaskCreateExecutor,
+    WorkspaceEditExecutor,
     WorkspaceReadExecutor,
     WorkspaceWriteExecutor,
 )
-from services.artifacts import read_artifact, write_artifact
+from services.artifacts import edit_artifact, read_artifact, write_artifact
 from services.assignment_ops import assign_acceptance
 from services.context_ops import read_shared_context
 from services.messaging import send_message_as
@@ -45,6 +46,14 @@ def build_task_dispatcher(
 
     def _send(comm: Any, **kwargs: Any) -> Any:
         return bridge.run(send_message_as(comm, **kwargs))
+
+    def _edit(agent_id: str, path: str, old_string: str,
+              new_string: str, *, replace_all: bool = False,
+              expected_revision: Any = None) -> Any:
+        return edit_artifact(
+            runtime.workspace_gateway, ws_id, agent_id, path,
+            old_string, new_string, replace_all=replace_all,
+            expected_revision=expected_revision)
 
     def _assign(*, by: str, to: str, reason: str = "") -> Any:
         return assign_acceptance(
@@ -101,6 +110,7 @@ def build_task_dispatcher(
         WorkspaceWriteExecutor(
             write_artifact, gateway=runtime.workspace_gateway,
             workspace_id=ws_id),
+        WorkspaceEditExecutor(_edit),
         MessageSendExecutor(_send, comm=runtime.communication),
         AssignAcceptanceExecutor(_assign),
         SharedContextReadExecutor(_read_context),

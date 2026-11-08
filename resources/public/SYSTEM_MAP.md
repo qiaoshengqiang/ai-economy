@@ -20,7 +20,7 @@
 | **Private Working Memory** | **只有你自己可见**的工作结构：抽象分支 · 当前任务 · 重大问题 · 重大发现 · 笔记。任务结项后当前工作记忆清空，历史保留 | `private_working_memory_read` / `private_working_memory_update` |
 | **Private Short-Term Memory** | **跨任务的近期摘要**：做过什么 · 实现过什么结构 · 哪些现象值得重视。固定容量 8；超过一半出现清理信号，抽象成长期记忆是 Agent 的工作 | `short_term_memory_read` / `update` / `reinforce` |
 | **Private Long-Term Memory** | 短期记忆的高级抽象：做过哪些事 · 印象深刻的事件 · 对应短期存档。按权重读取；低权重可主动 search/read | `long_term_memory_search` / `read` / `mark_used` / `consolidate` |
-| **Task Workspace** | Task 的**共享**文件空间。你写下的产物在这里 | `workspace_read` / `workspace_write`。只有**你参与的那个**；写受锁约束，读不受 |
+| **Task Workspace** | Task 的**共享**文件空间。你写下的产物在这里 | `workspace_read` / `workspace_write` / `workspace_edit`。只有**你参与的那个**；写受锁约束，读不受 |
 | **Resource 责任树** | Task Workspace 里的目录结构 —— 每一块都有**责任人** | `resource_create` 建目录 · `resource_handoff` 把责任交给别人 · `resource_release` 放掉独立责任 |
 | **Private Workspace** | **你自己的**文件空间。别人看不到、也读不到 | `private_write` / `private_read` / `private_list` / `private_delete`。它**不属于任何 Task**，**换任务也还在** |
 | **Ledger / Wallet** | 你的 AIC 余额与全部流水。**只追加，余额是算出来的** | **只读**。你不能直接改账本 |
@@ -35,7 +35,8 @@
 | `action.type` | 作用 | 参数 |
 |---|---|---|
 | `workspace_write` | 写一个产物到 Task Workspace | `path` · `content` · `write_mode`（`create`/`replace`/`append`） |
-| `workspace_read` | 读 Task Workspace 里某个文件的**当前内容** | `path` |
+| `workspace_edit` | 用 `old_string → new_string` **局部修改**已存在的文件 | `path` · `old_string` · `new_string` · `replace_all`（可选） · `expected_revision`（可选） |
+| `workspace_read` | 读 Task Workspace 里某个文件的**当前内容**（可范围读取） | `path` · `offset`（1-based，可选） · `limit`（可选） |
 | `message_send` | 按**显式**消息类型发一条消息 | `to` · `text` · `message_type` · `payload` |
 | `public_query` | 查**公共资料**（就是这里） | `name`（读一份）或 `list`（= true 时列清单） |
 | `shared_context_read` | 读这个 Task 的**共同认知**当前那一版 | **无参数** |
@@ -100,3 +101,10 @@
 | `create` | 文件**不存在**时新建。已存在会被拒绝（不会悄悄覆盖） |
 | `replace` | **整体替换**。原来的内容会消失 |
 | `append` | 在**末尾追加**。旧内容完整保留 |
+
+### 4.1 局部编辑（`workspace_edit`）
+
+`old_string` 必须**唯一命中**；0 个或多个都会失败。
+`replace_all=true` 才允许多个命中。严格字符串匹配，不做正则/模糊/空白归一化。
+`expected_revision` 可选；给了就必须等于当前 revision。
+它仍然经过 Workspace Gateway 的锁 / revision / audit。

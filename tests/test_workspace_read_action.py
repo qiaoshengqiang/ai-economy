@@ -333,6 +333,8 @@ def test_read_result_shape_matches_write(ws):
         写多出 → `mode`（读没有「写入模式」这个概念）
                  `previous_revision`（读没有「上一个版本」这个概念）
         读多出 → `content`（没有它就等于没读）
+                 + 范围读取元数据：total_chars / total_lines / offset /
+                   limit / start_line / end_line / truncated
     """
     from services.artifacts import read_artifact
 
@@ -343,8 +345,13 @@ def test_read_result_shape_matches_write(ws):
     assert common <= set(w), f"写的返回缺公共字段：{sorted(common - set(w))}"
     assert common <= set(r), f"读的返回缺公共字段：{sorted(common - set(r))}"
 
-    assert set(r) - set(w) == {"content"}, (
-        f"读多出的字段应当只有 content，实际：{sorted(set(r) - set(w))}")
+    read_only = {
+        "content", "total_chars", "total_lines", "offset", "limit",
+        "start_line", "end_line", "truncated",
+    }
+    assert set(r) - set(w) == read_only, (
+        f"读多出的字段应当只有 {sorted(read_only)}，"
+        f"实际：{sorted(set(r) - set(w))}")
     assert set(w) - set(r) == {"mode", "previous_revision"}, (
         f"写多出的字段应当只有 mode / previous_revision，"
         f"实际：{sorted(set(w) - set(r))}")

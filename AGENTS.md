@@ -30,7 +30,7 @@
 | | |
 |---|---|
 | **阶段** | `Workspace Core V1 已冻结 · Agent Core V1 已实现 · Tool Runtime V1 已实现 · Vision V1 已实现 · Demand Entry V1 已实现 · 观察实验` |
-| **测试基线** | 以 `./dev.sh test` 当前输出为准（最近：**5001 passed, 2 skipped, 30 deselected**） |
+| **测试基线** | 以 `./dev.sh test` 当前输出为准（最近：**5021 passed, 2 skipped, 30 deselected**） |
 | **协议版本** | `protocol_version = "1"` |
 | **命令数** | 25（`./dev.sh` 查看全部） |
 | **数据库表** | **28** |
@@ -305,7 +305,7 @@ Shared Context 可以**引用、解释、总结、补充**共同知识；
 ### 7.1 V1 已实现 / 下一阶段
 
 **V1 已实现**：Agent Core · Task Core · Shared Context · Workspace Core v1 ·
-Worktree Manager · **Tool Runtime V1** · **Vision Perception V1**（ADR-0041）· **Demand Entry V1**（ADR-0042）·
+Worktree Manager · **Tool Runtime V1** · **Vision Perception V1**（ADR-0041）· **Demand Entry V1**（ADR-0042）· **Workspace Read/Edit V1**（ADR-0043）·
 Economy（Agent / Wallet / Ledger / LLM 成本）· 本地通信 / Message Journal / Claim Lease。
 
 **下一阶段（需要任务书）**：Workspace Permission / ACL / IAM · OS 级执行沙箱 / 网络出口策略 / 工具安装与校验 ·

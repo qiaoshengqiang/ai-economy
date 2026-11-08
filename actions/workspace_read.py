@@ -84,7 +84,11 @@ ACTION_WORKSPACE_READ = "workspace_read"
 #:    这里不新增、不重命名、不推断。
 #:
 #: `content` 必须在列 —— 没有它，「读」这件事就没有发生。
-_OUTPUT_FIELDS = ("path", "revision", "chars", "content")
+_OUTPUT_FIELDS = (
+    "path", "revision", "chars", "content",
+    "total_chars", "total_lines", "offset", "limit",
+    "start_line", "end_line", "truncated",
+)
 
 
 class WorkspaceReadExecutor:
@@ -131,11 +135,19 @@ class WorkspaceReadExecutor:
         """
         params = dict(getattr(intent, "parameters", None) or {})
         path = str(params.get("path") or "")
+        offset = params.get("offset")
+        limit = params.get("limit")
 
         try:
-            raw = self.read_fn(
-                self.gateway, self.workspace_id, intent.agent_id, path,
-            )
+            if offset is None and limit is None:
+                raw = self.read_fn(
+                    self.gateway, self.workspace_id, intent.agent_id, path,
+                )
+            else:
+                raw = self.read_fn(
+                    self.gateway, self.workspace_id, intent.agent_id, path,
+                    offset=offset, limit=limit,
+                )
         except Exception as exc:                              # noqa: BLE001
             return self._fail(
                 intent, f"{type(exc).__name__}: {exc}",

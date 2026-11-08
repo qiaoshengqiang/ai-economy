@@ -63,6 +63,7 @@ from actions.message_send import ACTION_MESSAGE_SEND
 from actions.shared_context_read import ACTION_SHARED_CONTEXT_READ
 from actions.workspace_read import ACTION_WORKSPACE_READ
 from actions.workspace_write import ACTION_WORKSPACE_WRITE
+from actions.workspace_edit import ACTION_WORKSPACE_EDIT
 from actions.run_tool import ACTION_RUN_TOOL
 from actions.public_working_memory import (
     ACTION_PUBLIC_WORKING_MEMORY_READ,
@@ -111,6 +112,7 @@ OBSERVABLE_ACTIONS = frozenset({
 #:    否则新动作会**静默**落进「不回喂」那一类 —— 那正是这个 bug 的成因。
 CONFIRMATION_ACTIONS = frozenset({
     ACTION_WORKSPACE_WRITE,
+    ACTION_WORKSPACE_EDIT,
     ACTION_MESSAGE_SEND,
     ACTION_ASSIGN_ACCEPTANCE,
     ACTION_RESOURCE_CREATE,
@@ -213,6 +215,19 @@ def _payload_of(action_type: str, output: Any) -> Optional[str]:
                        ACTION_LONG_TERM_MEMORY_SEARCH,
                        ACTION_LONG_TERM_MEMORY_READ):
         return json.dumps(output, ensure_ascii=False, indent=2)
+
+    if action_type == ACTION_WORKSPACE_READ:
+        content = output.get("content")
+        if not isinstance(content, str) or not content:
+            return None
+        start = output.get("start_line")
+        end = output.get("end_line")
+        total = output.get("total_lines")
+        if (isinstance(start, int) and isinstance(end, int)
+                and isinstance(total, int)
+                and (start > 1 or end < total)):
+            return f"[lines {start}-{end} of {total}]\n{content}"
+        return content
 
     if action_type in _CONTENT_ACTIONS:
         content = output.get("content")
