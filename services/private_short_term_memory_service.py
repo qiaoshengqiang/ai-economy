@@ -15,6 +15,7 @@ import json
 from typing import Any, Dict, List, Mapping, Optional
 
 from core.private_short_term_memory import (
+    KEEP_AFTER_COMPACT,
     PrivateShortTermMemory,
     ShortTermEntry,
     make_entry,
@@ -35,7 +36,20 @@ class PrivateShortTermMemoryService:
             agent_id=agent_id, revision=0, entries=[], updated_at="")
 
     def render(self, agent_id: str) -> str:
-        return render(self.read(agent_id))
+        memory = self.read(agent_id)
+        text = render(memory)
+        if memory.needs_compaction:
+            candidates = sorted(memory.entries, key=lambda e: e.created_at)
+            ids = [e.entry_id for e in candidates[:max(
+                0, len(candidates) - KEEP_AFTER_COMPACT)]]
+            text += (
+                "\n\n【清理信号】短期记忆条目数 "
+                f"{len(memory.entries)} 已超过一半；"
+                "抽象成长期记忆是 Agent 的工作。"
+                f"候选旧条目：{ids}。"
+                "可以用 long_term_memory_consolidate 写 summary / events "
+                "并归档这些短期条目。")
+        return text
 
     # ------------------------------------------------------------
     def add_from_final(self, agent_id: str, task_id: str,
@@ -81,6 +95,13 @@ class PrivateShortTermMemoryService:
         )
         self.store.add(agent_id, entry)
         return entry
+
+    # ------------------------------------------------------------
+    def reinforce(self, agent_id: str, *, expected_revision: int,
+                  entry_id: str, reason: str = "") -> PrivateShortTermMemory:
+        return self.store.reinforce(
+            agent_id, expected_revision=expected_revision,
+            entry_id=entry_id, reason=reason)
 
     # ------------------------------------------------------------
     def update(self, agent_id: str, *, expected_revision: int,

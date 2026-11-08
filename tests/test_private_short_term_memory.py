@@ -49,31 +49,28 @@ class TestDomain:
         assert COMPACT_THRESHOLD == 4
         assert KEEP_AFTER_COMPACT == 4
 
-    def test_compaction_after_half(self):
+    def test_compaction_signal_after_half(self):
         mem = None
-        digest = None
         for i in range(5):
             entry = make_entry(
                 task_id=f"T{i}", summary=f"task {i}", importance=3,
                 now=f"2026-01-0{i + 1}T00:00:00Z")
-            mem, digest = add_entry(
+            mem = add_entry(
                 mem, entry, agent_id="agent_a",
                 now=f"2026-01-0{i + 1}T00:00:00Z")
-        assert len(mem.entries) == KEEP_AFTER_COMPACT
-        assert digest is not None
-        assert digest.entry_id.startswith("stm-digest-")
-        assert "历史任务摘要" in digest.summary
+        assert len(mem.entries) == 5
+        assert mem.needs_compaction is True
 
     def test_no_compaction_below_threshold(self):
         mem = None
         for i in range(4):
-            mem, digest = add_entry(
+            mem = add_entry(
                 mem,
                 make_entry(task_id=f"T{i}", summary=f"task {i}",
                            now="2026-01-01T00:00:00Z"),
                 agent_id="a", now="2026-01-01T00:00:00Z")
         assert len(mem.entries) == 4
-        assert digest is None
+        assert mem.needs_compaction is False
 
 
 class TestStoreAndService:
@@ -107,7 +104,7 @@ class TestStoreAndService:
             remove=True)
         assert removed.entries == []
 
-    def test_compaction_promotes_digest_to_long_term(self, db):
+    def test_compaction_is_agent_work_not_automatic(self, db):
         store = PrivateShortTermMemoryStore(db)
         service = PrivateShortTermMemoryService(store)
         for i in range(5):
@@ -117,10 +114,10 @@ class TestStoreAndService:
                                     "title": f"task {i}",
                                     "content": {}}}})
         mem = store.get("agent_a")
-        assert len(mem.entries) == KEEP_AFTER_COMPACT
-        long_term = store.long_term_entries("agent_a")
-        assert len(long_term) == 1
-        assert long_term[0]["entry_id"].startswith("stm-digest-")
+        assert len(mem.entries) == 5
+        assert mem.needs_compaction is True
+        # 不自动生成 digest / 长期记忆
+        assert store.long_term_entries("agent_a") == []
 
     def test_render(self, db):
         service = PrivateShortTermMemoryService(

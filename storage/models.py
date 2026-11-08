@@ -100,6 +100,7 @@ TABLE_PRIVATE_WORKING_MEMORY_REVISIONS: Final = (
 # 【短期】固定容量（8），超过一半时压缩，digest 进入长期。
 # 【长期】本版只存不读，留给后续长期记忆模块。
 TABLE_PRIVATE_SHORT_TERM_MEMORY: Final = "agent_short_term_memory"
+TABLE_PRIVATE_SHORT_TERM_ARCHIVE: Final = "agent_short_term_memory_archive"
 TABLE_PRIVATE_LONG_TERM_MEMORY: Final = "agent_long_term_memory"
 
 
@@ -1091,6 +1092,17 @@ SCHEMA_STATEMENTS: Final[tuple[str, ...]] = (
         revision        INTEGER NOT NULL,
         payload         TEXT NOT NULL,
         updated_at      TEXT NOT NULL
+    )
+    """,
+
+    """
+    CREATE TABLE IF NOT EXISTS agent_short_term_memory_archive (
+        agent_id        TEXT NOT NULL,
+        entry_id        TEXT NOT NULL,
+        payload         TEXT NOT NULL,
+        archived_at     TEXT NOT NULL,
+        long_term_entry_id TEXT,
+        PRIMARY KEY (agent_id, entry_id)
     )
     """,
 

@@ -76,6 +76,7 @@ from core.task_context_store import TaskContextStore
 from core.public_working_memory_store import PublicWorkingMemoryStore
 from core.private_working_memory_store import PrivateWorkingMemoryStore
 from core.private_short_term_memory_store import PrivateShortTermMemoryStore
+from core.private_long_term_memory_store import PrivateLongTermMemoryStore
 from core.workspace_core import normalize_path                 # noqa: E402
 from core.workspace_store import WorkspaceStore                 # noqa: E402
 from change import GitManager, WorktreeManager                   # noqa: E402
@@ -100,6 +101,9 @@ from services.private_working_memory_service import (  # noqa: E402
 )
 from services.private_short_term_memory_service import (  # noqa: E402
     PrivateShortTermMemoryService,
+)
+from services.private_long_term_memory_service import (  # noqa: E402
+    PrivateLongTermMemoryService,
 )
 from core.paths import ensure_runtime_dirs                      # noqa: E402
 from llm import LLMCallRecorder, LLMRouter, LLMError            # noqa: E402
@@ -193,6 +197,8 @@ class Runtime:
     private_working_memory: PrivateWorkingMemoryService
     #: 单个 Agent 的私有短期记忆（跨 Task 摘要）。
     private_short_term_memory: PrivateShortTermMemoryService
+    #: 单个 Agent 的私有长期记忆（短期记忆的高级抽象 + 权重）。
+    private_long_term_memory: PrivateLongTermMemoryService
 
     # ---- Workspace Core v1（收尾阶段接入组合根）----
     # 【依赖方向】
@@ -1253,8 +1259,10 @@ def build_runtime(
         PublicWorkingMemoryStore(db=economy.db), tasks=tasks)
     private_working_memory = PrivateWorkingMemoryService(
         PrivateWorkingMemoryStore(db=economy.db), tasks=tasks)
-    private_short_term_memory = PrivateShortTermMemoryService(
-        PrivateShortTermMemoryStore(db=economy.db))
+    short_term_store = PrivateShortTermMemoryStore(db=economy.db)
+    private_short_term_memory = PrivateShortTermMemoryService(short_term_store)
+    private_long_term_memory = PrivateLongTermMemoryService(
+        PrivateLongTermMemoryStore(db=economy.db), short_term_store)
 
     task_service = TaskService(
         store=tasks,
@@ -1335,6 +1343,7 @@ def build_runtime(
         public_working_memory=public_working_memory,
         private_working_memory=private_working_memory,
         private_short_term_memory=private_short_term_memory,
+        private_long_term_memory=private_long_term_memory,
         delegations=delegations,
         delegation_service=delegation_service,
         task_budgets=task_budgets,

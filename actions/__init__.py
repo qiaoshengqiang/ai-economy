@@ -79,9 +79,21 @@ from actions.private_working_memory import (
 )
 from actions.private_short_term_memory import (
     ACTION_SHORT_TERM_MEMORY_READ,
+    ACTION_SHORT_TERM_MEMORY_REINFORCE,
     ACTION_SHORT_TERM_MEMORY_UPDATE,
     ShortTermMemoryReadExecutor,
+    ShortTermMemoryReinforceExecutor,
     ShortTermMemoryUpdateExecutor,
+)
+from actions.private_long_term_memory import (
+    ACTION_LONG_TERM_MEMORY_CONSOLIDATE,
+    ACTION_LONG_TERM_MEMORY_MARK_USED,
+    ACTION_LONG_TERM_MEMORY_READ,
+    ACTION_LONG_TERM_MEMORY_SEARCH,
+    LongTermMemoryConsolidateExecutor,
+    LongTermMemoryMarkUsedExecutor,
+    LongTermMemoryReadExecutor,
+    LongTermMemorySearchExecutor,
 )
 from actions.read_payload import (
     CONFIRMATION_ACTIONS, OBSERVABLE_ACTIONS, PER_PAYLOAD_MAX_CHARS,
@@ -113,7 +125,14 @@ __all__ = [
     "ACTION_PRIVATE_WORKING_MEMORY_UPDATE",
     "PrivateWorkingMemoryReadExecutor", "PrivateWorkingMemoryUpdateExecutor",
     "ACTION_SHORT_TERM_MEMORY_READ", "ACTION_SHORT_TERM_MEMORY_UPDATE",
+    "ACTION_SHORT_TERM_MEMORY_REINFORCE",
     "ShortTermMemoryReadExecutor", "ShortTermMemoryUpdateExecutor",
+    "ShortTermMemoryReinforceExecutor",
+    "ACTION_LONG_TERM_MEMORY_SEARCH", "ACTION_LONG_TERM_MEMORY_READ",
+    "ACTION_LONG_TERM_MEMORY_MARK_USED",
+    "ACTION_LONG_TERM_MEMORY_CONSOLIDATE",
+    "LongTermMemorySearchExecutor", "LongTermMemoryReadExecutor",
+    "LongTermMemoryMarkUsedExecutor", "LongTermMemoryConsolidateExecutor",
     "ACTION_RESOURCE_CREATE", "ACTION_RESOURCE_HANDOFF",
     "ACTION_RESOURCE_RELEASE",
     "ResourceCreateExecutor", "ResourceHandoffExecutor",

@@ -606,6 +606,7 @@ class TestNoImplementation:
             "agent_private_working_memory_revisions",
             # Private Short / Long-Term Memory（2026-11-08）
             "agent_short_term_memory",
+            "agent_short_term_memory_archive",
             "agent_long_term_memory",
         }
         assert expected_workspace_tables <= names, (
@@ -630,7 +631,7 @@ class TestNoImplementation:
         # + 2（Public Working Memory）
         # + 2（Private Working Memory）
         # + 2（Private Short / Long-Term Memory）= 27
-        assert len(names) == 27, (
-            f"表数应为 13 + 5 + 3 + 2 + 2 + 2 = 27，实际 {len(names)}："
+        assert len(names) == 28, (
+            f"表数应为 13 + 5 + 3 + 2 + 2 + 3 = 28，实际 {len(names)}："
             f"{sorted(names)}"
         )

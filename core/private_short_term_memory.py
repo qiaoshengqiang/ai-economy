@@ -71,6 +71,10 @@ class ShortTermEntry:
     architecture: str = ""
     notable: str = ""
     importance: int = 3
+    #: 这条短期记忆在后续任务中被 Agent 认为“帮助很大”的次数。
+    use_count: int = 0
+    #: 最近一次“帮助很大”的原因（Agent 自己写）。
+    helpful: str = ""
     created_at: str = ""
     updated_at: str = ""
 
@@ -82,6 +86,8 @@ class ShortTermEntry:
             "architecture": self.architecture,
             "notable": self.notable,
             "importance": self.importance,
+            "use_count": self.use_count,
+            "helpful": self.helpful,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -95,6 +101,8 @@ class ShortTermEntry:
             architecture=str(raw.get("architecture") or ""),
             notable=str(raw.get("notable") or ""),
             importance=int(raw.get("importance") or 3),
+            use_count=int(raw.get("use_count") or 0),
+            helpful=str(raw.get("helpful") or ""),
             created_at=str(raw.get("created_at") or ""),
             updated_at=str(raw.get("updated_at") or ""),
         )
@@ -106,6 +114,10 @@ class PrivateShortTermMemory:
     revision: int
     entries: List[ShortTermEntry] = field(default_factory=list)
     updated_at: str = ""
+
+    @property
+    def needs_compaction(self) -> bool:
+        return len(self.entries) > COMPACT_THRESHOLD
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -169,45 +181,18 @@ def make_entry(
     )
 
 
-def _compact(entries: List[ShortTermEntry], now: str
-             ) -> tuple[List[ShortTermEntry], Optional[ShortTermEntry]]:
-    """
-    清理旧条目：保留最新 KEEP_AFTER_COMPACT 条，
-    其余压成一条 digest 交给长期记忆。
-    """
-    if len(entries) <= KEEP_AFTER_COMPACT:
-        return entries, None
-    ordered = sorted(entries, key=lambda e: (e.created_at, e.entry_id))
-    old = ordered[:-KEEP_AFTER_COMPACT]
-    keep = ordered[-KEEP_AFTER_COMPACT:]
-    if not old:
-        return entries, None
-
-    summary = "历史任务摘要（%d 个）：" % len(old) + " | ".join(
-        e.summary for e in old)
-    architecture = " | ".join(e.architecture for e in old if e.architecture)
-    notable = " | ".join(e.notable for e in old if e.notable)
-    digest = make_entry(
-        task_id="",
-        summary=summary[:MAX_SUMMARY_CHARS],
-        architecture=architecture[:MAX_DETAIL_CHARS],
-        notable=notable[:MAX_DETAIL_CHARS],
-        importance=3,
-        entry_id=f"stm-digest-{uuid.uuid4().hex[:12]}",
-        now=now,
-    )
-    return keep, digest
-
-
 def add_entry(
     memory: Optional[PrivateShortTermMemory],
     entry: ShortTermEntry,
     *,
     agent_id: str,
     now: Optional[str] = None,
-) -> tuple[PrivateShortTermMemory, Optional[ShortTermEntry]]:
+) -> PrivateShortTermMemory:
     """
-    追加/替换一个任务条目；超过一半时清理并返回 digest。
+    追加/替换一个任务条目。
+
+    🔒 **不自动压缩**：超过一半只设置 `needs_compaction` 信号；
+       抽象成长期记忆是 Agent 的工作（long_term_memory_consolidate）。
     """
     now = now or utc_now_iso()
     current = list(memory.entries if memory else [])
@@ -215,13 +200,12 @@ def add_entry(
     if entry.task_id:
         current = [e for e in current if e.task_id != entry.task_id]
     current.append(entry)
-    keep, digest = _compact(current, now)
-    return (PrivateShortTermMemory(
+    return PrivateShortTermMemory(
         agent_id=agent_id,
         revision=(memory.revision if memory else 0) + 1,
-        entries=keep,
+        entries=current,
         updated_at=now,
-    ), digest)
+    )
 
 
 def update_entry(
@@ -272,6 +256,47 @@ def update_entry(
         entries=entries, updated_at=now)
 
 
+def reinforce_entry(
+    memory: Optional[PrivateShortTermMemory],
+    *,
+    agent_id: str,
+    entry_id: str,
+    reason: str = "",
+    now: Optional[str] = None,
+) -> PrivateShortTermMemory:
+    """
+    Agent 反馈：这条短期记忆对当前任务帮助很大。
+
+    · use_count += 1
+    · importance = min(5, importance + 1)
+    · helpful = reason
+    """
+    if memory is None:
+        raise ShortTermMemoryValidationError("还没有短期记忆条目")
+    now = now or utc_now_iso()
+    found = False
+    entries: List[ShortTermEntry] = []
+    for e in memory.entries:
+        if e.entry_id != entry_id:
+            entries.append(e)
+            continue
+        found = True
+        entries.append(ShortTermEntry(
+            entry_id=e.entry_id, task_id=e.task_id,
+            summary=e.summary, architecture=e.architecture,
+            notable=e.notable,
+            importance=min(5, e.importance + 1),
+            use_count=e.use_count + 1,
+            helpful=_check_text(reason, 500, "helpful"),
+            created_at=e.created_at, updated_at=now))
+    if not found:
+        raise ShortTermMemoryValidationError(
+            f"找不到 short-term entry {entry_id!r}")
+    return PrivateShortTermMemory(
+        agent_id=agent_id, revision=memory.revision + 1,
+        entries=entries, updated_at=now)
+
+
 def render(memory: PrivateShortTermMemory) -> str:
     lines = [f"revision = {memory.revision}"]
     if not memory.entries:
@@ -279,7 +304,7 @@ def render(memory: PrivateShortTermMemory) -> str:
         return "\n".join(lines)
     for e in sorted(memory.entries, key=lambda x: x.created_at, reverse=True):
         lines.append(f"- [{e.entry_id}] task={e.task_id or '(digest)'} "
-                     f"importance={e.importance}\n"
+                     f"importance={e.importance} use_count={e.use_count}\n"
                      f"  summary: {e.summary}")
         if e.architecture:
             lines.append(f"  architecture: {e.architecture}")
@@ -292,5 +317,5 @@ __all__ = [
     "CAPACITY", "COMPACT_THRESHOLD", "KEEP_AFTER_COMPACT",
     "ShortTermMemoryError", "ShortTermMemoryValidationError",
     "ShortTermEntry", "PrivateShortTermMemory",
-    "make_entry", "add_entry", "update_entry", "render",
+    "make_entry", "add_entry", "update_entry", "reinforce_entry", "render",
 ]

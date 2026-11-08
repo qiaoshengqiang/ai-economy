@@ -54,12 +54,15 @@ KEEP_AFTER_COMPACT   = 4
 
 任务完成追加后，如果条目数 > 4：
 
-1. 保留最新 4 条；
-2. 较旧条目压成一条 **digest**（更抽象）；
-3. digest 写入 `agent_long_term_memory`（长期记忆 stub）；
-4. 短期记忆只保留最新 4 条。
+1. **不自动压缩**；
+2. prompt 出现“清理信号”，列出候选旧条目的 entry_id；
+3. 抽象成长期记忆是 **Agent 的工作**：
+   调用 `long_term_memory_consolidate`，写更抽象的 summary / events；
+4. 系统把选中的短期条目移入 archive，并从当前短期记忆删除；
+5. Agent 不调用时，短期记忆保留原样（继续提示）。
 
-🔒 长期记忆本版只存不读；后续长期记忆模块再实现检索。
+🔒 长期记忆与权重见
+[`PRIVATE_LONG_TERM_MEMORY.md`](PRIVATE_LONG_TERM_MEMORY.md)。
 
 ---
 
@@ -91,7 +94,14 @@ short_term_memory_update
   expected_revision · entry_id
   summary? · architecture? · notable? · importance?
   remove?
+
+short_term_memory_reinforce
+  expected_revision · entry_id · reason
 ```
+
+- `update`：内容不正确时修正/删除；
+- `reinforce`：这条短期记忆对当前任务帮助很大时：
+  `use_count += 1`，`importance += 1`，并记录 `helpful` reason。
 
 🔒 只有自己的短期记忆；不会跨 Agent。
 🔒 这不是系统自动判定“正确/错误”，是 Agent 的维护。
@@ -187,9 +197,17 @@ long-term：0 条（2 条未超过一半，未触发压缩）。
 
 ---
 
-## 8. 未实现
+## 8. 已做 / 未做
 
-- **长期记忆检索 / 摘要 / 淘汰**：本版只接收 digest；
+已做：
+
+- 长期记忆（高权重 top-N / search / read / mark_used / consolidate）；
+- 短期条目的具体存档（`agent_short_term_memory_archive`）；
+- `short_term_memory_reinforce` 反馈。
+
+未实现：
+
 - 短期记忆的自动重要性评估（当前 importance 由 notable 有无决定 3/4）；
 - 跨 Agent 的短期记忆共享（不做；短期记忆是私有的）；
-- 任务开始时“只读一次”的跨进程持久缓存（当前是进程内缓存）。
+- 任务开始时“只读一次”的跨进程持久缓存（当前是进程内缓存）；
+- 超过硬容量 8 时的自动兜底（当前由 Agent consolidation 清理）。

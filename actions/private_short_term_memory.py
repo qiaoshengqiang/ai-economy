@@ -16,6 +16,7 @@ from actions.intent import ActionResult, ActionIntent
 
 ACTION_SHORT_TERM_MEMORY_READ = "short_term_memory_read"
 ACTION_SHORT_TERM_MEMORY_UPDATE = "short_term_memory_update"
+ACTION_SHORT_TERM_MEMORY_REINFORCE = "short_term_memory_reinforce"
 
 
 def _memory_dict(memory: Any) -> Dict[str, Any]:
@@ -95,9 +96,46 @@ class ShortTermMemoryUpdateExecutor:
             metadata={"code": None})
 
 
+class ShortTermMemoryReinforceExecutor:
+    action_types = frozenset({ACTION_SHORT_TERM_MEMORY_REINFORCE})
+
+    def __init__(self, reinforce_fn: Callable[..., Any]):
+        self.reinforce_fn = reinforce_fn
+
+    def execute(self, intent: ActionIntent) -> ActionResult:
+        params = dict(getattr(intent, "parameters", None) or {})
+        expected = params.get("expected_revision")
+        entry_id = str(params.get("entry_id") or "").strip()
+        if expected is None or not entry_id:
+            return ActionResult(
+                success=False, output=None,
+                error="short_term_memory_reinforce 需要 "
+                      "expected_revision + entry_id",
+                action_id=intent.intent_id,
+                action_type=intent.action_type,
+                metadata={"code": "missing_required_field"})
+        try:
+            memory = self.reinforce_fn(
+                intent.agent_id, expected_revision=int(expected),
+                entry_id=entry_id, reason=str(params.get("reason") or ""))
+        except Exception as exc:                              # noqa: BLE001
+            return ActionResult(
+                success=False, output=None,
+                error=f"{type(exc).__name__}: {exc}",
+                action_id=intent.intent_id,
+                action_type=intent.action_type,
+                metadata={"code": "short_term_memory_reinforce_failed"})
+        return ActionResult(
+            success=True, output=_memory_dict(memory), error=None,
+            action_id=intent.intent_id, action_type=intent.action_type,
+            metadata={"code": None})
+
+
 __all__ = [
     "ACTION_SHORT_TERM_MEMORY_READ",
     "ACTION_SHORT_TERM_MEMORY_UPDATE",
+    "ACTION_SHORT_TERM_MEMORY_REINFORCE",
     "ShortTermMemoryReadExecutor",
     "ShortTermMemoryUpdateExecutor",
+    "ShortTermMemoryReinforceExecutor",
 ]
