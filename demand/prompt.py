@@ -149,6 +149,25 @@ def _render_inbox(messages: Iterable[Any]) -> str:
     return _clip("\n".join(lines).rstrip(), MAX_INBOX_CHARS)
 
 
+def _render_pending_requests(items: Optional[List[Dict[str, Any]]]) -> str:
+    """把**尚未回应**的 REQUEST/QUESTION 放到 prompt 顶部。"""
+    if not items:
+        return ""
+    lines = ["========== 未回应的请求（优先处理） =========="]
+    for item in items[-3:]:
+        who = str(item.get("from_agent") or "?")
+        kind = str(item.get("message_type") or "REQUEST")
+        turn = item.get("turn")
+        text = str(item.get("text") or "").strip()
+        lines.append(f"- turn {turn} · {who} [{kind}]")
+        lines.append(text)
+        lines.append("")
+    lines.append(
+        "这一轮优先：对上述请求给出**动作**（handoff / 拆件 / 写入）"
+        "或明确回复；不要继续无关的重复读取。")
+    return "\n".join(lines)
+
+
 def _clip(text: str, limit: int) -> str:
     if len(text) <= limit:
         return text
@@ -233,12 +252,17 @@ def _render_budget(runtime: Any, agent_id: str, *,
             lines.append(
                 "     事实：提高预算只改变单次输出上限，"
                 "不改变工作单元大小。")
-            if streak >= 2:
+            if streak >= 2 or total >= 2:
                 lines.append(
-                    "     🔴 同类超限已连续发生；优先重新评估工作拆分"
-                    "（文件/模块/步骤/委派），再决定是否继续加预算。")
+                    "     🔴 同一任务已累计多次超限；继续整文件/大块追加"
+                    "很可能重复失败。优先**停止大块写入**，重新评估工作拆分"
+                    "（拆成小文件/模块，或把部分交给其他 participant）。")
+            else:
+                lines.append(
+                    "     如果当前仍是一次大块写入/生成，"
+                    "可重新评估工作拆分。")
             lines.append(
-                "     可选方向（由你决定）：拆成更小的文件/模块/步骤；"
+                "     可选方向：拆成更小的文件/模块/步骤；"
                 "把独立部分交给其他 participant；"
                 "若 clipped=above_*，硬上限已到，再提高请求不会生效。")
         elif (feedback.get("pressure_total") or 0) >= 2:
@@ -339,6 +363,7 @@ def build_task_prompt(
     inbox: Iterable[Any],
     budget_cap: Optional[int] = None,
     budget_feedback: Optional[Dict[str, Any]] = None,
+    pending_requests: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
     directory = render_directory(runtime)
     workspace = _render_workspace(runtime, task.workspace.workspace_id
@@ -373,12 +398,15 @@ def build_task_prompt(
     if agent_id in task.participants:
         role.append("participant")
     role_text = ", ".join(role) or "participant"
+    pending_text = _render_pending_requests(pending_requests)
 
     return f"""你是 {agent_id}，这是正式运行中的一个 Task turn。
 
 ========== 你的角色事实 ==========
 {role_text}
 （这只是事实，不规定你必须做什么；怎么分工由你们自己决定。）
+
+{pending_text}
 
 ========== Task Core（唯一生命周期权威） ==========
 - task_id: {task.task_id}

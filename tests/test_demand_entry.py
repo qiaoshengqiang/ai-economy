@@ -313,10 +313,21 @@ class TestRunScheduler:
     def test_real_progress_resets_the_counter(self):
         s = RunScheduler(
             participants=["a"],
-            run_turn=lambda a: TurnOutcome(a, actions=1, progress=True),
+            run_turn=lambda a: TurnOutcome(
+                a, actions=1, progress=True, strong_progress=True),
             task_status=lambda: "IN_PROGRESS",
             max_turns=2, no_progress_cycles=1)
         assert s.run().exit_reason == "MAX_TURNS"
+
+    def test_messages_alone_do_not_reset_the_counter(self):
+        """普通协调消息只能算弱进展，不能无限延长 run。"""
+        s = RunScheduler(
+            participants=["a"],
+            run_turn=lambda a: TurnOutcome(
+                a, actions=1, progress=True, strong_progress=False),
+            task_status=lambda: "IN_PROGRESS",
+            max_turns=20, no_progress_cycles=2)
+        assert s.run().exit_reason == "NO_PROGRESS"
 
 
 # ============================================================
@@ -328,6 +339,7 @@ class TestDemandProgress:
         runner._message_signatures = set()
         runner._recent_messages = []
         runner._turn_index = 1
+        runner._pending_requests = {}
         return runner
 
     def _intent(self, action_type, **params):
@@ -401,10 +413,42 @@ class TestDemandProgress:
         assert progress is True
         assert reason == "task_status"
 
+    def test_pending_request_is_cleared_by_an_actual_action(self):
+        runner = self._runner()
+        msg = SimpleNamespace(
+            message_id="m1", message_type="REQUEST",
+            from_agent="agent_e", to_agent="agent_a",
+            text="请建 parts/ 并 handoff", payload={})
+        runner._collect_pending_requests("agent_a", [msg])
+        assert runner._pending_requests["agent_a"], "请求没有被记录"
+
+        intent = self._intent(
+            "message_send", to="agent_e", message_type="TEXT", text="好")
+        result = self._ok("message_send")
+        runner._clear_answered_requests(
+            "agent_a", [intent], [result], "IN_PROGRESS")
+        assert runner._pending_requests["agent_a"] == []
+
+    def test_pending_request_survives_a_read_only_turn(self):
+        runner = self._runner()
+        msg = SimpleNamespace(
+            message_id="m2", message_type="REQUEST",
+            from_agent="agent_e", to_agent="agent_a",
+            text="请建 parts/ 并 handoff", payload={})
+        runner._collect_pending_requests("agent_a", [msg])
+
+        read = self._intent("workspace_read", path="index.html")
+        result = self._ok("workspace_read")
+        runner._clear_answered_requests(
+            "agent_a", [read], [result], "IN_PROGRESS")
+        assert runner._pending_requests["agent_a"], (
+            "只读文件不应该把请求清掉")
+
     def test_blocking_report_names_the_waiter(self):
         """MAX_TURNS 不能只说“停了”，要回答“在等谁、等什么动作”。"""
         runner = object.__new__(DemandRunner)
         runner._last_progress_turn = 4
+        runner._last_strong_progress_turn = 4
         runner._recent_messages = []
         runner._last_turn_by_agent = {}
         runner.rt = SimpleNamespace(

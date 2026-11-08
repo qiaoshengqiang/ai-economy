@@ -221,6 +221,38 @@ def test_pressure_history_is_shown_after_budget_increase():
     assert "重新评估工作拆分" in prompt
 
 
+def test_second_total_pressure_stops_big_append():
+    """
+    total >= 2 但 streak 只有 1（中间有正常轮）时，也必须升级为
+    “停止整文件/大块追加”，否则 Agent 会继续原策略。
+    """
+    feedback = {
+        "turn": 26,
+        "phase": "decision",
+        "finish_reason": "length",
+        "output_status": "EMPTY_CONTENT",
+        "cognitive_status": "TRUNCATED",
+        "truncated": True,
+        "truncated_segments": 1,
+        "requested": 16384,
+        "actual": 16384,
+        "clipped": None,
+        "segments": 1,
+        "pressure": True,
+        "pressure_kinds": "truncated",
+        "pressure_streak": 1,
+        "pressure_total": 2,
+        "pressure_last_turn": 26,
+    }
+    prompt = build_task_prompt(
+        run=_run(), task=_task(), runtime=_runtime(),
+        agent_id="agent_a", inbox=[], budget_cap=32768,
+        budget_feedback=feedback)
+    assert "停止大块写入" in prompt
+    assert "拆成小文件/模块" in prompt
+    assert "交给其他 participant" in prompt
+
+
 def test_workspace_prompt_shows_controller_and_acceptance_path():
     prompt = build_task_prompt(
         run=_run(), task=_task(), runtime=_runtime(),
@@ -261,3 +293,22 @@ def test_error_inbox_is_explained_as_protocol_rejection():
     assert "协议拒绝原因" in prompt
     assert "缺少 task_id" in prompt
     assert "不要重发同一 message_type" in prompt
+
+
+def test_pending_request_is_prioritized_at_top():
+    pending = [{
+        "message_id": "m1",
+        "from_agent": "agent_e",
+        "message_type": "REQUEST",
+        "text": "请建 parts/ 并 handoff 给我",
+        "turn": 45,
+    }]
+    prompt = build_task_prompt(
+        run=_run(), task=_task(), runtime=_runtime(),
+        agent_id="agent_a", inbox=[], budget_cap=32768,
+        budget_feedback=None, pending_requests=pending)
+    assert "未回应的请求（优先处理）" in prompt
+    assert "请建 parts/ 并 handoff 给我" in prompt
+    assert "不要继续无关的重复读取" in prompt
+    # 必须出现在 Task Core 之前
+    assert prompt.index("未回应的请求") < prompt.index("Task Core")

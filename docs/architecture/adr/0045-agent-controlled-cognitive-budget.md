@@ -130,6 +130,20 @@ prompt 的 `truncated=False` 矛盾。
 `original_finish_reason`、`original_budget_clipped`。Demand 的
 `pressure` 同时统计 `is_truncated` 与 `repair_truncated`。
 
+### 11. 长跑抑制（2026-11-09）
+
+真实 run `demand_fbf8856a` 在 25 分钟里烧掉 1.05M tokens，主要由
+重复读取同一版本、验收人过早大量测量、以及消息不断刷新软弱进展造成。
+
+- **重复读取去重**：`workspace_read` 的 `path + revision + 行范围`
+  跨 turn 不再重复回喂全文；只提示“相同 revision/范围，内容未重复发送”；
+- **强/弱进展分离**：`NO_PROGRESS` 只由状态变化 / 写入 / 编辑 / 新目录
+  重置；普通 REQUEST/INFO/NOTE 只是弱进展；
+- **压力升级**：`pressure_total >= 2`（即使 streak=1）也明确要求
+  “停止大块写入，重新评估工作拆分”；
+- **未回应请求置顶**：REQUEST/QUESTION 未被回复或未被
+  `resource_create/handoff` 处理前，持续出现在 prompt 顶部。
+
 ### 明确不做
 
 - 不由 AIC 余额自动换算 token 预算；

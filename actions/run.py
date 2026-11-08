@@ -88,6 +88,7 @@ def run_cognition(
     work_loop: bool = False,
     max_work_steps: int = 2,
     initial_phase: str = "decision",
+    seen_reads: Optional[set] = None,
     **generate_kwargs: Any,
 ) -> CognitiveRunResult:
     """
@@ -137,6 +138,10 @@ def run_cognition(
                       工作阶段最多几次 LLM 调用（硬上限，防止失控 loop）。
         initial_phase 第一段（seg0）的 phase：默认 `decision`；
                       接收人类命令的首次理解可以传 `intake`。
+        seen_reads    🔴 可选的跨 turn 读取指纹集合。相同
+                      `workspace_read`（path + revision + 范围）不再
+                      重复回喂全文，只说明“内容未重复发送”。
+                      由调用方按 Agent 维护；不传时行为不变。
 
     返回：CognitiveRunResult（含 decision / intent / result / segments）
     """
@@ -179,7 +184,8 @@ def run_cognition(
                 list(zip(last_seg.action_intents, last_results)),
                 per_payload_max=int(follow_up_per_payload_max),
                 total_max=int(follow_up_total_max),
-                image_resolver=image_resolver)
+                image_resolver=image_resolver,
+                seen_reads=seen_reads)
             if not prompt:
                 break
             work_messages = base + [
@@ -246,7 +252,8 @@ def run_cognition(
             list(zip(seg0.action_intents, results)),
             per_payload_max=int(follow_up_per_payload_max),
             total_max=int(follow_up_total_max),
-            image_resolver=image_resolver)
+            image_resolver=image_resolver,
+            seen_reads=seen_reads)
         if prompt2 and base is not None:
             follow_up_used = True
             follow_up_messages = base + [

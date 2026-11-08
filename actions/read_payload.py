@@ -294,6 +294,30 @@ def _target_of(intent: ActionIntent) -> str:
     return ""
 
 
+def _workspace_read_signature(
+        intent: ActionIntent, result: Optional[ActionResult]) -> Optional[tuple]:
+    """
+    `workspace_read` 的**版本 + 范围**指纹。
+
+    🔒 同一 path + revision + start/end 的重复读取，不应该把同一段
+       文件内容再次塞回上下文。revision 变了就重新回喂。
+    """
+    if str(getattr(intent, "action_type", "") or "") != ACTION_WORKSPACE_READ:
+        return None
+    if result is None or not getattr(result, "success", False):
+        return None
+    output = getattr(result, "output", None)
+    if not isinstance(output, dict):
+        return None
+    params = dict(getattr(intent, "parameters", None) or {})
+    path = params.get("path") or output.get("path")
+    revision = output.get("revision")
+    if not path or revision is None:
+        return None
+    return (str(path), revision,
+            output.get("start_line"), output.get("end_line"))
+
+
 def _picked(pairs: Iterable[Tuple[ActionIntent, Optional[ActionResult]]]
             ) -> List[Tuple[str, str, str]]:
     """
@@ -380,6 +404,7 @@ def render_read_results(
     per_payload_max: int = PER_PAYLOAD_MAX_CHARS,
     total_max: int = TOTAL_MAX_CHARS,
     image_resolver: Optional[VisualResolver] = None,
+    seen_reads: Optional[set] = None,
 ) -> Union[str, List[Dict[str, Any]]]:
     """
     渲染成一段可以当**下一条 user 消息**发的文本（或 content parts）。
@@ -390,14 +415,33 @@ def render_read_results(
     有图片时返回 `[{"type":"text",...}, {"type":"image_url",...}]`；
     没有图片时仍返回字符串（向后兼容既有调用方）。
 
+    `seen_reads`（可选，跨 turn 共享的 set）：
+        记录已经回喂过的 `workspace_read` 指纹
+        `(path, revision, start_line, end_line)`。
+        相同指纹再次出现时只报告“内容未重复发送”，不再塞一遍全文。
+        不传时行为完全不变。
+
     🔒 措辞纪律：只陈述「这是你刚才请求的环境真实返回」，
        **不写**「你应该据此…」「请继续…」。
     """
     materialized = list(pairs)
-    picked = _picked(materialized)
-    image_parts = (_feedback_images(materialized, image_resolver)
+    fresh: List[Tuple[ActionIntent, Optional[ActionResult]]] = []
+    duplicate_notes: List[str] = []
+    for pair in materialized:
+        signature = _workspace_read_signature(pair[0], pair[1])
+        if signature is not None and seen_reads is not None:
+            if signature in seen_reads:
+                duplicate_notes.append(
+                    f"[{pair[0].action_type}] {_target_of(pair[0])} "
+                    f"（相同 revision / 范围；内容未重复发送）")
+                continue
+            seen_reads.add(signature)
+        fresh.append(pair)
+
+    picked = _picked(fresh)
+    image_parts = (_feedback_images(fresh, image_resolver)
                    if image_resolver is not None else [])
-    if not picked and not image_parts:
+    if not picked and not image_parts and not duplicate_notes:
         return ""
 
     lines: List[str] = [
@@ -435,6 +479,12 @@ def render_read_results(
         lines.append(
             f"（⚠️ 还有 {dropped} 条读取结果因为**总长度上限**没有列出来 —— "
             f"它们真实发生过，这里如实说明，不假装只有上面这些。）")
+        lines.append("")
+
+    if duplicate_notes:
+        lines.append(
+            "========== 重复读取（相同 revision / 范围） ==========")
+        lines.extend(duplicate_notes)
         lines.append("")
 
     text = "\n".join(lines).rstrip()

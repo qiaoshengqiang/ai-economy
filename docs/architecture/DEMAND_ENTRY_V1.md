@@ -123,9 +123,19 @@ requested / actual / budget_clipped 下一轮可见
 
 **信封修复**：Demand 打开 `repair_malformed=True`，格式坏掉时最多重试一次。
 
-**真实进展**：只有 Task 状态变化 / 成功 `workspace_write|edit` /
-`resource_create` / **首次出现**的消息才算进展。重复 `workspace_read` /
-`run_tool` 不算；连续 3 个 cycle 无进展 → `NO_PROGRESS` 提前停。
+**真实进展**：**强进展** = Task 状态变化 / 成功
+`workspace_write|edit` / `resource_create`；只有强进展会重置
+`NO_PROGRESS`。普通协调消息只是弱进展，不能无限延长 run。
+
+**2026-11-09 细化**：
+
+- **强进展**（可重置 `NO_PROGRESS`）= 状态变化 / 写入 / 编辑 / 新目录；
+  普通协调消息只算弱进展，不能无限延长 run；
+- **重复读取去重**：同一 `workspace_read` 的 `path + revision + 行范围`
+  跨 turn 不再重复回喂全文，只保留一条“内容未重复发送”；
+- **未回应的 REQUEST/QUESTION** 会持续出现在 prompt 顶部的
+  “未回应的请求（优先处理）”，直到 Agent 回复或采取
+  `resource_create` / `resource_handoff` 等结构动作。
 
 **结束报告**：`MAX_TURNS` / `TIME_LIMIT` 时打印当前 Task 状态、
 等待的角色与动作（START / SUBMIT / VERIFY / COMPLETE）、最后进展 turn、

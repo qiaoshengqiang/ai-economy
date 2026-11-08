@@ -79,3 +79,8 @@ class TurnOutcome:
     #:    首次出现的有意义消息。单纯的 read / run_tool **不算**。
     progress: bool = False
     progress_reason: str = ""
+    #: 🔴 强进展：Task 状态变化 / 成功写入或编辑 / 新目录。
+    #:
+    #:    普通协调消息只能算“弱进展”；`NO_PROGRESS` 只看强进展，
+    #:    否则一封接一封的说明就能让 run 永远不触发 stall。
+    strong_progress: bool = False

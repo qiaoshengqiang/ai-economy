@@ -34,6 +34,12 @@ _PROTOCOL_MESSAGE_TYPES = frozenset({
     "TASK_OFFER", "COUNTER_OFFER", "ACCEPT", "REJECT", "ERROR",
 })
 
+#: 只有这些才算**强进展**（能重置 NO_PROGRESS）。
+#: 普通消息只是弱进展 —— 否则协调/解释会无限延长 run。
+_STRONG_PROGRESS_REASONS = frozenset({
+    "task_status", "workspace_write", "workspace_edit", "resource_create",
+})
+
 
 class DemandRunner:
     def __init__(
@@ -64,11 +70,17 @@ class DemandRunner:
         self._recent_messages: List[Dict[str, Any]] = []
         #: 最近一次真实进展发生在第几 turn（0 = 还没有）。
         self._last_progress_turn = 0
+        #: 最近一次**强进展**发生在第几 turn（0 = 还没有）。
+        self._last_strong_progress_turn = 0
         self._turn_index = 0
         #: 工作单元压力（截断 / 预算裁剪）的连续与累计计数。
         self._pressure_streak: Dict[str, int] = {}
         self._pressure_total: Dict[str, int] = {}
         self._pressure_last_turn: Dict[str, int] = {}
+        #: 已经回喂过的 workspace_read 指纹（按 Agent），避免重复读同一版本。
+        self._seen_reads: Dict[str, set] = {}
+        #: 尚未回应的 REQUEST/QUESTION（按 Agent）。
+        self._pending_requests: Dict[str, List[Dict[str, Any]]] = {}
 
     # ------------------------------------------------------------
     def execute(self) -> Dict[str, Any]:
@@ -178,11 +190,14 @@ class DemandRunner:
         if task is None:
             return TurnOutcome(
                 agent_id=agent_id, ok=False, error="task disappeared")
+        messages = inbox.get("received") or []
+        self._collect_pending_requests(agent_id, messages)
         prompt = build_task_prompt(
             run=self.run, task=task, runtime=self.rt,
-            agent_id=agent_id, inbox=inbox.get("received") or [],
+            agent_id=agent_id, inbox=messages,
             budget_cap=self.cognitive_budget,
-            budget_feedback=self._last_turn_by_agent.get(agent_id))
+            budget_feedback=self._last_turn_by_agent.get(agent_id),
+            pending_requests=self._pending_requests.get(agent_id))
         return self._turn(
             agent_id, prompt, self.task_dispatcher,
             task_id=task.task_id, initial_phase="decision",
@@ -227,6 +242,7 @@ class DemandRunner:
                 max_work_steps=2,
                 image_resolver=self.image_resolver,
                 initial_phase=initial_phase,
+                seen_reads=self._seen_reads.setdefault(agent_id, set()),
                 # 🔴 与生产实验对齐：信封坏了先修一次格式。
                 repair_malformed=True,
             )
@@ -258,8 +274,15 @@ class DemandRunner:
         new_messages = self._record_messages(agent_id, intents, results)
         progress, progress_reason = self._progress_of(
             before, after, intents, results, new_messages)
+        progress_reasons = {
+            r for r in progress_reason.split(",") if r}
+        strong_progress = (
+            after != before
+            or bool(progress_reasons & _STRONG_PROGRESS_REASONS))
         if progress:
             self._last_progress_turn = self._turn_index
+        if strong_progress:
+            self._last_strong_progress_turn = self._turn_index
 
         self._last_turn_by_agent[agent_id] = {
             "turn": self._turn_index,
@@ -271,6 +294,7 @@ class DemandRunner:
             "action_types": action_types,
             "progress": progress,
             "progress_reason": progress_reason,
+            "strong_progress": strong_progress,
             "budget": budget,
             "envelope_errors": envelope_errors,
         }
@@ -286,9 +310,11 @@ class DemandRunner:
             status_after=after,
             progress=progress,
             progress_reason=progress_reason,
+            strong_progress=strong_progress,
             budget=budget,
             envelope_errors=len(envelope_errors),
         )
+        self._clear_answered_requests(agent_id, intents, results, after)
         return TurnOutcome(
             agent_id=agent_id,
             ok=bool(segments),
@@ -298,6 +324,7 @@ class DemandRunner:
             status_after=after,
             progress=progress,
             progress_reason=progress_reason,
+            strong_progress=strong_progress,
         )
 
     # ------------------------------------------------------------
@@ -473,6 +500,80 @@ class DemandRunner:
         return bool(unique), ",".join(unique)
 
     # ------------------------------------------------------------
+    def _collect_pending_requests(self, agent_id: str,
+                                  messages: List[Any]) -> None:
+        """
+        记录收到的 REQUEST/QUESTION，直到 Agent 回应或采取结构动作。
+
+        🔒 真实 run 里 E 明确请求 `parts/`，A 下一轮仍然继续读文件。
+           这里把“未回应的请求”持续放到 prompt 顶部，而不是只在
+           inbox 里出现一次。
+        """
+        pending = self._pending_requests.setdefault(agent_id, [])
+        known = {str(p.get("message_id") or "") for p in pending}
+        for message in messages:
+            message_type = str(
+                getattr(message, "message_type", "") or "").upper()
+            if message_type not in ("REQUEST", "QUESTION"):
+                continue
+            if str(getattr(message, "to_agent", "") or "") != agent_id:
+                continue
+            message_id = str(getattr(message, "message_id", "") or "")
+            if not message_id or message_id in known:
+                continue
+            text = str(getattr(message, "text", "") or "")
+            if not text:
+                payload = getattr(message, "payload", None) or {}
+                text = str(payload.get("text") or payload)
+            pending.append({
+                "message_id": message_id,
+                "from_agent": str(getattr(message, "from_agent", "") or ""),
+                "message_type": message_type,
+                "text": text[:600],
+                "turn": self._turn_index,
+            })
+            known.add(message_id)
+        # 只保留最近 3 条，避免 prompt 无限增长。
+        self._pending_requests[agent_id] = pending[-3:]
+
+    def _clear_answered_requests(self, agent_id: str, intents: List[Any],
+                                 results: List[Any], after: str) -> None:
+        """
+        回应或采取结构动作后，清掉对应请求。
+
+        🔒 判据是**动作**，不是模型说自己会做：
+            · 给请求方发了消息；
+            · 或创建/交接了目录（拆件动作）；
+            · 或 Task 已进入 SUBMITTED/COMPLETED。
+        """
+        pending = self._pending_requests.get(agent_id) or []
+        if not pending:
+            return
+        if after in ("SUBMITTED", "COMPLETED"):
+            pending.clear()
+            return
+
+        answered_from = set()
+        for intent, result in zip(intents, results):
+            if result is None or not getattr(result, "success", False):
+                continue
+            action_type = str(getattr(intent, "action_type", "") or "")
+            if action_type == "message_send":
+                params = dict(getattr(intent, "parameters", None) or {})
+                target = str(params.get("to") or "")
+                if target:
+                    answered_from.add(target)
+            elif action_type in ("resource_create", "resource_handoff"):
+                # 这是明确的“开始拆/交接”动作；清掉所有待回应请求。
+                pending.clear()
+                return
+        if answered_from:
+            pending[:] = [
+                p for p in pending
+                if str(p.get("from_agent") or "") not in answered_from
+            ]
+
+    # ------------------------------------------------------------
     def _status_task(self) -> Any:
         if not self.run.root_task_id:
             return None
@@ -599,6 +700,7 @@ class DemandRunner:
             "waiting_action": waiting_action,
             "acceptors": acceptors,
             "last_progress_turn": self._last_progress_turn,
+            "last_strong_progress_turn": self._last_strong_progress_turn,
             "recent_messages": list(self._recent_messages[-5:]),
             "last_turns": {
                 agent_id: {
@@ -606,7 +708,8 @@ class DemandRunner:
                     for key, value in facts.items()
                     if key in ("turn", "phase", "status_after", "actions",
                                "action_types", "progress", "progress_reason",
-                               "budget", "envelope_errors")
+                               "strong_progress", "budget",
+                               "envelope_errors")
                 }
                 for agent_id, facts in self._last_turn_by_agent.items()
             },

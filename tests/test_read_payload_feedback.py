@@ -180,6 +180,39 @@ class TestTheRenderer:
         assert "CREATED" in got, "域状态没渲染 —— 那是现场读的引用"
         assert "ASSIGN" in got
 
+    def test_same_revision_and_range_is_not_fed_twice(self):
+        """
+        同一 path + revision + 范围重复读取时，不把同一段全文再塞一遍。
+        revision 变了则重新回喂。
+        """
+        seen = set()
+        output = {
+            "path": "index.html",
+            "content": "FULL_FILE_" * 100,
+            "chars": 1000,
+            "revision": 3,
+            "start_line": 1,
+            "end_line": 50,
+            "total_lines": 50,
+        }
+        pairs = self._pairs(
+            "workspace_read", output,
+            params={"path": "index.html"})
+
+        first = render_read_results(pairs, seen_reads=seen)
+        assert "FULL_FILE_" in first
+
+        second = render_read_results(pairs, seen_reads=seen)
+        assert "FULL_FILE_" not in second
+        assert "内容未重复发送" in second
+
+        changed = dict(output, revision=4)
+        third = render_read_results(
+            self._pairs("workspace_read", changed,
+                        params={"path": "index.html"}),
+            seen_reads=seen)
+        assert "FULL_FILE_" in third
+
     def test_private_list_is_rendered(self):
         pairs = self._pairs("private_list", {"paths": ["notes.md", "draft.md"]})
         got = render_read_results(pairs)
