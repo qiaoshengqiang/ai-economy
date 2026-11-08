@@ -11,10 +11,10 @@
 | | |
 |---|---|
 | **文档状态** | 长期维护（不是一次性报告） |
-| **当前阶段** | Post-Step-4F / Pre-Task-Workspace |
+| **当前阶段** | Post-Change-Pipeline-Phase-1 · Agent Core V1 · Tool Runtime V1 已实现 |
 | **协议版本** | `protocol_version = "1"` |
-| **基线测试** | 2519 passed |
-| **最后更新** | Step 4E |
+| **基线测试** | 以 `./dev.sh test` 当前输出为准（最近：4816 passed, 2 skipped, 30 deselected） |
+| **最后更新** | 文档对齐（Step 4F / Workspace Core v1 / Agent Core v1） |
 
 ---
 
@@ -23,10 +23,10 @@
 ### 0.1 它是规范，不是介绍
 
 README 告诉你「怎么跑起来」。这份文档告诉你
-**「什么是允许的、什么是不允许的、以及为什么」**。
+**「当前能力是什么、边界在哪里、以及为什么」**。
 
 冲突时以这份文档为准；如果代码与这份文档矛盾，
-**要么改代码，要么先改这份文档并说明理由** —— 不允许默默不一致。
+**要么改代码，要么先改这份文档并说明理由** —— 文档与代码必须显式对齐。
 
 ### 0.2 四态标注纪律（强制）
 
@@ -36,9 +36,9 @@ README 告诉你「怎么跑起来」。这份文档告诉你
 | 标记 | 含义 | 例子 |
 |---|---|---|
 | **`CURRENT`** | 代码里**已经实现**，有测试 | `TaskWorkspaceRef` 存在 |
-| **`DESIGNED`** | 已经设计清楚，**尚未实现** | Task Shared Context 的数据模型 |
-| **`FUTURE`** | 方向明确，但还没有设计 | Workspace Permission |
-| **`FORBIDDEN NOW`** | 当前阶段**明确禁止**实现 | Git、代码执行、Payment |
+| **`DESIGNED`** | 已经设计清楚，**尚未实现** | Workspace Permission |
+| **`FUTURE`** | 方向明确，但还没有设计 | P2P / 多机 |
+| **`FORBIDDEN NOW`** | 当前阶段**尚未解锁**，需要任务书 | Task Payment、P2P |
 
 > **本项目的真实例子（必须照此写）**：
 >
@@ -65,14 +65,14 @@ README 告诉你「怎么跑起来」。这份文档告诉你
 
 ## 1. AI Economy OS 是什么
 
-### 1.1 它不是什么
+### 1.1 四个定义性特征
 
-正式排除这四种误解，因为它们会导致错误的架构决定：
+这四点决定了架构选择：
 
-- ❌ **不是一个 Chatbot** —— 这里没有「一个会话」的中心概念
-- ❌ **不是一个 Multi-Agent Demo** —— 不是把几个 Agent 并排跑一遍给人看
-- ❌ **不是一个 LLM 工作流** —— LLM 只是 Agent 的**外部生产资源**之一
-- ❌ **不是一个把 Agent 并排运行的脚本** —— Agent 是**长期运行的经济主体**
+- **长期运行的经济主体**：系统的中心是 Agent，而不是「一个会话」。
+- **可重复运行的生产系统**：不是把几个 Agent 并排跑一遍的演示。
+- **LLM 是外部生产资源**：模型是 Agent 使用的资源之一，不是系统本身。
+- **Agent 是独立主体**：不是脚本批次里的一个执行步骤。
 
 ### 1.2 它的长期目标
 
@@ -98,8 +98,8 @@ README 告诉你「怎么跑起来」。这份文档告诉你
 P2P / Distributed Agent Network
 ```
 
-**`FORBIDDEN NOW`** —— 不要实现最终形态。
-架构必须为它**保留演进空间**，但不要提前建好通向它的每一条路。
+**V1 只实现当前阶段。** 架构为最终形态**保留演进空间**；
+走向多机 / 跨网络的每一步都由独立任务书解锁。
 
 ### 1.4 为什么「经济」是关键
 
@@ -114,13 +114,13 @@ P2P / Distributed Agent Network
 - 决定**拒绝**
 - 决定**外包**给别的 Agent
 
-系统**不替它做这些决定**。系统的职责是：
+系统的职责与 Agent 的自主决定分开：
 
-| 系统负责 | 系统不负责 |
+| 系统负责 | Agent 自主决定 |
 |---|---|
-| 协议 | 「你应该怎么谈价」 |
-| 状态 | 「你应该接受这个价格吗」 |
-| 业务硬约束 | 「你应该信任谁」 |
+| 协议 | 怎么谈价 |
+| 状态 | 是否接受某个价格 |
+| 业务硬约束 | 是否信任另一个 Agent |
 | 持久化 | |
 | 消息路由 | |
 
@@ -144,25 +144,22 @@ Agent
 ├── Economy             经济环境（我在什么经济系统里）      CURRENT
 ├── Wallet              钱包（我有多少钱）                 CURRENT
 ├── Strategy            策略（我的偏好与底线）             CURRENT
-├── Private Workspace   私有空间（我自己的文件）           DESIGNED
+├── Private Workspace   私有空间（我自己的文件）           CURRENT（访问边界）
 └── Runtime / Life Loop 运行时（我什么时候醒来）           FUTURE
 ```
 
-> **注意 `Private Memory` 的标注是 `DESIGNED`。**
-> 当前代码里**没有** Memory 层的实现。Agent 的配置（`config.yaml`）
-> 不是记忆 —— 它是**静态声明**，不是**经验积累**。
+> **`Private Memory` 的标注是 `DESIGNED`。**
+> Memory 指**经验积累**；Agent 的配置（`config.yaml`）是**静态声明**，
+> 与 Memory 属于不同层。
 
-### 2.2 必须记住的五个不等号
+### 2.2 最常被搞混的五个不等号
 
-这五个不等号是本项目**最常被搞混**的地方，每一个都对应一次真实的设计风险：
+`Identity ≠ Address` · `Capability ≠ Permission` · `Wallet Ownership ≠ Machine Permission`
+的完整定义见 §3 原则表。
 
-| 不等号 | 含义 | 搞混的后果 |
-|---|---|---|
-| `Identity ≠ Address` | 我是谁 ≠ 在哪里找我 | 搬家就要换身份；身份不能跨传输层 |
-| `Capability ≠ Permission` | 我会做 ≠ 我有权做 | Agent 声明会写代码，就自动获得文件写权限 |
-| `Economy ≠ Intelligence` | 有钱 ≠ 聪明 | 用余额推断 Agent 的能力/可信度 |
-| `Wallet Ownership ≠ Machine Permission` | 有资产 ≠ 有机器权限 | 有钱的 Agent 自动能操作宿主机 |
-| `Private Memory ≠ Shared Task Context` | 我怎么想 ≠ 大家确认了什么 | 一个 Agent 的私下判断变成「共同事实」 |
+`Economy ≠ Intelligence`：经济表现是外部信号，不是能力评分。
+`Private Memory ≠ Shared Task Context`：私人判断需经 `Proposal → Alignment`
+才成为共识（§6.2 / §8）。
 
 ---
 
@@ -216,24 +213,25 @@ Agent
 | 1 | `Identity ≠ Address` | `core/identity.py` + `communication/address.py` 分离 |
 | 2 | `Message ≠ Transport` | `communication/message.py` vs `transport.py` |
 | 3 | `Communication ≠ Business Logic` | 守卫：`communication/` 不许 import `core.task` |
-| 4 | `Capability ≠ Permission` | `core/capability.py` 是纯集合运算；守卫禁止它碰权限 |
+| 4 | `Capability ≠ Permission` | `core/capability.py` 是纯集合运算；守卫检查它不接触权限 |
 | 5 | `Capability ≠ Economy` | Capability 不认识钱包/账本 |
 | 6 | `Wallet Ownership ≠ Machine Permission` | Wallet 不提供任何文件/执行能力 |
-| 7 | `Task Core ≠ Task Manager` | 守卫禁止 `TaskManager` / `Coordinator` |
+| 7 | `Task Core ≠ Task Manager` | 系统不含 `TaskManager` / `Coordinator`；有守卫检查 |
 | 8 | `Task Shared Context ≠ Message History` | **`CURRENT`** —— 结构上保证（对齐层不认识 Message） |
 | 9 | `Task Shared Context ≠ Agent Private Memory` | **`CURRENT`** —— 无读写私有记忆的路径 |
 | 10 | `Task Shared Context ≠ Task Workspace` | **`CURRENT`** —— 零文件系统访问 |
-| 11 | `Workspace ≠ Permission` | `workspace_id` 只是引用；守卫禁止文件 I/O |
+| 11 | `Workspace ≠ Permission` | `workspace_id` 只是逻辑引用；守卫检查无宿主机文件 I/O |
 | 12 | `Memory ≠ Alignment` | **`CURRENT`** —— 领域层与 Alignment 层分离（ADR-0019） |
 | 13 | `Agreement ≠ Payment` | `TaskAgreementRecord.describe()["is_payment"] == False` |
 | 14 | `Budget ≠ Price` | `Task.budget` 与 `Task.agreed_price` 是两个字段 |
 
-补两条从经验里长出来的：
+补三条从经验里长出来的：
 
 | # | 原则 | 含义 |
 |---|---|---|
 | 15 | `DecisionPolicy ≠ Decision Execution` | 策略只**返回**决定，不执行 |
-| 16 | `Domain ≠ Infrastructure` | `core/` 不依赖 `services/` / `storage/` / `communication/` |
+| 16 | `Domain ≠ Infrastructure` | `core/` 不依赖 `services/`；应用层经 `core/task_store` 访问存储 |
+| 17 | `Task Execution ≠ Code Execution` | 生命周期推进不跑代码；代码/测试只经 Tool Runtime |
 
 ---
 
@@ -249,8 +247,8 @@ graph TB
 
     subgraph TaskLayer["Task 层"]
         TC[Task Core<br/>状态机 · 预算 · 角色 · 生命周期<br/>CURRENT]
-        TSC[Task Shared Context<br/>共同世界模型<br/>DESIGNED]
-        TW[Task Workspace<br/>实际共享的文件与代码<br/>FUTURE]
+        TSC[Task Shared Context<br/>共同世界模型<br/>CURRENT]
+        TW[Task Workspace<br/>实际共享的文件与代码<br/>Core v1 CURRENT / 完整生命周期 FUTURE]
     end
 
     subgraph AgentA["Agent A"]
@@ -294,8 +292,8 @@ graph TB
 
 **看图的三条要点**：
 
-1. **Private Memory 到 Shared Context 是虚线** —— 不能直连。
-   必须经过 Proposal → Alignment（§8）。
+1. **Private Memory 到 Shared Context 是虚线**：路径是
+   `Proposal → Alignment`（§8）。
 2. **Shared Context 到 Task Workspace 是虚线** —— 前者说「我们认为是什么」，
    后者说「实际有哪些文件」。两者关联但不相等。
 3. **只有 Application Layer 能改 Task** —— Communication 送消息，
@@ -304,18 +302,21 @@ graph TB
 ### 4.2 依赖方向（单向，无环）
 
 ```
-main.py（组合根）
-    ↓
-services/   →  core/  +  communication/  +  storage/
-communication/  →  不依赖 services/、不依赖 core/task
-core/       →  谁都不依赖
-storage/    →  只被 core/task_store 与 communication/recorder 使用
+agents/         → core/ + llm/
+services/       → core/ + communication/     ← 不直接依赖 storage/
+communication/  → core/ + storage/
+core/           → storage/ 叶子 + agents/
+storage/        → core/ 叶子（paths / logging_setup / config）
+llm/            → core/ + storage/
+tool_runtime/   → core/ + 标准库（subprocess）；不依赖 services/
 ```
 
 **守卫保证**：
-- `core/` 不许 import `services/`（8 个 `*guards*.py` 里的 import 图检查）
-- `communication/` 不许 import `core.task` / `core.economy`
+- `core/` 与 `communication/` 不 import `services/`
+- `services/` 不直接依赖 `storage/`（经 `core/task_store`）
 - 只有 `main.py` 能调用 `register_type_handler`（接线只能在组合根）
+- 两个已知例外：`core/economy.py → agents/base_agent.py`；
+  `storage/database.py` 函数内 import `core.config`
 
 ---
 
@@ -342,15 +343,15 @@ storage/    →  只被 core/task_store 与 communication/recorder 使用
 `CapabilityProfile` 是能力的**集合**。
 它只支持集合运算（`covers` / `missing` / `union`…）。
 
-**它刻意没有**：评分、排名、信誉、价格。
-因为「谁会做」和「谁最合适 / 谁最便宜」是**两个不同的问题**
-（后者属于 Agent 自己的策略）。
+**Capability 只表达技能集合**；评分、排名、信誉、价格属于
+Agent Strategy 或未来的经济信号。「谁会做」和「谁最合适 / 谁最便宜」
+是两个不同的问题。
 
 ### 5.4 Brain / Decision（`CURRENT`）
 
 > **我怎么办。**
 
-两条不同的决策路径，**不要混**：
+两条决策路径职责不同：
 
 | | Brain | DecisionPolicy |
 |---|---|---|
@@ -363,7 +364,7 @@ storage/    →  只被 core/task_store 与 communication/recorder 使用
 
 > **`DecisionPolicy` 只返回 `Decision`，不执行它。**
 > 把它落到状态上的是 `TaskNegotiationService`。
-> 有守卫禁止策略 import 钱包/账本/通信/文件系统。
+> 有守卫检查策略不直接 import 钱包/账本/通信/文件系统。
 
 ### 5.5 Economy / Wallet（`CURRENT`）
 
@@ -371,7 +372,7 @@ storage/    →  只被 core/task_store 与 communication/recorder 使用
 
 **账本是唯一事实来源，余额永远是算出来的**
 （`SUM(inflow) - SUM(outflow)` 按 `asset` 过滤）。
-`wallets` 表**没有** `balance` 列 —— 这是刻意的，防止余额和账本漂移。
+`wallets` 表只保存资产引用，**余额由账本派生**，避免余额与账本漂移。
 
 货币代码是 `AIC`（AI Coin）。
 
@@ -383,7 +384,7 @@ storage/    →  只被 core/task_store 与 communication/recorder 使用
 最低可接受价格、目标价格、风险偏好、时间压力……
 
 **它属于 Agent 自己**，不属于系统。
-代码里**不许**出现 `if agent_id == "agent_b"` —— 有守卫。
+Agent 特定参数来自配置 / Strategy；代码保持 agent-agnostic —— 有守卫。
 
 ### 5.7 Private Memory（`DESIGNED`）
 
@@ -391,19 +392,20 @@ storage/    →  只被 core/task_store 与 communication/recorder 使用
 
 见 §6 Layer 1。**当前尚未实现。**
 
-### 5.8 Private Workspace（`DESIGNED`）
+### 5.8 Private Workspace（`CURRENT`：访问边界）
 
 > **我自己的文件。**
 
-未来属于单个 Agent，与 Task Workspace **不同**。
-**当前尚未实现。**
+`core/workspace.py` 提供每个 Agent 的私有目录访问边界
+（路径越界会抛 `WorkspaceViolationError`）。它与 Task Workspace **不同**；
+ACL / 授权体系仍是 `FUTURE`。
 
 ### 5.9 Runtime / Life Loop（`FUTURE`）
 
 > **我什么时候醒来。**
 
-Heartbeat / 事件唤醒 / 自主循环。
-**`FORBIDDEN NOW`** —— 不要实现。
+Heartbeat / 事件唤醒 / 自主循环属于 `FUTURE`。
+V1 的生命周期由显式调用与消息驱动。
 
 ---
 
@@ -415,9 +417,9 @@ Heartbeat / 事件唤醒 / 自主循环。
 
 | Layer | 名字 | 属于谁 | 状态 | 是不是 Source of Truth |
 |---|---|---|---|---|
-| **1** | Agent Private Memory | **单个 Agent** | `DESIGNED` | ❌ 不是 |
+| **1** | Agent Private Memory | **单个 Agent** | `DESIGNED` | 不是 |
 | **2** | Task Shared Context | **Task** | **`CURRENT`** | ✅ 是（任务知识层） |
-| **3** | Task Workspace | **Task** | `FUTURE` | ✅ 是（实际产物层） |
+| **3** | Task Workspace | **Task** | **Core v1 `CURRENT`** · 完整模型 `FUTURE` | ✅ 是（实际产物层） |
 | **4** | External / World State | **系统外** | `FUTURE` | ✅ 是（但需记来源） |
 
 ### 6.2 Layer 1：Agent Private Memory
@@ -433,18 +435,17 @@ Heartbeat / 事件唤醒 / 自主循环。
 
 **三条硬规则**：
 
-1. **其他 Agent 默认无权读取。**
-2. **它不是系统事实的 Source of Truth。**
-3. **它不能自动升级成共享事实。**
+1. **读取边界**：默认只有 owner 读取。
+2. **权威边界**：它不是系统事实的 Source of Truth。
+3. **升级路径**：进入 Shared Context 必须经 `Proposal → Alignment`。
 
 > **例子（必须照此理解）**：
 >
 > Agent B 私下认为「Agent C 不太可靠」。
 > 这属于 **Private Memory**。
-> **不能**自动成为 Task Shared Context。
 >
-> 如果 B 想让它影响协作，必须走正式流程提出
-> （见 §8）。否则这就是 B 的**偏见**，不是**共识**。
+> 如果 B 想让它影响协作，需要走正式流程提出（见 §8）；
+> 在此之前，它只是 B 的私人判断，而不是团队共识。
 
 ### 6.3 Layer 2：Task Shared Context
 
@@ -483,8 +484,10 @@ Heartbeat / 事件唤醒 / 自主循环。
 未来可能包含：source code · files · tests · patches ·
 generated artifacts · worktrees。
 
-`FUTURE` —— **当前只存在 `TaskWorkspaceRef`（一个 `workspace_id` 字符串）**。
-它**没有**路径、没有权限、没有 I/O。
+`CURRENT`（Workspace Core v1）—— 已实现资源树、Controller、
+Explicit/Effective Lock、Revision、Audit、Event、Gateway 与资源级并发。
+`TaskWorkspaceRef` 仍然只是逻辑引用；完整的 Task Workspace 生命周期
+（Patch / Test / Acceptance）仍是 `FUTURE`。
 
 > **Workspace ≠ Shared Context**
 >
@@ -492,16 +495,15 @@ generated artifacts · worktrees。
 > - Workspace：「**实际**有哪些东西」
 >
 > 一个说决定用 parser B，另一个是 `parser.py` / `tests/` / `fixtures/`。
-> 两者相互关联，但**不能混为一体**。
+> 两者相互关联，但职责不同。
 
 ### 6.5 Layer 4：External / World State
 
 例如：外部 API · 网络 · 外部数据库 · Git remote ·
 外部服务 · 外部现实环境。
 
-**一条硬规则**：Agent 观察到的 External State
-**不能自动等同于 Shared Context**。
-**必须记录来源**。
+**一条硬规则**：External State 进入 Shared Context 时需要**记录来源**并经过确认；
+观察首先是一条 Observation，而不是既成事实。
 
 > 为什么：如果一个 Agent 说「我查了，那个 API 支持幂等」，
 > 这句话在进入共同模型之前**只是一个观察**，
@@ -539,16 +541,16 @@ Shared Context   ≠   Alignment Protocol
 
 > **这是未来多 Agent 一致性的核心。**
 
-### 8.1 反例（必须避免）
+### 8.1 边界例子
 
 ```
 Agent A 说：「我觉得我们应该用方案 B。」
 
 Communication History：✅ 存在这句话
-Task Shared Context： ❌ 没有 Decision Record
+Task Shared Context： 还没有 Decision Record
 ```
 
-**系统不能认为「团队已经决定方案 B」。**
+此时状态是「A 提出过一个建议」，还不是「团队已经决定方案 B」。
 
 ### 8.2 正确的路径
 
@@ -578,20 +580,16 @@ Agent B
 Context Revision
 ```
 
-### 8.4 四类变更：**不要强制所有变化都投票**
+### 8.4 四类变更：对齐强度按类型区分
 
-> 🔒 **不要把 Shared Context 做成「民主投票系统」。**
->
-> 这不是政治制度。**不要**设计：多数票 / 所有人必须批准 /
-> 复杂 quorum / blockchain consensus。
-
-需要的是 **authority + provenance + revision + conflict handling**，
-而不是复杂共识算法。
+> Shared Context 使用 **authority + provenance + revision + conflict handling**。
+> 不同变更类型采用不同对齐强度；复杂 quorum / blockchain consensus
+> 不属于 V1 模型。
 
 | 类型 | 例子 | 谁决定 | 需要对齐吗 |
 |---|---|---|---|
-| **自动事实** | `Task.status` | **Domain State** | ❌ 不需要（客观事实） |
-| **契约约束** | 预算、验收要求 | Task / Agreement / User input | ❌ 不由 Agent 投票修改 |
+| **自动事实** | `Task.status` | **Domain State** | 不需要（客观事实） |
+| **契约约束** | 预算、验收要求 | Task / Agreement / User input | 由 Task / Agreement 决定 |
 | **协作决策** | 「选择方案 B」 | **需要明确的对齐机制** | ✅ 需要 |
 | **个人信念** | 「我觉得 C 不可靠」 | —— | 留在 **Private Memory** |
 
@@ -601,7 +599,7 @@ Context Revision
 
 1. **Domain State 优先** —— 如果 Shared Context 与 Task 状态矛盾，
    以 Task 为准，并把 Shared Context 标记为需要修正。
-2. **不删除，只标记** —— 旧 Decision 被取代时标 `SUPERSEDED`，不删。
+2. **历史保留** —— 旧 Decision 被取代时标 `SUPERSEDED`，旧版本继续可查。
 3. **记录争议** —— 如果两个 Agent 无法达成一致，那本身是一个
    **Open Question / Dispute**，而不是「谁先写谁赢」。
 
@@ -635,14 +633,14 @@ Agent Inference
 
 ### 9.3 三条推论
 
-1. **Domain State 不能被 Agent Memory 推翻。**
-   如果账本说成交价是 25 AIC，任何 Agent 的记忆都不能改变它。
+1. **Domain State 的权威高于 Agent Memory。**
+   如果账本说成交价是 25 AIC，当前事实以账本为准。
 
-2. **「有人说过」不等于「现在仍然有效」。**
-   Communication History 是历史，不是当前状态。
+2. **Communication History 是历史。**
+   当前是否有效，以 Domain State / Shared Context 为准。
 
-3. **推测不能冒充事实。**
-   Agent Inference 必须显式标记为推测。
+3. **Inference 必须显式标记为推测。**
+   推测与事实在数据结构上分开。
 
 ---
 
@@ -679,11 +677,11 @@ Latest verification feedback: ...
 Relevant artifacts:   ...
 ```
 
-### 10.3 必须写死的边界
+### 10.3 固定边界
 
-- ❌ Snapshot **不是** Source of Truth（它来自 Shared Context）
-- ❌ 本阶段**不实现**自动 LLM summarization
-- ✅ Snapshot 必须带 `revision`（否则不知道它是哪一刻的视图）
+- Snapshot 是 Shared Context 的**派生视图**，Source of Truth 仍在 Shared Context。
+- V1 不做自动 LLM summarization。
+- Snapshot 必须带 `revision`，标明它是哪一刻的视图。
 
 ---
 
@@ -707,7 +705,7 @@ LLM · 网络 · 通信日志 · 应用服务。
 **不负责**：Agent 是否接受价格 · Task 是否 ACCEPTED ·
 Agreement 是否成立 · Task 是否 VERIFIED。
 
-> **通信层连 `budget` 这个词都不许出现** —— 有守卫。
+> **通信层保持业务无关**：守卫检查 `budget` 等业务词不出现。
 > 它只负责把消息送到；「这个价格允不允许」是业务问题。
 
 ### 11.3 Application Layer（`CURRENT`）
@@ -725,7 +723,7 @@ Handlers（按消息类型）
    └──→ TaskExecutionService     执行规则 + 状态落地
 ```
 
-**议价与执行必须分开**（Step 4D 的核心决定），因为它们的**变化原因不同**：
+**议价与执行分开**（Step 4D 的核心决定），因为它们的**变化原因不同**：
 
 | | 变化原因 |
 |---|---|
@@ -747,8 +745,8 @@ Handlers（按消息类型）
 
 **负责**：START · SUBMIT · VERIFY · COMPLETE 的校验与状态落地。
 
-**明确不负责**（`FORBIDDEN NOW`）：
-❌ 执行代码 ❌ 调 LLM ❌ 碰钱 ❌ 碰 Workspace ❌ 碰 Git。
+**职责边界**：Execution 只负责推进生命周期；
+代码执行由 **Tool Runtime** 负责，LLM 调用、资金、Workspace、Git 由其他层或未来阶段负责。
 
 > **4D 的「执行」指的是任务生命周期进入执行状态，
 > 不是「系统替 Agent 跑代码」。**
@@ -767,33 +765,34 @@ Handlers（按消息类型）
 
 | 相邻层 | 边界规则 |
 |---|---|
-| **Private Memory** | 默认不能修改 Task / Agreement / Shared Context / 其他 Agent 的 Memory / 不能获得 Workspace 权限。只能通过 `Private Observation → Proposal → Alignment → Shared Context` 进入共享层 |
-| **Workspace** | Shared Context 说「认为是什么」，Workspace 说「实际有什么」。相互关联，不能混为一体 |
-| **Communication** | `Message → 可能的 Context Proposal → Alignment → Context Revision`，**不是** `Message → 自动写 Shared Context` |
-| **Task Core** | **Shared Context 可以引用 Domain State，但不能成为 Domain State 的第二个来源。** 不要复制一套 `status` / `agreed_price` / `contractor` 然后让两边漂移 |
+| **Private Memory** | 默认仅 owner 可读写；进入共享层的路径是 `Private Observation → Proposal → Alignment → Shared Context` |
+| **Workspace** | Shared Context 说「认为是什么」，Workspace 说「实际有什么」；两者相互关联、职责不同 |
+| **Communication** | `Message → 可能的 Context Proposal → Alignment → Context Revision`；消息本身不自动写 Shared Context |
+| **Task Core** | **Task Core 是 Domain State 的唯一权威；Shared Context 引用并解释它。** `status` / `agreed_price` / `contractor` 由 Task Core 维护，避免两边漂移 |
 | **Economy** | 只保存**与这个 Task 相关的、需要共同知道的**经济事实（如 `agreed_price`，来自 `TaskAgreement`）。**Agent B 的全部余额不属于 Shared Context** |
+
+### 11.8 Tool Runtime（`CURRENT` V1）
+
+**负责**：在独立 run 目录执行**公共工具库**中的 allowlist 工具
+（python / pytest / node / playwright），把 stdout / stderr / exit code
+结构化返回给 Agent。
+
+**不负责**：Task 生命周期、消息协议、钱包/账本、Task Workspace revision、
+任意 shell、任意下载/安装。详细设计：[`TOOL_RUNTIME_V1_DESIGN.md`](TOOL_RUNTIME_V1_DESIGN.md)，
+决策：[ADR-0040](adr/0040-controlled-code-execution-tool-runtime.md)。
 
 ---
 
 ## 12. Guard 规范
 
 > **Step 4E 之前，本项目已经出现过多次「守卫本身有问题」。**
-> 这一节是为了让后面的人不要再犯。
+> 这一节记录真实教训，帮助后续开发者避免重复发生。
 
 ### 12.1 当前守卫现状（`CURRENT`）
 
-8 个守卫文件，265 项：
-
-| 文件 | 项数 | 守什么 |
-|---|---|---|
-| `test_capability_guards.py` | 30 | Capability / Directory 边界 |
-| `test_communication_guards.py` | 27 | 通信层业务无关 |
-| `test_execution_guards.py` | 39 | 4D 的 10 组边界 |
-| `test_multiprocess_guards.py` | 35 | Phase 0 的 11 组边界 |
-| `test_negotiation_guards.py` | 32 | 议价层边界（覆盖整个 services 包） |
-| `test_reliability_guards.py` | 42 | 4D.1 的 10 组边界 + 迁移顺序 |
-| `test_service_layer_guards.py` | 29 | 薄门面 / 无 God Module / 扩展点 |
-| `test_task_guards.py` | 31 | Task Core 边界 |
+守卫文件位于 `tests/*guards*.py`，覆盖 Capability、Communication、
+Execution、Multiprocess、Negotiation、Reliability、Service Layer、Task Core
+等边界。具体项数随测试演进，以 `./dev.sh test` 当前输出为准。
 
 ### 12.2 检测手段优先级（**强制**）
 
@@ -805,10 +804,10 @@ Handlers（按消息类型）
 4. **具体的 DB 写入**（`UPDATE x SET y`，而不是「含 UPDATE」）
 5. **运行时行为**（`hasattr`、真的跑一遍看不变量）
 
-**不要主要依赖**：
+**字符串扫描作为最后手段**：它容易被注释、文档字符串、变量名误导：
 
 ```python
-source.count("xxx")        # ❌ 会被注释、文档字符串、变量名骗到
+source.count("xxx")        # 可能被注释、文档字符串、变量名骗到
 ```
 
 ### 12.3 如果必须做字符串扫描
@@ -819,7 +818,7 @@ source.count("xxx")        # ❌ 会被注释、文档字符串、变量名骗�
 2. **明确扫描范围**（是「整个文件」还是「某个方法体内」）
 3. **做反向测试**（把违规注入进去，确认守卫真的变红）
 
-### 12.4 本项目的真实教训（**必须读**）
+### 12.4 本项目的真实教训（建议阅读，避免重复踩坑）
 
 #### 教训 A：子串匹配会误报（至少 4 次）
 
@@ -878,10 +877,10 @@ registry.register(SubmitHandler(negotiation))     ← 只是举例
 ### 13.1 要解决的问题
 
 ```
-❌ 错误的方式：
+没有持久文档时：
     上一轮聊天
         ↓
-    Coding Agent 大概记得
+    Coding Agent 依赖记忆
         ↓
     继续写代码
         ↓
@@ -910,16 +909,16 @@ Updated Architecture Knowledge      ← ADR + 本文档的更新
 
 **每一个新的 Coding Agent，都不应该需要依赖某一次聊天记录。**
 
-### 13.3 三层文档的分工（不要重复）
+### 13.3 三层文档的分工（单一职责）
 
 | 文档 | 长度 | 作用 |
 |---|---|---|
 | **Architecture Constitution**（本文档） | 长 | 完整的 Source of Truth。**为什么这样设计** |
-| **Developer Context**（`AGENTS.md`） | 短 | **导航和入口**。花几分钟知道这是什么、当前在哪、什么不能动 |
+| **Developer Context**（`AGENTS.md`） | 短 | **导航和入口**。花几分钟知道这是什么、当前在哪、当前范围与边界 |
 | **ADR**（`adr/`） | 中 | **单个决策**的历史与理由 |
 
-> **不要把完整 Constitution 复制进 Developer Context。**
-> 那会制造两个需要同步的真相来源。
+> 完整 Constitution 留在本文档；Developer Context 只做导航，
+> 避免出现两个需要同步的真相来源。
 
 ---
 
@@ -955,63 +954,51 @@ Updated Architecture Knowledge      ← ADR + 本文档的更新
 | 22 | Context 如何处理 revision？ | `TASK_SHARED_CONTEXT.md` |
 | 23 | Context 如何解决上下文窗口不足？ | §10 |
 | 24 | 未来 Workspace 应该依赖什么？ | §6.4、§11.7 |
-| 25 | 什么东西当前绝不能实现？ | §15 |
+| 25 | 当前 V1 范围之外有哪些能力？ | §15 |
 
 ---
 
-## 15. FORBIDDEN NOW
+## 15. V1 范围（旧称 FORBIDDEN NOW）
 
-**当前阶段明确禁止实现。** 这份清单会被逐步解锁，
-但**每一步都必须有明确的任务书**，不能顺手实现。
+> 当前阶段只实现到这里。「下一阶段」需要明确任务书才解锁；
+> 在此之前保持 `DESIGNED` / `FUTURE` 标注，不写成 `CURRENT`。
 
-### 15.1 全阶段禁止（在明确解锁前）
+### 15.1 V1 能力边界
 
-| 领域 | 禁止内容 |
-|---|---|
-| **Workspace** | Task Workspace 实现 · Workspace Manager · Gateway · Permission · ACL · members · 文件系统访问 · artifact storage · 文件上传下载 |
-| **Git** | worktree · branch · commit 自动化 · merge · patch 应用 |
-| **代码执行** | `subprocess` · shell · Docker · sandbox · 代码执行器 · 测试运行器 |
-| **经济结算** | Payment · Escrow · Settlement · Wallet transfer · Ledger append · AI Coin 扣款 |
-| **通信可靠性** | Retry Queue · Retry Scheduler · ACK · Redis · Kafka · Celery · Message Broker |
-| **网络** | P2P · 多机 · 分布式部署 |
-| **Agent 生命周期** | Heartbeat · Scheduler · Life Loop · 自主唤醒 |
-| **智能演化** | Adaptive Negotiation · Reinforcement Learning · 策略自学习 · Strategy Marketplace |
-| **协调** | TaskManager · Coordinator · 中央调度 |
+| 领域 | V1 状态 | 下一阶段（需要任务书） |
+|---|---|---|
+| **Workspace** | ✅ Core v1：资源树 · Controller · Explicit/Effective Lock · Revision · Audit · Event · Gateway · 资源级并发（ADR-0029/0030/0031） | Permission · ACL · IAM · members · artifact backend · 宿主机文件系统写权限 · 文件上传下载 · Conversation Manager · Recovery Automation |
+| **Git** | ✅ Worktree Manager：真实 worktree · intent log · 幂等 · reconciliation · 崩溃一致性（ADR-0037） | branch / commit 自动化 · merge · patch 应用 · Test Runner · Acceptance |
+| **代码执行** | ✅ Tool Runtime V1：公共只读工具库（python / pytest / node / playwright）· 独立 run 目录 · `shell=False` · 超时/输出上限 | OS 级 sandbox · 网络出口策略 · 工具安装/checksum · 资源配额（V2） |
+| **经济** | ✅ Agent · Wallet · Ledger · 余额计算 · `Economy.transfer` 原语 · LLM 成本记账 | Task 的 Payment · Escrow · Settlement（Agreement 只记录约定，不是支付） |
+| **通信可靠性** | ✅ 本地 Transport · Message Journal · Claim Lease | Retry Queue · Retry Scheduler · ACK · Redis · Kafka · Celery · Message Broker |
+| **网络** | ✅ 单机多进程（同一文件系统） | P2P · 多机 · 分布式部署 |
+| **Agent 生命周期** | ✅ 显式调用 / 消息驱动 | Heartbeat · Scheduler · Life Loop · 自主唤醒 |
+| **智能演化** | 无 | Adaptive Negotiation · Reinforcement Learning · 策略自学习 · Strategy Marketplace |
+| **协调 / 清理** | ✅ Agent 自主协调；Task Core 不做调度 | TaskManager · Coordinator · 中央调度 · GC · TTL · 自动物理删除 · Workspace Delete Lifecycle |
+| **Guardian** | 无 | Guardian Agent 实体 · crash detector · inactivity 自动判死 · 自动 Lock Expiry · Lease Renewal |
+| **篡改监控** | out-of-band 修改不阻止、不监控（ADR-0022） | Filesystem Watcher · Hash Tamper Detection · Kernel-level Enforcement |
+| **Task Lineage / Demand** | 概念见 [`TASK_ORIGIN_LINEAGE.md`](TASK_ORIGIN_LINEAGE.md)；实现为 `FUTURE` | parent/root/child task · task tree / graph · delegation lifecycle · ChildTaskManager · TaskCreationService · Demand DB/Service/API/lifecycle/persistence |
+| **Human 中心化** | Human 以 Demand / Feedback / Collaborator / Governance 参与；Task 管理由 Agent 负责 | Human Task Manager · Human Task Coordinator · Human Central Scheduler · Human-driven Task Tree Management |
+| **策略** | Agent 的价格阈值 / 外包比例 / 风险偏好放在 Agent config / DecisionPolicy | 系统服务保持策略无关，不硬编码具体 Agent 的出价/外包阈值 |
 
-### 15.2 不要过度设计（Step 4E 特别要求）
+### 15.2 硬边界（安全 · 权限 · 数据完整性 · 兼容性）
 
-看到 "Shared Context" 就设计成下面这些 —— **现在都不要**：
+1. **代码执行边界**：代码/测试只经 **Tool Runtime** 的公共工具库执行；`shell=False`、独立 run 目录、allowlist 工具、超时与输出上限。Task / Workspace 层不执行任意宿主 shell，Agent 不能下载/安装/替换工具（WorktreeManager 的受控 `git` 调用与 ToolRunner 的受控工具调用不在此列）。
+2. **权限边界**：Workspace 是逻辑资源树；宿主机文件系统写权限与 ACL/IAM/Role 不作为 Workspace 权限的替代。
+3. **验收边界**：生产者不验收自己的成果；验收责任必须由非生产者承担。
+4. **数据完整性**：Task Core 与 Ledger 只经领域/服务写入；没有旁路写状态或余额。
+5. **密钥边界**：配置文件只保存环境变量名；secret 只从 `.env` / 环境变量读取。
+6. **兼容性**：`protocol_version = "1"`；破坏线协议兼容性的改动必须显式升级协议版本并更新 [`PROTOCOL.md`](../../PROTOCOL.md)。
 
-❌ Blockchain consensus
-❌ CRDT
-❌ Event sourcing everything
-❌ Vector database
-❌ Knowledge graph
-❌ Distributed consensus
-❌ LLM memory cloud
-❌ Multi-agent voting protocol
-❌ Complex ontology
+### 15.3 V1 设计取舍
 
-> 这些未来都可能**有价值**。但现在**不要提前选择**。
->
-> 本阶段的目标是：**建立最小但正确的概念边界。**
-> 以后再根据真实需求演进。
+V1 优先**最小但正确的边界**。以下机制在具体需求出现前不引入：
+Blockchain consensus · CRDT · Event sourcing everything · Vector database ·
+Knowledge graph · Distributed consensus · LLM memory cloud ·
+Multi-agent voting protocol · Complex ontology。
 
-### 15.3 当前仍然不存在的（不要假装它存在）
-
-| 东西 | 实际状态 |
-|---|---|
-| Task Workspace | **只有 `TaskWorkspaceRef`**（一个 `workspace_id` 字符串） |
-| Workspace Permission | 完全不存在 |
-| Agent Private Memory | 只有设计，没有实现 |
-| Task Shared Context | 只有设计，没有实现 |
-| Shared Context 数据库表 | **不存在** |
-| Workspace 相关的任何表 | **不存在** |
-| Git / Worktree | 不存在 |
-| 真实代码执行 | 不存在 |
-| Payment / Settlement | 不存在 |
-| P2P / 多机 | 不存在 |
-| Agent Life Loop | 不存在 |
+> 这些机制未来可能有价值；选择它们需要具体需求与独立设计，而不是提前铺设。
 
 ---
 
@@ -1032,8 +1019,14 @@ Updated Architecture Knowledge      ← ADR + 本文档的更新
 | Step 4D.1 | 持久化消息幂等 + Task 乐观锁 + 事务原子性 | `0a78794` |
 | Workspace Phase 0 | 真实多进程验证 + Message Claim Lease | `82f4718` `4898bd8` |
 | **Step 4E** | **Architecture Constitution + Shared Context 设计** | 本步骤 |
+| Step 4F | Task Shared Context / Alignment 最小可运行原型 | — |
+| Workspace Core v1 | 资源树 · Controller · Explicit/Effective Lock · Revision · Audit · Event · Gateway · 资源级并发 · Hardening | ADR-0029/0030/0031 |
+| Change Pipeline Phase 1 | Git Worktree Manager（真实 worktree · intent log · reconciliation） | ADR-0032…0037 |
+| Agent Core v1 | Actions · Cognition · Experience · Reflection · Self Model · Stage · Production Budget · Delegation | — |
+| Tool Runtime V1 | 公共只读工具库（python / pytest / node / playwright）· 独立 run 目录 · 受控执行 | ADR-0040 |
+| 实验线 | Human Demand → 多 Agent 协作生产 / 自主分工观察（`experiments/`） | — |
 
-**基线**：2333 passed · Protocol `v1` · 15 个命令 · 10 张表
+**基线**：以 `./dev.sh test` 当前输出为准（最近：4816 passed）· Protocol `v1` · 25 个命令 · 21 张表
 
 ### 16.2 已知技术债（`CURRENT` 的真实问题）
 
@@ -1042,13 +1035,14 @@ Updated Architecture Knowledge      ← ADR + 本文档的更新
 
 | # | 技术债 | 严重度 | 说明 |
 |---|---|---|---|
-| 1 | **租约 vs 长任务** | 🔴 高 | 没有 lease renewal（本阶段禁止）。如果 handler 处理时间**超过租约**，别的 worker 会接手 → **重复处理**。Workspace 阶段的重复处理 = **重复的文件副作用** |
-| 2 | **多线程共享 `Database` 不安全** | 🔴 高 | `_tx_depth` 是实例状态。两个线程共享同一个 `Database` 时会被交错修改 → 事务边界错乱。当前唯一安全用法是**每线程一个实例** |
+| 1 | **租约 vs 长任务** | 🔴 高 | lease renewal 尚未实现（需独立任务书）。如果 handler 处理时间**超过租约**，别的 worker 会接手 → **重复处理**。Workspace 阶段的重复处理 = **重复的文件副作用** |
+| 2 | ~~多线程共享 `Database` 不安全~~ **✅ 已修复** | ✅ | 每线程一个 `_ThreadSession`（连接 + 深度 + pid）→ 事务独立且**无全局锁**（ADR-0031）。反向验证过（旧模型下测试真的变红）。剩余约束：内存库仍单连接（**测试环境**约束） |
 | 3 | **Retry 未实现** | 🟡 中 | 租约到期只让**占用**失效。**没有任何东西会自动重新投递**。崩溃恢复的最后一步（谁来再送一次）还不存在 |
 | 4 | **网络 / 多机未做** | 🟡 中 | Phase 0 验证的是**多进程、同一文件系统**。SQLite 也不适合多机共享 |
 | 5 | **`result_ref` 没有 resolver** | 🟡 中 | 它只保证「不是路径、不是 URL」。**没有任何东西检查它指向的成果是否真的存在**。当前 `SUBMIT` 在物理上不可证伪 |
 | 6 | **压力测试规模小** | 🟢 低 | 4 进程 × 15 轮。足以证明**正确性**，不足以说明**性能** |
 | 7 | **写事务全串行** | 🟢 低 | `BEGIN IMMEDIATE` 的固有代价（SQLite 单写者模型）。当前负载无感 |
+| 8 | **Tool Runtime 无 OS 级隔离** | 🟡 中 | V1 是受控 `subprocess` + 独立 run 目录；不是 sandbox，没有网络出口策略与资源配额。只适合项目内可信测试代码 |
 
 ### 16.3 Workspace Phase 0 的遗留问题
 
@@ -1065,17 +1059,17 @@ Phase 0 完成了两个前置验证，但**留下了一件必须带进下一阶�
 
 ## 17. 变更这份文档的规则
 
-1. **任何架构边界的改动，必须先改这份文档。**
-   不是「先写代码，回头补文档」。
+1. **架构边界改动先更新这份文档，再改代码。**
+   文档与实现同步推进。
 
 2. **每个重要决策写一条 ADR**（[`adr/`](adr/README.md)）。
-   ADR 一旦写下**不修改**；被取代时写新 ADR 并标注 `superseded by ADR-XXXX`。
+   ADR 写定后保持历史；被取代时写新 ADR 并标注 `superseded by ADR-XXXX`。
 
-3. **不要把 `DESIGNED` / `FUTURE` 写成 `CURRENT`。**
-   这是最容易被后来者误读的错误。
+3. **保持四态标注准确**：`CURRENT` / `DESIGNED` / `FUTURE` / `FORBIDDEN NOW`
+   必须与代码真实状态一致。
 
-4. **不要在文档里写「大概」「可能已经」。**
-   要么确认（读代码/跑测试），要么标注为不确定。
+4. **只写已确认的事实**：确认方式包括读代码、跑测试；
+   不确定的内容显式标注为不确定。
 
 5. **文档与代码矛盾时，先确认真实状态，再决定改哪一边。**
-   不允许默默不一致。
+   两边必须显式对齐。

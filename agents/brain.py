@@ -381,6 +381,7 @@ class Brain:
         max_tokens: Optional[int] = None,
         record: bool = True,
         task_id: Optional[str] = None,
+        session_started_at: Optional[str] = None,
         #: 🔴 Cognitive Budget V1：Agent 请求的认知预算（max_tokens 上限）。
         #: Runtime 负责裁剪；**禁止**由 AIC 余额换算而来。
         requested_cognitive_budget: Optional[int] = None,
@@ -449,6 +450,9 @@ class Brain:
         self.last_call_id: Optional[str] = None
         #: Provider 请求边界的证据（§7）。
         self.last_request_evidence: Optional[dict] = None
+        #: 本次调用的**进程内回执**：tokens + cost_ai + token_source。
+        #: 失败 / 未记录时为 None。
+        self.last_usage: Optional[dict] = None
         # 🔴 必须区分 None 与 {} —— 这是两种不同的意思：
         #      None = 「这次不要 Context」
         #      {}   = 「要 Context，但不限定检索情境」
@@ -456,10 +460,16 @@ class Brain:
         #    默认路径于是**静默不构建上下文**（实测踩过）。
         if not cognitive:
             query = None
-        elif context_query is not None:
-            query = context_query
         else:
-            query = self.default_context_query          # 可能是 {}
+            base_query = (context_query if context_query is not None
+                          else self.default_context_query)
+            query = dict(base_query or {})
+            # 这两个值是当前调用的**事实**，不是 Agent 自己填的参数：
+            # 它们让 EconomicContext 能聚合 task/session 用量。
+            if task_id:
+                query.setdefault("task_id", task_id)
+            if session_started_at:
+                query.setdefault("session_started_at", session_started_at)
         built_ctx: Any = None      # §7：真正构建出来的 Context（供边界取证）
         if self.context_builder is not None and query is not None:
             try:
@@ -610,6 +620,22 @@ class Brain:
                 # 🔒 只记**元信息**（ref / source / 变量名），**绝不记 key 本身**。
                 **self._credential_meta(effective_provider),
             )
+            # 🔴 进程内回执：用**同一个** CostCalculator 计算，
+            #    与刚写入 llm_calls.cost_ai 的规则完全一致。
+            cost_ai, usage_tokens, cost_known = \
+                self.recorder.cost_of(response)
+            self.last_usage = {
+                "call_id": self.last_call_id,
+                "input_tokens": response.input_tokens,
+                "output_tokens": response.output_tokens,
+                "total_tokens": usage_tokens,
+                "cost_ai": cost_ai,
+                "cost_known": bool(cost_known),
+                "token_source": response.token_source,
+                "provider": response.provider,
+                "model": response.model,
+                "created_at": getattr(response, "created_at", ""),
+            }
 
         return response
 

@@ -79,6 +79,7 @@ from change import GitManager, WorktreeManager                   # noqa: E402
 from change.worktree import WorkspaceSnapshot                    # noqa: E402
 from change.worktree_store import WorktreeStore                  # noqa: E402
 from change.materializer import WorktreeMaterializer             # noqa: E402
+from tool_runtime import ToolLibrary, ToolRunner                 # noqa: E402
 from services.workspace_concurrency import ResourceLockRegistry  # noqa: E402
 from services.workspace_gateway import (  # noqa: E402
     WorkspaceGateway, WorkspaceLimits,
@@ -202,6 +203,11 @@ class Runtime:
     #    与 WorkspaceGateway 用注入的 is_participant 是同一种手法。
     worktrees: WorktreeStore
     worktree_manager: WorktreeManager
+
+    # ---- Tool Runtime V1（受控代码执行 / 测试）----
+    # 🔒 公共工具库只读；Agent 没有安装 / 下载 / 改写入口。
+    tool_library: ToolLibrary
+    tool_runner: ToolRunner
 
     def agent(self, agent_id: str):
         return self.economy.agent(agent_id)
@@ -427,6 +433,60 @@ def _sum_llm_cost(db, where: str, params: tuple) -> float:
         params,
     )
     return float(row["c"]) if row is not None else 0.0
+
+
+def _sum_llm_usage(db: Any, where: str, params: tuple) -> Dict[str, Any]:
+    """
+    按维度聚合 `llm_calls` 的 token / AIC / 调用次数。
+
+    🔒 只读聚合；不重新计算价格、不写第二套账本。
+    """
+    row = db.fetchone(
+        f"""
+        SELECT
+            COUNT(*)                                      AS calls,
+            COALESCE(SUM(input_tokens), 0)                AS input_tokens,
+            COALESCE(SUM(output_tokens), 0)               AS output_tokens,
+            COALESCE(SUM(total_tokens), 0)                AS total_tokens,
+            COALESCE(SUM(cost_ai), 0)                     AS cost_ai,
+            COALESCE(SUM(CASE WHEN token_source = 'unknown'
+                              THEN 1 ELSE 0 END), 0)       AS unknown_calls
+        FROM llm_calls WHERE {where}
+        """,
+        params,
+    )
+    if row is None:
+        return {"calls": 0, "input_tokens": 0, "output_tokens": 0,
+                "total_tokens": 0, "cost_ai": 0.0, "unknown_calls": 0}
+    out = dict(row)
+    out["calls"] = int(out.get("calls") or 0)
+    for key in ("input_tokens", "output_tokens", "total_tokens",
+                "unknown_calls"):
+        out[key] = int(out.get(key) or 0)
+    out["cost_ai"] = float(out.get("cost_ai") or 0.0)
+    return out
+
+
+def _recent_llm_usage(db: Any, agent_id: str, limit: int = 5) -> List[Dict[str, Any]]:
+    """最近 N 次调用的只读摘要（newest first）。"""
+    rows = db.fetchall(
+        """
+        SELECT call_id, provider, model, input_tokens, output_tokens,
+               total_tokens, cost_ai, token_source, task_id, created_at
+        FROM llm_calls
+        WHERE agent_id = ?
+        ORDER BY created_at DESC, rowid DESC
+        LIMIT ?
+        """,
+        (agent_id, int(limit)),
+    )
+    out: List[Dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        item["cost_known"] = (str(item.get("token_source") or "")
+                              != "unknown")
+        out.append(item)
+    return out
 
 
 def _sum_settled_cost(db: Any, task_id: str) -> float:
@@ -960,6 +1020,14 @@ def build_runtime(
         #:    起点由调用方（Runtime / 实验脚本）负责传。
         cost_since=lambda aid, since: _sum_llm_cost(
             economy.db, "agent_id = ? AND created_at >= ?", (aid, since)),
+        #: LLM 用量历史（只读）：最近调用 + task/session 聚合。
+        #: 这是 Agent「根据历史形成消耗认知」的事实来源。
+        recent_calls_of=lambda aid, limit: _recent_llm_usage(
+            economy.db, aid, limit),
+        usage_of_task=lambda tid: _sum_llm_usage(
+            economy.db, "task_id = ?", (tid,)),
+        usage_since=lambda aid, since: _sum_llm_usage(
+            economy.db, "agent_id = ? AND created_at >= ?", (aid, since)),
         #: §十三：未决的生产性委托 —— 同样只读，同样只给事实。
         pending_offers_of=lambda aid: _pending_offer_facts(delegations, aid),
         task_budget_of=lambda tid: _task_budget_fact(budget_service, tid),
@@ -1211,6 +1279,15 @@ def build_runtime(
         registry=ResourceLockRegistry(),
     )
 
+    # ---- Tool Runtime V1（受控代码执行 / 测试）----
+    # 🔒 公共工具库从 resources/public/tools/manifests 加载；
+    #    Agent 只能使用清单里的工具，不能安装/下载/改写。
+    tool_library = ToolLibrary.from_directory(PROJECT_ROOT)
+    tool_runner = ToolRunner(
+        tool_library,
+        run_root=PROJECT_ROOT / "data" / "tool_runs",
+    )
+
     return Runtime(
         resolved_config=resolved,
         economy=economy,
@@ -1235,6 +1312,8 @@ def build_runtime(
         workspace_locks=workspace_locks,
         worktrees=worktrees,
         worktree_manager=worktree_manager,
+        tool_library=tool_library,
+        tool_runner=tool_runner,
     )
 
 

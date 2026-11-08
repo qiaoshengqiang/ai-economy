@@ -43,6 +43,17 @@
 | `private_read` | 读**你自己的**文件空间 | `path` |
 | `private_list` | 列出**你自己的**文件空间里有什么 | **无参数** |
 | `private_delete` | 删**你自己的**文件空间里的一个文件 | `path` |
+| `run_tool` | 在独立 run 目录执行公共工具库中的工具 | `tool` · `args` · `source` · `path` · `timeout_seconds` |
+
+**公共工具库**（只读，由项目预装）：
+`python` · `pytest` · `node` · `playwright`
+
+`run_tool` 会把 `source="task"` 或 `source="private"` 的文件只读复制到独立 run
+目录，然后执行工具；没有 shell、没有下载、没有安装。结果包含 `ok` /
+`exit_code` / `stdout` / `stderr` / `timed_out`。
+
+`run_tool` **不推进 Task 状态**。测试通过后，生产者仍需发送 `SUBMIT`，
+验收人仍需发送 `VERIFY` / `COMPLETE`。
 
 **消息类型**（协议已注册的）：
 `TEXT` · `TASK_OFFER` · `COUNTER_OFFER` · `ACCEPT` · `REJECT` · `START` · `SUBMIT` · `VERIFY` · `COMPLETE`

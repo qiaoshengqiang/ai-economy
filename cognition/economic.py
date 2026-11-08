@@ -52,12 +52,15 @@ Economic Context —— Agent 当前**可以观察到的**经济事实
 【⚠️ 当前可靠可得的字段（§十一 要求如实区分）】
 
     ✅ current_balance        Ledger.balance_of() —— 权威、实时、可靠
-    ⚠️ current_task_cost      依赖 LLM 调用带 task_id。
-                              当前 Runtime **没有把 task_id 传给 Brain**，
-                              所以真实实验里它是 not available —— 不伪造。
-    ⚠️ current_session_cost   依赖 Runtime 提供会话起点时刻。
-                              起点只有 Runtime 知道（core 没有「会话」概念），
-                              所以由调用方注入 `session_started_at`。
+    ✅ last_call / recent_calls
+                              llm_calls 的只读摘要（token / cost_ai /
+                              token_source）
+    ✅ current_task_usage     llm_calls 按 task_id 的聚合
+    ✅ current_session_usage  llm_calls 按 session 起点的聚合
+    ⚠️ current_task_cost      旧字段；若未注入 usage 回调则依赖
+                              `cost_of_task`，否则如实 unavailable
+    ⚠️ current_session_cost   旧字段；若未注入 usage 回调则依赖
+                              `cost_since`，否则如实 unavailable
 
     取不到的字段进 `unavailable`，**渲染时明确写出来**，
     而不是默默少一行 —— 少了哪一行必须能被看见。
@@ -96,6 +99,16 @@ class EconomicContext:
     current_balance: Optional[float] = None
     current_task_cost: Optional[float] = None
     current_session_cost: Optional[float] = None
+
+    #: 最近一次 LLM 调用（来自 llm_calls）：
+    #: call_id · total_tokens · cost_ai · cost_known · token_source。
+    last_call: Optional[Dict[str, Any]] = None
+    #: 最近若干次调用（newest first），只读摘要。
+    recent_calls: Tuple[Dict[str, Any], ...] = ()
+    #: 当前 Task 的 token / AIC 聚合（来自 llm_calls）。
+    current_task_usage: Optional[Dict[str, Any]] = None
+    #: 当前 Session 的 token / AIC 聚合（来自 llm_calls）。
+    current_session_usage: Optional[Dict[str, Any]] = None
 
     #: 快照时刻（UTC ISO）。有了它才能回答「这个数字是什么时候的」。
     as_of: str = ""
@@ -146,6 +159,12 @@ class EconomicContext:
             "current_balance": self.current_balance,
             "current_task_cost": self.current_task_cost,
             "current_session_cost": self.current_session_cost,
+            "last_call": dict(self.last_call) if self.last_call else None,
+            "recent_calls": [dict(c) for c in self.recent_calls],
+            "current_task_usage": (dict(self.current_task_usage)
+                                   if self.current_task_usage else None),
+            "current_session_usage": (dict(self.current_session_usage)
+                                      if self.current_session_usage else None),
             "as_of": self.as_of,
             "unavailable": list(self.unavailable),
             "sources": dict(self.sources),
@@ -182,6 +201,54 @@ class EconomicContext:
         else:
             lines.append(f"Current session cost: "
                          f"{self.current_session_cost:.4f} {self.currency}")
+
+        if self.last_call:
+            lc = self.last_call
+            known = bool(lc.get("cost_known", True))
+            tokens = lc.get("total_tokens")
+            tokens_txt = (f"{int(tokens)} tokens"
+                          if known and tokens is not None else "tokens unknown")
+            cost = lc.get("cost_ai")
+            cost_txt = (f"{float(cost):.6f} {self.currency}"
+                        if known and cost is not None else "cost unknown")
+            lines.append(
+                f"Last LLM call: {tokens_txt}, {cost_txt}, "
+                f"source={lc.get('token_source') or 'unknown'}")
+
+        if self.recent_calls:
+            lines.append("Recent LLM calls (newest first):")
+            for c in self.recent_calls:
+                known = bool(c.get("cost_known", True))
+                tokens = c.get("total_tokens")
+                cost = c.get("cost_ai")
+                tokens_txt = (f"{int(tokens)} tok"
+                              if known and tokens is not None else "tok=?")
+                cost_txt = (f"{float(cost):.6f} AIC"
+                            if known and cost is not None else "AIC=?")
+                lines.append(
+                    f"- {c.get('call_id')}: {tokens_txt}, {cost_txt}, "
+                    f"source={c.get('token_source') or 'unknown'}, "
+                    f"model={c.get('provider') or '?'}/"
+                    f"{c.get('model') or '?'}")
+
+        if self.current_task_usage:
+            u = self.current_task_usage
+            lines.append(
+                f"Current task usage: {int(u.get('calls') or 0)} calls, "
+                f"{int(u.get('total_tokens') or 0)} tokens, "
+                f"{float(u.get('cost_ai') or 0.0):.6f} {self.currency}")
+            if int(u.get("unknown_calls") or 0):
+                lines.append(
+                    f"  ({int(u.get('unknown_calls'))} calls have unknown tokens)")
+        if self.current_session_usage:
+            u = self.current_session_usage
+            lines.append(
+                f"Current session usage: {int(u.get('calls') or 0)} calls, "
+                f"{int(u.get('total_tokens') or 0)} tokens, "
+                f"{float(u.get('cost_ai') or 0.0):.6f} {self.currency}")
+            if int(u.get("unknown_calls") or 0):
+                lines.append(
+                    f"  ({int(u.get('unknown_calls'))} calls have unknown tokens)")
 
         # §十三：待处理的委托 —— 只列事实，不给建议
         if self.pending_offers:
@@ -237,6 +304,12 @@ class EconomicContextBuilder:
             某个 Task 已消耗的 AIC。没有 task 维度数据时返回 None。
         cost_since(agent_id, since_iso) -> float | None
             某个 Agent 从 `since_iso` 起消耗的 AIC（会话维度的近似）。
+        recent_calls_of(agent_id, limit) -> list | None
+            最近 N 次 `llm_calls` 摘要（token / cost / source）。
+        usage_of_task(task_id) -> dict | None
+            某个 Task 的 token / AIC / 调用次数聚合。
+        usage_since(agent_id, since_iso) -> dict | None
+            某个 Agent 从 `since_iso` 起的用量聚合。
         currency
             货币单位，由组合根从 economy.currency 注入。
     """
@@ -247,6 +320,9 @@ class EconomicContextBuilder:
         balance_of: Optional[Callable[[str], Optional[float]]] = None,
         cost_of_task: Optional[Callable[[str], Optional[float]]] = None,
         cost_since: Optional[Callable[[str, str], Optional[float]]] = None,
+        recent_calls_of: Optional[Callable[[str, int], Optional[list]]] = None,
+        usage_of_task: Optional[Callable[[str], Optional[dict]]] = None,
+        usage_since: Optional[Callable[[str, str], Optional[dict]]] = None,
         pending_offers_of: Optional[Callable[[str], Optional[list]]] = None,
         task_budget_of: Optional[Callable[[str], Optional[dict]]] = None,
         currency: str = DEFAULT_CURRENCY,
@@ -255,6 +331,10 @@ class EconomicContextBuilder:
         self.balance_of = balance_of
         self.cost_of_task = cost_of_task
         self.cost_since = cost_since
+        #: LLM 用量（只读）：最近调用 / task 聚合 / session 聚合。
+        self.recent_calls_of = recent_calls_of
+        self.usage_of_task = usage_of_task
+        self.usage_since = usage_since
         #: §十三：与某个 Agent 相关的未决委托。同样是**只读**回调。
         self.pending_offers_of = pending_offers_of
         #: §七：Task 生产预算（按 task_id 取）。同样是**只读**回调。
@@ -285,31 +365,70 @@ class EconomicContextBuilder:
         else:
             sources["current_balance"] = "Ledger.balance_of"
 
+        recent: List[Dict[str, Any]] = []
+        if self.recent_calls_of is not None:
+            recent = [
+                dict(x) for x in self._safe_list(
+                    self.recent_calls_of, agent_id, 5)
+                if isinstance(x, dict)
+            ]
+        last_call = recent[0] if recent else None
+
+        task_usage: Optional[Dict[str, Any]] = None
         task_cost: Optional[float] = None
-        if task_id and self.cost_of_task is not None:
-            task_cost = self._safe(self.cost_of_task, task_id)
+        if task_id:
+            if self.usage_of_task is not None:
+                task_usage = self._safe_dict(self.usage_of_task, task_id)
+                if task_usage is not None:
+                    value = task_usage.get("cost_ai")
+                    if isinstance(value, (int, float)):
+                        task_cost = float(value)
+                        sources["current_task_cost"] = \
+                            "llm_calls aggregate by task_id"
+                else:
+                    unavailable.append("current_task_usage")
+            if task_cost is None and self.cost_of_task is not None:
+                task_cost = self._safe(self.cost_of_task, task_id)
+                if task_cost is not None:
+                    sources["current_task_cost"] = "llm_calls by task_id"
             if task_cost is None:
                 unavailable.append("current_task_cost")
-            else:
-                sources["current_task_cost"] = "llm_calls by task_id"
         else:
             # 没有 task_id 就没有「任务成本」这个概念可言 —— 如实报告
             unavailable.append("current_task_cost")
 
+        session_usage: Optional[Dict[str, Any]] = None
         session_cost: Optional[float] = None
-        if session_started_at and self.cost_since is not None:
-            session_cost = self._safe(self.cost_since, agent_id,
-                                      session_started_at)
+        if session_started_at:
+            if self.usage_since is not None:
+                session_usage = self._safe_dict(
+                    self.usage_since, agent_id, session_started_at)
+                if session_usage is not None:
+                    value = session_usage.get("cost_ai")
+                    if isinstance(value, (int, float)):
+                        session_cost = float(value)
+                        sources["current_session_cost"] = \
+                            "llm_calls aggregate since session start"
+                else:
+                    unavailable.append("current_session_usage")
+            if session_cost is None and self.cost_since is not None:
+                session_cost = self._safe(
+                    self.cost_since, agent_id, session_started_at)
+                if session_cost is not None:
+                    sources["current_session_cost"] = \
+                        "llm_calls since session start"
             if session_cost is None:
                 unavailable.append("current_session_cost")
-            else:
-                sources["current_session_cost"] = "llm_calls since session start"
         else:
             unavailable.append("current_session_cost")
 
         pending = self._safe_list(self.pending_offers_of, agent_id)
         budget = self._safe_dict(self.task_budget_of, task_id) \
             if task_id else None
+
+        if recent:
+            sources["last_call"] = "llm_calls recent"
+            sources["recent_calls"] = "llm_calls recent"
 
         return EconomicContext(
             currency=self.currency,
@@ -318,6 +437,10 @@ class EconomicContextBuilder:
             current_balance=balance,
             current_task_cost=task_cost,
             current_session_cost=session_cost,
+            last_call=last_call,
+            recent_calls=tuple(recent),
+            current_task_usage=task_usage,
+            current_session_usage=session_usage,
             as_of=self.clock(),
             unavailable=tuple(unavailable),
             sources=sources,

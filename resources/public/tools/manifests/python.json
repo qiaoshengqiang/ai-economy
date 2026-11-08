@@ -1,0 +1,6 @@
+{
+  "name": "python",
+  "description": "Project Python runtime (.venv/bin/python). Runs a script or module in the per-run workspace.",
+  "concurrency": "shared-readonly",
+  "command": [".venv/bin/python"]
+}

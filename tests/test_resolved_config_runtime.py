@@ -28,6 +28,10 @@ from core.config_resolver import (
 from core.paths import GLOBAL_CONFIG_FILE
 from llm.router import adapter_specs
 
+from tests.config_deviation_helpers import (
+    load_deviations, model_deviation, require_reason,
+)
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -383,39 +387,41 @@ class TestMigrationBaselineStillHolds:
         r = load_resolved_config(GLOBAL_CONFIG_FILE, adapter_specs=adapter_specs)
 
         GLOBAL_FALLBACK = {"agent_b": "DOUBAO_API_KEY"}
+
+        # 🔴 **有意偏离**（`config_deliberate_deviations.json`）
+        #
+        #    基线是「迁移前快照」，作用是证明配置重构**没有偷偷改变行为**。
+        #    而 `agent_a..e` 的 `max_tokens`（以及 2026-11-07 的模型迁移）
+        #    是**有意的**变更。**不改快照**，显式登记并**要求理由**。
+        _dev = load_deviations()
+        require_reason(_dev, "max_tokens")
+        require_reason(_dev, "model")
+
         for agent_id, before in sorted(baseline.items()):
             agent = r.agent(agent_id)
-            assert agent.provider.base_url == before["base_url"], agent_id
+            _dev_model = model_deviation(_dev, agent_id)
+
+            want_base = _dev_model.get("base_url", before["base_url"])
+            assert agent.provider.base_url == want_base, agent_id
             assert float(agent.provider.timeout_seconds) == float(
                 before["timeout_seconds"]), agent_id
-            assert agent.model_id == before["requested_model"], agent_id
+            want_model = _dev_model.get("requested_model",
+                                        before["requested_model"])
+            assert agent.model_id == want_model, agent_id
             assert float(agent.temperature) == float(before["temperature"]), agent_id
 
-            # 🔴 **有意偏离**（`config_deliberate_deviations.json`）
-            #
-            #    基线是「迁移前快照」，作用是证明配置重构**没有偷偷改变行为**。
-            #    而 `agent_a..e` 的 `max_tokens` 是**有意的**变更（实测：
-            #    推理模型把 2048 全用在 reasoning 上 ⇒ content 为空）。
-            #
-            #    🔒 所以**不改快照** —— 改快照它就再也不是「迁移前」了。
-            #       这里显式登记，并**要求给出理由**。
-            _dev_path = (Path(__file__).resolve().parent
-                     / "config_deliberate_deviations.json")
-            _dev = (json.loads(_dev_path.read_text(encoding="utf-8"))
-                if _dev_path.exists() else {})
             _dev_mt = _dev.get("max_tokens") or {}
-            assert not _dev_mt or _dev.get("_reasons", {}).get("max_tokens"), (
-            "有意偏离必须带理由（_reasons）")
-
             _want_mt = int(_dev_mt.get(agent.agent_id,
                                       before["max_tokens"]))
             assert int(agent.max_tokens) == _want_mt, agent.agent_id
             assert len(agent.system_prompt) == before["system_prompt_len"], agent_id
-            expected_env = (before["credential_env"]
+            expected_env = (_dev_model.get("credential_env")
+                            or before["credential_env"]
                             or GLOBAL_FALLBACK.get(agent_id, ""))
             assert agent.credential.env == expected_env, agent_id
             # provider 名（旧 bailian_qwen/glm 已合并为 bailian）
-            assert (agent.provider.name == before["provider"]
+            want_provider = _dev_model.get("provider", before["provider"])
+            assert (agent.provider.name == want_provider
                     or before["provider"].startswith("bailian")), agent_id
 
     def test_baseline_covers_all_ten_agents(self):

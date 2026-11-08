@@ -13,7 +13,7 @@
 | **第一次接触这个项目** | [`../../AGENTS.md`](../../AGENTS.md) → 本页 → [Constitution](ARCHITECTURE_CONSTITUTION.md) |
 | **AI Coding Agent** | [`../../AGENTS.md`](../../AGENTS.md)（入口）→ Constitution §12（Guard 规范） |
 | **要改某个模块** | Constitution §11（各层职责）→ §6（Memory 四层）→ 对应的 ADR |
-| **想加新功能** | Constitution §15（FORBIDDEN NOW）→ 确认不属于禁止项 |
+| **想加新功能** | Constitution §15（V1 范围 / 旧称 `FORBIDDEN NOW`）→ 确认是否已解锁 |
 
 ---
 
@@ -31,6 +31,7 @@
 | [LOCK_MODEL.md](LOCK_MODEL.md) | 中 | **Directory/File Lock · Explicit/Implicit · Effective Lock · Edit Session · Handoff**（`FUTURE`） | 做 Lock / 并行修改 / 交接时 |
 | [RECOVERY_MODEL.md](RECOVERY_MODEL.md) | 中 | **异常检测 ≠ 治理决策 · Human Confirmation · 未来 AI Governance**（`FUTURE`） | 做 Agent 异常 / Recovery / 治理时 |
 | [COMMUNICATION_MODEL.md](COMMUNICATION_MODEL.md) | 中 | **Communication 是 Agent 基础能力（不绑 Task）· Workspace Event ≠ Agent Message · Runtime Inbox** | 做通信 / Conversation / Inbox 时 |
+| [TOOL_RUNTIME_V1_DESIGN.md](TOOL_RUNTIME_V1_DESIGN.md) | 中 | **受控代码执行 / 测试 · 公共只读工具库 · 独立 run 目录**（`CURRENT`） | 做代码执行 / 测试 / 工具时 |
 | [adr/](adr/README.md) | 中 | **单个决策**的历史与理由 | 想知道「为什么当初这样定」时 |
 
 **三层分工，不要重复**：
@@ -77,12 +78,13 @@ ADR            ← 单个决策的历史与理由（中）
 
 | | |
 |---|---|
-| **阶段** | Post-Workspace-Phase-0 / Pre-Shared-Context |
-| **测试** | 2333 passed |
+| **阶段** | Post-Change-Pipeline-Phase-1 · Agent Core V1 · Tool Runtime V1 已实现 |
+| **测试** | 以 `./dev.sh test` 当前输出为准（最近：4790 passed, 2 skipped, 30 deselected） |
 | **协议** | v1 |
-| **Memory 四层** | 全部 `DESIGNED`，**零实现** |
-| **Task Workspace** | 只有 `TaskWorkspaceRef`（一个字符串） |
-| **下一步** | Task Shared Context / Alignment 最小原型 |
+| **Memory 四层** | Layer 1 `DESIGNED` · **Layer 2 `CURRENT`** · Layer 3/4 `FUTURE`（见 AGENTS.md §4） |
+| **Task Workspace** | `TaskWorkspaceRef` 仍是纯引用；**Workspace Core v1 已实现**（资源树 / 锁 / 版本，ADR-0029） |
+| **Tool Runtime** | **V1 `CURRENT`**：公共只读工具库 python/pytest/node/playwright；独立 run 目录（ADR-0040） |
+| **下一步** | Change Pipeline 的 Patch · 观察实验闭环（见 [`AGENTS.md`](../../AGENTS.md) §2） |
 
 ---
 

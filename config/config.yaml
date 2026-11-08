@@ -232,8 +232,14 @@ models:
 credentials:
   deepseek_key_a:
     env: DEEPSEEK_KEY_AGENT_A
+  deepseek_key_b:
+    env: DEEPSEEK_KEY_AGENT_B
   deepseek_key_c:
     env: DEEPSEEK_KEY_AGENT_C
+  deepseek_key_d:
+    env: DEEPSEEK_KEY_AGENT_D
+  deepseek_key_e:
+    env: DEEPSEEK_KEY_AGENT_E
   doubao_key:
     env: DOUBAO_API_KEY
   bailian_key_d:
@@ -333,8 +339,8 @@ agents:
         AIC 不能凭空产生；当前也没有把它转给别的 Agent 的通道。
         会持久留下来的：私有文件空间 · 经历记录 · 账本 · 声誉。
     brain:
-      model: doubao_novel
-      credential: doubao_key
+      model: deepseek_flash
+      credential: deepseek_key_b
       temperature: 0.7
       max_tokens: 16384
       system_prompt: |
@@ -426,8 +432,8 @@ agents:
         AIC 不能凭空产生；当前也没有把它转给别的 Agent 的通道。
         会持久留下来的：私有文件空间 · 经历记录 · 账本 · 声誉。
     brain:
-      model: qwen_fast
-      credential: bailian_key_d
+      model: deepseek_flash
+      credential: deepseek_key_d
       temperature: 0.7
       max_tokens: 16384
       system_prompt: |
@@ -471,8 +477,8 @@ agents:
         AIC 不能凭空产生；当前也没有把它转给别的 Agent 的通道。
         会持久留下来的：私有文件空间 · 经历记录 · 账本 · 声誉。
     brain:
-      model: qwen_max
-      credential: bailian_key_e
+      model: deepseek_flash
+      credential: deepseek_key_e
       temperature: 0.7
       max_tokens: 16384
       system_prompt: |

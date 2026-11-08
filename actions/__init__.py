@@ -8,9 +8,10 @@ Minimal Action Seam —— Agent 的认知第一次有了行动出口。
         WorkspaceReadExecutor, ACTION_WORKSPACE_READ,
     )
 
-🔒 边界（本轮**刻意不做**）：
-    ❌ Authorization / Capability / Sandbox / Executor Framework
-    ❌ DSH Tool Bridge / Tool Registry / Process.Execute / Host 控制
+🔒 边界：
+    ✅ `run_tool` 只把参数交给组合根注入的 ToolRunner
+    ✅ `actions/` 不 import `tool_runtime/` / `subprocess`
+    ❌ 不在 actions 内实现 Tool Registry / Process.Execute / Host 控制
     ❌ Action → Self Model 回流（必须经过 Experience + Reflection）
     ❌ 复用 core/capability.py（语义不同，见 §二十二）
 
@@ -61,6 +62,9 @@ from actions.workspace_write import (
 from actions.shared_context_read import (
     ACTION_SHARED_CONTEXT_READ, SharedContextReadExecutor,
 )
+from actions.run_tool import (
+    ACTION_RUN_TOOL, RunToolExecutor,
+)
 from actions.read_payload import (
     CONFIRMATION_ACTIONS, OBSERVABLE_ACTIONS, PER_PAYLOAD_MAX_CHARS,
     TOTAL_MAX_CHARS, is_observable, observable_results,
@@ -83,6 +87,7 @@ __all__ = [
     "ACTION_PUBLIC_QUERY", "PublicQueryExecutor",
     "ACTION_ASSIGN_ACCEPTANCE", "AssignAcceptanceExecutor",
     "ACTION_SHARED_CONTEXT_READ", "SharedContextReadExecutor",
+    "ACTION_RUN_TOOL", "RunToolExecutor",
     "ACTION_RESOURCE_CREATE", "ACTION_RESOURCE_HANDOFF",
     "ACTION_RESOURCE_RELEASE",
     "ResourceCreateExecutor", "ResourceHandoffExecutor",

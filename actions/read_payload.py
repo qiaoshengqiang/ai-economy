@@ -63,6 +63,7 @@ from actions.message_send import ACTION_MESSAGE_SEND
 from actions.shared_context_read import ACTION_SHARED_CONTEXT_READ
 from actions.workspace_read import ACTION_WORKSPACE_READ
 from actions.workspace_write import ACTION_WORKSPACE_WRITE
+from actions.run_tool import ACTION_RUN_TOOL
 
 #: 结果里带**新的世界信息**、值得当场回喂给模型的动作。
 #:
@@ -74,6 +75,7 @@ OBSERVABLE_ACTIONS = frozenset({
     ACTION_PRIVATE_LIST,
     ACTION_PUBLIC_QUERY,
     ACTION_SHARED_CONTEXT_READ,
+    ACTION_RUN_TOOL,
 })
 
 #: 明确**不是**观察类 —— 它们的结果只是「我刚才做了什么」的确认。
@@ -122,6 +124,28 @@ def _clip(text: str, limit: int) -> Tuple[str, bool]:
     return text[:limit], True
 
 
+def _tool_output_text(output: Dict[str, Any]) -> str:
+    """把 run_tool 的结构化结果渲染成 Agent 可读材料。"""
+    lines = [
+        f"tool={output.get('tool')}  "
+        f"exit_code={output.get('exit_code')}  "
+        f"ok={output.get('ok')}  "
+        f"timed_out={output.get('timed_out')}  "
+        f"duration_ms={output.get('duration_ms')}",
+    ]
+    if output.get("message"):
+        lines.append(f"message: {output['message']}")
+    stdout = str(output.get("stdout") or "")
+    stderr = str(output.get("stderr") or "")
+    if stdout:
+        lines.extend(["", "--- stdout ---", stdout])
+    if stderr:
+        lines.extend(["", "--- stderr ---", stderr])
+    if not stdout and not stderr:
+        lines.append("（没有 stdout / stderr）")
+    return "\n".join(lines)
+
+
 def _payload_of(action_type: str, output: Any) -> Optional[str]:
     """
     从 `ActionResult.output` 里取出**可读的那部分**。
@@ -132,6 +156,9 @@ def _payload_of(action_type: str, output: Any) -> Optional[str]:
     """
     if not isinstance(output, dict):
         return None
+
+    if action_type == ACTION_RUN_TOOL:
+        return _tool_output_text(output)
 
     if action_type in _CONTENT_ACTIONS:
         content = output.get("content")

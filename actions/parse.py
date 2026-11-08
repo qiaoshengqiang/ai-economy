@@ -104,67 +104,90 @@ def extract_envelope(text: Optional[str]) -> Optional[Dict[str, Any]]:
     if not text or not isinstance(text, str):
         return None
 
-    data = _first_balanced_json(text)
-    if data is None:
-        return None
+    # 🔴 不能只看**第一个**花括号块。
+    #    实测：模型会把示例 JSON 放在信封前面，或者外层信封被截断
+    #    而内部某个小对象仍然合法。只看第一个 ⇒ 合法信封被漏掉，
+    #    还会被误报成 `unparsable_envelope`。
+    #    所以：**按出现顺序**逐个尝试，返回第一个可识别的信封。
+    for data in _iter_balanced_json(text):
+        # 数组根 → 只可能是 reflection 列表（Action 一定是对象）
+        if isinstance(data, list):
+            if all(isinstance(x, dict) for x in data) and data:
+                return {"reflections": data}
+            continue
 
-    # 数组根 → 只可能是 reflection 列表（Action 一定是对象）
-    if isinstance(data, list):
-        if all(isinstance(x, dict) for x in data) and data:
-            return {"reflections": data}
-        return None
+        if not isinstance(data, dict):
+            continue
 
-    if not isinstance(data, dict):
-        return None
+        # 必须至少有一个可识别的键，否则这只是一段碰巧是 JSON 的文本
+        if ENVELOPE_KEYS & set(data.keys()):
+            return data
 
-    # 必须至少有一个可识别的键，否则这只是一段碰巧是 JSON 的文本
-    if not (ENVELOPE_KEYS & set(data.keys())):
-        return None
-    return data
+    return None
 
 
-def _first_balanced_json(text: str) -> Any:
+def _iter_balanced_json(text: str):
     """
-    找出第一个**括号平衡**的 `{...}` 或 `[...]`，解析成 Python 对象。
+    按出现顺序，产出**每一个**能解析的平衡 `{...}` / `[...]`。
 
     ⚠️ 用括号计数而不是正则 —— JSON 可以嵌套，
        而且字符串字面量里的括号会骗过朴素正则。
     """
-    starts = [i for i in (text.find("{"), text.find("[")) if i != -1]
-    if not starts:
-        return None
-    start = min(starts)
-
     pairs = {"{": "}", "[": "]"}
-    open_ch = text[start]
-    close_ch = pairs[open_ch]
-    depth = 0
-    in_str = False
-    escape = False
+    for start, first in enumerate(text):
+        if first not in pairs:
+            continue
+        close_ch = pairs[first]
+        depth = 0
+        in_str = False
+        escape = False
 
-    for i in range(start, len(text)):
-        ch = text[i]
-        if escape:
-            escape = False
-            continue
-        if ch == "\\":
-            escape = True
-            continue
-        if ch == '"':
-            in_str = not in_str
-            continue
-        if in_str:
-            continue
-        if ch == open_ch:
-            depth += 1
-        elif ch == close_ch:
-            depth -= 1
-            if depth == 0:
-                try:
-                    return json.loads(text[start:i + 1])
-                except (ValueError, TypeError):
-                    return None
+        for i in range(start, len(text)):
+            ch = text[i]
+            if escape:
+                escape = False
+                continue
+            if ch == "\\":
+                escape = True
+                continue
+            if ch == '"':
+                in_str = not in_str
+                continue
+            if in_str:
+                continue
+            if ch == first:
+                depth += 1
+            elif ch == close_ch:
+                depth -= 1
+                if depth == 0:
+                    try:
+                        yield json.loads(text[start:i + 1])
+                    except (ValueError, TypeError):
+                        pass
+                    break
+
+
+def _first_balanced_json(text: str) -> Any:
+    """第一个能解析的平衡 JSON 块（向后兼容的私有入口）。"""
+    for data in _iter_balanced_json(text):
+        return data
     return None
+
+
+def looks_like_envelope(text: Optional[str]) -> bool:
+    """
+    这段输出**像不像**一个结构化信封（即使它坏了）？
+
+    🔒 只用于**诊断**，不用于猜测动作。
+       它回答的是「该不该报 malformed」，而不是「Agent 想做什么」。
+    """
+    if not text or not isinstance(text, str):
+        return False
+    stripped = text.lstrip()
+    if stripped.startswith("{") or stripped.startswith("```json"):
+        return True
+    return any(k in text for k in ('"decision"', '"actions"',
+                                    '"action_type"'))
 
 
 def build_intent(agent_id: str, action: Dict[str, Any],
@@ -201,9 +224,15 @@ def decision_from_text(agent_id: str, text: Optional[str]) -> Decision:
     envelope = extract_envelope(text)
 
     if envelope is None:
+        # 🔴 「没有信封」与「信封坏了」必须分开：
+        #    前者是 Agent 主动只回复（正常），
+        #    后者是**解析失败**（模型想行动，但输出不可用）。
+        #    混在一起会把 parser 问题误读成 Agent 不行动。
+        error = "unparsable_envelope" if looks_like_envelope(text) else ""
         return Decision(
             decision_id=decision_id, agent_id=agent_id,
             kind=DECISION_REPLY, reasoning=text or "",
+            envelope_error=error,
             created_at=utc_now_iso(),
         )
 
@@ -242,10 +271,15 @@ def decision_from_text(agent_id: str, text: Optional[str]) -> Decision:
             dropped += 1
 
     if not intents:
-        # 一个都没成 → 和今天一样**降级为普通回复，不崩**
+        # 一个都没成 → 和今天一样**降级为普通回复，不崩**；
+        # 但如果它**确实给了候选动作**，必须把失败原因带出来。
+        error = ""
+        if isinstance(raw, (list, tuple)) and len(raw) > 0:
+            error = "no_valid_actions"
         return Decision(
             decision_id=decision_id, agent_id=agent_id,
             kind=DECISION_REPLY, reasoning=reasoning or (text or ""),
+            dropped_actions=dropped, envelope_error=error,
             created_at=utc_now_iso(),
         )
 

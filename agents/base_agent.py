@@ -143,6 +143,10 @@ class BaseAgent:
         # 而不是塞一个假的进去掩盖问题。
         self.brain: Optional[Any] = None
 
+        #: 最近一次 LLM 调用的进程内回执（tokens + cost_ai + source）。
+        #: 🔒 它与 `llm_calls` 是同一次调用的事实；不是第二套账本。
+        self.last_usage: Optional[Dict[str, Any]] = None
+
         # 通信（Step 3）。
         # 注意这里存的是 CommunicationManager，不是 Transport。
         # Agent 永远看不到 LocalTransport —— 它只知道「我能给人发消息」，
@@ -344,7 +348,12 @@ class BaseAgent:
                 f"请先用 attach_brain(brain) 给它装一个。"
             )
 
+        self.last_usage = None
         response = self.brain.generate(messages=messages, **kwargs)
+
+        # 进程内回执：Brain 用与 llm_calls 相同的 CostCalculator 算好。
+        self.last_usage = getattr(self.brain, "last_usage", None)
+        usage = self.last_usage or {}
 
         # 记一笔：这次思考的元信息（不含内容，避免记忆膨胀）
         self.remember(
@@ -352,6 +361,9 @@ class BaseAgent:
             provider=getattr(response, "provider", None),
             model=getattr(response, "model", None),
             total_tokens=getattr(response, "total_tokens", None),
+            cost_ai=usage.get("cost_ai"),
+            cost_known=usage.get("cost_known"),
+            token_source=usage.get("token_source"),
         )
 
         # 🔴 **认知输出被截断 → 记成关键观察**（Critical Observation）。

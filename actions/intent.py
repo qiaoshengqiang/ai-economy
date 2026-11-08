@@ -153,6 +153,18 @@ class Decision:
     #: 信封里写坏、被**跳过**的动作个数。
     #: 🔒 不静默丢弃 —— 跳过了几个，就如实记几个。
     dropped_actions: int = 0
+    #: 信封解析失败的原因（空字符串 = 没有失败）。
+    #:
+    #: 🔴 为什么需要它：LLM 输出被截断/写坏时，`decision_from_text`
+    #:    会降级成 `kind="reply"` —— 与「Agent 主动决定只回复」
+    #:    **长得一模一样**。实测（5-Agent 空间站 run）：
+    #:    生产者明明在输出 `{"decision":"act", ... SUBMIT ...}`，
+    #:    但 JSON 在 payload 中间断掉 → 被记成 reply → 没人 SUBMIT →
+    #:    整个 Task 卡在 IN_PROGRESS，而报告看起来像「Agent 不想结项」。
+    #:
+    #:    `unparsable_envelope` —— 看起来像信封，但 JSON 解析失败
+    #:    `no_valid_actions`    —— 信封能解析，但没有一个动作可用
+    envelope_error: str = ""
     created_at: str = ""
 
     @property
@@ -176,6 +188,7 @@ class Decision:
             "intents": [i.to_dict() for i in self.intents],
             "intent": self.intent.to_dict() if self.intent else None,
             "dropped_actions": self.dropped_actions,
+            "envelope_error": self.envelope_error,
             "created_at": self.created_at,
         }
 
@@ -225,6 +238,11 @@ class CognitiveSegment:
     #:        这个字段是给**逐轮显示**用的汇总依据。
     tokens: Optional[int] = None
 
+    #: 这一段是否因为信封解析失败而**重试过一次**（修复调用）。
+    repair_attempted: bool = False
+    #: 修复调用是否成功解析出可用动作。
+    repair_succeeded: bool = False
+
     @property
     def is_truncated(self) -> bool:
         return self.cognitive_status == "TRUNCATED"
@@ -245,6 +263,8 @@ class CognitiveSegment:
             "cognitive_status": self.cognitive_status,
             "finish_reason": self.finish_reason,
             "is_truncated": self.is_truncated,
+            "repair_attempted": self.repair_attempted,
+            "repair_succeeded": self.repair_succeeded,
         }
 
 

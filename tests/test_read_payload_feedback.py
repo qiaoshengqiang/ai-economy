@@ -446,20 +446,17 @@ class TestTheExperimentTurnsItOn:
     def test_production_turn_passes_the_flag(self):
         """
         🔒 默认关闭 ⇒ 实验**必须显式打开**，否则这个能力等于没接。
-           用 AST 找 `a.act(...)` 那个调用。
+           现在允许实验级 `FOLLOW_UP_ON_READS` 关闭它（慢 provider 场景），
+           但**默认值必须仍是 True**，且 `_turn` 必须把它传给 `act()`。
         """
+        from experiments.heterogeneous_production import production as P
+
         src = (ROOT / "experiments" / "heterogeneous_production"
                / "production.py").read_text(encoding="utf-8")
-        found = [
-            n for n in ast.walk(ast.parse(src))
-            if isinstance(n, ast.Call)
-            for kw in n.keywords
-            if kw.arg == "follow_up_on_reads"
-            and isinstance(kw.value, ast.Constant) and kw.value.value is True
-        ]
-        assert found, (
-            "`production._turn` 没有传 `follow_up_on_reads=True` —— "
-            "观察实验里读取的内容仍然收不到")
+        assert "follow_up_on_reads=FOLLOW_UP_ON_READS" in src
+        assert P.FOLLOW_UP_ON_READS is True, (
+            "默认必须打开读取回喂；实验可以显式改成 False，"
+            "但不能把默认值改掉")
 
     def test_the_turn_records_both_segments(self):
         src = (ROOT / "experiments" / "heterogeneous_production"

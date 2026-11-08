@@ -14,7 +14,28 @@
     "agent_d": 16384,
     "agent_e": 16384
   },
+  "model": {
+    "agent_b": {
+      "requested_model": "deepseek-flash",
+      "provider": "deepseek",
+      "base_url": "https://api.deepseek.com",
+      "credential_env": "DEEPSEEK_KEY_AGENT_B"
+    },
+    "agent_d": {
+      "requested_model": "deepseek-flash",
+      "provider": "deepseek",
+      "base_url": "https://api.deepseek.com",
+      "credential_env": "DEEPSEEK_KEY_AGENT_D"
+    },
+    "agent_e": {
+      "requested_model": "deepseek-flash",
+      "provider": "deepseek",
+      "base_url": "https://api.deepseek.com",
+      "credential_env": "DEEPSEEK_KEY_AGENT_E"
+    }
+  },
   "_reasons": {
-    "max_tokens": "2026-10-10。agent_a..e 原为 2048（老配置遗留）。实测：agent_a 用 deepseek-flash —— **推理模型**，它把 2048 全用在 reasoning 上，撞到输出上限，content 一个字都不剩（output_status=EMPTY_CONTENT · cognitive_status=TRUNCATED · finish_reason=length · chars=0）。观察实验因此什么都没产出，而报告还误说成「Agent 选择不分工」。写到 16384，与 novel_* 一致。"
+    "max_tokens": "2026-10-10。agent_a..e 原为 2048（老配置遗留）。实测：agent_a 用 deepseek-flash —— **推理模型**，它把 2048 全用在 reasoning 上，撞到输出上限，content 一个字都不剩（output_status=EMPTY_CONTENT · cognitive_status=TRUNCATED · finish_reason=length · chars=0）。观察实验因此什么都没产出，而报告还误说成「Agent 选择不分工」。写到 16384，与 novel_* 一致。",
+    "model": "2026-11-07。用户把 5 个 Agent 统一到 deepseek-flash：百炼端点响应慢/超时、豆包在长 payload 上截断 JSON，两者都会把「模型可靠性」混进协作实验结果。这是有意的模型迁移，不是配置重构漂移。"
   }
 }

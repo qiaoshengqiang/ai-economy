@@ -68,3 +68,18 @@ decision-lab/.hf-cache/
 # 真实 API 实验：库与快照可重建，不进仓库（结果 JSON 进）
 experiments/real_api_self_evolution/data/
 experiments/real_api_self_evolution/snapshot/
+
+# Tool Runtime 的运行目录（每次工具执行的临时物化，不进仓库）
+data/tool_runs/
+
+# 公共工具库的二进制包（manifest 进仓库；node_modules / 浏览器缓存不进）
+resources/public/tools/playwright/node_modules/
+resources/public/tools/playwright-browsers/
+
+# 观察实验的运行产物（数据库 / 日志 / 截图 / 工具物化，不进仓库）
+experiments/agent_division/data/
+experiments/agent_division/results/
+experiments/agent_division/runs/
+experiments/tool_collab/runs/
+experiments/web_collab/runs/
+experiments/user_demand/runs/

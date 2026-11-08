@@ -1,0 +1,6 @@
+{
+  "name": "node",
+  "description": "Node.js 24 runtime. Runs JavaScript/Node tests in the per-run workspace.",
+  "concurrency": "shared-readonly",
+  "command": ["node"]
+}

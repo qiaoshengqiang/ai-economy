@@ -47,6 +47,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from communication.message import MessageType
+from core.identity import utc_now_iso
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
@@ -58,7 +59,7 @@ from actions import (  # noqa: E402
     PrivateReadExecutor, PrivateWriteExecutor, PublicQueryExecutor,
     AssignAcceptanceExecutor, SharedContextReadExecutor,
     ResourceCreateExecutor, ResourceHandoffExecutor,
-    ResourceReleaseExecutor,
+    ResourceReleaseExecutor, RunToolExecutor,
     WorkspaceReadExecutor, WorkspaceWriteExecutor,
 )
 from services.messaging import send_message_as  # noqa: E402
@@ -145,6 +146,43 @@ BUDGET_AIC = 50.0
 #: 🔒 可覆盖：`HETERO_COGNITIVE_BUDGET`。
 COGNITIVE_BUDGET = int(os.environ.get("HETERO_COGNITIVE_BUDGET", "16384"))
 
+#: 是否在读取后**当场回喂**（同一认知里的第二段 LLM 调用）。
+#:
+#: 默认 True（既有实验行为）。当某个参与者的 provider 很慢时，
+#: 第二段可能吃掉整个 Session —— 实验可以显式关闭这个放大器，
+#: Agent 仍然能在下一轮基于 Experience 看到读取结果。
+FOLLOW_UP_ON_READS = True
+
+#: 回喂内容的字符上限（单条 / 全部）。
+#:
+#: 实测：一次读取 6–11KB 文档 + 回喂，会把推理模型的单轮推到
+#: 30–50k tokens，6 分钟 Session 只能走 2–3 轮。
+#: 调小上限是「降低单轮上下文」的直接手段；截断仍然会如实写明。
+FOLLOW_UP_PER_PAYLOAD_MAX = int(
+    os.environ.get("HETERO_FOLLOW_UP_PER_PAYLOAD", "3000"))
+FOLLOW_UP_TOTAL_MAX = int(
+    os.environ.get("HETERO_FOLLOW_UP_TOTAL", "5000"))
+
+#: 信封写坏（截断/非法 JSON）时，是否**再要一次**更短的结构化输出。
+#:
+#: 实测：小模型（doubao lite）在构造嵌套 SUBMIT payload 时会把 JSON
+#: 写断，随后被降级成 reply —— 生产者看起来「不想结项」。
+#: 修复调用只修**格式**，不替 Agent 做决定。
+REPAIR_MALFORMED = True
+
+#: 墙钟最后这一段比例 = **收尾窗口**。
+#:
+#: 实测：Run D 在 22:05 才 SUBMIT，墙钟 22:07 到 ——
+#: 验收人没有时间写 review / VERIFY。
+#: 收尾窗口里，实现者（由实验显式列出）不再获得新轮次；
+#: 生产者 / 验收人 / 协调者仍然可以行动。
+FINAL_WINDOW_RATIO = float(
+    os.environ.get("HETERO_FINAL_WINDOW_RATIO", "0.2"))
+
+#: 收尾窗口里**跳过**的 Agent（实现者）。
+#: 空 = 不跳过任何人（自主分工没有角色映射，保持原行为）。
+FINAL_WINDOW_SKIP_AGENTS: tuple = ()
+
 #: 本实验创建的**根 Stage** 的固定 ID。
 #:
 #: 🔒 有了它，`_close_stage()` 才能关**自己驱动的那一个** Stage，
@@ -195,6 +233,21 @@ DEFINITION_OF_DONE = (
     "由非生产者的验收责任人给出验收结论",
 )
 
+#: 🔴 是否把 VERIFY / COMPLETE 交给 **Agent 自己**发送（而不是 runner 代发）。
+#:
+#: 默认 False —— 兼容既有实验与测试（它们直接把 `_try_complete_task`
+#: 当成「runner 驱动结项」的行为来断言）。
+#:
+#: Web / human-command 实验把它设为 True：
+#:   runner 只**观察** Task Core 状态；SUBMIT / VERIFY / COMPLETE
+#:   必须来自 Agent 的 message_send。这样「验收」才是真的验收，
+#:   而不是 runner 替验收人盖章。
+AGENT_DRIVEN_COMPLETION = False
+
+#: 当 `AGENT_DRIVEN_COMPLETION=True` 时，验收前应存在的验收 Artifact
+#: （逻辑路径，例如 `qa/review.md`）。空字符串表示不额外要求。
+COMPLETION_QA_ARTIFACT = ""
+
 
 DEMAND = """【Human Demand】
 
@@ -232,10 +285,21 @@ PROMPT = """你是这次长期生产任务的一名参与者。这是**正式生
 ========== 你这一轮做什么，完全由你自己判断 ==========
 🔴 走**生产协议的信封**（本实验与生产环境用同一个信封）：
 
-如果你决定**采取一个动作**，就输出：
+如果你决定**采取动作**，就输出 JSON 信封。两种形状都接受：
 
+单动作：
 {{"decision":"act","reasoning":"你对当前进展的判断（简短）",
   "action":{{"type":"动作类型","parameters":{{}}}}}}
+
+多动作（读多个文件 / 写完再通知时用这个）：
+{{"decision":"act","reasoning":"你对当前进展的判断（简短）",
+  "actions":[
+    {{"type":"workspace_read","parameters":{{"path":"brief/content.md"}}}},
+    {{"type":"workspace_read","parameters":{{"path":"design/layout.md"}}}}
+  ]}}
+
+🔒 要读多个文件时，用 `actions` 列表**一次**列出；系统会按顺序全部执行。
+   只输出 JSON 信封；`<tool_call>` / DSML / `function_call` 等格式不会被解析。
 
 如果你**不采取动作**（只是想说点什么，或者什么都不做），就直接正常回复 ——
 没有这个信封就是一次普通回复。
@@ -244,10 +308,8 @@ PROMPT = """你是这次长期生产任务的一名参与者。这是**正式生
    当它们**属于同一件事**时（例如「写完正文 + 通知下一个人」）。
    写一个还是几个、写哪些，完全由你自己判断。
 
-🔴 **你会不会被再次叫醒，取决于有没有消息到达**（§22.27）：
-   你**不会被自动唤醒**。只有在**收到新消息**时，才会有你的下一个回合。
-   （这条是**机制事实**，不是"你该去发消息"——
-     发不发、发给谁，仍然完全由你自己判断。）
+🔴 **本实验按轮次轮询**：每个参与者在一个 Session 内会轮到多次。
+   轮询是准入机制，不替你做决定；行动与否、行动什么，仍然由你自己判断。
 
 下面这些动作类型是**环境事实**（这个环境注册了什么、各自要什么参数）：
 
@@ -321,6 +383,33 @@ PROMPT = """你是这次长期生产任务的一名参与者。这是**正式生
           - 🔒 设计上它是你放**个人记忆 / 经验 / 策略 / 工具**的地方
             （以后的形态），当前至少可以当你的草稿与笔记空间。
 
+  · "run_tool"
+        作用：在**独立 run 目录**里执行公共工具库中的一个工具。
+        这是当前唯一能真正运行代码 / 测试的动作。
+
+        parameters（形状）：
+          {{"tool": "pytest",
+            "args": ["-q"],
+            "source": "task",
+            "path": "",
+            "timeout_seconds": 120}}
+
+        工具库（环境事实）：
+          - "python"    项目 Python 运行时
+          - "pytest"    pytest 测试运行器
+          - "node"      Node.js 运行时
+          - "playwright" Playwright 测试运行器（使用本机 Google Chrome；
+            工具命令已包含 `test`，args 从测试文件或选项开始）
+
+        约束（环境事实）：
+          - `source` 取 "task" 或 "private"；默认 "task"；
+            `path` 是该空间里的可选子路径，空字符串表示整个空间；
+          - 文件会被**只读复制**到独立 run 目录，执行不会回写 Workspace；
+          - `args` 是字符串列表；命令由工具库固定，Agent 只能追加参数；
+          - 没有 shell、没有下载、没有安装；超时与输出都有上限；
+          - 结果包含 `ok` / `exit_code` / `stdout` / `stderr` / `timed_out`；
+            `ok=false` 表示工具运行了但测试/命令失败，输出仍会回喂给你。
+
   · "resource_create" / "resource_handoff" / "resource_release"
         这三个管的是资源树的**结构与责任**（不是内容 —— 内容归 workspace_write）。
 
@@ -367,6 +456,46 @@ PROMPT = """你是这次长期生产任务的一名参与者。这是**正式生
           - 读到的内容会**当场**回到你手上（与 `workspace_read` 同一条路径），
             你可以在**同一次判断里**继续决定做什么；
           - 它**只读**：不改变任何状态、不产生新 revision。
+
+========== 结项协议（环境事实）==========
+本 Task 的 task_id = {task_id}
+
+Task 的状态只能由协议消息推进；普通回复不改变状态。
+
+- 生产者提交成果：message_send
+  parameters: {{"to": "<验收责任人>", "message_type": "SUBMIT",
+    "payload": {{"task_id": "{task_id}",
+      "result": {{"result_ref": "web-game", "result_type": "code",
+                  "summary": "<一句话说明交付物>"}}}}}}
+
+  `completion_proposal` 是**可选**的。要带就保持短小：
+    "completion_proposal": {{"proposal_id": "cp_1",
+      "criteria_status": "MET",
+      "evidence": [{{"result_ref": "web-game", "result_type": "code"}}],
+      "outstanding_gaps": []}}
+  （`task_id` / `proposed_by` 以消息本身为准，不用在 proposal 里重复。）
+
+  🔒 最小合法 SUBMIT 只需要 `task_id` + `result`。
+     输出被截断时，这条消息不会推进 Task 状态。
+
+- 验收责任人验收：先读交付物、写验收 Artifact（例如 qa/review.md），再发 VERIFY
+  parameters: {{"to": "<生产者>", "message_type": "VERIFY",
+    "payload": {{"task_id": "{task_id}", "passed": true,
+                 "feedback": "<验收结论>"}}}}
+
+- VERIFY(passed=True) 之后，验收责任人发 COMPLETE
+  parameters: {{"to": "<生产者>", "message_type": "COMPLETE",
+    "payload": {{"task_id": "{task_id}", "summary": "<结项说明>"}}}}
+
+- START 已经由组合根发出；Task 仍为 CREATED 时，参与方可以自己发 START：
+  parameters: {{"to": "<任意参与者>", "message_type": "START",
+    "payload": {{"task_id": "{task_id}"}}}}
+
+🔒 `completion_proposal.proposed_by` 与 `task_id` 以消息本身为准：
+   发送方由运行时填写，payload 不能替别人声称完成。
+
+🔒 `run_tool` 只执行代码/测试，**不推进 Task 状态**。
+   测试通过后，生产者仍需发送 SUBMIT；验收人仍需发送 VERIFY / COMPLETE。
 
 🔒 这些都只是**能力**。用不用、什么时候用、读哪个文件、
    给谁发什么类型的消息 —— **完全由你自己判断** ——
@@ -511,7 +640,9 @@ def main() -> int:
             budget_left = TOTAL_WALL_LIMIT - elapsed_total
             limit = min(SESSION_LIMIT, budget_left)
             sess, bridge, s_log = _run_session(
-                rt, bridge, session_index, limit, log, stats)
+                rt, bridge, session_index, limit, log, stats,
+                run_started_wall=started_wall,
+                total_wall_limit=TOTAL_WALL_LIMIT)
             log["sessions"].append(s_log)
 
             # ---- §二十一 无效生产判定 ----
@@ -693,8 +824,8 @@ def _ensure_completion_setup(rt: Any) -> None:
 
         Human 提供 Demand / Constraints          ← DEMAND 常量
               ↓
-        Agent 自主结构化 Definition of Done       ← 本函数
-        Agent 自主指派 Acceptance Responsibility  ← 本函数
+        Runner 写入**通用**验收契约                ← 本函数
+        Runner 指派 Acceptance Responsibility      ← 本函数
               ↓
         START（进入生产）
               ↓
@@ -724,12 +855,39 @@ def _ensure_completion_setup(rt: Any) -> None:
     if task is None:
         return
 
+    def _propose_and_accept(change_type: str, new_value: Any,
+                            reason: str) -> None:
+        """
+        走**现有** Alignment 通道写一条变更，并立刻接受。
+
+        SET_OBJECTIVE / ADD_ACCEPTANCE_CRITERION / ASSIGN 都属于
+        「声明类」—— 不需要第二个 aligner 确认（见 ContextChangeType）。
+        """
+        current = rt.alignment.require_current(TASK_ID)
+        change = rt.alignment.propose(
+            TASK_ID,
+            proposed_by=PRODUCER,
+            change_type=change_type,
+            new_value=new_value,
+            expected_revision=current.revision,
+            reason=reason,
+        )
+        rt.alignment.accept(TASK_ID, change.change_id,
+                            decided_by=PRODUCER, reason=reason)
+
     context = None
     try:
         context = rt.alignment.current(TASK_ID)
     except Exception:  # noqa: BLE001 — 没有上下文就建一个
         context = None
 
+    # 🔴 2026-11-07：`Runtime.create_task` 现在**总是**同时创建一个
+    #    **空** Shared Context（main.py::create_task）。旧代码只在
+    #    `context is None` 时写 DoD —— 于是 DoD 永远写不进去，
+    #    `_try_complete_task()` 永远被 `no-definition-of-done` 挡住。
+    #
+    #    ✅ 正确做法：**容器存在与否**和**内容是否已经建立**是两件事。
+    #       容器为空时，仍然要通过 Alignment 补 objective / DoD / 验收责任。
     if context is None:
         rt.alignment.create_context(
             TASK_ID,
@@ -737,18 +895,31 @@ def _ensure_completion_setup(rt: Any) -> None:
             objective=DEMAND,
             acceptance_criteria=list(DEFINITION_OF_DONE),
         )
-        # 指派验收责任（ASSIGN 不需要第二个 aligner 确认）
-        change = rt.alignment.propose(
-            TASK_ID,
-            proposed_by=PRODUCER,
-            change_type="ASSIGN",
-            new_value={"agent_id": ACCEPTOR,
-                       "responsibility": ACCEPTANCE_RESPONSIBILITY},
-            expected_revision=rt.alignment.require_current(TASK_ID).revision,
-            reason="指派验收责任人：由读者角色验收作者的作品",
-        )
-        rt.alignment.accept(TASK_ID, change.change_id, decided_by=PRODUCER,
-                            reason="生产者指派验收方（验收方本人不能是生产者）")
+        context = rt.alignment.require_current(TASK_ID)
+
+    ctx = context.context
+    if not str(ctx.objective or "").strip():
+        _propose_and_accept(
+            "SET_OBJECTIVE", DEMAND,
+            "补齐任务目标（Shared Context 初始容器是空的）")
+
+    for criterion in DEFINITION_OF_DONE:
+        text = str(criterion or "").strip()
+        if not text:
+            continue
+        if text in (context.context.acceptance_criteria or ()):
+            continue
+        _propose_and_accept(
+            "ADD_ACCEPTANCE_CRITERION", text,
+            "补齐 Definition of Done（Shared Context 初始容器是空的）")
+        context = rt.alignment.require_current(TASK_ID)
+
+    if ACCEPTOR not in (context.context.acceptors() or ()):
+        _propose_and_accept(
+            "ASSIGN",
+            {"agent_id": ACCEPTOR,
+             "responsibility": ACCEPTANCE_RESPONSIBILITY},
+            "指派验收责任人（验收人不能是实现者）")
 
     # ---- 进入生产：走**现有执行协议**（不直接调 task.start()）----
     if task.status == TaskStatus.CREATED:
@@ -770,7 +941,9 @@ def _task_message(from_agent: str, to_agent: str, message_type: str,
 
 
 def _try_complete_task(rt: Any, gw: Any, log: Dict[str, Any],
-                       s_log: Dict[str, Any]) -> str:
+                       s_log: Dict[str, Any], *,
+                       agent_driven: Optional[bool] = None,
+                       qa_artifact: Optional[str] = None) -> str:
     """
     尝试用**现有 Task Execution 协议**把任务推到 COMPLETED。
 
@@ -801,6 +974,12 @@ def _try_complete_task(rt: Any, gw: Any, log: Dict[str, Any],
     🔒 本函数**不直接改 Task 状态** —— 它只发消息。
        状态变化全部由 Task Core 的状态机产生。
        读回来的 `task.status` 是**证据**，不是假设。
+
+    🔴 `agent_driven=True`（模块全局 `AGENT_DRIVEN_COMPLETION`）时：
+       本函数**只观察** Task Core，**不代发** SUBMIT / VERIFY / COMPLETE。
+       那三步必须来自 Agent 自己的 `message_send`；
+       runner 只在 `task.status == COMPLETED` 时收尾 Stage。
+       这是「验收必须由验收 Agent 做出」的硬要求。
     """
     from core.task import TaskStatus
     from core.task_execution import (
@@ -808,12 +987,38 @@ def _try_complete_task(rt: Any, gw: Any, log: Dict[str, Any],
         TaskResultRef,
     )
 
-    if not s_log.get("agents_claim_done"):
-        return ""                       # 还没有任何 Agent 声称完成
+    if agent_driven is None:
+        agent_driven = AGENT_DRIVEN_COMPLETION
+    if qa_artifact is None:
+        qa_artifact = COMPLETION_QA_ARTIFACT
 
     task = rt.tasks.get(TASK_ID)
     if task is None:
         return "no-task"
+
+    # 🔴 Agent-driven 模式：runner **只观察**，不代发任何协议消息。
+    #    这样 SUBMIT / VERIFY / COMPLETE 都来自 Agent 自己的 message_send，
+    #    「验收」不再由 runner 替验收人盖章。
+    if agent_driven:
+        # 这里用领域状态值比较，**不新增**第二个
+        # `TaskStatus.COMPLETED` 判定点（权威仍是下面那条完成链）。
+        if task.status == "COMPLETED":
+            _close_stage(rt, log)
+            return "COMPLETED"
+        if task.status == TaskStatus.CREATED:
+            return "waiting-for-start"
+        if task.status == TaskStatus.IN_PROGRESS:
+            return "waiting-for-producer-submit"
+        if task.status == TaskStatus.SUBMITTED:
+            if qa_artifact and not _artifact_exists(rt, qa_artifact):
+                return "waiting-for-qa-artifact"
+            return "waiting-for-acceptor-verify"
+        if task.status == TaskStatus.VERIFIED:
+            return "waiting-for-acceptor-complete"
+        return f"waiting-for-terminal:{task.status}"
+
+    if not s_log.get("agents_claim_done"):
+        return ""                       # 还没有任何 Agent 声称完成
 
     # ---- 前置一：Definition of Done ----
     dod = rt.task_execution.definition_of_done(task)
@@ -884,6 +1089,24 @@ def _try_complete_task(rt: Any, gw: Any, log: Dict[str, Any],
 
     blockers = rt.task_execution.completion_blockers(task)
     return "blocked: " + " / ".join(blockers)
+
+
+def _artifact_exists(rt: Any, path: str) -> bool:
+    """
+    读一个 Workspace 逻辑路径，确认它存在且非空。
+
+    🔒 用 OWNER 读（任何 Task 参与者都能读；这里只是确认文件事实）。
+    """
+    wanted = str(path or "").strip().lstrip("/")
+    if not wanted:
+        return False
+    try:
+        got = rt.workspace_gateway.read(WS_ID, "/" + wanted, OWNER)
+    except Exception:                                         # noqa: BLE001
+        return False
+    if not got.success:
+        return False
+    return bool(str((got.result or {}).get("content") or "").strip())
 
 
 def _manuscript_ref(rt: Any) -> Any:
@@ -1052,6 +1275,43 @@ def _ws_of(rt: Any) -> Any:
     return _resolve
 
 
+def _run_tool_fn(rt: Any) -> Any:
+    """
+    把 `run_tool` 接到 Runtime 的 ToolRunner。
+
+    🔒 workspace_id / gateway 在这里绑定；Agent 只能选工具与参数。
+    🔒 `source=private` 使用该 Agent 自己的私有空间；
+       `source=task` 使用当前 Task Workspace。
+    """
+    def _run(agent_id: str, *, tool: str, args: Any, source: str,
+             path: str, timeout_seconds: Any) -> Dict[str, Any]:
+        source = str(source or "task").strip().lower()
+        if source not in ("task", "private"):
+            return {
+                "ran": False, "ok": False, "tool": str(tool),
+                "code": "bad_source",
+                "message": "source 只能是 task 或 private",
+            }
+        if source == "private":
+            ws = _ws_of(rt)(agent_id)
+            if ws is None:
+                return {
+                    "ran": False, "ok": False, "tool": str(tool),
+                    "code": "no_private_workspace",
+                    "message": "没有这个 Agent，或它没有私有空间",
+                }
+            result = rt.tool_runner.run_from_private(
+                ws, tool=tool, args=args, source_path=path,
+                timeout_seconds=timeout_seconds)
+        else:
+            result = rt.tool_runner.run_from_task(
+                rt.workspace_gateway, WS_ID, agent_id,
+                tool=tool, args=args, source_path=path,
+                timeout_seconds=timeout_seconds)
+        return result.to_agent_dict()
+    return _run
+
+
 def _send_fn(bridge: Any) -> Any:
     """
     把**异步**的 `send_message_as` 适配成执行器要的**同步** `send_fn`。
@@ -1145,6 +1405,10 @@ def _action_seam(rt: Any, bridge: Any = None) -> tuple:
         PrivateReadExecutor(read_private, workspace_of=_ws_of(rt)),
         PrivateListExecutor(list_private, workspace_of=_ws_of(rt)),
         PrivateDeleteExecutor(delete_private, workspace_of=_ws_of(rt)),
+        # 2026-11-07 加入受控代码执行 / 测试：
+        # 🔒 只执行公共工具库 manifest 里的工具；没有任意 shell、下载、安装。
+        # 🔒 每次执行独立 run 目录；Task / Private 文件只读复制进去。
+        RunToolExecutor(_run_tool_fn(rt)),
         # 2026-10-09 加入资源结构/责任三件套：建目录 · 交接 · 释放。
         # 🔒 它们管的是**结构与责任**，不是内容（内容归 workspace_*）。
         # 🔒 gateway 与 workspace_id 在这里**绑定**掉，Agent 只给路径 ——
@@ -1202,8 +1466,24 @@ def _record_action_experience(store: Any, agent_id: str, intent: Any,
     return getattr(exp, "experience_id", None)
 
 
+def _in_final_window(run_started_wall: float,
+                     total_wall_limit: float) -> bool:
+    """
+    是否已经进入**收尾窗口**（墙钟最后 `FINAL_WINDOW_RATIO`）。
+
+    🔒 只用真实墙钟，不用轮数/ Session 数估算 ——
+        Session 长度会被 `budget_left` 截短，轮数也不等长。
+    """
+    if run_started_wall <= 0 or total_wall_limit <= 0:
+        return False
+    elapsed = time.time() - run_started_wall
+    return elapsed >= total_wall_limit * (1.0 - FINAL_WINDOW_RATIO)
+
+
 def _run_session(rt: Any, bridge: Any, index: int, limit: float,
-                 log: Dict[str, Any], stats: Dict[str, Any]) -> tuple:
+                 log: Dict[str, Any], stats: Dict[str, Any],
+                 *, run_started_wall: float = 0.0,
+                 total_wall_limit: float = 0.0) -> tuple:
     import channels
     from stage import RuntimeSession, SESSION_STOPPED_HARD_LIMIT, StageStore
     from stage.context import render_stage
@@ -1214,6 +1494,8 @@ def _run_session(rt: Any, bridge: Any, index: int, limit: float,
     # 🔴 M3：Action Seam —— 写操作必须经过 Dispatcher，结果必须落成 Experience
     dispatcher, experience_store = _action_seam(rt, bridge)
 
+    #: 给 EconomicContext 的 session 聚合用（llm_calls.created_at 是 ISO）。
+    session_started_at = utc_now_iso()
     sess = RuntimeSession(limit_seconds=limit).start()
     s_log: Dict[str, Any] = {"index": index, "limit_seconds": limit,
                              "turns": [], "agents_claim_done": False}
@@ -1235,16 +1517,43 @@ def _run_session(rt: Any, bridge: Any, index: int, limit: float,
         if ckpt is not None:
             # 可观测证据：这一轮的 prompt 里**确实**带了哪个 checkpoint
             s_log["checkpoint_in_context"] = ckpt.checkpoint_id
+
+        # ---- 收尾窗口：把**真实墙钟**作为事实写进 prompt ----------------
+        #
+        #   🔒 只陈述剩余时间，不写「你应该…」——
+        #      「怎么用最后几分钟」仍然是 Agent 的判断。
+        closing = _in_final_window(run_started_wall, total_wall_limit)
+        if closing:
+            elapsed = time.time() - run_started_wall
+            remaining = max(0.0, total_wall_limit - elapsed)
+            stage_txt = stage_txt + (
+                f"\n\n【墙钟事实】本次运行已用 {elapsed:.0f} 秒 / "
+                f"总 {total_wall_limit:.0f} 秒；当前处于收尾窗口"
+                f"（剩余 {remaining:.0f} 秒）。")
+            s_log["closing_window"] = True
+
         print(f"  ── 第 {rnd} 轮 (已用 {sess.elapsed_seconds():.0f}s)")
+        ran = 0
+        skipped = 0
         for aid in AGENTS:
             if sess.is_exceeded():
                 print("  🛑 Hard Limit 到达，本轮中止")
                 break
+            if closing and aid in FINAL_WINDOW_SKIP_AGENTS:
+                skipped += 1
+                print(f"    ⏭ {aid}（收尾窗口：实现者停写）")
+                continue
             turn = _turn(rt, bridge, st, stage, aid, rnd, stage_txt, log, stats,
                          dispatcher=dispatcher,
-                         experience_store=experience_store)
+                         experience_store=experience_store,
+                         session_started_at=session_started_at)
             s_log["turns"].append(turn)
+            ran += 1
             _print_turn(aid, turn)
+
+        if closing and ran == 0 and skipped:
+            sess.stop_by_agent("closing_window_no_turns")
+            break
 
     if not sess.is_exceeded():
         sess.stop_by_agent("max_rounds_reached")
@@ -1481,7 +1790,8 @@ def _turn(rt: Any, bridge: Any, st: Any, stage: Any, aid: str, rnd: int,
           stats: Dict[str, Any], *, dispatcher: Any = None,
           experience_store: Any = None,
           demand: Any = None,
-          prompt_template: Any = None) -> Dict[str, Any]:
+          prompt_template: Any = None,
+          session_started_at: Optional[str] = None) -> Dict[str, Any]:
     import channels
 
     comm, gw = rt.communication, rt.workspace_gateway
@@ -1501,7 +1811,7 @@ def _turn(rt: Any, bridge: Any, st: Any, stage: Any, aid: str, rnd: int,
     prompt = _template.format(
         # 🔴 `demand` 可覆盖：**「人类命令」只递给被指定的那个 Agent**。
         demand=DEMAND if demand is None else demand,
-        stage=stage_txt, ws=WS_ID,
+        stage=stage_txt, ws=WS_ID, task_id=TASK_ID,
         completion=_completion_facts(rt),
         workspace=_workspace_facts(gw, aid),
         roster=_roster_facts(rt, aid),
@@ -1542,6 +1852,7 @@ def _turn(rt: Any, bridge: Any, st: Any, stage: Any, aid: str, rnd: int,
         run = a.act(messages=prompt,
                     dispatcher=dispatcher,
                     task_id=TASK_ID,
+                    session_started_at=session_started_at,
                     requested_cognitive_budget=COGNITIVE_BUDGET,
                     # §5.3 purpose 由**调用方**声明，绝不从结果反推
                     call_purpose="cognition",
@@ -1555,7 +1866,10 @@ def _turn(rt: Any, bridge: Any, st: Any, stage: Any, aid: str, rnd: int,
                     #       多一次完整 LLM 调用（实测单次 4k–11k tokens）。
                     #       这种成本必须由调用方明说要不要付，
                     #       所以 `run_cognition` 的默认是**关闭**。
-                    follow_up_on_reads=True)
+                    follow_up_on_reads=FOLLOW_UP_ON_READS,
+                    follow_up_per_payload_max=FOLLOW_UP_PER_PAYLOAD_MAX,
+                    follow_up_total_max=FOLLOW_UP_TOTAL_MAX,
+                    repair_malformed=REPAIR_MALFORMED)
     except Exception as exc:                                  # noqa: BLE001
         turn["error"] = f"{type(exc).__name__}: {exc}"
         stats[aid]["calls"] += 1
@@ -1598,7 +1912,9 @@ def _turn(rt: Any, bridge: Any, st: Any, stage: Any, aid: str, rnd: int,
                  "cognitive_status": run.cognitive_status,
                  "finish_reason": run.finish_reason,
                  "ms": round((time.perf_counter() - t0) * 1000, 1),
-                 "chars": len(content)})
+                 "chars": len(content),
+                 # 进程内回执：本轮最后一次 LLM 调用的 tokens + AIC。
+                 "usage": getattr(a, "last_usage", None)})
 
     # ---- §5.1/§7：这次调用的 llm_call_id 与 Provider 边界证据 ----
     turn["llm_call_id"] = getattr(a, "last_call_id", None)
@@ -1632,6 +1948,10 @@ def _turn(rt: Any, bridge: Any, st: Any, stage: Any, aid: str, rnd: int,
     decision = run.decision
     reasoning = str(getattr(decision, "reasoning", "") or "")
     turn["decision"] = getattr(decision, "kind", None)
+    turn["envelope_error"] = getattr(decision, "envelope_error", "")
+    if turn["envelope_error"]:
+        # 只留尾巴：是「写断了」还是「引号没转义」，看结尾最快。
+        turn["envelope_preview"] = content[-240:]
     turn["reasoning"] = reasoning[:400]
     if "完成" in reasoning and "未" not in reasoning:
         turn["claims_done"] = True
@@ -1652,14 +1972,19 @@ def _turn(rt: Any, bridge: Any, st: Any, stage: Any, aid: str, rnd: int,
             {"index": s.index,
              "reasoning": str(getattr(s.decision, "reasoning", "") or "")[:400],
              "decision": getattr(s.decision, "kind", None),
+             "envelope_error": getattr(s.decision, "envelope_error", ""),
              "action_count": len(s.action_intents),
              "output_status": s.output_status,
              "cognitive_status": s.cognitive_status,
-             "finish_reason": s.finish_reason}
+             "finish_reason": s.finish_reason,
+             "repair_attempted": s.repair_attempted,
+             "repair_succeeded": s.repair_succeeded}
             for s in segments
         ]
         turn["reasonings"] = [s["reasoning"] for s in turn["segments"]
                               if s["reasoning"]]
+        turn["repair_used"] = any(
+            s.get("repair_attempted") for s in turn["segments"])
 
     # ---- 🔴 唯一的动作通道（一轮一个）----
     #
@@ -1892,6 +2217,7 @@ def _completion_facts(rt: Any) -> str:
     if task is None:
         return "（任务尚未建立）"
 
+    lines.append(f"Task ID：{task.task_id}")
     lines.append(f"Task 目标：{DEMAND.strip().splitlines()[0]}")
 
     # ---- Definition of Done（权威：Shared Context）----

@@ -65,7 +65,9 @@ from actions.intent import (
     Decision, new_decision_id,
 )
 from actions.parse import decision_from_text
-from actions.read_payload import render_read_results
+from actions.read_payload import (
+    PER_PAYLOAD_MAX_CHARS, TOTAL_MAX_CHARS, render_read_results,
+)
 from core.logging_setup import get_logger
 
 logger = get_logger(__name__)
@@ -79,6 +81,9 @@ def run_cognition(
     execute: bool = True,
     write_service: Optional[Any] = None,
     follow_up_on_reads: bool = False,
+    follow_up_per_payload_max: int = PER_PAYLOAD_MAX_CHARS,
+    follow_up_total_max: int = TOTAL_MAX_CHARS,
+    repair_malformed: bool = False,
     **generate_kwargs: Any,
 ) -> CognitiveRunResult:
     """
@@ -101,13 +106,27 @@ def run_cognition(
 
                       🔒 **最多一次**（2 次 LLM 调用封顶）。
                       🔒 默认 False —— 它多花一次调用，由调用方决定。
+        follow_up_per_payload_max / follow_up_total_max
+                      回喂内容的**字符上限**。默认沿用 `actions/read_payload`
+                      的 8,000 / 12,000；实验可以调小，避免把单轮上下文
+                      推到推理模型的长 reasoning 区间。
+
+                      🔒 截断仍然会**如实写明**完整长度，不静默少给。
+        repair_malformed
+                      🔴 True 时：模型输出看起来像结构化信封、但 JSON
+                      解析失败（截断/写坏）⇒ **重试一次**，要求它输出
+                      一个更短、只有一个动作的信封。
+
+                      🔒 只修**格式**，不改 Agent 的决定。
+                      🔒 每段**最多一次**，默认 False（会多花一次调用）。
 
     返回：CognitiveRunResult（含 decision / intent / result / segments）
     """
     agent_id = _agent_id_of(agent)
 
     # ---- 第 1 段 ------------------------------------------------------
-    seg0 = _run_one_segment(agent, agent_id, messages, generate_kwargs)
+    seg0 = _run_one_segment(agent, agent_id, messages, generate_kwargs,
+                            repair_malformed=repair_malformed)
     segments: List[CognitiveSegment] = [seg0]
 
     # ---- 执行第 1 段的动作 --------------------------------------------
@@ -124,7 +143,10 @@ def run_cognition(
     #    与它下一轮从 Experience 里看到的信息重复。
     follow_up_used = False
     if follow_up_on_reads:
-        prompt2 = render_read_results(list(zip(seg0.action_intents, results)))
+        prompt2 = render_read_results(
+            list(zip(seg0.action_intents, results)),
+            per_payload_max=int(follow_up_per_payload_max),
+            total_max=int(follow_up_total_max))
         base = _as_message_list(messages)
         if prompt2 and base is not None:
             follow_up_used = True
@@ -136,7 +158,8 @@ def run_cognition(
                 {"role": "user", "content": prompt2},
             ]
             seg1 = _run_one_segment(agent, agent_id, follow_up_messages,
-                                   generate_kwargs, index=1)
+                                   generate_kwargs, index=1,
+                                   repair_malformed=repair_malformed)
             segments.append(seg1)
             intents.extend(seg1.action_intents)
             results.extend(_dispatch_all(
@@ -186,8 +209,24 @@ def run_cognition(
 # ================================================================
 # 内部
 # ================================================================
+#: 信封写坏后的**一次**修复提示。
+#:
+#: 🔒 它只说格式，不说「你应该做什么」——
+#:    决定仍然是 Agent 的，我们只是要求它**把决定写成可执行的样子**。
+REPAIR_INSTRUCTION = (
+    "你的上一条输出没有形成可执行的结构化信封（JSON 被截断或格式不合法），"
+    "因此没有任何动作被执行。\n"
+    "请**直接重发**一个更短的信封，最多一个动作：\n"
+    '{"decision":"act","reasoning":"<一句话>",'
+    '"action":{"type":"<动作类型>","parameters":{...}}}\n'
+    "不要把长文档、长报告或嵌套很深的 payload 塞进 JSON —— "
+    "先发最小合法参数，后续再补。"
+)
+
+
 def _run_one_segment(agent: Any, agent_id: str, messages: Any,
-                     generate_kwargs: dict, *, index: int = 0
+                     generate_kwargs: dict, *, index: int = 0,
+                     repair_malformed: bool = False,
                      ) -> CognitiveSegment:
     """
     **一次** LLM 调用 + 解析。不含执行动作（执行由调用方做）。
@@ -195,12 +234,75 @@ def _run_one_segment(agent: Any, agent_id: str, messages: Any,
     🔒 段与段之间**唯一**的差别就是这个 `index` ——
        第二段走的是**完全同一条**解析路径（同一个信封 parser）。
        所以「第二段能不能执行动作」不需要另一套规则。
+
+    🔴 `repair_malformed=True` 时：信封解析失败会**重试一次**，
+       要求模型输出更短的、只有一个动作的信封。
+       只修格式，不替 Agent 决定做什么。
     """
     response = agent.generate(messages=messages, **generate_kwargs)
     content = getattr(response, "content", None)
+    total_tokens = getattr(response, "total_tokens", None)
 
     # 🔒 只认显式信封。没有信封 → 普通回复，不产生 Action。
     decision = decision_from_text(agent_id, content)
+
+    # 🔴 信封坏了 ≠ Agent 决定只回复。
+    #    必须显式报警，否则「模型想行动但输出不可用」会被
+    #    报告成「Agent 没有行动」，进而误判 Agent 的意愿。
+    envelope_error = getattr(decision, "envelope_error", "")
+    repair_attempted = False
+    repair_succeeded = False
+    if envelope_error:
+        logger.warning(
+            "Cognition 信封解析失败（%s）：agent=%s seg=%d "
+            "dropped=%d finish_reason=%s output_status=%s。"
+            "模型输出**看起来像结构化信封**，但没有可用动作 —— "
+            "这不是「Agent 决定只回复」。",
+            envelope_error, agent_id, index,
+            getattr(decision, "dropped_actions", 0),
+            getattr(response, "finish_reason", None),
+            getattr(response, "output_status", None),
+        )
+
+        # ---- 可选：一次格式修复 ------------------------------------
+        base = _as_message_list(messages) if repair_malformed else None
+        if base is not None:
+            repair_attempted = True
+            repair_messages = base + [
+                {"role": "assistant", "content": str(content or "")},
+                {"role": "user", "content": REPAIR_INSTRUCTION},
+            ]
+            repaired = agent.generate(messages=repair_messages,
+                                      **generate_kwargs)
+            repaired_content = getattr(repaired, "content", None)
+            repaired_decision = decision_from_text(agent_id,
+                                                   repaired_content)
+            repaired_tokens = getattr(repaired, "total_tokens", None)
+            if total_tokens is None and repaired_tokens is None:
+                total_tokens = None
+            else:
+                total_tokens = (total_tokens or 0) + (repaired_tokens or 0)
+
+            content = repaired_content
+            decision = repaired_decision
+            # 🔒 状态以**最后一次**调用为准：第一次已经确定不可用。
+            response = repaired
+            repair_succeeded = (
+                bool(str(repaired_content or "").strip())
+                and not getattr(decision, "envelope_error", ""))
+            if repair_succeeded:
+                logger.info(
+                    "信封修复成功：agent=%s seg=%d actions=%d",
+                    agent_id, index, len(decision.intents))
+            else:
+                logger.warning(
+                    "信封修复失败（%s）：agent=%s seg=%d "
+                    "finish_reason=%s output_status=%s",
+                    getattr(decision, "envelope_error", ""),
+                    agent_id, index,
+                    getattr(response, "finish_reason", None),
+                    getattr(response, "output_status", None),
+                )
 
     # ============================================================
     # §七：EMPTY_CONTENT **不许悄悄成功**
@@ -253,7 +355,10 @@ def _run_one_segment(agent: Any, agent_id: str, messages: Any,
         finish_reason=finish_reason,
         # 🔴 逐段记 tokens —— `last_response` 只保留最后一次调用，
         #    只看它会把 follow-up 那轮的成本算成**只有第二段**。
-        tokens=getattr(response, "total_tokens", None),
+        #    修复调用发生时，这里记**两次调用之和**。
+        tokens=total_tokens,
+        repair_attempted=repair_attempted,
+        repair_succeeded=repair_succeeded,
     )
 
 

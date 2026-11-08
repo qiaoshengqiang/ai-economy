@@ -34,6 +34,10 @@ from pathlib import Path
 
 import pytest
 
+from tests.config_deviation_helpers import (
+    load_deviations, model_deviation, require_reason,
+)
+
 from core.config_resolver import (
     ConfigLoader,
     ConfigResolver,
@@ -219,17 +223,23 @@ class TestResolvesCorrectly:
                                         adapter_specs=adapter_specs)
 
         # 同一个 model profile 被两个 Agent 用不同 credential
-        a = resolved.agent("agent_d")           # qwen_fast / bailian_key_d
-        b = resolved.agent("novel_editor")      # qwen_fast / bailian_key_d
-        c = resolved.agent("agent_e")           # qwen_max  / bailian_key_e
+        a = resolved.agent("novel_plot_architect")   # deepseek_chat / key_c
+        b = resolved.agent("novel_world_builder")    # deepseek_chat / key_a
+        c = resolved.agent("novel_author")           # doubao_novel  / doubao
 
         # 构造一对：同 model、不同 credential
         same_model = [a, b]
-        assert all(x.model_profile == "qwen_fast" for x in same_model)
+        assert all(x.model_profile == "deepseek_chat" for x in same_model)
+        assert a.credential.env == "DEEPSEEK_KEY_AGENT_C"
+        assert b.credential.env == "DEEPSEEK_KEY_AGENT_A"
+        assert a.credential.profile != b.credential.profile
+
         # 反向：不同 model 也可以共用**同一个** credential
-        assert c.credential.env == "BAILIAN_KEY_AGENT_E"
-        assert a.credential.env == "BAILIAN_KEY_AGENT_D"
-        assert a.credential.profile != c.credential.profile
+        # （agent_a 是 deepseek-flash，novel_world_builder 是 deepseek-chat）
+        d = resolved.agent("agent_a")
+        assert d.credential.env == b.credential.env == "DEEPSEEK_KEY_AGENT_A"
+        assert d.model_profile != b.model_profile
+        assert c.credential.env == "DOUBAO_API_KEY"
 
         # 用假配置做一次**真正**的「同 model 两 credential」正向断言
         cfg = base_canonical()
@@ -326,19 +336,37 @@ class TestResolvesCorrectly:
             "agent_b": "DOUBAO_API_KEY",
         }
 
+        # 🔴 **有意偏离**（`config_deliberate_deviations.json`）
+        #
+        #    基线是「迁移前快照」，作用是证明配置重构**没有偷偷改变行为**。
+        #    而 `agent_a..e` 的 `max_tokens`（以及 2026-11-07 的模型迁移）
+        #    是**有意的**变更。**不改快照**，在这里显式登记并**要求理由**。
+        _dev = load_deviations()
+        require_reason(_dev, "max_tokens")
+        require_reason(_dev, "model")
+
         checked = 0
         for agent_id, before in sorted(baseline.items()):
             a = resolved.agent(agent_id)
+            _dev_model = model_deviation(_dev, agent_id)
 
             # ① 模型：旧配置解析出的真实 model 名 == 新配置的 model_id
-            assert a.model_id == before["requested_model"], (
-                f"{agent_id}: model_id {a.model_id!r} != 迁移前 "
-                f"{before['requested_model']!r}")
+            want_model = _dev_model.get("requested_model",
+                                        before["requested_model"])
+            assert a.model_id == want_model, (
+                f"{agent_id}: model_id {a.model_id!r} != "
+                f"迁移前/登记值 {want_model!r}")
 
             # ② endpoint
-            assert a.provider.base_url == before["base_url"], (
-                f"{agent_id}: base_url {a.provider.base_url!r} != 迁移前 "
-                f"{before['base_url']!r}")
+            want_base = _dev_model.get("base_url", before["base_url"])
+            assert a.provider.base_url == want_base, (
+                f"{agent_id}: base_url {a.provider.base_url!r} != "
+                f"迁移前/登记值 {want_base!r}")
+
+            # ②.5 provider 名（旧 bailian_qwen/glm 已合并为 bailian）
+            want_provider = _dev_model.get("provider", before["provider"])
+            assert (a.provider.name == want_provider
+                    or before["provider"].startswith("bailian")), agent_id
 
             # ③ 超时
             assert float(a.provider.timeout_seconds) == float(
@@ -347,33 +375,19 @@ class TestResolvesCorrectly:
             # ④ 生成参数
             assert float(a.temperature) == float(before["temperature"]), agent_id
 
-            # 🔴 **有意偏离**（`config_deliberate_deviations.json`）
-            #
-            #    基线是「迁移前快照」，作用是证明配置重构**没有偷偷改变行为**。
-            #    而 `agent_a..e` 的 `max_tokens` 是**有意的**变更（实测：
-            #    推理模型把 2048 全用在 reasoning 上 ⇒ content 为空）。
-            #
-            #    🔒 所以**不改快照** —— 改快照它就再也不是「迁移前」了。
-            #       这里显式登记，并**要求给出理由**。
-            _dev_path = (Path(__file__).resolve().parent
-                     / "config_deliberate_deviations.json")
-            _dev = (json.loads(_dev_path.read_text(encoding="utf-8"))
-                if _dev_path.exists() else {})
             _dev_mt = _dev.get("max_tokens") or {}
-            assert not _dev_mt or _dev.get("_reasons", {}).get("max_tokens"), (
-            "有意偏离必须带理由（_reasons）")
-
             _want_mt = int(_dev_mt.get(a.agent_id,
                                       before["max_tokens"]))
             assert int(a.max_tokens) == _want_mt, a.agent_id
 
-            # ⑤ 凭据：指向**同一个环境变量**
-            expected_env = (before["credential_env"]
+            # ⑤ 凭据：指向**同一个环境变量**（或登记过的迁移值）
+            expected_env = (_dev_model.get("credential_env")
+                            or before["credential_env"]
                             or GLOBAL_FALLBACK_ENV.get(agent_id, ""))
             if expected_env:
                 assert a.credential.env == expected_env, (
                     f"{agent_id}: credential env {a.credential.env!r} != "
-                    f"迁移前 {expected_env!r}")
+                    f"迁移前/登记值 {expected_env!r}")
 
             # ⑥ system_prompt 一个字都不能丢
             assert len(a.system_prompt) == before["system_prompt_len"], (

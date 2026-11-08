@@ -1,7 +1,7 @@
 # AGENTS.md — AI Economy OS Developer Context
 
 > **这是一个 AI Coding Agent 的入口文件。**
-> 花几分钟读完它，你就知道这个项目是什么、当前做到哪、什么不能动。
+> 花几分钟读完它，你就知道这个项目是什么、当前做到哪、当前范围与边界。
 >
 > **完整的架构 Source of Truth 在
 > [`docs/architecture/ARCHITECTURE_CONSTITUTION.md`](docs/architecture/ARCHITECTURE_CONSTITUTION.md)。**
@@ -29,10 +29,10 @@
 
 | | |
 |---|---|
-| **阶段** | `Workspace Core V1 已冻结 / Change Pipeline Phase 1 已实现` |
-| **测试基线** | **4135 passed, 2 skipped, 30 deselected** |
+| **阶段** | `Workspace Core V1 已冻结 · Agent Core V1 已实现 · Tool Runtime V1 已实现 · 观察实验` |
+| **测试基线** | 以 `./dev.sh test` 当前输出为准（最近：**4816 passed, 2 skipped, 30 deselected**） |
 | **协议版本** | `protocol_version = "1"` |
-| **命令数** | 17（`./dev.sh` 查看全部） |
+| **命令数** | 25（`./dev.sh` 查看全部） |
 | **数据库表** | **21** |
 | **工作区状态** | 应当干净 |
 
@@ -49,13 +49,16 @@ Phase 0·4E   真实多进程验证 + Message Claim Lease · Constitution + Shar
 Step 4F      Task Shared Context / Alignment 最小可运行原型
 Workspace v1  资源树 · Controller · Explicit/Effective Lock · Revision · Audit ·
               Event · Gateway · 资源级并发 · Hardening · 组合根接线 · 20 Agent 并行
-Change Pipeline  Phase 1 WorktreeManager · hello-demo（真实 LLM 端到端）  ← 当前
+Change Pipeline  Phase 1 WorktreeManager · hello-demo（真实 LLM 端到端）
+Agent Core    Actions（14 执行器）· Cognition · Experience · Reflection · Self Model · Stage · Budget · Delegation
+Tool Runtime  V1 · 公共只读工具库（python/pytest/node/playwright）· 独立 run 目录 · 受控执行（ADR-0040）
+实验线        Human Demand → 第一个 Agent 能否自主分工（`experiments/`）  ← 当前工作重心
 ```
 
 ### 下一步
 
-> **下一阶段：Change Pipeline 的 Patch**（Test / Acceptance / Merge 在其后）。
-> Worktree Manager 已实现 —— 见 [`CHANGE_PIPELINE_V1_DESIGN.md`](docs/architecture/implementation/CHANGE_PIPELINE_V1_DESIGN.md)。
+> **两条线**：① **冻结路线图** —— Change Pipeline 的 Patch（Test / Acceptance / Merge 在其后），见
+> [`CHANGE_PIPELINE_V1_DESIGN.md`](docs/architecture/implementation/CHANGE_PIPELINE_V1_DESIGN.md)；② **当前重心** —— 「Human Demand → Agent 自主分工 → 闭环」跑通（`experiments/`）。
 
 ---
 
@@ -69,11 +72,12 @@ Change Pipeline  Phase 1 WorktreeManager · hello-demo（真实 LLM 端到端）
 | 链路 | `User → Agent A → Root Task → 自执行 / 协作 → Result → 验收` | `Human → Front Agent → Agent Economy` |
 | Human 角色 | Requester · 约束 · 预算 · 验收 · 反馈 | 模糊意图 · 方案选择 · 经济承诺 |
 
-**V1 必须避免的 4 个错误假设**：① ❌ `Human → Agent A` **不是**永久架构，
-只是 V1 部署方式；② ❌ Human **不是** Task Creator（ADR-0024）；
-③ ❌ 不硬编码 `Task.creator = human` —— **Front Agent 也是 Agent**，
-不该有 `HumanTask` / `Front-created Task`；④ ❌ Front Agent **不是**中央
-Coordinator —— 只做 `Human → OS` 入口，Agent 间仍可直接协作。
+**V1 的四条边界**（避免把临时部署当成永久架构）：
+
+① `Human → Agent A` 是 V1 的部署方式；未来入口是 `Human → Front Agent → Agent Economy`。
+② Human 提供 Demand；Task Creator 始终是 Agent（ADR-0024）。
+③ Front Agent 也是 Agent；系统使用同一套 Task / Agent 模型，不引入 `HumanTask`。
+④ Front Agent 承担 `Human → OS` 入口；Agent 之间仍然可以直接协作。
 
 > **兼容性 ≠ 提前实现**：`V1 简单 + 边界清楚 + 接口稳定 = 可扩展`。
 
@@ -119,15 +123,17 @@ communication/  →  core/ + storage/
 core/           →  storage/ + agents/         ← 不是「谁都不依赖」
 storage/        →  core/ 的**叶子**（paths / logging_setup / config）
 llm/            →  core/ + storage/
+tool_runtime/   →  core/ + 标准库（subprocess）；不依赖 services/
 ```
 
 **四条有守卫的规则**（✅ 全部成立）：`core/` 与 `communication/`
 **不**依赖 `services/`；`services/` **不直接**依赖 `storage/`（只经
 `core/task_store`）；只有 `main.py` 调用 `register_type_handler`。
 
-**三个最容易被写错的**：`services → storage` ❌（真实是经 `core/task_store`）；`core/` **确实**依赖 `storage/`；`storage/ → core/` 允许。
+**三个容易混淆的事实**：`services` 经 `core/task_store` 访问存储，不直接依赖 `storage/`；
+`core/` **确实**依赖 `storage/` 的叶子模块；`storage/ → core/` 的叶子依赖是允许的。
 
-**两个已知例外**（历史遗留，**不要顺手改**）：① `core/economy.py` →
+**两个已知例外**（历史遗留，改动前先读相关测试与 ADR）：① `core/economy.py` →
 `agents/base_agent.py`（可达环）；② `storage/database.py` **函数内** import `core.config`。
 
 > 重新扫描用 **AST**，见 [Constitution §4](docs/architecture/ARCHITECTURE_CONSTITUTION.md)。
@@ -142,8 +148,11 @@ llm/            →  core/ + storage/
 |---|---|---|---|
 | **1** Agent Private Memory | 单个 Agent | `DESIGNED` | 私人经验 / 判断 / 策略。**默认无权读**。有目录与极简文件读写（`Workspace.write_memory`），**无**结构化记忆、检索、经验积累 |
 | **2** Task Shared Context | **Task** | **`CURRENT`** | 共同的任务世界模型。**已实现**：持久化 + 修订历史 + Alignment + 乐观锁。见 [`TASK_SHARED_CONTEXT.md`](docs/architecture/TASK_SHARED_CONTEXT.md) |
-| **3** Task Workspace | Task | `FUTURE` | 实际共享的文件与代码。**只有 `TaskWorkspaceRef`** —— 一个 `workspace_id` 字符串。见 [`TASK_WORKSPACE.md`](docs/architecture/TASK_WORKSPACE.md) |
+| **3** Task Workspace | Task | **`FUTURE`**（完整模型） | 实际共享的文件与代码。Workspace Core v1 已实现资源树 / Controller / Lock / Revision / Audit / Gateway；Patch / Test / Acceptance 等完整生命周期仍为 `FUTURE`。见 [`TASK_WORKSPACE.md`](docs/architecture/TASK_WORKSPACE.md) |
 | **4** External / World State | 系统外 | `FUTURE` | 外部 API / 网络 / Git remote。**无** |
+
+> 注：**Workspace Core v1**（资源树 / Controller / Lock / Revision / Audit / Gateway）是 `CURRENT`；
+> Memory 四层里的 **Task Workspace** 指完整模型（Patch / Test / Acceptance），仍为 `FUTURE`。
 
 **`Memory ≠ Alignment`** —— Shared Context 是**结果**，Alignment 是**机制**。
 
@@ -163,13 +172,13 @@ llm/            →  core/ + storage/
 | 属于 | Memory 四层 **Layer 1** | **不在这四层里** |
 | 边界 | 其他 Agent **默认无权读** | `WorkspaceViolationError` —— 路径不许跑出根目录 |
 
-**三条不许越过的推论**：❌ 当成 Memory 的一层 ·
-❌ 当成 Task Workspace（后者是任务共享的）·
-❌ 因为「有 workspace 目录」就以为 Workspace Permission 已实现。
+**三条边界**：Private Workspace 不属于 Memory 四层；
+它与 Task Workspace 相互独立（`Private Workspace ≠ Task Workspace`，后者是任务共享的）；
+目录存在只代表资源边界，不代表 Workspace Permission 已实现。
 
-> **`Workspace ≠ Permission`。** `core/workspace.py` 给的是一个 Agent
-> **对自己**目录的访问，**没有**「谁能看什么」的授权体系（`FUTURE`）。
-> **有私有 workspace 目录 ≠ Task Workspace 已实现。**
+> **`Workspace ≠ Permission`。** `core/workspace.py` 提供一个 Agent
+> **对自己**目录的访问；「谁能看什么」的授权体系仍是 `FUTURE`。
+> 私有 workspace 目录与 Task Workspace 是两件事。
 
 ```text
 Memory（知道什么） ──┐                    Private Workspace（有哪些文件）
@@ -193,57 +202,39 @@ Agent Private Memory                ← 个体判断
 Agent Inference                     ← 推测（最不可靠）
 ```
 
-**三条推论**：① Domain State 不能被 Memory 推翻；② 「说过」≠「仍有效」；③ 推测 ≠ 事实。
+**三条推论**：① Domain State 的权威高于 Memory；② Communication History 是历史，不代表仍然有效；③ Inference 必须显式标记为推测。
 
 **「说过」≠「确认过」**：
 
 ```
 A 说「我觉得用方案 B」   →   Communication History 里有这句话
-                        →   Shared Context 里**没有** Decision Record
-                        →   系统**不能**认为「团队已决定方案 B」
+                        →   Shared Context 里还没有 Decision Record
+                        →   当前状态仍然只是「A 提出过一个建议」
 ```
 
-只有走完 `Proposal → Alignment → DecisionRecord → Revision`
-才算共同决定。
+只有走完 `Proposal → Alignment → DecisionRecord → Revision`，
+「团队已决定方案 B」才成为共同事实。
 
 ---
 
 ## 6. 不可破坏的边界
 
-**这些是项目的架构骨架。搞混它们 = 破坏架构。**
+**这些是项目的架构骨架。完整定义与后果见 Constitution §3、§2.3、§11.7。**
+编码时优先核对下面这些不等号：
 
-| 不等号 | 搞混的后果 |
-|---|---|
-| `Identity ≠ Address` | 搬家就要换身份 |
-| `Message ≠ Transport` | 换传输就要改协议 |
-| `Communication ≠ Business Logic` | 通信层开始判断「这个价格行不行」 |
-| `Capability ≠ Permission` | 声明会写代码 → 自动获得文件写权限 |
-| `Capability ≠ Economy` | 用能力推断财富 |
-| `Wallet Ownership ≠ Machine Permission` | 有钱就能操作宿主机 |
-| `Task Core ≠ Task Manager` | 领域层变成调度器 |
-| `Task Shared Context ≠ Message History` | 把「说过」当成「确认过」· **有守卫** |
-| `Task Shared Context ≠ Private Memory` | 私人偏见变成共识 |
-| `Task Shared Context ≠ Task Workspace` | 把「认为是什么」和「实际有什么」混起来 |
-| `Workspace ≠ Permission` | 有 `workspace_id` 就以为能读文件 |
-| `Memory ≠ Alignment` | 只有共同存储，没有形成机制 |
-| `Agreement ≠ Payment` | 成交凭证被当成支付记录 |
-| `Budget ≠ Price` | 预算被当成成交价 |
-| `DecisionPolicy ≠ Decision Execution` | 策略开始改状态 |
-| `Domain ≠ Infrastructure` | `core/` 依赖 `services/` |
-| **`Agent Strategy ≠ Negotiation Mechanism`** | 把 Agent 的价格阈值硬编码进系统 |
-| **`Task Shared Context ≠ 第二套 Task Core`** | 出现两个都声称正确的 `status` · **有守卫** |
-| **`Agent Private Memory ≠ Agent Private Workspace`** | 把「知道什么」和「有哪些文件」混起来 |
-| **`Observation ≠ Conclusion`** | 把「2 小时没活动」当成「Agent 已死」 |
-| **`Permission ≠ Force Unlock`** | 有 `WRITE` 就以为自己能强解锁 |
-| **`Guardian 判断 ≠ Domain Fact`** | 让 Guardian 的评估自动改写 Task Core |
-| **`Logical Workspace ≠ Physical Workspace`** | 以为 `workspace_id` 存在就代表物理目录已建 |
-| **`Workspace Protocol ≠ Host OS Permission`** | 把 Write Lock 说成宿主机物理不可触碰 |
-| **`Origin ≠ Creator`** | 把「谁提的需求」和「谁建的 Task」混为一谈 |
-| **`Parent ≠ Root`** | 把「直接上一层」当成「整条谱系的起点」 |
-| **`Funding ≠ Responsible ≠ Creator`** | 用一个 `owner` 表达三种责任 |
-| **`Human Demand ≠ Task`** | 把「需求」当成「可执行的工作单元」 |
-| **`Human ≠ Task Creator`** | 以为 Human 直接创建 Root Task |
-| **`Demand Source ≠ Creator`** | 把「需求从哪来」和「谁建的 Task」混起来 |
+- **身份 / 通信**：`Identity ≠ Address` · `Message ≠ Transport` · `Communication ≠ Business Logic`
+- **能力 / 权限 / 经济**：`Capability ≠ Permission` · `Capability ≠ Economy` ·
+  `Wallet Ownership ≠ Machine Permission` · `Workspace ≠ Permission` ·
+  `Permission ≠ Force Unlock` · `Workspace Protocol ≠ Host OS Permission`
+- **Task / 共享知识**：`Task Core ≠ Task Manager` ·
+  `Shared Context ≠ Message History / Private Memory / Task Workspace / 第二套 Task Core` ·
+  `Memory ≠ Alignment` · `Agreement ≠ Payment` · `Budget ≠ Price`
+- **Agent / 策略 / 判断**：`DecisionPolicy ≠ Decision Execution` ·
+  `Agent Strategy ≠ Negotiation Mechanism` · `Private Memory ≠ Private Workspace` ·
+  `Observation ≠ Conclusion` · `Guardian 判断 ≠ Domain Fact`
+- **空间 / 来源**：`Logical Workspace ≠ Physical Workspace` · `Origin ≠ Creator` ·
+  `Parent ≠ Root` · `Funding ≠ Responsible ≠ Creator` · `Human Demand ≠ Task` ·
+  `Human ≠ Task Creator` · `Demand Source ≠ Creator`
 
 ---
 
@@ -264,27 +255,26 @@ TaskNegotiationService       ← 系统机制（协议 + 硬约束 + 落地）
 | 回答 | 「我**想怎么谈**」 | 「什么谈判行为在系统规则上**有效**」 |
 | 内容 | 最低价 · 目标价 · 保留价 · 风险溢价 · 最大轮数 · 工作量偏好 · 现金压力 · 截止期敏感度 · 历史合作经验 | 协议合法性 · 谁能响应 · 轮次 · 报价是否**突破硬约束** · Agreement 落地 · 状态变化 · Offer 持久化 |
 
-**`DecisionPolicy` 不能**修改 Task / Wallet / Ledger / Workspace，
-也不能发 Message —— 它**只返回一个 `Decision`**。
+**`DecisionPolicy` 的职责**：读取 Agent 自己的参数，返回一个 `Decision`。
+Task / Wallet / Ledger / Workspace 的落地由 `TaskNegotiationService` 等系统机制完成。
 
-```text
-❌ 不要把 Agent 的价格阈值 / 风险偏好 / 让价策略硬编码进 TaskNegotiationService
-❌ 不要让未来的 Strategy 绕过系统硬约束直接改 Task
-```
+Agent 的价格阈值 / 风险偏好 / 让价策略属于 **Agent Strategy**，放在 Agent 自己的
+config / DecisionPolicy 中；`TaskNegotiationService` 只执行协议与硬约束，
+不把价格策略硬编码进机制层。
 
-> **实测**：`TaskNegotiationService` 里**没有**任何价格阈值
+> **实测**：`TaskNegotiationService` 里没有任何价格阈值
 > （`accept_price` / `opening_ask` / `walk_away` 都不出现）；
 > 那些参数全在 `RuleBasedDecisionPolicy` 上，来自**每个 Agent 自己的 config**。
 > 有守卫在盯这条线。
 
 ---
 
-## 6.2 Task Shared Context 不能成为第二套 Task Core
+## 6.2 Task Core 与 Shared Context 的分工
 
 > **Task Core 是 Task 客观生命周期和领域状态的唯一权威来源。**
 
-Shared Context 可以**引用、解释、总结、补充**共同知识，
-但**不能建立一套可独立修改、独立生效的第二 Task 状态机**。
+Shared Context 可以**引用、解释、总结、补充**共同知识；
+两者通过「引用 + 解释」协作，而不是各自维护一套可修改的状态。
 
 | 谁 | 拥有什么 |
 |---|---|
@@ -292,44 +282,54 @@ Shared Context 可以**引用、解释、总结、补充**共同知识，
 | **Shared Context**（**`CURRENT`**） | objective · constraints · acceptance 的**解释** · decisions · assumptions · open questions · assignments · terminology · facts · verification feedback · **对 Domain State 的引用** |
 
 ```text
-❌  Task.status                = SUBMITTED
-    SharedContext.current_status = IN_PROGRESS   ← 两个都声称自己正确
+禁止形态（第二条可独立修改的状态）：
+    Task.status                 = SUBMITTED
+    SharedContext.current_status = IN_PROGRESS
 
+正确形态：
 ✅  Task Core:       status = SUBMITTED
-    Shared Context:  「当前处于等待发起方验收阶段。」   ← 语义解释
+✅  Shared Context:  「当前处于等待发起方验收阶段。」   ← 语义解释
 ```
 
-> **Shared Context 可以解释 Domain State，但不能取代 Domain State。**
-> 有守卫禁止 Shared Context 复制 `status` / `agreed_price` / `contractor`
+> **Shared Context 解释 Domain State，Domain State 保持唯一权威。**
+> 有守卫检查 Shared Context 不复制 `status` / `agreed_price` / `contractor`
 > 作为第二个可独立修改的事实源。
 
 ---
 
-## 7. 当前禁止项（`FORBIDDEN NOW`）
+## 7. V1 范围与硬边界
 
-**除非有明确的任务书，否则不要实现下面任何一项。**
+> **当前阶段只实现到这里。** 下表中的「下一阶段」需要明确任务书才解锁
+> （等同旧称 `FORBIDDEN NOW`）；在此之前保持 `DESIGNED` / `FUTURE` 标注。
 
-| 领域 | 禁止内容 |
-|---|---|
-| **Workspace** | ✅ Core v1 **已冻结**（ADR-0029/0030/0031）· ❌ 仍禁止：Permission Engine · ACL · IAM · Role · Backend · 物理文件系统写权限 · Conversation Manager · Recovery Automation |
-| **Git** | ✅ Worktree Manager **已实现**（ADR-0037）· ❌ 仍禁止：branch 自动化 · commit 自动化 · merge · Patch · Test Runner · Acceptance |
-| **代码执行** | `subprocess` · shell · Docker · sandbox · 测试运行器 |
-| **经济结算** | Payment · Escrow · Settlement · Wallet transfer |
-| **通信可靠性** | Retry Queue · Retry Scheduler · ACK · Redis · Kafka · Celery |
-| **网络** | P2P · 多机 · 分布式 |
-| **生命周期 / 演化** | Heartbeat · Scheduler · Life Loop · Adaptive Negotiation · RL · 策略自学习。**不得因 Guardian / 未来自动恢复而提前实现** |
-| **Guardian** | Guardian Agent 实体代码 · crash detector · 基于 inactivity 的自动判死 · 自动 Lock Expiry · Lease Renewal |
-| **协调 / 清理** | TaskManager · Coordinator · GC · TTL · 自动物理删除 · Workspace Delete Lifecycle |
-| **篡改监控** | Filesystem Watcher · Hash Tamper Detection · Kernel-level Enforcement · 阻止管理员直接改文件 |
-| **Task Lineage** | `parent_task_id` · `root_task_id` · child task · task tree · task graph · delegation lifecycle · ChildTaskManager · TaskCreationService（概念见 [TASK_ORIGIN_LINEAGE.md](docs/architecture/TASK_ORIGIN_LINEAGE.md)，**实现为 `FUTURE`**） |
-| **Human 中心化** | Human Task Manager · Human Task Coordinator · Human Central Scheduler · Human-driven Task Tree Management（**系统目标就是 Agent 能独立组织复杂工作**） |
-| **Demand 实现** | Demand DB table · Demand Service · Demand API · Demand lifecycle · Demand persistence（概念见 [TASK_ORIGIN_LINEAGE.md](docs/architecture/TASK_ORIGIN_LINEAGE.md) §2.4，标 `OPEN DESIGN`） |
-| **策略硬编码** | 「超过 X AIC 必须外包」·「必须自己完成至少 N%」·「Child 预算不得超过 Parent 的 N%」·「中间层不得盈利」·「必须找最便宜的承包者」（属于 **Agent Strategy**，不得写进系统） |
+### 7.1 V1 已实现 / 下一阶段
 
-### 也不要过度设计
+**V1 已实现**：Agent Core · Task Core · Shared Context · Workspace Core v1 ·
+Worktree Manager · **Tool Runtime V1** · Economy（Agent / Wallet / Ledger / LLM 成本）·
+本地通信 / Message Journal / Claim Lease。
 
-看到 "Shared Context" 就上 ❌ Blockchain · CRDT · Event sourcing · Vector DB ·
-Knowledge graph · 分布式共识 · 多 agent 投票 · 复杂 ontology。**目标是建立最小但正确的边界。**
+**下一阶段（需要任务书）**：Workspace Permission / ACL / IAM · OS 级执行沙箱 / 网络出口策略 / 工具安装与校验 ·
+Task Payment / Escrow / Settlement · Retry / Queue / Broker · P2P / 多机 ·
+Heartbeat / Scheduler · Guardian · TaskManager / GC · Task Lineage / Demand 实体 ·
+Human Task Manager / Coordinator。
+
+> 完整状态表与逐项说明见 **Constitution §15.1**。下一阶段能力保持
+> `DESIGNED` / `FUTURE`；不要写成 `CURRENT`。
+
+### 7.2 硬边界（安全 · 权限 · 数据完整性 · 兼容性）
+
+1. **代码执行边界**：代码/测试只经 **Tool Runtime** 的公共工具库执行；`shell=False`、独立 run 目录、allowlist 工具、超时与输出上限。Task / Workspace 层不执行任意宿主 shell，Agent 不能下载/安装/替换工具（WorktreeManager 的受控 `git` 调用与 ToolRunner 的受控工具调用不在此列）。
+2. **权限边界**：Workspace 是逻辑资源树；宿主机文件系统写权限与 ACL/IAM/Role 不作为 Workspace 权限的替代。
+3. **验收边界**：生产者不验收自己的成果；验收责任必须由非生产者承担。
+4. **数据完整性**：Task Core 与 Ledger 只经领域/服务写入；没有旁路写状态或余额。
+5. **密钥边界**：配置文件只保存环境变量名；secret 只从 `.env` / 环境变量读取。
+6. **兼容性**：`protocol_version = "1"`；破坏线协议兼容性的改动必须显式升级协议版本并更新 [`PROTOCOL.md`](PROTOCOL.md)。
+
+### 7.3 V1 设计取舍
+
+V1 优先**最小但正确的边界**。以下机制在具体需求出现前不引入：
+Blockchain · CRDT · Event sourcing · Vector DB · Knowledge graph ·
+分布式共识 · 多 Agent 投票 · 复杂 ontology。
 
 ---
 
@@ -338,9 +338,9 @@ Knowledge graph · 分布式共识 · 多 agent 投票 · 复杂 ontology。**�
 ```
 1. 读本文档 + Constitution
         ↓
-2. 先调查真实代码（不要凭空设计）
+2. 先调查真实代码，再形成设计
         ↓
-3. 跑基线：./dev.sh test   （必须是 4135 passed）
+3. 跑基线：./dev.sh test   （对照 §2 的当前基线）
         ↓
 4. 实施最小修改
         ↓
@@ -357,9 +357,9 @@ Knowledge graph · 分布式共识 · 多 agent 投票 · 复杂 ontology。**�
 
 ### 三条硬要求
 
-1. **先调查，再动手。** 不要在设计之前改代码。
-2. **每一步结束跑全量测试。** 不是只跑自己改的那个文件。
-   基线现在是 **4135 passed**。
+1. **先调查，再动手。** 设计基于真实代码调查。
+2. **每一步结束跑全量测试。** 不是只跑自己改的那个文件；
+   基线见 §2。
 3. **新增守卫必须配反向测试。** 把违规注入进去，确认守卫**真的变红**。
 
 ---
@@ -372,17 +372,17 @@ Knowledge graph · 分布式共识 · 多 agent 投票 · 复杂 ontology。**�
 ./dev.sh test tests/test_xxx.py -k 名字  # 单个测试
 ```
 
-基线 **4135 passed / 2 skipped / 30 deselected** ·
-守卫文件 10 个约 390 项 · 真实 API 测试 30 项（单独跑，需要 Key）。
+基线见 §2；守卫文件位于 `tests/*guards*.py`；真实 API 测试 30 项（单独跑，需要 Key）。
 
-**必须用 `./dev.sh test`，不要直接 `pytest`** —— 它会正确设置环境。
+**使用 `./dev.sh test` 运行测试** —— 它负责设置项目环境；直接 `pytest` 可能缺少环境变量。
 
 ---
 
-## 9.5 ⚠️ Context Loading Rule —— 不要一次加载全部文档
+## 9.5 ⚠️ Context Loading Rule —— 按任务加载相关文档
 
 **为什么有这一节**：为了解决「上下文不足」，很容易反过来把所有架构文档
 一次性塞进 Coding Agent —— 那浪费上下文，而且淹没真正相关的那几页。
+**不要一次加载全部文档**；按任务只读相关规范与 ADR。
 
 ```text
 AGENTS.md → 判断任务领域 → 只读相关 Specification → 必要时读对应 ADR
@@ -397,6 +397,7 @@ AGENTS.md → 判断任务领域 → 只读相关 Specification → 必要时读
 | **Communication / 协议** | [`PROTOCOL.md`](PROTOCOL.md) · `communication/` · ADR-0002 · ADR-0003 | Economy |
 | **Workspace / Lifecycle / Human** | [`TASK_WORKSPACE.md`](docs/architecture/TASK_WORKSPACE.md) + ADR-0020/0021/0022（§4.1 · §7 · §14.5 · §15） | TASK_SHARED_CONTEXT.md |
 | **Task Origin / Task Lineage** | [`TASK_ORIGIN_LINEAGE.md`](docs/architecture/TASK_ORIGIN_LINEAGE.md) + **ADR-0023** —— 概念已定（`SETTLED`），**实现为 `FUTURE`** | — |
+| **代码执行 / 测试工具** | [`TOOL_RUNTIME_V1_DESIGN.md`](docs/architecture/TOOL_RUNTIME_V1_DESIGN.md) + **ADR-0040** · `tool_runtime/` · `resources/public/tools/` | 与 Task Execution 无关 |
 | **Guard / 测试** | ADR-0018 · `tests/*guards*.py` | — |
 | **Git Worktree / Patch / Test / Acceptance / Merge** | [`CHANGE_PIPELINE_V1_DESIGN.md`](docs/architecture/implementation/CHANGE_PIPELINE_V1_DESIGN.md) + **ADR-0032…0037** —— 设计已定；**Worktree Manager 已实现（ADR-0037）**，其余仍 `DESIGNED` | Workspace Core 内部细节 |
 
@@ -407,7 +408,7 @@ AGENTS.md → 判断任务领域 → 只读相关 Specification → 必要时读
 
 ## 10. 必读文件（按优先级）
 
-### 阅读顺序（**固定，不要颠倒**）
+### 推荐阅读顺序
 
 ```
 1. AGENTS.md（本文档）              ← 入口
@@ -416,16 +417,17 @@ AGENTS.md → 判断任务领域 → 只读相关 Specification → 必要时读
 4. Necessary ADR                   ← 只读相关的那几篇
 ```
 
-> ⚠️ **不要跳过第 1 步直接读 Constitution。**
-> AGENTS.md 的价值之一是告诉你**哪些不用读**。
-> 也**不要把 Constitution 的内容复制回 AGENTS.md**。
+> **从 AGENTS.md 开始**：它的价值之一是告诉你**哪些不用读**。
+> **每个事实保留一个权威来源**：Constitution 负责长期架构，AGENTS.md 负责导航，
+> 任务规范负责领域细节。
 
 ### Task-specific Specification（按任务领域选）
 
 | 我要做… | 规范 | 状态 |
 |---|---|---|
 | Task Shared Context / Alignment | [`TASK_SHARED_CONTEXT.md`](docs/architecture/TASK_SHARED_CONTEXT.md) | **`CURRENT`**（已实现） |
-| **Task Workspace / Read / Lock** | [`TASK_WORKSPACE.md`](docs/architecture/TASK_WORKSPACE.md) + [`LOCK_MODEL.md`](docs/architecture/LOCK_MODEL.md) | **`FUTURE`** |
+| **Task Workspace / Read / Lock** | [`TASK_WORKSPACE.md`](docs/architecture/TASK_WORKSPACE.md) + [`LOCK_MODEL.md`](docs/architecture/LOCK_MODEL.md) | **Core v1 `CURRENT`** · 完整 Task Workspace `FUTURE` |
+| **代码执行 / 测试工具** | [`TOOL_RUNTIME_V1_DESIGN.md`](docs/architecture/TOOL_RUNTIME_V1_DESIGN.md) + **ADR-0040** + `tool_runtime/` | **`CURRENT`（V1，受控执行）** |
 | 消息协议 | [`PROTOCOL.md`](PROTOCOL.md) | `CURRENT` |
 | **Task Origin / Lineage / Funding** | [`TASK_ORIGIN_LINEAGE.md`](docs/architecture/TASK_ORIGIN_LINEAGE.md) | **`FUTURE`**（逻辑模型已定） |
 | **Resource / Lock / Handoff** | [`RESOURCE_LAYER.md`](docs/architecture/RESOURCE_LAYER.md) + [`LOCK_MODEL.md`](docs/architecture/LOCK_MODEL.md) —— 第一版核心 = **`Controller + Lock + Handoff + Audit`**（Authorization / Delegation 降级，Cascade Revocation **移除**，ADR-0027） | **`FUTURE`** |
@@ -466,7 +468,7 @@ docs/architecture/adr/0024-*.md            ← 为什么 Human ≠ Task Creator
 > | 已定（`SETTLED`） | 仍 `FUTURE` / `OPEN` |
 > |---|---|
 > | Write Lock v1：显式持有 + 锁主释放 + **Human Force Unlock** + 审计（ADR-0021） | Guardian · 自动恢复 · Reopen 的 6 个细节 |
-> | Lifecycle：**Lazy Provisioning** + `UNPROVISIONED→…→ARCHIVED`；结束后 `FROZEN`（不删除），**允许 Reopen**（ADR-0022） | Workspace 实现 |
+> | Lifecycle：**Lazy Provisioning** + `UNPROVISIONED→…→ARCHIVED`；结束后 `FROZEN`（不删除），**允许 Reopen**（ADR-0022） | 完整 Task Workspace · Permission · Conversation · Recovery |
 > | Human 是正式协作 Actor；out-of-band 修改**不阻止不监控**（ADR-0022） | out-of-band 检测 |
 > | 7 个角色独立（`Origin`/`Creator`/`Parent`/`Root`/`Funding`/`Responsible`/`Participant`）；`Maximum Depth = 3`（**TEMPORARY**）（ADR-0023） | Child Task · Agent 自建 Root Task（12 个 Open 见 `TASK_ORIGIN_LINEAGE.md` §16） |
 
@@ -509,7 +511,7 @@ docs/architecture/adr/0024-*.md            ← 为什么 Human ≠ Task Creator
 > 调长租约？实现续租？还是换一种占用模型？
 >
 > ⚠️ 这是 **Message Claim Lease**（`CURRENT`）。
-> **Workspace Write Lock 明确不用时间租约** —— 不要混淆。
+> **Workspace Write Lock 不使用时间租约**；两者是不同的可靠性模型。
 
 ### Workspace Readiness（架构决策状态）
 
@@ -520,16 +522,14 @@ docs/architecture/adr/0024-*.md            ← 为什么 Human ≠ Task Creator
 | **Human 协作** | ✅ `SETTLED`：Authorized Human Modification 是一等方式；out-of-band **不阻止不监控**（ADR-0022） |
 | **7 个角色独立** | ✅ `SETTLED`（ADR-0023）·`Maximum Depth = 3`（**TEMPORARY**） |
 | **Human Demand ≠ Task** | ✅ `SETTLED`（ADR-0024）—— Human 提供 Demand，**Creator 始终是 Agent** |
-| Human 的四角色 | ✅ `SETTLED`：Demand Provider / Feedback Provider / Optional Collaborator / Governance Authority |
+| Human 的四角色 | ✅ `SETTLED`：Demand Provider / Feedback Provider / Optional Collaborator / Governance Authority；Task 管理由 Agent 负责 |
 | Guardian · 自动恢复 · Reopen 6 细节 · Demand 实体 · Child Task · Agent 自建 Root Task | `FUTURE` / `OPEN`（见各文档） |
-| Heartbeat / Lease Renewal · Human 作 Task Manager | ❌ **Not implemented / 禁止** |
+| Heartbeat / Lease Renewal | 未实现；需要任务书并先解决长任务租约决策 |
 | **Workspace Core v1** | ✅ **已冻结**：资源树 · Controller · Explicit/Effective Lock · Revision ·
 Audit · Event · Gateway（9 操作）· 资源级并发 · 组合根接线 · 20 Agent 并行 ·
 `workspace-demo` · `agent_exists` fail-closed · Database 每线程 session（ADR-0029/0030/**0031**） |
-| **Change Pipeline Phase 1** | ✅ **WorktreeManager 已实现**：真实 Git worktree · intent log · 幂等 · reconciliation · 崩溃一致性 · resource 级并发（ADR-0032…**0037**）· ❌ Patch/Test/Acceptance/Merge 仍 `DESIGNED` |
+| **Change Pipeline Phase 1** | ✅ **WorktreeManager 已实现**：真实 Git worktree · intent log · 幂等 · reconciliation · 崩溃一致性 · resource 级并发（ADR-0032…**0037**）· Patch/Test/Acceptance/Merge 仍 `DESIGNED` |
 | Task Workspace 其余部分 | `FUTURE`：Patch · Acceptance · Conversation Manager · Recovery Automation · AI Governance |
-
-> **v1 不需要等自动恢复机制就能进入 Workspace 实现。**
 
 ---
 
@@ -550,11 +550,11 @@ Audit · Event · Gateway（9 操作）· 资源级并发 · 组合根接线 · 
 
 > **经济表现不是 Intelligence 本身**，但长期收入/成本/成功率/返工率/谈判表现/
 > 生存能力是观察 Agent 实际行为能力的**重要外部信号**。
-> **只是理念**，不要因此实现：❌ Reputation · ❌ Ranking · ❌ 自动最优选择 · ❌ 策略学习。
+> 这些是长期观察信号；V1 不实现 Reputation · Ranking · 自动最优选择 · 策略学习。
 
 ---
 
 ## 13. 一句话总结
 
 > **项目的核心不是「功能越来越多」，而是「边界越来越清楚」。**
-> 宁愿少做功能，也不要破坏边界。
+> 优先保持边界清晰，再增加功能。

@@ -748,7 +748,7 @@ extra_body:
 ## 4. 跑测试
 
 ```bash
-# 全部测试（2333 个，不含真实 API 测试）
+# 全部测试（4768 个，不含真实 API 测试）
 ./dev.sh test
 
 # 详细输出，显示每个测试的名字
@@ -802,6 +802,10 @@ extra_body:
 
 **可用的测试文件：**
 
+> ⚠️ **下面是 Phase 0 时期的清单快照，已经不全** —— 此后新增了
+> Step 4F / Workspace Core v1 / Change Pipeline / Agent Core 等大量测试文件。
+> **权威基线以 `./dev.sh test` 为准：当前 4768 passed / 2 skipped / 30 deselected。**
+
 | 文件 | 测什么 | 数量 |
 |---|---|---|
 | `tests/test_address.py` | 身份与地址分离 / 解析 / 不可变性 | 28 |
@@ -846,7 +850,7 @@ extra_body:
 | `tests/test_transaction_atomicity.py` | 4D.1 可重入事务 / 状态+事件原子性 / 双向回滚 | 19 |
 | `tests/test_transfer.py` | 转账入口与各种拒绝情况 | 27 |
 | `tests/test_wallet.py` | 钱包、余额、扣款 | 15 |
-| | **合计** | **2333** |
+| | **合计（Phase 0 快照）** | **2333** |
 
 另有 `tests/test_real_api.py`（30 项）需要真实 API Key，
 默认不跑，见下面的「真实 API 测试」。

@@ -153,6 +153,23 @@ LLM 只能**提出意图**，永远不能**直接改账**。
 
 ## 当前进度
 
+> ⚠️ **本节是从 Step 1 开始的详细历史记录，最新只到「Workspace Phase 0」。**
+> **Step 4F 之后的内容不在这里** —— 当前真实状态请看
+> [`AGENTS.md`](AGENTS.md) §2（它是每次开工前的入口）。
+
+### 🚧 最新进度（Step 4F 之后）
+
+| 阶段 | 内容 | 状态 |
+|---|---|---|
+| Step 4F | Task Shared Context / Alignment | ✅ 已实现 |
+| Workspace Core v1 | 资源树 · Controller · Lock · Revision · Audit · Event · Gateway | ✅ 已冻结（ADR-0029/0030/0031） |
+| Change Pipeline Phase 1 | Git Worktree Manager · `hello-demo` | ✅ 已实现（ADR-0032…0037） |
+| Agent Core v1 | Actions · Cognition · Experience · Reflection · Self Model · Stage · Budget · Delegation | ✅ 已实现 |
+| Tool Runtime V1 | 公共只读工具库（python / pytest / node / playwright）· 独立 run 目录 · 受控执行 | ✅ 已实现（ADR-0040） |
+| 实验线 | Human Demand → 多 Agent 协作生产 / 自主分工观察（`experiments/`） | 🚧 进行中 |
+
+**测试基线**：4816 passed / 2 skipped / 30 deselected
+
 ### ✅ Step 1：最小运行骨架（已完成）
 
 - [x] 项目结构、配置系统、虚拟环境
@@ -165,7 +182,7 @@ LLM 只能**提出意图**，永远不能**直接改账**。
 - [x] SQLite 数据库（4 张表）
 - [x] 启动横幅
 - [x] **命令行经济操作**（转账 / 余额 / 流水 / 对账）
-- [x] 2333 个 pytest 测试全绿（另有 30 个真实 API 测试单独跑）
+- [x] 4768 个 pytest 测试全绿（另有 30 个真实 API 测试单独跑）
 
 **验收标准**（已达成）：
 
@@ -1729,10 +1746,10 @@ UPDATE communication_messages
 
 | 阶段 | 内容 | 状态 |
 |---|---|---|
-| Task Workspace | 创建 / 授权 / 隔离 / 共享 | 待开始 |
-| 结算 | Payment / Escrow / Settlement（可引用 `TaskAgreementRecord`） | 待开始 |
+| Task Workspace | 创建 / 授权 / 隔离 / 共享 | ✅ Workspace Core v1 已实现（Permission ACL 仍 `FUTURE`） |
+| 结算 | Payment / Escrow / Settlement（可引用 `TaskAgreementRecord`） | 待开始（`FORBIDDEN NOW`） |
 | Step 5 | 完整经济交易 Demo（A 外包给 B，结算） | 待开始 |
-| Step 6 | Cost Calculator（把 token 用量接到经济系统） | 待开始 |
+| Step 6 | Cost Calculator（把 token 用量接到经济系统） | ✅ 已实现（`llm_calls.cost_ai` + `charge_llm_cost`） |
 
 ---
 
@@ -1906,21 +1923,16 @@ Agent 余额
 
 ## 运行测试
 
-```bash
-python -m pytest
-```
-
-更详细的输出：
+**用项目自带的 `./dev.sh test`**（它会自动用 `.venv`，并排除需要真实 API Key 的测试）：
 
 ```bash
-python -m pytest -v
+./dev.sh test                    # 全量（不含真实 API 测试）
+./dev.sh test -v                 # 详细输出
+./dev.sh test tests/test_ledger.py -v   # 只跑某一部分
 ```
 
-只跑某一部分：
-
-```bash
-python -m pytest tests/test_ledger.py -v
-```
+> ❌ **不要直接敲 `pytest`** —— 那可能用到系统 Python，报
+> 「No module named pytest」。原因见 [`COMMANDS.md`](COMMANDS.md) §0。
 
 ---
 
@@ -2002,7 +2014,7 @@ ai-economy/
 │   ├── database.py            ← SQLite 连接、事务、迁移
 │   └── models.py              ← 表结构定义
 │
-├── tests/                     ← 2333 个测试 + 30 个真实 API 测试
+├── tests/                     ← 4816 个测试 + 30 个真实 API 测试
 └── data/
     └── economy.db             ← SQLite 数据库（运行产物，不进 git）
 ```
