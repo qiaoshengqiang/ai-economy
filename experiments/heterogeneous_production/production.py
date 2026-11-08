@@ -54,7 +54,9 @@ sys.path.insert(0, str(ROOT))
 
 from actions import (  # noqa: E402
     ACTION_MESSAGE_SEND, ACTION_PUBLIC_QUERY, ACTION_WORKSPACE_READ,
-    ACTION_WORKSPACE_WRITE, ActionDispatcher,
+    ACTION_WORKSPACE_WRITE, ACTION_RUN_TOOL,
+    ACTION_PRIVATE_WORKING_MEMORY_UPDATE,
+    ActionDispatcher,
     MessageSendExecutor, PrivateDeleteExecutor, PrivateListExecutor,
     PrivateReadExecutor, PrivateWriteExecutor, PublicQueryExecutor,
     AssignAcceptanceExecutor, SharedContextReadExecutor,
@@ -330,6 +332,9 @@ PROMPT = """你是这次长期生产任务的一名参与者。这是**正式生
 
 ========== 你的私有工作记忆（只有你能读）==========
 {private_working_memory}
+
+========== 私有工作记忆维护反馈（环境事实）==========
+{maintenance_feedback}
 
 ========== 公共工作记忆（Task 范围，所有参与者可见）==========
 {working_memory}
@@ -1505,6 +1510,123 @@ def _send_fn(bridge: Any) -> Any:
     return _send
 
 
+#: Agent -> 尚未处理的维护信号（跨 turn 保留，直到它更新私有记忆）。
+_MAINTENANCE_SIGNALS: Dict[str, List[Dict[str, str]]] = defaultdict(list)
+
+#: 失败 code 里属于“返工/冲突”的那一类。
+_REWORK_CODES = frozenset({
+    "already_exists", "not_found", "locked_by_other", "bad_path",
+    "bad_mode", "concurrent_modification",
+})
+
+
+def _sig(kind: str, text: str) -> Dict[str, str]:
+    return {"kind": kind, "text": text}
+
+
+def _merge_signals(existing: List[Dict[str, str]],
+                   new: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    """按 (kind,text) 去重；保留最近 6 条。"""
+    seen = {(s.get("kind"), s.get("text")) for s in existing}
+    out = list(existing)
+    for item in new:
+        key = (item.get("kind"), item.get("text"))
+        if key not in seen:
+            out.append(item)
+            seen.add(key)
+    return out[-6:]
+
+
+def _maintenance_signals(public_mem: Any, private_mem: Any,
+                         run: Any = None) -> List[Dict[str, str]]:
+    """
+    从**真实事实**推导“可能需要维护私有记忆”的信号。
+
+    🔒 只产生信号，不强制动作；是否维护由 Agent 判断。
+    """
+    signals: List[Dict[str, str]] = []
+    public_items = getattr(public_mem, "items", {}) or {}
+    private_updated = getattr(private_mem, "updated_at", "") or ""
+    public_updated = getattr(public_mem, "updated_at", "") or ""
+    private_rev = getattr(private_mem, "revision", 0) or 0
+
+    # ① 版本落后：公共记忆已经更新，而私有记忆为空/更旧。
+    if public_items and (
+            private_rev == 0
+            or (private_updated and public_updated
+                and private_updated < public_updated)):
+        signals.append(_sig(
+            "version_lag",
+            f"公共工作记忆 revision={getattr(public_mem, 'revision', '?')} "
+            f"updated_at={public_updated or '?'}；"
+            f"你的私有工作记忆 revision={private_rev} "
+            f"updated_at={private_updated or '（空）'}。"))
+
+    # ② 计划 / 架构变化：公共 plan/architecture 比私有记忆新。
+    if private_updated:
+        for key, item in public_items.items():
+            kind = getattr(item, "kind", "") or ""
+            if kind == "plan" or "plan" in key or "architecture" in key:
+                item_updated = getattr(item, "updated_at", "") or ""
+                if item_updated and item_updated > private_updated:
+                    signals.append(_sig(
+                        "plan_changed",
+                        f"公共工作记忆的 {key}（{kind}）在 "
+                        f"{item_updated} 更新，晚于你的私有记忆 "
+                        f"{private_updated}。"))
+
+    if run is None:
+        return _merge_signals([], signals)
+
+    # ③ 工作失误 / 返工：失败动作、工具失败。
+    for intent, result in zip(getattr(run, "action_intents", []) or [],
+                              getattr(run, "action_results", []) or []):
+        if result is None:
+            continue
+        code = str((getattr(result, "metadata", None) or {}).get("code") or "")
+        action_type = getattr(intent, "action_type", "?")
+        if not getattr(result, "success", False):
+            kind = "rework" if code in _REWORK_CODES else "work_failure"
+            signals.append(_sig(
+                kind,
+                f"{action_type} 失败：{getattr(result, 'error', '') or code or '未知原因'}"))
+            continue
+        if action_type == ACTION_RUN_TOOL:
+            output = getattr(result, "output", None) or {}
+            if (output.get("ok") is False
+                    or output.get("exit_code") not in (0, None)):
+                signals.append(_sig(
+                    "work_failure",
+                    f"run_tool({output.get('tool')}) "
+                    f"exit_code={output.get('exit_code')} ok={output.get('ok')}"))
+
+    # ④ 认知失败：截断 / 空产出 / 信封修复。
+    if getattr(run, "output_status", None) == "EMPTY_CONTENT":
+        signals.append(_sig("cognition_failure", "上一轮 LLM 输出为空。"))
+    if getattr(run, "cognitive_status", None) == "TRUNCATED":
+        signals.append(_sig("cognition_failure", "上一轮认知输出被截断。"))
+    for seg in getattr(run, "segments", []) or []:
+        if getattr(seg, "repair_attempted", False):
+            signals.append(_sig(
+                "cognition_failure",
+                "上一轮触发了信封修复（结构化输出写坏）。"))
+            break
+
+    return _merge_signals([], signals)
+
+
+def _feedback_text(signals: List[Dict[str, str]]) -> str:
+    if not signals:
+        return "（本轮没有检测到需要维护的信号）"
+    lines = []
+    for s in signals:
+        lines.append(f"- [{s['kind']}] {s['text']}")
+    lines.append("")
+    lines.append("这些信号表示你对项目的理解可能前后不一致；"
+                 "是否更新私有工作记忆、更新什么，由你判断。")
+    return "\n".join(lines)
+
+
 def _working_memory(rt: Any) -> PublicWorkingMemoryService:
     service = getattr(rt, "public_working_memory", None)
     if service is not None:
@@ -2048,6 +2170,18 @@ def _turn(rt: Any, bridge: Any, st: Any, stage: Any, aid: str, rnd: int,
     except Exception as exc:                              # noqa: BLE001
         private_wm_text = (
             f"（私有工作记忆读取失败：{type(exc).__name__}: {exc}）")
+
+    # 维护反馈：当前版本差 + 上一轮以来积累的失误/返工/认知失败信号。
+    try:
+        public_mem_obj = _working_memory(rt).read(TASK_ID, aid)
+        private_mem_obj = _private_working_memory(rt).read(aid, TASK_ID)
+        live = _maintenance_signals(public_mem_obj, private_mem_obj)
+        feedback = _feedback_text(_merge_signals(
+            live, _MAINTENANCE_SIGNALS.get(aid, [])))
+    except Exception as exc:                              # noqa: BLE001
+        feedback = (f"（维护反馈读取失败：{type(exc).__name__}: {exc}）")
+    turn["maintenance_feedback"] = feedback
+
     prompt = _template.format(
         # 🔴 `demand` 可覆盖：**「人类命令」只递给被指定的那个 Agent**。
         demand=DEMAND if demand is None else demand,
@@ -2055,6 +2189,7 @@ def _turn(rt: Any, bridge: Any, st: Any, stage: Any, aid: str, rnd: int,
         completion=_completion_facts(rt),
         workspace=_workspace_facts(gw, aid),
         private_working_memory=private_wm_text,
+        maintenance_feedback=feedback,
         working_memory=working_memory_text,
         roster=_roster_facts(rt, aid),
         inbox=channels.render_inbox(inbox["received"]))
@@ -2128,6 +2263,31 @@ def _turn(rt: Any, bridge: Any, st: Any, stage: Any, aid: str, rnd: int,
         stats[aid]["calls"] += 1
         stats[aid]["empty"] += 1
         return turn
+
+    # ---- 维护反馈：消费 / 累积信号 ----------------------------------
+    # 如果 Agent 这一轮成功更新了私有记忆，视为它已经回应了反馈；
+    # 否则把新信号留到下一轮 prompt。
+    private_updated = any(
+        str(getattr(intent, "action_type", ""))
+        == ACTION_PRIVATE_WORKING_MEMORY_UPDATE
+        and result is not None and bool(getattr(result, "success", False))
+        for intent, result in zip(
+            getattr(run, "action_intents", []) or [],
+            getattr(run, "action_results", []) or []))
+    try:
+        if private_updated:
+            _MAINTENANCE_SIGNALS[aid].clear()
+        else:
+            pub_after = _working_memory(rt).read(TASK_ID, aid)
+            priv_after = _private_working_memory(rt).read(aid, TASK_ID)
+            post = _maintenance_signals(pub_after, priv_after, run)
+            _MAINTENANCE_SIGNALS[aid] = _merge_signals(
+                _MAINTENANCE_SIGNALS.get(aid, []), post)
+    except Exception as exc:                              # noqa: BLE001
+        turn["maintenance_feedback_error"] = (
+            f"{type(exc).__name__}: {exc}")
+    turn["maintenance_signals_after"] = list(
+        _MAINTENANCE_SIGNALS.get(aid, []))
 
     # 🔒 act() 内部经 run_cognition() → self.generate()，
     #    所以这次 LLM 调用的事实仍可从 Agent 上取到。
