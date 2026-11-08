@@ -144,6 +144,19 @@ prompt 的 `truncated=False` 矛盾。
 - **未回应请求置顶**：REQUEST/QUESTION 未被回复或未被
   `resource_create/handoff` 处理前，持续出现在 prompt 顶部。
 
+### 12. 规模与协作事实（2026-11-09）
+
+真实 run 里 A 选择 solo（A 生产 + E 验收），没有使用 C；prompt 有边界和
+成本信息，但没有“任务规模 / 模块化 / 协作”的规划事实。
+
+- 不写成硬约束（不要求“必须先估算”或“必须多用人”）；
+- intake 增加事实：AIEOS 的目标之一是低 AIC、短墙钟、高质量；
+  合理分工通常减少单 Agent 上下文负担、匹配 capabilities、减少返工；
+  当前调度是串行轮转，增加参与者也有协调成本；V1 无 Child Task；
+- `task_create` 示例带可选的“拆分计划：模块 A / 模块 B / 集成 / 验收”；
+- Task turn 增加“拆分与协作（可选方向）”：大块写入前判断是否拆成
+  文件/模块/步骤，独立模块可 handoff，是否拆分由 Agent 决定。
+
 ### 明确不做
 
 - 不由 AIC 余额自动换算 token 预算；

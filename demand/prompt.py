@@ -310,6 +310,18 @@ def build_intake_prompt(*, run: Any, runtime: Any, front_agent: str,
 - 最多参与者：{run.max_agents}
 - 当前没有 Task
 
+========== 系统目标与协作（环境事实） ==========
+- AI Economy OS 的目标之一：在保证质量的前提下，降低 AIC / token
+  消耗、缩短墙钟、提高有效产出。低成本、高效率、高质量都是目标。
+- 合理的分工与协作通常有助于减少单个 Agent 的上下文负担、匹配不同
+  capabilities、减少返工，从而改善成本和有效产出。
+- 当前 Task 调度是**串行轮转**（不是并行执行）：增加参与者会带来
+  协调成本；是否分工、用多少参与者，由你决定。
+- V1 没有 Child Task；Task 内的模块拆分通过文件/目录 +
+  `resource_create` / `resource_handoff` 完成。
+- Agent Directory 里的 capabilities 是公开事实，可用于判断谁适合
+  承担哪个模块。
+
 ========== 认知预算（观测，不是指令） ==========
 {budget}
 
@@ -345,12 +357,15 @@ def build_intake_prompt(*, run: Any, runtime: Any, front_agent: str,
 示例（只是形状，不要照抄内容）：
 {{"decision":"act","reasoning":"接受 Demand，创建根任务",
   "action":{{"type":"task_create","parameters":{{
-    "description":"...",
+    "description":"...\\n拆分计划：\\n- 模块 A：...\\n- 模块 B：...\\n- 集成：...\\n- 验收：...",
     "participants":["{front_agent}","agent_b"],
     "acceptance_criteria":["交付物存在且非空","核心功能可运行"],
     "producer":"{front_agent}",
     "acceptance_assignee":"agent_b"
   }}}}}}
+
+如果任务包含多个独立模块，可以在 `description` 里附上拆分计划，
+并让 participants 覆盖这些模块（示例只是形状，不规定必须几个人）。
 """
 
 
@@ -407,6 +422,14 @@ def build_task_prompt(
 （这只是事实，不规定你必须做什么；怎么分工由你们自己决定。）
 
 {pending_text}
+
+========== 拆分与协作（可选方向） ==========
+- 大块写入前，先判断它能否拆成独立文件 / 模块 / 步骤。
+- 独立模块可以通过 `resource_create` / `resource_handoff` 交给其他
+  participant；计划、分工、完成清单可以写进 `public_working_memory`。
+- 一个 producer + 一个巨大文件不是默认方案；串行墙钟通常随模块数增长。
+- AI Economy OS 的目标之一是低 AIC、短墙钟、高质量；合理分工通常
+  有助于减少单个 Agent 的上下文负担和返工。是否拆分由你决定。
 
 ========== Task Core（唯一生命周期权威） ==========
 - task_id: {task.task_id}

@@ -246,6 +246,12 @@ RunScheduler(
   `requested / actual / clipped / truncated`；
 - **工具边界**：`run_tool` 在一次性副本执行、写不回 Workspace；
   Playwright 先写 spec；验收人无法复跑时发 `VERIFY(passed=false)`；
+- **系统目标与协作事实**：AI Economy OS 的目标之一是低 AIC、短墙钟、
+  高质量；合理分工通常能减少单 Agent 上下文负担、匹配 capabilities、
+  减少返工；但当前调度是**串行轮转**，增加参与者也有协调成本；
+- **拆分与协作（可选方向）**：大块写入前判断能否拆成文件/模块/步骤；
+  独立模块可 `resource_handoff`；计划可写进 public working memory；
+  一个 producer + 一个巨大文件不是默认方案，是否拆分由 Agent 决定；
 - 可用动作与生命周期载荷示例。
 
 Agent 自己决定：谁生产、怎么分工、写什么文件、何时 SUBMIT/VERIFY/COMPLETE。

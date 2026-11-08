@@ -161,6 +161,35 @@ def test_intake_prompt_delivers_budget_facts():
     assert "truncated=True" in prompt
 
 
+def test_intake_prompt_states_efficiency_and_collaboration_facts():
+    """AIEOS 目标 + 分工收益/成本是事实，不是强制规划命令。"""
+    prompt = build_intake_prompt(
+        run=_run(), runtime=_runtime(), front_agent="agent_a",
+        budget_cap=32768)
+    assert "AI Economy OS 的目标之一" in prompt
+    assert "低成本、高效率、高质量" in prompt
+    assert "合理的分工与协作" in prompt
+    assert "串行轮转" in prompt
+    assert "Child Task" in prompt
+    assert "拆分计划" in prompt
+    assert "模块 A" in prompt
+    # 不把“先估算/必须多人”写成硬约束
+    assert "必须在 reasoning 里估算" not in prompt
+    assert "必须使用多个" not in prompt
+
+
+def test_task_prompt_states_decomposition_as_optional_direction():
+    prompt = build_task_prompt(
+        run=_run(), task=_task(), runtime=_runtime(),
+        agent_id="agent_a", inbox=[], budget_cap=32768)
+    assert "拆分与协作（可选方向）" in prompt
+    assert "大块写入前" in prompt
+    assert "resource_handoff" in prompt
+    assert "public_working_memory" in prompt
+    assert "巨大文件不是默认方案" in prompt
+    assert "是否拆分由你决定" in prompt
+
+
 def test_work_unit_pressure_prompts_rearchitecture():
     """预算/输出反复撞上限时，必须给 Agent 一个“拆小”的明确信号。"""
     feedback = {
