@@ -177,7 +177,7 @@ case "$COMMAND" in
         echo "    ./dev.sh test [pytest 参数]    跑测试"
         echo "    ./dev.sh run  [main.py 参数]   启动系统"
         echo "    ./dev.sh demand --file <提示词>  人类 Demand → Agent 自建 Task"
-        echo "    ./dev.sh work --demand <输入>    Human → Front → Solo Work（无消息/经济）"
+        echo "    ./dev.sh work --demand <输入>    Human → Front → Work（Solo / Team）"
         echo "    ./dev.sh clean                 清除数据库和日志"
         echo "    ./dev.sh shell                 进入交互式 Python"
         echo "    ./dev.sh doctor                检查环境"

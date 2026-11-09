@@ -1,13 +1,14 @@
 # Life / Work 分层架构
 
-> **状态：目标架构 `DESIGNED`；Solo / Reopen / Work 基础 / Front 契约 `CURRENT`（2026-11-09）**
+> **状态：目标架构 `DESIGNED`；Solo / Team / Reopen / Work / Front 契约 `CURRENT`（2026-11-09）**
 >
 > 本文描述**目标架构**，不是全部已实现。
 > 当前已实现：Task Core · Workspace Core v1 · Memory · Draft Buffer Phase 1 ·
 > Tool Runtime · Demand Entry V1 · **Solo 自 SUBMIT/VERIFY/COMPLETE** ·
-> **COMPLETED Reopen / Iteration V1** · **SoloWorkRuntime + Work 精简 prompt**
-> · **Front 意图 / Brief / Result 契约** · **AgentAvailability / TeamRegistry**。
-> Team Runtime（多 Agent 执行）与 Front 调度接线仍为 `DESIGNED`。
+> **COMPLETED Reopen / Iteration V1** ·
+> **SoloWorkRuntime + TeamWorkRuntime + Work 精简 prompt** ·
+> **Front 意图 / Brief / Result 契约** · **AgentAvailability / TeamRegistry**。
+> Front 的真实邀请协议 / 调度排队仍为 `DESIGNED`。
 >
 > 相关 ADR：
 > [ADR-0055](adr/0055-life-work-layering-and-front-agent.md) ·
@@ -238,13 +239,44 @@ Draft
 Result
 ```
 
-> ⚠️ `OPEN`：Work 层无消息后，Worker 遇到阻塞如何表达？
-> 候选：
-> 1. 写入 Task / Shared Context 的结构化阻塞项；
-> 2. Team Lead 将阻塞作为 Result 返回 Front；
-> 3. 允许退出 Work 层，在 Life 层发消息（但这会重新引入协调成本）。
->
-> 本阶段先不定；实现前需要一个明确选择。
+Work 层用**结构化动作**代替消息：
+
+```text
+work_item_done      成员声明某个 item 完成
+work_item_blocked   成员声明某个 item 被阻塞（带 reason）
+work_qa_verdict     QA 给出整体结论
+work_complete       Leader 汇总后完成 Task
+```
+
+阻塞不会变成一个“消息”，而是留在 runtime 的 item 状态与事件里；
+Leader 汇总时能看到 blocked item 并决定修复 / 调整 / 收尾。
+
+### 5.4 Team 工作方式（`CURRENT`）
+
+```text
+Leader（Task Creator）
+  ├─ 计划 / 架构
+  ├─ 把工作拆成 items，明确 assigned_to
+  ├─ 可选：指定 QA（也可以不指定）
+  └─ 汇总 / 接线 / 收尾
+        ↓
+多个成员并行执行自己的 items
+        ↓
+work_item_done / work_item_blocked
+        ↓
+（可选）QA：work_qa_verdict
+        ↓
+Leader：work_complete
+```
+
+- Task 就是团队容器，不新增 Team 实体；
+- Leader 是 `creator`，并在 V1 中同时是 `contractor`（最终收尾人）；
+- 成员只看到自己的 item，不看到其他人的完整上下文；
+- Work 层没有消息机制，成员用结构化动作回报；
+- **QA 是否设置由 Leader 决定**：
+  - 设置 QA：QA 必须通过，Leader 才能完成；
+  - 不设置 QA：Leader 汇总后自己完成（显式 Team 例外）；
+- 旧消息路径 `TaskExecutionService` 的 Team `producer ≠ acceptor` 规则不变。
 
 ---
 
@@ -263,7 +295,13 @@ Human 后续输入由 Front 识别为返工或其他意图
 ```
 
 这是 `producer ≠ acceptor` 的**显式 Solo 例外**。
-Team Task 仍然保留 `producer ≠ acceptor`。
+
+Team Task 的 Work 路径见 §5.4：
+
+- Leader 决定是否设置 QA；
+- 设置 QA 时必须通过；
+- 不设置 QA 时 Leader 负责汇总收尾；
+- 旧消息路径 `TaskExecutionService` 的 `producer ≠ acceptor` 保持不变。
 
 ### 6.2 流程
 
@@ -469,6 +507,8 @@ front/runtime.py     FrontAgentRuntime：direct_reply / handoff / rework / follo
 front/parser.py      解析模型输出；rework 只接受 COMPLETED Task
 
 work/runtime.py      SoloWorkRuntime：精简 prompt + Work 动作 + work_complete
+work/team_runtime.py TeamWorkRuntime：Leader 计划 / 并行 / 可选 QA / 汇总收尾
+work/plan.py         WorkPlan / WorkItem / Leader 计划解析
 work/lifecycle.py    无消息的 START/SUBMIT/VERIFY/COMPLETE/Reopen（写 task_executions）
 work/actions.py      只注册 Workspace/Draft/Tool/Memory；无消息/经济/验收指派
 work/prompt.py       最小 Work prompt
@@ -485,9 +525,9 @@ work/cli.py          ./dev.sh work：Human → Front → Solo Task → Work
 | 阶段 | 内容 | 状态 |
 |---|---|---|
 | 0 | 本文档 + ADR-0055/0056 | **已完成** |
-| 1 | Front 意图 / Brief / Result 契约 | **已实现**（`front/`）；CLI 接线为 `DESIGNED` |
-| 2 | Solo Work runtime + 精简 prompt / 动作集 | **已实现**（`work/`）；Team 多 Agent 执行为 `DESIGNED` |
-| 3 | AgentAvailability + 并行 3 Team 注册表 | **已实现**（`work/availability.py` / `team_registry.py`）；Front 调度接线为 `DESIGNED` |
+| 1 | Front 意图 / Brief / Result 契约 | **已实现**（`front/`）+ `./dev.sh work` |
+| 2 | Solo / Team Work runtime + 精简 prompt / 动作集 | **已实现**（`work/runtime.py` / `work/team_runtime.py`） |
+| 3 | AgentAvailability + 并行 3 Team 注册表 | **已实现**（`work/availability.py` / `team_registry.py`）；Front 排队仍 `DESIGNED` |
 | 4 | Solo 自 SUBMIT / VERIFY / COMPLETE | **已实现** |
 | 5 | Reopen / Iteration V1 | **已实现**（FROZEN/陈旧锁为 `FUTURE`） |
 | 6 | 生活层邀请协议 | `FUTURE` |
@@ -496,13 +536,12 @@ work/cli.py          ./dev.sh work：Human → Front → Solo Task → Work
 
 ## 11. 未决问题
 
-1. Work 层无消息时，阻塞如何表达？
-2. Front 意图识别失败/低置信度时，如何向 Human 澄清？
-3. `COMPLETED → Workspace FROZEN` 的自动联动。
-4. Draft 持久化位置：私有 Workspace 文件 vs 私有 DB 表。
-5. Front 如何选择 Team Lead：直接指定 / 按能力 / 按负载？
-6. Team Lead 自己 Solo 时，是否需要 `SUBMITTED` 之外的 `DELIVERED` 状态？
-7. 多 Team 共用同一个 Agent 的短/长期记忆时，是否需要并发锁？
+1. Front 意图识别失败/低置信度时，如何向 Human 澄清？
+2. `COMPLETED → Workspace FROZEN` 的自动联动。
+3. Front 如何选择 Team Lead：直接指定 / 按能力 / 按负载？
+4. 多 Team 共用同一个 Agent 的短/长期记忆时，是否需要并发锁？
+5. QA 多次不通过时，是继续修复 / 重新计划 / 交给 Human？当前 V1 是修复一轮后再 QA，仍失败则不完成。
+6. Team Leader 在运行中重新计划（增删 item）是否走 `work_plan_update`；当前 V1 计划在开始时固定。
 8. Reopen 后陈旧 Workspace 锁的治理策略。
 
 ---

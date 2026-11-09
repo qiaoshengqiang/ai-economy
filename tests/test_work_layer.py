@@ -184,6 +184,9 @@ def _dispatcher():
         _FakeRuntime(), task=task, drafts=drafts,
         promote_drafts=lambda *a, **k: {"ok": True, "results": []},
         complete_fn=lambda **k: {"ok": False},
+        item_done_fn=lambda **k: {"ok": False},
+        item_blocked_fn=lambda **k: {"ok": False},
+        qa_verdict_fn=lambda **k: {"ok": False},
     )
 
 

@@ -48,7 +48,10 @@ Solo Task:
 - 不引入 QA Agent；
 - 不要求 Front 替人类做验收；
 - 这是对 `producer ≠ acceptor` 的**显式 Solo 例外**；
-- Team Task 仍然保留 `producer ≠ acceptor`，承接方不能自验。
+- Team Task 的 Work 路径中，Leader 决定是否设置 QA：
+  - 设置 QA → QA 必须通过；
+  - 不设置 QA → Leader 汇总后自己完成；
+- 旧消息路径 `TaskExecutionService` 的 Team `producer ≠ acceptor` 不变。
 
 > 为什么不让 Front 验收：Front 是入口和路由，不是验收责任方；
 > 让它验收会把“人类入口”变成“隐藏 QA”，职责再次混在一起。
@@ -123,7 +126,7 @@ TRANSITIONS[COMPLETED] = { IN_PROGRESS }
 
 - 不让 Front 创建 Task 或直接改 Task 状态；
 - 不在 Solo 中要求 Human 接受；
-- 不让 Team Task 的承接方自验；
+- 不让旧消息路径的 Team 承接方自验；Work Team 路径由 Leader 决定 QA；
 - 不把 Reopen 当成新 Task；
 - 不把锁自动过期/自动释放混进 Reopen；
 - 不在本轮实现 Workspace FROZEN。
@@ -135,7 +138,7 @@ TRANSITIONS[COMPLETED] = { IN_PROGRESS }
 - Solo 有明确的 Agent 自完成路径；
 - Human 不再承担 Task 操作负担；
 - 返工保留原 Task 与历史；
-- Team 的 `producer ≠ acceptor` 仍然成立；
+- 旧消息路径 Team 的 `producer ≠ acceptor` 仍然成立；Work Team 的 QA 由 Leader 决定；
 - `COMPLETED` 的语义与 `TASK_WORKSPACE.md` / ADR-0022 对齐。
 
 ### 负面 / 代价

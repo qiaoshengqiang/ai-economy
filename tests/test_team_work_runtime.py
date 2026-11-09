@@ -1,0 +1,318 @@
+"""
+TeamWorkRuntime —— Leader 计划 / 并行 / QA / 汇总
+==================================================
+
+验证用户定义的团队工作方式：
+
+    Leader 计划架构 → 分配 items → 多 Agent 并行 →
+    (可选) QA → Leader 汇总收尾
+
+重点：
+
+    · 没有 QA 时 Leader 完成；
+    · 有 QA 时 QA 通过才能完成；
+    · QA 不通过时 Task 不能 COMPLETED；
+    · 成员只拿到自己的 item；
+    · Work 层没有消息 / 经济动作。
+"""
+
+from __future__ import annotations
+
+import json
+import threading
+from types import SimpleNamespace
+
+import pytest
+
+from actions import ActionIntent
+from core.task import Task, TaskMode, TaskStatus
+from core.task_store import TaskStore
+from work.actions import FORBIDDEN_WORK_ACTION_TYPES, WORK_ACTION_TYPES
+from work.plan import parse_work_plan
+from work.team_runtime import TeamWorkRuntime
+
+
+# ============================================================
+# fakes
+# ============================================================
+class _Gateway:
+    def list(self, ws_id, path, agent_id):
+        return SimpleNamespace(success=True, result={"entries": []})
+
+
+class _ScriptedAgent:
+    has_brain = True
+    workspace = None
+
+    def __init__(self, *, think=None, actions=None):
+        self._think = think
+        self._actions = list(actions or [])
+
+    def think(self, prompt):
+        if callable(self._think):
+            return self._think(prompt)
+        return self._think or ""
+
+    def act(self, *, messages, dispatcher, **kwargs):
+        action = None
+        if self._actions:
+            action = self._actions.pop(0)
+        if action is None:
+            return SimpleNamespace(
+                segments=[SimpleNamespace(tokens=3, content="", is_truncated=False)],
+                action_intents=[], action_results=[])
+        if callable(action):
+            return action(dispatcher)
+        intent = ActionIntent(
+            action_type=action["type"],
+            parameters=action.get("parameters") or {},
+            agent_id=action.get("agent_id", ""),
+        )
+        result = dispatcher.dispatch(intent)
+        return SimpleNamespace(
+            segments=[SimpleNamespace(tokens=3, content="", is_truncated=False)],
+            action_intents=[intent], action_results=[result])
+
+
+def _done(item_id, agent_id):
+    return {
+        "type": "work_item_done",
+        "agent_id": agent_id,
+        "parameters": {"item_id": item_id, "summary": f"{item_id} done"},
+    }
+
+
+def _verdict(passed):
+    return {
+        "type": "work_qa_verdict",
+        "agent_id": "agent_c",
+        "parameters": {"passed": passed, "feedback": "" if passed else "需要修"},
+    }
+
+
+def _complete():
+    return {
+        "type": "work_complete",
+        "agent_id": "agent_a",
+        "parameters": {
+            "result_ref": "team-result-v1",
+            "summary": "团队完成并汇总",
+        },
+    }
+
+
+class _TeamRuntime:
+    def __init__(self, db, task, agents):
+        self.tasks = TaskStore(db)
+        self.tasks.save(task)
+        self.economy = SimpleNamespace(agent=lambda aid: agents.get(aid))
+        self.workspace_gateway = _Gateway()
+        self.alignment = None
+        self.private_working_memory = SimpleNamespace(
+            render=lambda aid, tid: "")
+        self.private_short_term_memory = SimpleNamespace(
+            render=lambda aid: "")
+        self.private_long_term_memory = SimpleNamespace(
+            render_top=lambda aid: "")
+        self.tool_runner = None
+
+
+def _task(participants=("agent_a", "agent_b", "agent_c")):
+    task = Task.create(
+        task_id="T-TEAM-RUN",
+        creator="agent_a",
+        description="做一个两模块项目",
+        workspace_id="",
+        participants=list(participants),
+        mode=TaskMode.TEAM,
+    )
+    task.claim_producer("agent_a")
+    return task
+
+
+def _plan(qa=None):
+    return json.dumps({
+        "items": [
+            {"item_id": "item_1", "assigned_to": "agent_b",
+             "goal": "模块 B"},
+            {"item_id": "item_2", "assigned_to": "agent_c",
+             "goal": "模块 C"},
+        ],
+        "qa": qa,
+        "directories": {},
+    })
+
+
+# ============================================================
+# 1. Plan parser
+# ============================================================
+class TestWorkPlan:
+    def test_parse_plan(self):
+        plan, error = parse_work_plan(
+            _plan(qa="agent_c"),
+            participants=["agent_a", "agent_b", "agent_c"])
+        assert error == ""
+        assert plan is not None
+        assert [item.agent_id for item in plan.items] == ["agent_b", "agent_c"]
+        assert plan.qa == "agent_c"
+
+    def test_reject_unknown_assignee(self):
+        plan, error = parse_work_plan(
+            json.dumps({"items": [
+                {"assigned_to": "ghost", "goal": "x"}]}),
+            participants=["agent_a"])
+        assert plan is None
+        assert "unknown_agent" in error
+
+    def test_reject_unknown_qa(self):
+        plan, error = parse_work_plan(
+            _plan(qa="ghost"),
+            participants=["agent_a", "agent_b", "agent_c"])
+        assert plan is None
+        assert "qa_unknown_agent" in error
+
+    def test_reject_duplicate_item_id(self):
+        plan, error = parse_work_plan(
+            json.dumps({"items": [
+                {"item_id": "x", "assigned_to": "agent_a", "goal": "1"},
+                {"item_id": "x", "assigned_to": "agent_b", "goal": "2"},
+            ]}),
+            participants=["agent_a", "agent_b"])
+        assert plan is None
+        assert "duplicate_item_id" in error
+
+
+# ============================================================
+# 2. Team runtime
+# ============================================================
+class TestTeamRuntime:
+    def test_workers_parallel_and_leader_completes(self, db):
+        barrier = threading.Barrier(2, timeout=5)
+
+        def worker_action(dispatcher, item_id, agent_id):
+            barrier.wait()
+
+            def act(_dispatcher):
+                intent = ActionIntent(
+                    action_type="work_item_done",
+                    parameters={"item_id": item_id,
+                                "summary": f"{item_id} done"},
+                    agent_id=agent_id,
+                )
+                result = _dispatcher.dispatch(intent)
+                return SimpleNamespace(
+                    segments=[SimpleNamespace(
+                        tokens=3, content="", is_truncated=False)],
+                    action_intents=[intent], action_results=[result])
+            return act(dispatcher)
+
+        agents = {
+            "agent_a": _ScriptedAgent(
+                think=_plan(), actions=[_complete()]),
+            "agent_b": _ScriptedAgent(
+                actions=[lambda d: worker_action(d, "item_1", "agent_b")]),
+            "agent_c": _ScriptedAgent(
+                actions=[lambda d: worker_action(d, "item_2", "agent_c")]),
+        }
+        task = _task()
+        runtime = _TeamRuntime(db, task, agents)
+
+        result = TeamWorkRuntime(
+            runtime, task, max_worker_turns=2,
+            max_integration_turns=2,
+        ).run()
+
+        assert result.ok is True, result.error
+        assert runtime.tasks.get(task.task_id).status == TaskStatus.COMPLETED
+        assert runtime.tasks.count_executions(task.task_id) == 4
+        assert any(event["event"] == "team_item_done"
+                   for event in result.events)
+        assert result.summary == "团队完成并汇总"
+
+    def test_qa_must_pass(self, db):
+        agents = {
+            "agent_a": _ScriptedAgent(
+                think=_plan(qa="agent_c"), actions=[_complete()]),
+            "agent_b": _ScriptedAgent(actions=[_done("item_1", "agent_b")]),
+            "agent_c": _ScriptedAgent(actions=[
+                _done("item_2", "agent_c"), _verdict(True)]),
+        }
+        task = _task()
+        runtime = _TeamRuntime(db, task, agents)
+
+        result = TeamWorkRuntime(
+            runtime, task, max_worker_turns=2,
+            max_integration_turns=2,
+        ).run()
+
+        assert result.ok is True, result.error
+        assert runtime.tasks.get(task.task_id).status == TaskStatus.COMPLETED
+
+    def test_qa_failure_blocks_completion(self, db):
+        agents = {
+            "agent_a": _ScriptedAgent(
+                think=_plan(qa="agent_c"), actions=[_complete()]),
+            "agent_b": _ScriptedAgent(actions=[_done("item_1", "agent_b")]),
+            "agent_c": _ScriptedAgent(
+                actions=[_done("item_2", "agent_c"),
+                         _verdict(False), _verdict(False)]),
+        }
+        task = _task()
+        runtime = _TeamRuntime(db, task, agents)
+
+        result = TeamWorkRuntime(
+            runtime, task, max_worker_turns=2,
+            max_integration_turns=1,
+        ).run()
+
+        assert result.ok is False
+        assert runtime.tasks.get(task.task_id).status != TaskStatus.COMPLETED
+
+    def test_invalid_plan_fails_without_completing(self, db):
+        agents = {
+            "agent_a": _ScriptedAgent(think="not json", actions=[]),
+            "agent_b": _ScriptedAgent(),
+            "agent_c": _ScriptedAgent(),
+        }
+        task = _task()
+        runtime = _TeamRuntime(db, task, agents)
+
+        result = TeamWorkRuntime(runtime, task).run()
+
+        assert result.ok is False
+        assert "计划" in result.error
+        assert runtime.tasks.get(task.task_id).status != TaskStatus.COMPLETED
+
+    def test_worker_item_ownership(self, db):
+        """成员不能替别人标记完成。"""
+        agents = {
+            "agent_a": _ScriptedAgent(
+                think=_plan(), actions=[_complete()]),
+            "agent_b": _ScriptedAgent(actions=[
+                _done("item_2", "agent_b")]),  # item_2 属于 agent_c
+            "agent_c": _ScriptedAgent(actions=[_done("item_2", "agent_c")]),
+        }
+        task = _task()
+        runtime = _TeamRuntime(db, task, agents)
+
+        result = TeamWorkRuntime(
+            runtime, task, max_worker_turns=1,
+            max_integration_turns=2,
+        ).run()
+
+        assert any(
+            event["event"] == "team_worker_finished"
+            and event.get("agent_id") == "agent_b"
+            for event in result.events)
+
+
+# ============================================================
+# 3. 动作边界
+# ============================================================
+def test_work_action_set_has_no_messages_or_economy():
+    for banned in ("message_send", "task_create", "assign_acceptance",
+                   "public_working_memory_read"):
+        assert banned not in WORK_ACTION_TYPES
+    assert "work_item_done" in WORK_ACTION_TYPES
+    assert "work_qa_verdict" in WORK_ACTION_TYPES
+    assert "work_complete" in WORK_ACTION_TYPES

@@ -30,7 +30,7 @@
 | | |
 |---|---|
 | **阶段** | `Workspace Core V1 已冻结 · Agent Core V1 已实现 · Tool Runtime V1 已实现 · Vision V1 已实现 · Demand Entry V1 已实现 · 观察实验` |
-| **测试基线** | 以 `./dev.sh test` 当前输出为准（最近：**5271 passed, 2 skipped, 30 deselected**） |
+| **测试基线** | 以 `./dev.sh test` 当前输出为准（最近：**5281 passed, 2 skipped, 30 deselected**） |
 | **协议版本** | `protocol_version = "1"` |
 | **命令数** | 25（`./dev.sh` 查看全部） |
 | **数据库表** | **28** |

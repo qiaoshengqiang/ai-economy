@@ -16,9 +16,14 @@ Work 层的入口是 `WorkTeamRuntime`（Solo 先实现）；Task 就是团队�
 """
 
 from work.lifecycle import WorkLifecycle, WorkLifecycleError
+from work.plan import WorkItem, WorkPlan, parse_work_plan
 from work.roles import WorkRole, WorkResult, WorkContext
+from work.runtime import SoloWorkRuntime
+from work.team_runtime import TeamWorkRuntime
 
 __all__ = [
     "WorkLifecycle", "WorkLifecycleError",
+    "WorkItem", "WorkPlan", "parse_work_plan",
     "WorkRole", "WorkResult", "WorkContext",
+    "SoloWorkRuntime", "TeamWorkRuntime",
 ]

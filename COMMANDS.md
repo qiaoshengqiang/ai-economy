@@ -62,8 +62,11 @@ python xxx          ❌ 错误 —— 会用到系统 Python，报 "No module na
 # 人类 Demand → Agent 自己建 Task → 串行执行
 ./dev.sh demand --file /tmp/prompt.txt --minutes 20 --budget 20
 
-# Human → Front Agent → Team Lead 建 SOLO Task → Work 层执行
+# Human → Front Agent → Team Lead 建 Task → Work 层执行
 ./dev.sh work --demand "写一个 hello.txt"
+
+# Team：Leader 计划 / 成员并行 / 汇总（QA 由 Leader 决定）
+./dev.sh work --team --members agent_b,agent_c --demand "做一个两模块项目"
 
 # 看系统环境是否正常（出问题时先跑这个）
 ./dev.sh doctor
@@ -1141,7 +1144,7 @@ economy:
 | `./dev.sh` | 显示帮助 |
 | `./dev.sh test [参数]` | 跑测试（参数透传给 pytest） |
 | `./dev.sh run [参数]` | 启动系统（参数透传给 main.py） |
-| `./dev.sh work --demand <输入>` | Human → Front → Solo Work（无消息 / 无经济） |
+| `./dev.sh work --demand <输入>` | Human → Front → Work（Solo / Team；无消息 / 无经济） |
 | `./dev.sh clean` | 删除数据库和日志 |
 | `./dev.sh shell` | 进入交互式 Python |
 | `./dev.sh doctor` | 检查环境 |

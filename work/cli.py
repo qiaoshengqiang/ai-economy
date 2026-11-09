@@ -45,12 +45,13 @@ from demand.task_creation import TaskCreationService              # noqa: E402
 from front import FrontAgentRuntime, FrontIntent                  # noqa: E402
 from work.availability import AgentAvailability                   # noqa: E402
 from work.runtime import SoloWorkRuntime                          # noqa: E402
+from work.team_runtime import TeamWorkRuntime                     # noqa: E402
 
 
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog="work",
-        description="Human → Front Agent → Solo Work（无消息 / 无经济）")
+        description="Human → Front Agent → Work（Solo / Team；无消息 / 无经济）")
     src = ap.add_mutually_exclusive_group(required=True)
     src.add_argument("--demand", help="直接给一段 Human 输入")
     src.add_argument("--file", help="从文本文件读 Human 输入")
@@ -58,10 +59,14 @@ def build_parser() -> argparse.ArgumentParser:
                     help="Front Agent（默认 agent_a）")
     ap.add_argument("--lead", default=None,
                     help="Team Lead；默认选第一个非 Front 的 Agent")
+    ap.add_argument("--team", action="store_true",
+                    help="创建 TEAM Task（Leader 计划 / 成员并行 / 汇总）")
+    ap.add_argument("--members", default="",
+                    help="团队成员 agent_id，逗号分隔；配合 --team")
     ap.add_argument("--budget", type=float, default=10.0,
                     help="生产观测预算（AIC），默认 10")
     ap.add_argument("--max-turns", type=int, default=12,
-                    help="Solo Work 最大轮数，默认 12")
+                    help="Work 最大轮数（Solo / Team 各自使用），默认 12")
     ap.add_argument("--cognitive-budget", type=int, default=32768,
                     help="单次响应硬上限（tokens），默认 32768")
     ap.add_argument("--db", default=None,
@@ -114,6 +119,15 @@ def _choose_lead(runtime: Any, front_agent: str,
         if aid and aid != front_agent:
             return aid
     return None
+
+
+def _parse_members(raw: str) -> List[str]:
+    out: List[str] = []
+    for item in str(raw or "").split(","):
+        aid = item.strip()
+        if aid and aid not in out:
+            out.append(aid)
+    return out
 
 
 def _description_from_brief(brief: Any) -> str:
@@ -203,16 +217,23 @@ def main(argv=None) -> int:
         if task is None:
             print(f"找不到任务 {decision.task_id}")
             return 1
-        if task.mode != "SOLO":
-            print("（Team Task 的返工路由尚未接入；需要 TeamRuntime）")
-            return 0
-        solo = SoloWorkRuntime(
-            runtime, task,
-            max_turns=int(args.max_turns),
-            cognitive_budget=int(args.cognitive_budget),
-        )
-        work_result = solo.reopen_and_run(
-            reason=decision.reply or human_text)
+        if task.mode == "TEAM":
+            team = TeamWorkRuntime(
+                runtime, task,
+                max_worker_turns=int(args.max_turns),
+                max_integration_turns=int(args.max_turns),
+                cognitive_budget=int(args.cognitive_budget),
+            )
+            work_result = team.reopen_and_run(
+                reason=decision.reply or human_text)
+        else:
+            solo = SoloWorkRuntime(
+                runtime, task,
+                max_turns=int(args.max_turns),
+                cognitive_budget=int(args.cognitive_budget),
+            )
+            work_result = solo.reopen_and_run(
+                reason=decision.reply or human_text)
         print(front.format_result(
             front.result_from_work(work_result)))
         return 0 if work_result.ok else 1
@@ -223,11 +244,19 @@ def main(argv=None) -> int:
         print("❌ 没有可用的 Team Lead（需要至少一个非 Front 的 Agent）")
         return 2
 
+    members = _parse_members(args.members) if args.team else []
+    participants = [lead] + [m for m in members if m != lead]
+
     availability = AgentAvailability()
-    availability.register(lead)
-    if not availability.try_acquire(lead):
-        print(f"❌ Team Lead {lead} 当前不是 IDLE")
-        return 2
+    reserved: List[str] = []
+    for aid in participants:
+        availability.register(aid)
+        if not availability.try_acquire(aid):
+            for done in reserved:
+                availability.release(done)
+            print(f"❌ Agent {aid} 当前不是 IDLE")
+            return 2
+        reserved.append(aid)
 
     try:
         run = SimpleNamespace(
@@ -238,15 +267,27 @@ def main(argv=None) -> int:
             workspace_plan=None,
             status="INIT",
         )
-        creation = TaskCreationService(runtime, run, max_agents=1)
+        mode = "TEAM" if args.team else "SOLO"
+        workspace_plan = None
+        if args.team:
+            workspace_plan = {
+                "root_owner": lead,
+                "directories": {
+                    f"work/{aid}": aid for aid in participants if aid != lead
+                },
+                "files": {},
+            }
+        creation = TaskCreationService(
+            runtime, run, max_agents=max(1, len(participants)))
         created = creation.create(
             creator=lead,
             description=_description_from_brief(decision.brief),
-            participants=[lead],
+            participants=participants,
             acceptance_criteria=_criteria_from_brief(decision.brief),
             producer=lead,
             acceptance_assignee=None,
-            mode="SOLO",
+            workspace_plan=workspace_plan,
+            mode=mode,
         )
         if not created.get("ok"):
             print(f"❌ Task 创建失败：{created.get('message') or created}")
@@ -257,18 +298,29 @@ def main(argv=None) -> int:
             print("❌ Task 创建后无法读取")
             return 1
 
-        solo = SoloWorkRuntime(
-            runtime, task,
-            brief=decision.brief.to_dict(),
-            max_turns=int(args.max_turns),
-            cognitive_budget=int(args.cognitive_budget),
-        )
-        work_result = solo.run()
+        if args.team:
+            team = TeamWorkRuntime(
+                runtime, task,
+                brief=decision.brief.to_dict(),
+                max_worker_turns=int(args.max_turns),
+                max_integration_turns=int(args.max_turns),
+                cognitive_budget=int(args.cognitive_budget),
+            )
+            work_result = team.run()
+        else:
+            solo = SoloWorkRuntime(
+                runtime, task,
+                brief=decision.brief.to_dict(),
+                max_turns=int(args.max_turns),
+                cognitive_budget=int(args.cognitive_budget),
+            )
+            work_result = solo.run()
         print(front.format_result(
             front.result_from_work(work_result)))
         return 0 if work_result.ok else 1
     finally:
-        availability.release(lead)
+        for aid in reserved:
+            availability.release(aid)
 
 
 if __name__ == "__main__":

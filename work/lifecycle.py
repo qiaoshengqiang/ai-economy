@@ -92,17 +92,19 @@ class WorkLifecycle:
         actor: str,
         passed: bool = True,
         feedback: str = "",
+        allow_team: bool = False,
     ) -> Task:
         """
         SUBMITTED → VERIFIED / IN_PROGRESS。
 
-        🔒 Work 层的 VERIFY 只允许 Solo 承接方自己发。
-           Team Task 的 VERIFY 仍走 `TaskExecutionService` 的角色规则。
+        Solo：承接方自己 VERIFY。
+        Team：Leader 汇总后由 Work runtime 调用（`complete_team`），
+              是否设置 QA 由 Leader 决定；QA 结论在 runtime 层校验。
         """
-        if task.mode != TaskMode.SOLO:
+        if task.mode != TaskMode.SOLO and not allow_team:
             raise WorkLifecycleError(
-                "WorkLifecycle.verify 只用于 Solo Task；"
-                "Team Task 继续使用 TaskExecutionService。")
+                "WorkLifecycle.verify 默认只用于 Solo Task；"
+                "Team Task 通过 complete_team() 进入 Work 完成路径。")
         self._require_status(task, TaskStatus.SUBMITTED, "VERIFY")
         self._require_contractor(task, actor, "VERIFY")
 
@@ -174,6 +176,77 @@ class WorkLifecycle:
             self.verify(
                 task, actor=actor, passed=True,
                 feedback=feedback or "Solo 自验收：按 DoD 完成")
+        if task.status == TaskStatus.VERIFIED:
+            self.complete(task, actor=actor)
+
+        return {
+            "ok": True,
+            "already_completed": False,
+            "status": task.status,
+            "iteration": task.iteration,
+            "summary": result.summary,
+        }
+
+    # ------------------------------------------------------------
+    # Team 完成（Leader 汇总 / 可选 QA）
+    # ------------------------------------------------------------
+    def complete_team(
+        self,
+        task: Task,
+        *,
+        actor: str,
+        result: TaskResultRef,
+        qa_passed: Optional[bool] = None,
+        feedback: str = "",
+    ) -> Dict[str, Any]:
+        """
+        Team Task 的 Work 完成路径（Leader 汇总后调用）。
+
+        🔒 规则：
+
+            · 只有 Task Creator（Leader）可以完成；
+            · Leader 必须是 contractor（Team runtime 在开始时确定）；
+            · 如果 Leader 选择了 QA，`qa_passed` 必须为 True；
+            · 没有 QA 时，Leader 负责最终收尾并完成；
+            · 仍然按 IN_PROGRESS → SUBMITTED → VERIFIED → COMPLETED 走。
+
+        这是 Work 层的显式路径，不改变旧消息路径
+        `TaskExecutionService` 的 Team 角色规则。
+        """
+        if task.mode != TaskMode.TEAM:
+            raise WorkLifecycleError(
+                f"任务 {task.task_id} 是 {task.mode}，"
+                f"不能用 Team 完成路径。")
+        if actor != task.creator:
+            raise WorkLifecycleError(
+                f"只有 Team Leader（{task.creator}）可以完成 Task；"
+                f"收到 {actor}。")
+        if qa_passed is False:
+            raise WorkLifecycleError(
+                "QA 未通过，不能完成 Team Task。请先修复并重新验收。")
+
+        if task.status == TaskStatus.COMPLETED:
+            return {
+                "ok": True,
+                "already_completed": True,
+                "status": task.status,
+                "iteration": task.iteration,
+            }
+        if task.status not in (
+            TaskStatus.IN_PROGRESS,
+            TaskStatus.SUBMITTED,
+            TaskStatus.VERIFIED,
+        ):
+            raise WorkLifecycleError(
+                f"任务 {task.task_id} 当前是 {task.status}，不能完成。")
+
+        if task.status == TaskStatus.IN_PROGRESS:
+            self.submit(task, actor=actor, result=result)
+        if task.status == TaskStatus.SUBMITTED:
+            self.verify(
+                task, actor=actor, passed=True,
+                feedback=feedback or "Team Leader 汇总完成",
+                allow_team=True)
         if task.status == TaskStatus.VERIFIED:
             self.complete(task, actor=actor)
 

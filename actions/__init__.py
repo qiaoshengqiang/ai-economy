@@ -91,6 +91,11 @@ from actions.task_create import (
 from actions.work_complete import (
     ACTION_WORK_COMPLETE, WorkCompleteExecutor,
 )
+from actions.work_item import (
+    ACTION_WORK_ITEM_BLOCKED, ACTION_WORK_ITEM_DONE,
+    ACTION_WORK_QA_VERDICT,
+    WorkItemBlockedExecutor, WorkItemDoneExecutor, WorkQaVerdictExecutor,
+)
 from actions.public_working_memory import (
     ACTION_PUBLIC_WORKING_MEMORY_READ,
     ACTION_PUBLIC_WORKING_MEMORY_UPDATE,
@@ -157,6 +162,10 @@ __all__ = [
     "ACTION_RUN_TOOL", "RunToolExecutor",
     "ACTION_TASK_CREATE", "TaskCreateExecutor",
     "ACTION_WORK_COMPLETE", "WorkCompleteExecutor",
+    "ACTION_WORK_ITEM_DONE", "ACTION_WORK_ITEM_BLOCKED",
+    "ACTION_WORK_QA_VERDICT",
+    "WorkItemDoneExecutor", "WorkItemBlockedExecutor",
+    "WorkQaVerdictExecutor",
     "ACTION_PUBLIC_WORKING_MEMORY_READ",
     "ACTION_PUBLIC_WORKING_MEMORY_UPDATE",
     "PublicWorkingMemoryReadExecutor", "PublicWorkingMemoryUpdateExecutor",

@@ -1,6 +1,6 @@
 # ADR-0055：Life / Work 分层 + Front Agent
 
-- **状态**：Accepted（**分层已确认；Front 契约 / Solo Work 基础 / Availability 已实现；Team Runtime 为 `DESIGNED`**）
+- **状态**：Accepted（**分层已确认；Front / Solo Work / Team Work / Availability 已实现；邀请协议为 `FUTURE`**）
 - **时间**：2026-11-09
 - **Supersedes**：无
 - **Superseded by**：无
@@ -51,6 +51,21 @@ Work 层（Task / Workspace / 角色 / 工具 / 记忆 / 草稿）
 - 不新增 `Team` 实体；
 - Task 的 creator / contractor / participants / roles 表达团队；
 - 团队信息不复制到第二套状态。
+
+#### Team 工作方式
+
+```text
+Leader 做计划 / 架构
+  → 拆 items 并分配
+  → 多成员并行
+  → 可选 QA（由 Leader 决定）
+  → Leader 汇总 / 接线 / 收尾
+```
+
+- 成员用 `work_item_done` / `work_item_blocked` 结构化回报；
+- Work 层没有消息机制；
+- QA 可选：设置后必须通过；不设置时 Leader 负责收尾；
+- 旧消息路径的 `producer ≠ acceptor` 不变。
 
 ### 5. AgentAvailability
 

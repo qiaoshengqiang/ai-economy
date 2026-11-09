@@ -78,8 +78,8 @@
 | [0052](0052-thinking-directive-schema.md) | **thinking 指令 schema 与兼容归一** | Accepted（**已实现**） | invalid_thinking 频繁 | Cognition / Demand |
 | [0053](0053-plan-phases-checkpoints-provisioning.md) | **Workspace Plan 阶段 / 依赖 / 检查点 / 占位标记** | Accepted（**已实现**） | 有文件清单无开发顺序 | Demand / Workspace |
 | [0054](0054-private-draft-buffer-and-batch-promotion.md) | **私有 Draft Buffer + 批量 Promotion** | Accepted（**Phase 1 已实现**） | 生成与落盘绑定 / 一轮一文件 | Demand / Workspace |
-| [0055](0055-life-work-layering-and-front-agent.md) | **Life / Work 分层 + Front Agent** | Accepted（**Front 契约 / Solo Work / Availability 已实现；Team Runtime 为 DESIGNED**） | 通用框架过重 / 角色混合 | Architecture / Life / Work |
-| [0056](0056-solo-completion-and-iteration-reopen.md) | **Solo 完成语义 + Iteration / Reopen** | Accepted（**Solo 自 COMPLETE + Reopen V1 已实现**） | Solo 完成 / COMPLETED 终态 | Task / Work |
+| [0055](0055-life-work-layering-and-front-agent.md) | **Life / Work 分层 + Front Agent** | Accepted（**Front / Solo Work / Team Work / Availability 已实现；邀请协议为 FUTURE**） | 通用框架过重 / 角色混合 | Architecture / Life / Work |
+| [0056](0056-solo-completion-and-iteration-reopen.md) | **Solo 完成语义 + Iteration / Reopen** | Accepted（**Solo 自 COMPLETE + Reopen V1 已实现；Team QA 可选**） | Solo 完成 / COMPLETED 终态 | Task / Work |
 | [0028](0028-read-visibility-and-native-communication.md) | **Read 靠 Task Participation；Communication 是 Agent 基础能力** | Accepted（实现为 FUTURE） | Read / Visibility / Communication | Workspace / Communication |
 
 ---

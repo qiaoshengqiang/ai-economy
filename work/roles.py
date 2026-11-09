@@ -22,11 +22,12 @@ class WorkRole:
 
     LEAD = "LEAD"
     MEMBER = "MEMBER"
+    QA = "QA"
     SOLO = "SOLO"
 
     @classmethod
     def all(cls) -> List[str]:
-        return [cls.LEAD, cls.MEMBER, cls.SOLO]
+        return [cls.LEAD, cls.MEMBER, cls.QA, cls.SOLO]
 
 
 @dataclass
@@ -79,6 +80,7 @@ class WorkResult:
     actions: int = 0
     summary: str = ""
     error: str = ""
+    artifacts: List[str] = field(default_factory=list)
     events: List[Dict[str, Any]] = field(default_factory=list)
 
     @property
@@ -95,5 +97,6 @@ class WorkResult:
             "actions": self.actions,
             "summary": self.summary,
             "error": self.error,
+            "artifacts": list(self.artifacts),
             "events": list(self.events),
         }

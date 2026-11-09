@@ -24,6 +24,9 @@ from typing import Any, List, Optional
 
 from actions import (
     ActionDispatcher,
+    WorkItemBlockedExecutor,
+    WorkItemDoneExecutor,
+    WorkQaVerdictExecutor,
     DraftAppendExecutor,
     DraftDeleteExecutor,
     DraftListExecutor,
@@ -79,6 +82,7 @@ WORK_ACTION_TYPES = frozenset({
     "long_term_memory_search", "long_term_memory_read",
     "long_term_memory_mark_used", "long_term_memory_consolidate",
     "private_write", "private_read", "private_list", "private_delete",
+    "work_item_done", "work_item_blocked", "work_qa_verdict",
     "work_complete",
 })
 
@@ -95,8 +99,12 @@ def build_work_dispatcher(
     task: Any,
     drafts: Any,
     promote_drafts: Any,
-    complete_fn: Any,
-    record_checkpoint: Any = None,
+    complete_fn: Any = None,
+    item_done_fn: Any = None,
+    item_blocked_fn: Any = None,
+    qa_verdict_fn: Any = None,
+    include_complete: bool = True,
+    extra_executors: Optional[List[Any]] = None,
 ) -> ActionDispatcher:
     """
     绑定 Work 层的动作集合。
@@ -248,6 +256,18 @@ def build_work_dispatcher(
         PrivateReadExecutor(read_private, workspace_of=_ws_of),
         PrivateListExecutor(list_private, workspace_of=_ws_of),
         PrivateDeleteExecutor(delete_private, workspace_of=_ws_of),
-        WorkCompleteExecutor(complete_fn),
     ]
+    if item_done_fn is not None:
+        executors.append(WorkItemDoneExecutor(item_done_fn))
+    if item_blocked_fn is not None:
+        executors.append(WorkItemBlockedExecutor(item_blocked_fn))
+    if qa_verdict_fn is not None:
+        executors.append(WorkQaVerdictExecutor(qa_verdict_fn))
+    if include_complete:
+        if complete_fn is None:
+            raise ValueError(
+                "build_work_dispatcher(include_complete=True) 需要 complete_fn")
+        executors.append(WorkCompleteExecutor(complete_fn))
+    if extra_executors:
+        executors.extend(extra_executors)
     return ActionDispatcher(executors)
