@@ -168,7 +168,8 @@ def _render_last_turn(last: Optional[Dict[str, Any]]) -> str:
             "优先用 workspace_edit 做局部修改。")
     if last.get("truncated"):
         lines.append(
-            "- 上一轮输出被截断：请拆小工作单元，或先写草稿再分批落盘。")
+            "- 上一轮输出被截断：下一次可把 cognitive_budget 提到 65536，"
+            "或拆小工作单元 / 先写草稿再分批落盘。")
     if last.get("error"):
         lines.append(f"- error: {last['error']}")
     return "\n".join(lines)
@@ -267,19 +268,26 @@ thinking / cognitive_budget。
 ========== 可选：调整下一次调用 ==========
 在同一个 JSON 的**顶层**加入（不要放进 action.parameters）：
 - "thinking": {{"enabled": true, "effort": "high"}}
-  DeepSeek 支持 effort: low / high / max；关闭写 enabled:false。
+  单相作用于**当前阶段**；DeepSeek 支持 effort: low / high / max；
+  关闭写 enabled:false。
   也可以分相：{{"decision": {{...}}, "work": {{...}}}}。
 - "cognitive_budget": 32768
+  单相作用于**当前阶段**；
   或分相：{{"decision": 8192, "work": 65536}}
   单位是 max_tokens（输出上限）；当前硬上限 65536，
   实际值 = min(你的偏好, 65536, Provider 上限)。
   不设置就保持当前默认值（config 里的 max_tokens）。
   它只影响**下一次** LLM 调用，不影响当前这次输出。
+  如果下一次要写很大的文件：先用一次
+  {{"decision":"reply","content":"准备写大文件",
+    "cognitive_budget":65536}} 只设置预算，再在下一轮写。
 
 ========== 工作节奏 ==========
 - 先确定模块边界和文件清单，再开始写第一个文件；
 - 入口文件先搭骨架，之后用 workspace_edit 增量修改，
   避免整文件反复重写；
+- 预计一次输出会很长（例如完整写一个大文件）时，先把
+  cognitive_budget 提到 65536，或者拆成 create + append；
 - 每完成一个模块，尽量用 run_tool 验证一次，再继续下一个。
 
 ========== 可用动作与参数 ==========

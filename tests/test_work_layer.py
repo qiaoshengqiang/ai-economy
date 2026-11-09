@@ -332,6 +332,7 @@ class TestWorkPrompt:
                 "status_after": "IN_PROGRESS",
                 "action_types": ["workspace_write"],
                 "tokens": 100,
+                "truncated": True,
                 "thinking": {"*": {"enabled": True, "effort": "high"}},
                 "cognitive_budget": {
                     "requested": 65536,
@@ -351,6 +352,7 @@ class TestWorkPrompt:
         assert "clipped=above_max" in prompt
         assert "index.html × 3" in prompt
         assert "workspace_edit" in prompt
+        assert "把 cognitive_budget 提到 65536" in prompt
 
     def test_prompt_has_work_actions(self):
         context = WorkContext(
