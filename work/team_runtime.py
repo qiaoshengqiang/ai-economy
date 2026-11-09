@@ -69,6 +69,7 @@ class TeamWorkRuntime:
         task: Task,
         *,
         brief: Optional[Dict[str, Any]] = None,
+        initial_plan: Optional[WorkPlan] = None,
         drafts: Any = None,
         max_plan_turns: int = 2,
         max_worker_turns: int = 8,
@@ -89,6 +90,7 @@ class TeamWorkRuntime:
         self.task = task
         self.lead = task.creator
         self.brief = brief
+        self.initial_plan = initial_plan
         self.max_plan_turns = max(1, int(max_plan_turns))
         self.max_worker_turns = max(1, int(max_worker_turns))
         self.max_integration_turns = max(1, int(max_integration_turns))
@@ -126,7 +128,7 @@ class TeamWorkRuntime:
                 result.summary = self.task.note or "Task 已经处于 COMPLETED"
                 return result
             self._start_if_needed()
-            self.plan = self._plan()
+            self.plan = self.initial_plan or self._plan()
             if self.plan is None:
                 result.error = "Leader 没有产出可执行计划"
                 result.status = self.task.status

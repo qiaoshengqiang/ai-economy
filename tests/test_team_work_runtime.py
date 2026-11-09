@@ -336,6 +336,34 @@ class TestTeamRuntime:
                    for event in result.events)
         assert result.summary == "团队完成并汇总"
 
+    def test_initial_plan_skips_leader_planning_call(self, db):
+        """Front/Controller 已经让 Leader 规划过时，runtime 不再重复规划。"""
+        from work.plan import parse_work_plan
+
+        plan, error = parse_work_plan(
+            _plan(), participants=["agent_a", "agent_b", "agent_c"])
+        assert error == ""
+        calls = {"think": 0}
+
+        def think(_prompt):
+            calls["think"] += 1
+            return ""
+
+        agents = {
+            "agent_a": _ScriptedAgent(think=think, actions=[_complete()]),
+            "agent_b": _ScriptedAgent(actions=[_done("item_1", "agent_b")]),
+            "agent_c": _ScriptedAgent(actions=[_done("item_2", "agent_c")]),
+        }
+        task = _task()
+        runtime = _TeamRuntime(db, task, agents)
+        result = TeamWorkRuntime(
+            runtime, task, initial_plan=plan,
+            max_worker_turns=2, max_integration_turns=2,
+        ).run()
+
+        assert result.ok is True, result.error
+        assert calls["think"] == 0
+
     def test_qa_must_pass(self, db):
         agents = {
             "agent_a": _ScriptedAgent(

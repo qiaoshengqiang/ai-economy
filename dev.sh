@@ -119,8 +119,13 @@ case "$COMMAND" in
         ;;
 
     work)
-        # Human → Front Agent → Team Lead 建 SOLO Task → Work 层执行
+        # Human → Front Agent → Team Lead 建 Task → Work 层执行
         exec "$VENV_PYTHON" -m work.cli "$@"
+        ;;
+
+    ui|aieos)
+        # 浏览器交互界面：Human ↔ Front Agent ↔ Team
+        exec "$VENV_PYTHON" -m ui.server "$@"
         ;;
 
     clean)
@@ -178,6 +183,7 @@ case "$COMMAND" in
         echo "    ./dev.sh run  [main.py 参数]   启动系统"
         echo "    ./dev.sh demand --file <提示词>  人类 Demand → Agent 自建 Task"
         echo "    ./dev.sh work --demand <输入>    Human → Front → Work（Solo / Team）"
+        echo "    ./dev.sh ui                     浏览器 AIEOS 交互界面（默认 127.0.0.1:8000）"
         echo "    ./dev.sh clean                 清除数据库和日志"
         echo "    ./dev.sh shell                 进入交互式 Python"
         echo "    ./dev.sh doctor                检查环境"

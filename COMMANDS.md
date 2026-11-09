@@ -68,6 +68,9 @@ python xxx          ❌ 错误 —— 会用到系统 Python，报 "No module na
 # Team：Leader 计划 / 成员并行 / 汇总（QA 由 Leader 决定）
 ./dev.sh work --team --members agent_b,agent_c --demand "做一个两模块项目"
 
+# AIEOS 浏览器交互界面（Human ↔ Front ↔ Team）
+./dev.sh ui
+
 # 看系统环境是否正常（出问题时先跑这个）
 ./dev.sh doctor
 ```
@@ -1145,6 +1148,7 @@ economy:
 | `./dev.sh test [参数]` | 跑测试（参数透传给 pytest） |
 | `./dev.sh run [参数]` | 启动系统（参数透传给 main.py） |
 | `./dev.sh work --demand <输入>` | Human → Front → Work（Solo / Team；无消息 / 无经济） |
+| `./dev.sh ui` | AIEOS 浏览器交互界面（Front / Agents / Task 卡片） |
 | `./dev.sh clean` | 删除数据库和日志 |
 | `./dev.sh shell` | 进入交互式 Python |
 | `./dev.sh doctor` | 检查环境 |

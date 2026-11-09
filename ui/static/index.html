@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AIEOS · Human ↔ Front Agent</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">AIEOS</div>
+      <div class="subtitle">Human ↔ Front Agent ↔ Team</div>
+    </div>
+    <div class="top-status">
+      <span class="pill" id="front-badge">Front: —</span>
+      <span class="pill" id="running-badge">Running: 0</span>
+      <button class="icon-btn" id="settings-btn" title="设置">⚙ 设置</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="panel chat-panel">
+      <div class="panel-head">
+        <h2>与 Front 对话</h2>
+        <span class="hint">Ctrl/Cmd + Enter 提交</span>
+      </div>
+      <div class="messages" id="messages"></div>
+      <div class="composer">
+        <textarea id="prompt" rows="4"
+          placeholder="告诉 Front Agent 你想做什么，例如：做一个简单的打飞机游戏……"></textarea>
+        <div class="composer-actions">
+          <span class="muted" id="composer-hint">提交后 Front 会判断：直接回复，或交给一个空闲 Leader 组队。</span>
+          <button class="primary" id="submit-btn">提交</button>
+        </div>
+      </div>
+    </section>
+
+    <aside class="side">
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Agents</h2>
+          <span class="muted" id="agents-count"></span>
+        </div>
+        <div class="agent-grid" id="agents"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Task 卡片</h2>
+          <span class="muted" id="tasks-count"></span>
+        </div>
+        <div class="task-list" id="tasks"></div>
+      </section>
+    </aside>
+  </main>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <div class="modal-backdrop" id="settings-modal" hidden>
+    <div class="modal">
+      <div class="panel-head">
+        <h2>设置</h2>
+        <button class="icon-btn" id="settings-close">✕</button>
+      </div>
+      <label class="field">
+        <span>Front Agent</span>
+        <select id="front-select"></select>
+      </label>
+      <label class="field">
+        <span>最大并行 Team</span>
+        <input id="max-teams" type="number" min="1" max="8" />
+        <small class="muted">当前 GUI 进程内生效；重启后按启动参数重新创建。</small>
+      </label>
+      <div class="modal-actions">
+        <button class="icon-btn" id="settings-cancel">取消</button>
+        <button class="primary" id="settings-save">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

@@ -602,5 +602,6 @@ work/cli.py          ./dev.sh work：Human → Front → Solo Task → Work
 - `docs/architecture/adr/0022-*.md`（FROZEN / Reopen）
 - `docs/architecture/adr/0055-life-work-layering-and-front-agent.md`
 - `docs/architecture/adr/0056-solo-completion-and-iteration-reopen.md`
+- [`AIEOS_UI.md`](AIEOS_UI.md)（Human ↔ Front ↔ Team 交互界面）
 - `core/task.py`（COMPLETED 已可 Reopen）
 - `services/task_execution_service.py`（producer ≠ acceptor）

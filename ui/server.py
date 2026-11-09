@@ -1,0 +1,191 @@
+"""
+AIEOS UI Server —— 人类与 Front Agent 的唯一入口
+==================================================
+
+    Human
+      ↕ 浏览器
+    AIEOS UI（本文件）
+      ↕
+    AIEOSController
+      ↕
+    Front / Leader / Team / Task / Workspace
+
+🔒 只用标准库 `http.server`，不引入新依赖。
+🔒 绑定 127.0.0.1；不暴露到公网。
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import mimetypes
+import sys
+from pathlib import Path
+from urllib.parse import unquote, urlparse
+
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+ROOT = Path(__file__).resolve().parent.parent
+STATIC = Path(__file__).resolve().parent / "static"
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+
+class Handler(BaseHTTPRequestHandler):
+    controller = None
+    server_version = "AIEOSUI/1.0"
+
+    # ------------------------------------------------------------
+    # HTTP helpers
+    # ------------------------------------------------------------
+    def _send_json(self, payload, status=200):
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_file(self, path: Path):
+        if not path.is_file():
+            self.send_error(404)
+            return
+        data = path.read_bytes()
+        ctype = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _read_json(self):
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = 0
+        if length <= 0:
+            return {}
+        raw = self.rfile.read(min(length, 1_000_000))
+        try:
+            value = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            return {}
+        return value if isinstance(value, dict) else {}
+
+    # ------------------------------------------------------------
+    # GET
+    # ------------------------------------------------------------
+    def do_GET(self):
+        parsed = urlparse(self.path)
+        path = unquote(parsed.path)
+        if path in ("/", "/index.html"):
+            self._send_file(STATIC / "index.html")
+            return
+        if path.startswith("/static/"):
+            relative = path[len("/static/"):]
+            target = (STATIC / relative).resolve()
+            if STATIC.resolve() not in target.parents and target != STATIC.resolve():
+                self.send_error(403)
+                return
+            self._send_file(target)
+            return
+        if path == "/api/state":
+            self._send_json(self.controller.state())
+            return
+        if path == "/api/health":
+            self._send_json({"ok": True})
+            return
+        self.send_error(404)
+
+    # ------------------------------------------------------------
+    # POST
+    # ------------------------------------------------------------
+    def do_POST(self):
+        parsed = urlparse(self.path)
+        path = unquote(parsed.path)
+        payload = self._read_json()
+        try:
+            if path == "/api/submit":
+                text = str(payload.get("text") or "").strip()
+                job_id = self.controller.submit(text)
+                self._send_json({"ok": True, "job_id": job_id})
+                return
+            if path == "/api/settings":
+                settings = self.controller.update_settings(
+                    front_agent=payload.get("front_agent"),
+                    max_parallel_teams=payload.get("max_parallel_teams"),
+                )
+                self._send_json({"ok": True, "settings": settings})
+                return
+        except Exception as exc:                              # noqa: BLE001
+            self._send_json(
+                {"ok": False, "error": f"{type(exc).__name__}: {exc}"},
+                status=400)
+            return
+        self.send_error(404)
+
+    def log_message(self, fmt, *args):
+        # 保留在 stderr，但不写 HTTP 访问日志到前端。
+        sys.stderr.write(
+            "%s - %s\n" % (self.address_string(), fmt % args))
+
+
+def build_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(
+        prog="aieos-ui",
+        description="AIEOS 人类交互界面（Front Agent + Team）")
+    ap.add_argument("--host", default="127.0.0.1")
+    ap.add_argument("--port", type=int, default=8000)
+    ap.add_argument("--db", default=None,
+                    help="Runtime 数据库；默认 runs/ui/aieos.db")
+    ap.add_argument("--front-agent", default="agent_a")
+    ap.add_argument("--max-teams", type=int, default=3)
+    ap.add_argument("--worker-turns", type=int, default=8)
+    ap.add_argument("--integration-turns", type=int, default=8)
+    ap.add_argument("--cognitive-budget", type=int, default=32768)
+    return ap
+
+
+def main(argv=None) -> int:
+    args = build_parser().parse_args(argv)
+    from main import build_runtime
+    from work.controller import AIEOSController
+
+    if args.db:
+        db_path = Path(args.db).expanduser().resolve()
+    else:
+        db_path = (ROOT / "runs" / "ui" / "aieos.db").resolve()
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    runtime = build_runtime(db_path=str(db_path))
+    controller = AIEOSController(
+        runtime,
+        front_agent=str(args.front_agent),
+        max_parallel_teams=max(1, int(args.max_teams)),
+        max_worker_turns=max(1, int(args.worker_turns)),
+        max_integration_turns=max(1, int(args.integration_turns)),
+        cognitive_budget=max(1, int(args.cognitive_budget)),
+        settings_path=db_path.parent / "ui_settings.json",
+    )
+    Handler.controller = controller
+    httpd = ThreadingHTTPServer((args.host, int(args.port)), Handler)
+    print(
+        f"AIEOS UI 已启动：http://{args.host}:{args.port}/\n"
+        f"Front Agent：{controller.front_agent}\n"
+        f"DB：{db_path}",
+        flush=True,
+    )
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        print("\n正在关闭 AIEOS UI…", flush=True)
+    finally:
+        controller.close()
+        httpd.server_close()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
