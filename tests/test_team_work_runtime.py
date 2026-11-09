@@ -472,6 +472,69 @@ class TestTeamRuntime:
             for event in result.events)
 
 
+class _FakePublicWM:
+    def __init__(self):
+        self.revision = 0
+        self.items = {}
+
+    def read(self, task_id, agent_id):
+        return SimpleNamespace(
+            revision=self.revision, items=dict(self.items))
+
+    def update(self, task_id, agent_id, *, expected_revision,
+               items=None, remove_keys=None):
+        assert expected_revision == self.revision
+        for key in remove_keys or []:
+            self.items.pop(key, None)
+        for key, value in (items or {}).items():
+            self.items[key] = value
+        self.revision += 1
+        return SimpleNamespace(revision=self.revision, items=dict(self.items))
+
+
+class TestPublicWorkingMemoryIsAbstract:
+    def test_plan_publishes_architecture_not_task_copy(self, db):
+        from work.plan import WorkItem, WorkPlan
+
+        task = _task()
+        runtime = _TeamRuntime(db, task, {})
+        runtime.public_working_memory = _FakePublicWM()
+
+        plan = WorkPlan(
+            revision=1,
+            items=[
+                WorkItem(
+                    item_id="item_1",
+                    agent_id="agent_b",
+                    goal="这是一段很长很长的任务目标" * 20,
+                    paths=["game/src/a.js", "game/src/b.js"],
+                    acceptance=["很长很长的验收标准" * 20],
+                    notes="很长很长的实现说明" * 20,
+                ),
+            ],
+            directories={"game": "agent_b", "game/src": "agent_b"},
+            qa="agent_c",
+        )
+        team = TeamWorkRuntime(runtime, task)
+        team._publish_plan_to_public_memory(plan)
+
+        items = runtime.public_working_memory.items
+        assert items["team.architecture"]["value"]["files"] == {
+            "game/src/a.js": "agent_b",
+            "game/src/b.js": "agent_b",
+        }
+        assert items["item.item_1"]["value"] == {
+            "owner": "agent_b",
+            "paths": ["game/src/a.js", "game/src/b.js"],
+        }
+        # 不复制 goal / acceptance / notes
+        dumped = json.dumps(items, ensure_ascii=False)
+        assert "很长很长的任务目标" not in dumped
+        assert "很长很长的验收标准" not in dumped
+        assert "很长很长的实现说明" not in dumped
+        assert len(dumped) < 1500
+
+
 # ============================================================
 # 3. 动作边界
 # ============================================================

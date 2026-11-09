@@ -289,11 +289,15 @@ class TeamWorkRuntime:
 
     def _publish_plan_to_public_memory(self, plan: WorkPlan) -> None:
         """
-        把当前计划写入 Public Working Memory。
+        把**抽象架构**写入 Public Working Memory。
 
-        🔒 这是 worker prompt 的直接输入：每个成员都能看到
-           ——谁负责什么、notes 里的契约、QA 是谁。
-           这样不需要再反复 shared_context_read。
+        🔒 Public WM 不是 plan 副本，也不是任务书：
+           只存目录 / 文件归属 / 接口 / 依赖 / 进度等抽象结构；
+           goal / acceptance / notes 留在 WorkPlan 和对应 worker prompt 里，
+           不重复塞进公共记忆。
+
+        这样每个 worker 的 prompt 都能拿到一张很小的架构白板，
+        而不是 10KB 的具体任务描述。
         """
         service = getattr(self.rt, "public_working_memory", None)
         if service is None:
@@ -303,32 +307,44 @@ class TeamWorkRuntime:
             existing = set(current.items)
             items = {}
             desired = set()
+
+            # 1) 计划元信息：只保留 revision / QA / item 数。
             desired.add("team.plan")
             items["team.plan"] = {
                 "kind": "plan",
                 "value": {
                     "revision": plan.revision,
                     "qa": plan.qa,
-                    "notes": str(plan.notes or "")[:1000],
+                    "item_count": len(plan.items),
                 },
             }
+
+            # 2) 目录与文件归属：真正的架构白板。
+            files = {}
+            for item in plan.items:
+                for path in item.paths:
+                    files[str(path)] = item.agent_id
+            desired.add("team.architecture")
+            items["team.architecture"] = {
+                "kind": "plan",
+                "value": {
+                    "directories": dict(plan.directories),
+                    "files": files,
+                },
+            }
+
+            # 3) 每个 item 只保留 owner + paths，不复制 goal/acceptance/notes。
             for item in plan.items:
                 key = f"item.{item.item_id}"
                 desired.add(key)
-                notes = str(item.notes or "")
-                if len(notes) > 1500:
-                    notes = notes[:1500] + " …（已截断）"
                 items[key] = {
                     "kind": "assignment",
                     "value": {
-                        "item_id": item.item_id,
-                        "agent_id": item.agent_id,
-                        "goal": item.goal,
+                        "owner": item.agent_id,
                         "paths": list(item.paths),
-                        "acceptance": list(item.acceptance),
-                        "notes": notes,
                     },
                 }
+
             if plan.qa:
                 desired.add("team.qa")
                 items["team.qa"] = {

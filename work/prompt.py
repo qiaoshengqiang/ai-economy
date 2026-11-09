@@ -9,8 +9,9 @@ Work 层最小 prompt
     · Agent 间消息 / inbox / 收件人
     · 生活层邀请协议
 
-✅ Public Working Memory 是团队共享契约 / 计划 / 进度的主要载体，
-   每个 worker 的 prompt 都直接注入它，避免反复读 Shared Context。
+✅ Public Working Memory 是团队**抽象架构白板**：目录、文件归属、
+   类/方法接口、依赖、进度。每个 worker 的 prompt 都直接注入它，
+   避免反复读 Shared Context；它不存具体实现或长任务描述。
 
 只给当前角色真正需要的：
 
@@ -58,6 +59,9 @@ ACTION_SCHEMA = """
                      "parent_key":"<可选>",
                      "evidence":{"path":"<真实文件>","revision":<整数>}}},
    "remove_keys":[]}
+  🔒 Public WM 只存**抽象架构**：目录、文件归属、类/方法签名、
+     接口、依赖关系、进度。不要存代码、完整实现、长 acceptance
+     或大段任务描述；条目越小越好。
 - private_working_memory_read / private_working_memory_update:
   同上，但只属于当前 Agent + 当前 Task。
 - short_term_memory_read / short_term_memory_update / short_term_memory_reinforce
