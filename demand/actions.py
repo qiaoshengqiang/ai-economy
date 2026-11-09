@@ -48,6 +48,12 @@ from actions import (
     WorkspaceReadExecutor,
     WorkspaceSearchExecutor,
     WorkspaceWriteExecutor,
+    DraftAppendExecutor,
+    DraftDeleteExecutor,
+    DraftListExecutor,
+    DraftReadExecutor,
+    DraftWriteExecutor,
+    WorkspacePromoteDraftsExecutor,
 )
 from services.artifacts import (
     edit_artifact, read_artifact, search_artifacts, stat_artifact,
@@ -88,6 +94,8 @@ def build_task_dispatcher(
     bridge: Any,
     update_plan: Any = None,
     record_checkpoint: Any = None,
+    drafts: Any = None,
+    promote_drafts: Any = None,
 ) -> ActionDispatcher:
     ws_id = task.workspace.workspace_id if task.workspace else ""
     task_id = task.task_id
@@ -259,6 +267,14 @@ def build_task_dispatcher(
           if update_plan is not None else []),
         *([WorkspacePlanCheckpointExecutor(record_checkpoint)]
           if record_checkpoint is not None else []),
+        *([DraftWriteExecutor(drafts.write),
+           DraftAppendExecutor(drafts.append),
+           DraftReadExecutor(drafts.read),
+           DraftListExecutor(drafts.list),
+           DraftDeleteExecutor(drafts.delete)]
+          if drafts is not None else []),
+        *([WorkspacePromoteDraftsExecutor(promote_drafts)]
+          if promote_drafts is not None else []),
         MessageSendExecutor(_send, comm=runtime.communication),
         PublicQueryExecutor(public.query),
         PrivateWriteExecutor(write_private, workspace_of=_ws_of),

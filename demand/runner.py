@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional
 from core.identity import utc_now_iso
 from demand.actions import build_intake_dispatcher, build_task_dispatcher
 from demand.channels import SyncBridge, drain
+from demand.drafts import DraftBuffer
 from demand.images import make_image_resolver
 from demand.intake import fallback_brief, parse_brief
 from demand.models import DemandRun, TurnOutcome
@@ -28,6 +29,7 @@ from demand.prompt import (
 )
 from demand.scheduler import RunScheduler
 from demand.task_creation import TaskCreationError, TaskCreationService
+from services.artifacts import write_artifact
 
 #: 这些消息类型的“新消息”**不算真实进展**：
 #: 它们的价值应体现在 Task 状态变化上；被拒绝时也不该延长 run。
@@ -41,6 +43,7 @@ _PROTOCOL_MESSAGE_TYPES = frozenset({
 #: 普通消息只是弱进展 —— 否则协调/解释会无限延长 run。
 _STRONG_PROGRESS_REASONS = frozenset({
     "task_status", "workspace_write", "workspace_edit", "resource_create",
+    "workspace_promote_drafts",
 })
 
 #: 只有这些动作是“只读/查询”；连续出现时给 Agent 一个动作事实。
@@ -73,6 +76,8 @@ class DemandRunner:
         self.task_dispatcher: Any = None
         self._creation = TaskCreationService(
             runtime, run, max_agents=run.max_agents)
+        #: Agent 私有草稿区（内存，随 run 结束销毁；不是项目 artifact）。
+        self.drafts = DraftBuffer()
         self._done = False
         #: 上一 turn 的可观测事实（按 Agent）。下一轮 prompt 会显示它 ——
         #: 尤其是截断 / 预算裁剪 / zero-action，否则 Agent 无法自主调节。
@@ -224,7 +229,9 @@ class DemandRunner:
         self.task_dispatcher = build_task_dispatcher(
             self.rt, task=task, bridge=self.bridge,
             update_plan=self._update_workspace_plan,
-            record_checkpoint=self._record_plan_checkpoint)
+            record_checkpoint=self._record_plan_checkpoint,
+            drafts=self.drafts,
+            promote_drafts=self._promote_drafts)
 
         order: List[str] = []
         if task.contractor:
@@ -288,7 +295,8 @@ class DemandRunner:
             held_locks=held,
             stalled_agents=(
                 self._stalled_agents(task, current_locks, exclude=agent_id)
-                if agent_id == task.creator else []))
+                if agent_id == task.creator else []),
+            drafts=self.drafts.meta(agent_id))
         try:
             return self._turn(
                 agent_id, prompt, self.task_dispatcher,
@@ -414,6 +422,63 @@ class DemandRunner:
         self._write_run()
         self._event("workspace_plan_checkpoint", **record)
         return {"ok": True, "checkpoint": record}
+
+    def _promote_drafts(
+        self, agent_id: str, items: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """
+        把 Agent 的多个草稿一次落盘到 Task Workspace。
+
+        🔒 内容来自私有草稿，不经过模型输出；仍然走 write_artifact，
+           所以锁 / revision / audit / 参与者边界全部照旧。
+        """
+        task = self._status_task()
+        if task is None:
+            return {"ok": False, "summary": "Task 不存在",
+                    "results": []}
+        workspace_id = (
+            task.workspace.workspace_id if task.workspace else "")
+        results: List[Dict[str, Any]] = []
+        for item in items:
+            draft_id = str(item.get("draft_id") or "")
+            path = str(item.get("path") or "")
+            mode = str(item.get("write_mode") or "")
+            draft = self.drafts.get(agent_id, draft_id)
+            if draft is None:
+                results.append({
+                    "draft_id": draft_id, "path": path, "ok": False,
+                    "code": "draft_not_found",
+                    "message": f"没有草稿 {draft_id!r}",
+                })
+                continue
+            try:
+                raw = write_artifact(
+                    self.rt.workspace_gateway, workspace_id, agent_id,
+                    path, draft.content, write_mode=mode)
+            except Exception as exc:                          # noqa: BLE001
+                raw = {"ok": False, "code": "executor_error",
+                       "message": f"{type(exc).__name__}: {exc}"}
+            result = {
+                "draft_id": draft_id,
+                "path": path,
+                "ok": bool(raw.get("ok")),
+                "code": raw.get("code"),
+                "message": raw.get("message") or "",
+            }
+            for key in ("mode", "revision", "chars", "appended_chars"):
+                if key in raw:
+                    result[key] = raw[key]
+            results.append(result)
+        ok_count = sum(1 for item in results if item.get("ok"))
+        ok = ok_count == len(results)
+        failures = [
+            f"{item.get('path')}: {item.get('message') or item.get('code')}"
+            for item in results if not item.get("ok")
+        ]
+        summary = f"{ok_count}/{len(results)} 个文件 promotion 成功"
+        if failures:
+            summary += "；失败：" + " | ".join(failures[:5])
+        return {"ok": ok, "summary": summary, "results": results}
 
     def _lock_snapshot(self, workspace_id: str) -> Dict[str, str]:
         if not workspace_id:
@@ -758,9 +823,20 @@ class DemandRunner:
             reasons.append("task_status")
         new_message_ids = set(new_messages)
         for intent, result in zip(intents, results):
-            if result is None or not getattr(result, "success", False):
+            if result is None:
                 continue
             action_type = str(getattr(intent, "action_type", ""))
+            # 批量 promotion 即使是 partial failure，只要有一个文件落盘，
+            # 就是强进展；其余失败在 output.results/summary 里可见。
+            if action_type == "workspace_promote_drafts":
+                output = getattr(result, "output", None) or {}
+                promoted = output.get("results") or []
+                if any(isinstance(item, dict) and item.get("ok")
+                       for item in promoted):
+                    reasons.append("workspace_promote_drafts")
+                continue
+            if not getattr(result, "success", False):
+                continue
             if action_type in ("workspace_write", "workspace_edit"):
                 reasons.append(action_type)
             elif action_type == "resource_create":
@@ -834,9 +910,18 @@ class DemandRunner:
 
         answered_from = set()
         for intent, result in zip(intents, results):
-            if result is None or not getattr(result, "success", False):
+            if result is None:
                 continue
             action_type = str(getattr(intent, "action_type", "") or "")
+            if action_type == "workspace_promote_drafts":
+                output = getattr(result, "output", None) or {}
+                if any(isinstance(item, dict) and item.get("ok")
+                       for item in (output.get("results") or [])):
+                    pending.clear()
+                    return
+                continue
+            if not getattr(result, "success", False):
+                continue
             if action_type == "message_send":
                 params = dict(getattr(intent, "parameters", None) or {})
                 target = str(params.get("to") or "")
@@ -846,6 +931,12 @@ class DemandRunner:
                 # 这是明确的“开始拆/交接”动作；清掉所有待回应请求。
                 pending.clear()
                 return
+            elif action_type == "workspace_promote_drafts":
+                output = getattr(result, "output", None) or {}
+                if any(isinstance(item, dict) and item.get("ok")
+                       for item in (output.get("results") or [])):
+                    pending.clear()
+                    return
         if answered_from:
             pending[:] = [
                 p for p in pending

@@ -85,6 +85,11 @@ from actions.private_long_term_memory import (
     ACTION_LONG_TERM_MEMORY_READ,
     ACTION_LONG_TERM_MEMORY_SEARCH,
 )
+from actions.workspace_draft import (
+    ACTION_DRAFT_APPEND, ACTION_DRAFT_DELETE, ACTION_DRAFT_LIST,
+    ACTION_DRAFT_READ, ACTION_DRAFT_WRITE,
+    ACTION_WORKSPACE_PROMOTE_DRAFTS,
+)
 
 #: 结果里带**新的世界信息**、值得当场回喂给模型的动作。
 #:
@@ -103,6 +108,8 @@ OBSERVABLE_ACTIONS = frozenset({
     ACTION_SHORT_TERM_MEMORY_READ,
     ACTION_LONG_TERM_MEMORY_SEARCH,
     ACTION_LONG_TERM_MEMORY_READ,
+    ACTION_DRAFT_READ,
+    ACTION_DRAFT_LIST,
 })
 
 #: 明确**不是**观察类 —— 它们的结果只是「我刚才做了什么」的确认。
@@ -128,6 +135,23 @@ CONFIRMATION_ACTIONS = frozenset({
     ACTION_SHORT_TERM_MEMORY_REINFORCE,
     ACTION_LONG_TERM_MEMORY_MARK_USED,
     ACTION_LONG_TERM_MEMORY_CONSOLIDATE,
+    ACTION_DRAFT_WRITE,
+    ACTION_DRAFT_APPEND,
+    ACTION_DRAFT_DELETE,
+    ACTION_WORKSPACE_PROMOTE_DRAFTS,
+})
+
+#: 只由 Demand 组合根注册、但同样是真实动作的集合。
+#:
+#: `tests/action_registry_helpers.py` 的“注册动作”来源是生产实验；
+#: 草稿动作只在 Demand 注册，所以守卫需要显式知道它们的存在。
+DEMAND_ONLY_ACTIONS = frozenset({
+    ACTION_DRAFT_WRITE,
+    ACTION_DRAFT_APPEND,
+    ACTION_DRAFT_READ,
+    ACTION_DRAFT_LIST,
+    ACTION_DRAFT_DELETE,
+    ACTION_WORKSPACE_PROMOTE_DRAFTS,
 })
 
 #: 单条读取结果最多回喂多少字符。
@@ -147,10 +171,13 @@ VisualResolver = Callable[[str, str], Optional[str]]
 #: 带 `content` 字段的动作 —— 直接就是那段文本。
 _CONTENT_ACTIONS = frozenset({
     ACTION_WORKSPACE_READ, ACTION_PRIVATE_READ, ACTION_PUBLIC_QUERY,
+    ACTION_DRAFT_READ,
 })
 
 #: 结构化载荷 —— 渲染成可读 JSON（保真，不做摘要）。
-_STRUCTURED_ACTIONS = frozenset({ACTION_SHARED_CONTEXT_READ})
+_STRUCTURED_ACTIONS = frozenset({
+    ACTION_SHARED_CONTEXT_READ, ACTION_DRAFT_LIST,
+})
 
 
 def is_observable(action_type: Any) -> bool:
@@ -252,6 +279,19 @@ def _payload_of(action_type: str, output: Any) -> Optional[str]:
     if action_type in _CONTENT_ACTIONS:
         content = output.get("content")
         return content if isinstance(content, str) and content else None
+
+    if action_type == ACTION_DRAFT_LIST:
+        drafts = output.get("drafts") or []
+        if not drafts:
+            return "（当前没有草稿）"
+        lines = []
+        for item in drafts:
+            if not isinstance(item, dict):
+                continue
+            lines.append(
+                f"- {item.get('draft_id')}  label={item.get('label') or '-'} "
+                f"chars={item.get('chars')}  sha256={item.get('sha256')}")
+        return "\n".join(lines)
 
     if action_type == ACTION_PRIVATE_LIST:
         paths = output.get("paths")

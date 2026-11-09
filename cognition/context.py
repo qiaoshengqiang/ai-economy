@@ -424,7 +424,7 @@ def _experience_detail(e: Experience) -> str:
     # ---- 结果里的真实字段（有才渲染）----
     for key in ("revision", "previous_revision", "mode",
                 "previous_chars", "appended_chars", "chars",
-                "changed", "observed_state"):
+                "changed", "observed_state", "summary"):
         value = out.get(key)
         if value is None or value == "":
             continue

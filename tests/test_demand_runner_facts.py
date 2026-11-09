@@ -82,3 +82,24 @@ def test_lock_snapshot_failure_returns_empty_dict():
     fake = SimpleNamespace(rt=SimpleNamespace(
         workspace_gateway=_Broken()))
     assert DemandRunner._lock_snapshot(fake, "WS-X") == {}
+
+
+def test_batch_promotion_counts_as_strong_progress_if_any_file_wrote():
+    from actions.intent import ActionIntent, ActionResult
+
+    promotion = ActionResult(
+        success=False,
+        output={"results": [{"ok": True, "path": "a.js"},
+                            {"ok": False, "path": "b.js"}],
+                "summary": "1/2 promoted"},
+        error="1/2 promoted",
+        action_type="workspace_promote_drafts",
+    )
+    intent = ActionIntent(
+        action_type="workspace_promote_drafts", agent_id="a",
+        parameters={"items": []})
+    fake = SimpleNamespace()
+    progress, reason = DemandRunner._progress_of(
+        fake, "IN_PROGRESS", "IN_PROGRESS", [intent], [promotion], [])
+    assert progress is True
+    assert "workspace_promote_drafts" in reason

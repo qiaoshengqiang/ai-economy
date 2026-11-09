@@ -257,6 +257,32 @@ def _safe(render: Any, fallback: str) -> str:
         return f"{fallback}：{type(exc).__name__}: {exc}"
 
 
+def _render_drafts(items: Optional[List[Dict[str, Any]]]) -> str:
+    """私有草稿元数据。🔒 不注入全文；全文由 draft_read 分块读取。"""
+    drafts = list(items or [])
+    if not drafts:
+        return ("========== 你的私有草稿（不是项目文件） ==========\n"
+                "（当前没有草稿。需要先草稿化时用 draft_write。）")
+    lines = ["========== 你的私有草稿（不是项目文件） =========="]
+    for item in drafts[:10]:
+        draft_id = str(item.get("draft_id") or "?")
+        label = str(item.get("label") or "")
+        chars = item.get("chars")
+        sha = str(item.get("sha256") or "")[:16]
+        lines.append(
+            f"- {draft_id}  label={label or '-'}  chars={chars}  "
+            f"sha256={sha}…")
+        preview = str(item.get("preview") or "").replace("\n", " ")[:200]
+        if preview:
+            lines.append(f"  preview: {preview}")
+    if len(drafts) > 10:
+        lines.append(f"  …还有 {len(drafts) - 10} 份草稿，用 draft_list 查看。")
+    lines.append(
+        "promotion 用 workspace_promote_drafts；一次可以写多个文件，"
+        "不需要每轮只写一个。草稿不是 artifact，只有 promotion 才落盘。")
+    return "\n".join(lines)
+
+
 def _render_plan_status(runtime: Any, workspace_id: str, agent_id: str,
                         plan: Optional[Dict[str, Any]],
                         checkpoints: Optional[Dict[str, Any]] = None) -> str:
@@ -653,6 +679,7 @@ def build_task_prompt(
     read_only_streak: int = 0,
     held_locks: Optional[List[str]] = None,
     stalled_agents: Optional[List[Dict[str, Any]]] = None,
+    drafts: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
     directory = render_directory(runtime)
     workspace = _render_workspace(runtime, task.workspace.workspace_id
@@ -700,6 +727,7 @@ def build_task_prompt(
         pending_requests=list(pending_requests or []),
         stalled_agents=list(stalled_agents or []),
     )
+    drafts_text = _render_drafts(drafts)
 
     return f"""你是 {agent_id}，这是正式运行中的一个 Task turn。
 
@@ -749,6 +777,10 @@ def build_task_prompt(
   其他），再用 `workspace_plan_checkpoint` 记录 passed/evidence/note。
   系统不硬编码“每阶段必须跑 DOM/import/smoke”；Web 任务的最终 SUBMIT
   仍有单独的 DOM/import 门禁。
+- 生成草稿时可以使用当前允许的最高 `cognitive_budget`；
+  promotion / 审查 / 决策用较低预算。不要把高预算无差别套到所有 turn。
+- 先 `draft_write`/`draft_append` 生成，再决定路径；多个文件准备好后
+  用**一次** `workspace_promote_drafts` 落盘，不要每轮只写一个文件。
 
 ========== Task Core（唯一生命周期权威） ==========
 - task_id: {task.task_id}
@@ -771,6 +803,8 @@ def build_task_prompt(
 
 ========== 私有工作记忆（只有你自己可见；验证他人断言的第一站） ==========
 {private_working_memory}
+
+{drafts_text}
 
 ========== 你的短期记忆（跨任务摘要） ==========
 {short_term}
@@ -843,6 +877,17 @@ def build_task_prompt(
   可选 `timeout_seconds`。
 - `public_query`：读公共资料区（含 SYSTEM_MAP 和 tools/*.md）。
 - `private_write/read/list/delete`：你自己的私有文件空间。
+- `draft_write` / `draft_append` / `draft_read` / `draft_list` /
+  `draft_delete`：**私有草稿区**。
+  `draft_write(content, label?)` 返回 draft_id；`draft_append` 分块追加；
+  `draft_read(draft_id, offset?, limit?)` 按字符范围读取。
+  草稿不是项目文件，不参与验收；系统不会自动 promotion。
+- `workspace_promote_drafts`
+  `items`: `[{{"draft_id": "...", "path": "...",
+  "write_mode": "create|replace|append"}}]`。
+  **一次 Action 可以落盘多个文件**；按 items 顺序走 Workspace Gateway
+  （锁 / revision / audit 照旧）。草稿内容不会重新经过模型输出。
+  如果多个文件都准备好了，应该在**同一轮** promote，不要逐个文件拆轮。
 - `resource_create` / `resource_handoff` / `resource_release`：
   建目录 / 交接责任 / 释放独立责任。
 - `workspace_plan_update`（仅 creator）

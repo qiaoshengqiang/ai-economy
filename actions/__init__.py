@@ -71,6 +71,14 @@ from actions.workspace_plan import (
 from actions.workspace_plan_checkpoint import (
     ACTION_WORKSPACE_PLAN_CHECKPOINT, WorkspacePlanCheckpointExecutor,
 )
+from actions.workspace_draft import (
+    ACTION_DRAFT_APPEND, ACTION_DRAFT_DELETE, ACTION_DRAFT_LIST,
+    ACTION_DRAFT_READ, ACTION_DRAFT_WRITE,
+    ACTION_WORKSPACE_PROMOTE_DRAFTS,
+    DraftAppendExecutor, DraftDeleteExecutor, DraftListExecutor,
+    DraftReadExecutor, DraftWriteExecutor,
+    WorkspacePromoteDraftsExecutor,
+)
 from actions.shared_context_read import (
     ACTION_SHARED_CONTEXT_READ, SharedContextReadExecutor,
 )
@@ -132,6 +140,12 @@ __all__ = [
     "ACTION_WORKSPACE_PLAN_UPDATE", "WorkspacePlanUpdateExecutor",
     "ACTION_WORKSPACE_PLAN_CHECKPOINT",
     "WorkspacePlanCheckpointExecutor",
+    "ACTION_DRAFT_WRITE", "ACTION_DRAFT_APPEND", "ACTION_DRAFT_READ",
+    "ACTION_DRAFT_LIST", "ACTION_DRAFT_DELETE",
+    "ACTION_WORKSPACE_PROMOTE_DRAFTS",
+    "DraftWriteExecutor", "DraftAppendExecutor", "DraftReadExecutor",
+    "DraftListExecutor", "DraftDeleteExecutor",
+    "WorkspacePromoteDraftsExecutor",
     "ACTION_WORKSPACE_READ", "WorkspaceReadExecutor",
     "ACTION_MESSAGE_SEND", "MessageSendExecutor",
     "ACTION_PUBLIC_QUERY", "PublicQueryExecutor",

@@ -49,7 +49,8 @@ from actions import run as run_mod                                  # noqa: E402
 from actions.executor import ActionDispatcher                        # noqa: E402
 from actions.intent import ActionResult                              # noqa: E402
 from actions.read_payload import (                                   # noqa: E402
-    CONFIRMATION_ACTIONS, OBSERVABLE_ACTIONS, render_read_results,
+    CONFIRMATION_ACTIONS, DEMAND_ONLY_ACTIONS, OBSERVABLE_ACTIONS,
+    render_read_results,
 )
 from tests.action_registry_helpers import registered_action_types     # noqa: E402
 
@@ -268,7 +269,7 @@ class TestTheRenderer:
 # ============================================================
 class TestEveryActionIsClassified:
     def test_the_two_sets_cover_every_registered_action(self):
-        registered = registered_action_types()
+        registered = registered_action_types() | DEMAND_ONLY_ACTIONS
         classified = OBSERVABLE_ACTIONS | CONFIRMATION_ACTIONS
 
         missing = sorted(registered - classified)
@@ -279,8 +280,9 @@ class TestEveryActionIsClassified:
             f"或 CONFIRMATION_ACTIONS。")
 
     def test_no_action_is_classified_that_is_not_registered(self):
-        phantom = sorted((OBSERVABLE_ACTIONS | CONFIRMATION_ACTIONS)
-                         - registered_action_types())
+        phantom = sorted(
+            (OBSERVABLE_ACTIONS | CONFIRMATION_ACTIONS)
+            - (registered_action_types() | DEMAND_ONLY_ACTIONS))
         assert not phantom, f"分类里有不存在的动作：{phantom}"
 
     def test_the_two_sets_do_not_overlap(self):

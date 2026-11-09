@@ -343,6 +343,32 @@ Provisioning 仍然是 Creator 的显式动作，不由 `task_create` 自动创�
 所有空文件：先建目录 + 入口 skeleton + 模块最小骨架，再按 phases 填充；
 需要交接的文件/目录必须先存在。
 
+### 3.9 私有 Draft Buffer + 批量 Promotion（2026-11-09）
+
+目标：**先生成，再决定落盘/拆文件；下一次调用可以一次 promote 多个文件。**
+
+动作：
+
+- `draft_write(content, label?)` → draft_id；
+- `draft_append(draft_id, content)`；
+- `draft_read(draft_id, offset?, limit?)`（observable）；
+- `draft_list` / `draft_delete`；
+- `workspace_promote_drafts(items=[...])`：
+  - 一次 Action 写多个文件；
+  - 内容来自私有草稿，不重新经过模型输出；
+  - 顺序走 Workspace Gateway（锁 / revision / audit 照旧）；
+  - 逐项返回 `results` + `summary`；partial success 也计强进展。
+
+边界：
+
+- 草稿按 Agent 隔离，不是 Task Workspace artifact，不是 Memory 四层；
+- 不参与验收 / Plan 完成度；
+- 不自动保存所有 API 输出，不自动 promotion；
+- 当前是 run 内存态；长期保存需显式写 private workspace；
+- 第一次生成仍可能截断，需要 `draft_append`；
+- **不**在本阶段把 Cognitive Budget 上限改成 64k；等 provider 能力
+  验证后再做。
+
 ---
 
 ## 4. `task_create`

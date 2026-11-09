@@ -77,6 +77,7 @@
 | [0051](0051-submit-smoke-and-conflict-record.md) | **SUBMIT 前 DOM/import 门禁 + 观点/事实冲突记录** | Accepted（**已实现**） | 首帧崩溃 / 错误观点无记录 | Demand / Memory / Workspace |
 | [0052](0052-thinking-directive-schema.md) | **thinking 指令 schema 与兼容归一** | Accepted（**已实现**） | invalid_thinking 频繁 | Cognition / Demand |
 | [0053](0053-plan-phases-checkpoints-provisioning.md) | **Workspace Plan 阶段 / 依赖 / 检查点 / 占位标记** | Accepted（**已实现**） | 有文件清单无开发顺序 | Demand / Workspace |
+| [0054](0054-private-draft-buffer-and-batch-promotion.md) | **私有 Draft Buffer + 批量 Promotion** | Accepted（**Phase 1 已实现**） | 生成与落盘绑定 / 一轮一文件 | Demand / Workspace |
 | [0028](0028-read-visibility-and-native-communication.md) | **Read 靠 Task Participation；Communication 是 Agent 基础能力** | Accepted（实现为 FUTURE） | Read / Visibility / Communication | Workspace / Communication |
 
 ---

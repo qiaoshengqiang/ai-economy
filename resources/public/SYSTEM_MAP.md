@@ -74,6 +74,10 @@
 > `workspace_plan_checkpoint` 记录某个 phase 的检查结果。
 > 它们只存在于 Demand 组合根，参数见 Task prompt；checkpoint 是
 > Agent 自报，不是 Task 验收。
+>
+> Demand 入口还提供**私有草稿**：`draft_write` / `draft_append` /
+> `draft_read` / `draft_list` / `draft_delete`，以及一次可落盘多个文件的
+> `workspace_promote_drafts`。草稿不是项目文件，只有显式 promotion 才落盘。
 
 **公共工具库**（只读，由项目预装）：
 `python` · `pytest` · `node` · `playwright`

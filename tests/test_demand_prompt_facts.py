@@ -534,3 +534,21 @@ def test_plan_status_renders_phases_placeholders_and_checkpoints():
     assert "⬜ placeholder" in prompt
     assert "checkpoint 目标：page can load" in prompt
     assert "workspace_plan_checkpoint" in prompt
+
+
+def test_prompt_shows_private_drafts_and_batch_promotion():
+    prompt = build_task_prompt(
+        run=_run(), task=_task(), runtime=_runtime(),
+        agent_id="agent_a", inbox=[], budget_cap=32768,
+        drafts=[{
+            "draft_id": "draft_abc",
+            "label": "cube-view",
+            "chars": 4000,
+            "sha256": "a" * 64,
+            "preview": "export function buildView() {}",
+        }])
+    assert "你的私有草稿" in prompt
+    assert "draft_abc" in prompt
+    assert "cube-view" in prompt
+    assert "workspace_promote_drafts" in prompt
+    assert "一次 Action 可以落盘多个文件" in prompt
