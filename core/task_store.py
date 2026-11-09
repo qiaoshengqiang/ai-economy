@@ -252,12 +252,12 @@ class TaskStore:
             f"""
             INSERT INTO {TABLE_TASKS} (
                 task_id, current_trace_id, creator, contractor,
-                participants, status, description, workspace_id,
+                participants, status, mode, iteration, description, workspace_id,
                 budget_amount, budget_currency,
                 agreed_price_amount, agreed_price_currency,
                 acceptance, required_capabilities, expires_at,
                 created_at, updated_at, note, version
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (*self._task_columns(task), version),
         )
@@ -289,6 +289,8 @@ class TaskStore:
                 contractor            = ?,
                 participants          = ?,
                 status                = ?,
+                mode                  = ?,
+                iteration             = ?,
                 description           = ?,
                 workspace_id          = ?,
                 budget_amount         = ?,
@@ -308,6 +310,8 @@ class TaskStore:
                 task.contractor,
                 json.dumps(task.participants, ensure_ascii=False),
                 task.status,
+                task.mode,
+                task.iteration,
                 task.description,
                 task.workspace_id,
                 task.budget.amount if task.budget else None,
@@ -346,6 +350,8 @@ class TaskStore:
             task.contractor,
             json.dumps(task.participants, ensure_ascii=False),
             task.status,
+            task.mode,
+            task.iteration,
             task.description,
             task.workspace_id,
             task.budget.amount if task.budget else None,
@@ -670,6 +676,10 @@ class TaskStore:
             updated_at=row["updated_at"],
             offers=self.offers_for(row["task_id"]),
             note=row["note"],
+            # ADR-0056：老库迁移后是 TEAM / 1。
+            # 用 keys() 判断是为了兼容列还没补齐的极端情况。
+            mode=row["mode"] if "mode" in row.keys() else "TEAM",
+            iteration=row["iteration"] if "iteration" in row.keys() else 1,
             # 【必须把 version 读出来 —— 否则乐观锁形同虚设】
             #
             #     乐观锁的前提是「读到的版本」和「写回时的版本」一致。

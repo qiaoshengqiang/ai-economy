@@ -157,7 +157,11 @@ class TestStateMachine:
 
         task.complete()
         assert task.status == TaskStatus.COMPLETED
-        assert task.is_terminal is True
+        # ADR-0056：COMPLETED 是「当前 Iteration 关闭」，不是真终态。
+        assert task.is_settled is True
+        assert task.is_terminal is False
+        assert task.is_closed is True
+        assert task.is_open is False
 
     def test_negotiating_can_repeat(self, negotiating_task):
         """
@@ -306,7 +310,6 @@ class TestTerminalStates:
     @pytest.mark.parametrize(
         "terminal",
         [
-            TaskStatus.COMPLETED,
             TaskStatus.REJECTED,
             TaskStatus.CANCELLED,
             TaskStatus.EXPIRED,
@@ -319,7 +322,6 @@ class TestTerminalStates:
     @pytest.mark.parametrize(
         "terminal",
         [
-            TaskStatus.COMPLETED,
             TaskStatus.REJECTED,
             TaskStatus.CANCELLED,
             TaskStatus.EXPIRED,
@@ -332,6 +334,44 @@ class TestTerminalStates:
         assert task.is_terminal is True
         with pytest.raises(InvalidTaskTransition):
             task.transition_to(TaskStatus.COMPLETED)
+
+    def test_completed_is_settled_not_terminal(self):
+        """
+        ADR-0056：COMPLETED 只关闭当前 Iteration，可以 Reopen。
+        """
+        task = Task(task_id="task_x", creator="a",
+                    status=TaskStatus.COMPLETED)
+
+        assert task.is_settled is True
+        assert task.is_terminal is False
+        assert task.is_closed is True
+        assert TRANSITIONS[TaskStatus.COMPLETED] == frozenset({
+            TaskStatus.IN_PROGRESS,
+        })
+
+    def test_completed_cannot_use_raw_transition_to_reopen(self):
+        """必须走 reopen()，否则 iteration 不会递增。"""
+        task = Task(task_id="task_x", creator="a",
+                    status=TaskStatus.COMPLETED)
+
+        with pytest.raises(InvalidTaskTransition, match="reopen"):
+            task.transition_to(TaskStatus.IN_PROGRESS)
+
+    def test_reopen_bumps_iteration_and_preserves_history(self):
+        task = Task(task_id="task_x", creator="a",
+                    status=TaskStatus.COMPLETED, iteration=1)
+        task.note = "旧记录"
+
+        task.reopen(reason="Human 要求改")
+
+        assert task.status == TaskStatus.IN_PROGRESS
+        assert task.iteration == 2
+        assert task.note == "Human 要求改"
+        assert task.is_open is True
+
+    def test_reopen_requires_completed(self, task):
+        with pytest.raises(InvalidTaskTransition):
+            task.reopen()
 
     def test_rejected_path(self, task):
         task.offer()

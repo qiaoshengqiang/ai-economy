@@ -1,11 +1,13 @@
 # Life / Work 分层架构
 
-> **状态：`DESIGNED`（2026-11-09）**
+> **状态：目标架构 `DESIGNED`；Solo / Reopen / Work 基础 / Front 契约 `CURRENT`（2026-11-09）**
 >
-> 本文描述**目标架构**，不是当前已实现状态。
-> 当前实现：Task Core · Workspace Core v1 · Memory · Draft Buffer Phase 1 ·
-> Tool Runtime · Demand Entry V1。Front Agent / Team Runtime / 可用状态 /
-> Reopen 尚未实现。
+> 本文描述**目标架构**，不是全部已实现。
+> 当前已实现：Task Core · Workspace Core v1 · Memory · Draft Buffer Phase 1 ·
+> Tool Runtime · Demand Entry V1 · **Solo 自 SUBMIT/VERIFY/COMPLETE** ·
+> **COMPLETED Reopen / Iteration V1** · **SoloWorkRuntime + Work 精简 prompt**
+> · **Front 意图 / Brief / Result 契约** · **AgentAvailability / TeamRegistry**。
+> Team Runtime（多 Agent 执行）与 Front 调度接线仍为 `DESIGNED`。
 >
 > 相关 ADR：
 > [ADR-0055](adr/0055-life-work-layering-and-front-agent.md) ·
@@ -76,7 +78,7 @@ Work 层（具体执行）
 | 可用状态 | `IDLE` / `WORKING` |
 | 组队 | 邀请 / 接受 / 拒绝（未来） |
 
-Life 层是 Agent **持续存在**的地方。  
+Life 层是 Agent **持续存在**的地方。
 Agent 完成任务后回到 Life 层，仍然保留身份、资产和历史。
 
 ### 2.2 Work 层
@@ -171,7 +173,7 @@ WORKING  已在某个 Task 中，不可接受新邀请
 - Task 完成 / 中止 / 退出 → 回到 `IDLE`；
 - 一个 Agent 同时只能属于一个 Work Task。
 
-> 当前 V1 的 Task participants 仍是直接指定；  
+> 当前 V1 的 Task participants 仍是直接指定；
 > 邀请协议作为生活层后续内容，不在本阶段修改协议。
 
 ### 4.2 Task 就是团队容器
@@ -250,14 +252,18 @@ Result
 
 ### 6.1 结论
 
-Solo 不引入 QA，也不让生产者自验。
+Solo 不引入 QA，也不要求 Human 执行“接受”动作。
 
 采用：
 
 ```text
-Solo Agent 可以自己声明「工作完成」= SUBMITTED
-COMPLETED 仍然是 Human/非生产者接受后的关闭
+Solo Agent 可以自己 SUBMIT / VERIFY / COMPLETE
+Human 没有“接受”动作
+Human 后续输入由 Front 识别为返工或其他意图
 ```
+
+这是 `producer ≠ acceptor` 的**显式 Solo 例外**。
+Team Task 仍然保留 `producer ≠ acceptor`。
 
 ### 6.2 流程
 
@@ -266,31 +272,35 @@ Team Lead 创建 Solo Task（自己为 contractor）
         ↓
 IN_PROGRESS
         ↓
- Agent 自己发送 SUBMIT
+Agent 自己 SUBMIT
         ↓
 SUBMITTED
         ↓
-Result 交给 Front
+Agent 自己 VERIFY + COMPLETE
         ↓
-Front 回复 Human
+COMPLETED（当前 Iteration 关闭）
         ↓
-Human 接受 → COMPLETED
-Human 要求返工 → IN_PROGRESS（下一 Iteration）
+Result 交给 Front → Human
+        ↓
+Human 再次输入
+        ↓
+Front 判断意图
+  ├─ 返工 → 路由给 Task Creator → Reopen → Iteration +1
+  ├─ 新目标 → 新 Brief / 新 Task
+  ├─ 询问 → direct reply
+  └─ 不明确 → 请 Human 澄清
 ```
 
 ### 6.3 边界
 
-- `SUBMITTED` 是 Agent 自述“我完成了这一轮工作”；
-- `COMPLETED` 是生命周期关闭，不是永久状态；
+- `SUBMITTED` 是 Agent 自述“这一轮交付”；
+- `VERIFIED` / `COMPLETED` 在 Solo 中允许承接方自己发送；
+- `COMPLETED` 是当前 Iteration 关闭，不是永久状态；
 - 没有团队内部 QA；
-- Human 通过 Front 做接受/返工决定；
-- Front 只转达 Human 决定，不替 Human 判断。
-
-> 当前代码：`SUBMIT` 允许 contractor；`VERIFY/COMPLETE` 不允许 contractor。
-> 因此“Solo 自给 SUBMITTED、Human 接受后 COMPLETED”与现有
-> `producer ≠ acceptor` 边界兼容。
->
-> 不采用“Solo Agent 自己发 COMPLETED”，除非显式修改该边界。
+- Human 没有“接受”动作；
+- Front 不创建 Task、不改 Task 状态、不替 Human 验收；
+- Front 只识别意图并把反馈路由给 Task Creator；
+- Team Task 中承接方仍不能自验。
 
 ---
 
@@ -314,25 +324,26 @@ Iteration 2 继续执行
 以后不能再改
 ```
 
-### 7.2 当前实现差距
+### 7.2 Iteration V1（已实现）
 
-| 项 | 当前状态 |
+| 项 | 状态 |
 |---|---|
-| `TaskStatus.COMPLETED` | 终态，`TRANSITIONS[COMPLETED] = ∅` |
-| Reopen | **未实现** |
-| `COMPLETED → Workspace FROZEN` | 设计已定，代码未实现 |
-| Reopen 6 个细节 | `OPEN`（ADR-0022 / TASK_WORKSPACE §15.9） |
+| `TaskStatus.COMPLETED` | **不再是终态**；`TRANSITIONS[COMPLETED] = {IN_PROGRESS}` |
+| `Task.iteration` | `INTEGER`，从 1 开始；Reopen 时 +1 |
+| Reopen | **已实现** `Task.reopen()` |
+| `COMPLETED → Workspace FROZEN` | 设计方向保留；Workspace FROZEN 仍为 `FUTURE` |
+| Reopen 的锁处理 | **旧锁不自动失效**（Lock ≠ Task 状态） |
 
-### 7.3 Reopen 的目标模型（`PROPOSED`，未实现）
+### 7.3 Iteration 模型
 
 ```text
 Iteration 1 → COMPLETED
         ↓ Human 通过 Front 要求返工
-Reopen
+Reopen（Task Creator 执行）
+        ↓ iteration += 1
+Iteration 2（同一 Task / 同一 Workspace）
         ↓
-Iteration 2（同一 Task）
-        ↓
-IN_PROGRESS → SUBMITTED → ...
+IN_PROGRESS → SUBMITTED → VERIFIED → COMPLETED
 ```
 
 必须保留：
@@ -348,17 +359,17 @@ IN_PROGRESS → SUBMITTED → ...
 - 覆盖旧 Verification；
 - 把 Reopen 当成新 Task（除非目标发生根本变化）。
 
-### 7.4 仍需确认的 6 个细节
+### 7.4 Reopen 的 V1 约定
 
-1. 谁可以 Reopen？  
-2. 何时必须新建 Task，而不是 Reopen？  
-3. Reopen 是否产生新的 Iteration ID？  
-4. 是否恢复原 Workspace？  
-5. 旧 Lock 是否全部无效？  
-6. Permission 是否重新评估？
+1. **谁可以 Reopen？** Task Creator（Team Lead；Solo 时 creator = contractor）。
+2. **何时新建 Task？** 目标/交付物发生根本变化；普通修改用 Reopen。
+3. **是否新 Iteration ID？** 不新增实体；`Task.iteration` +1。
+4. **是否恢复原 Workspace？** 是，继续使用同一个 `workspace_id`。
+5. **旧 Lock 是否失效？** 否；Lock 独立，不自动释放/过期。
+6. **Permission 是否重新评估？** V1 participants 不变；变更按正常参与方规则处理。
 
-> 本阶段只固定“允许 Reopen / COMPLETED 非永久”的原则；
-> 上述 6 项保持 `OPEN`，实现前需专门 ADR。
+> 未决：`COMPLETED → Workspace FROZEN` 的自动联动、FROZEN 后的
+> Reopen 流程、陈旧锁的治理——都留到 Workspace lifecycle 实现时处理。
 
 ---
 
@@ -411,7 +422,8 @@ Short-Term 容量有限；如果用它存活动任务状态，切换几次任务
 - Private WM：按 Task 持久化；
 - Short/Long-Term：按 Agent 全局持久化；
 - Draft：按 `(agent_id, task_id)` 持久化到私有空间；
-- 当前 Draft Buffer Phase 1 是 run 内存；目标实现改为私有空间持久化。
+- **Work 层已实现** `TaskDraftStore`（`.drafts/<task_id>.json`）；
+- 旧 `DemandRunner` 的 Draft Buffer Phase 1 仍是 run 内存，迁移时替换。
 
 ---
 
@@ -449,18 +461,35 @@ Database
 > 当前 `DemandRunner` 是 Front/Creator/Producer/Reviewer 混合的单体，
 > 不作为目标架构。它保留为旧实验路径，逐步迁移。
 
+已实现的代码入口：
+
+```text
+front/contracts.py   FrontBrief / FrontDecision / FrontResult / FrontIntent
+front/runtime.py     FrontAgentRuntime：direct_reply / handoff / rework / follow_up / clarify
+front/parser.py      解析模型输出；rework 只接受 COMPLETED Task
+
+work/runtime.py      SoloWorkRuntime：精简 prompt + Work 动作 + work_complete
+work/lifecycle.py    无消息的 START/SUBMIT/VERIFY/COMPLETE/Reopen（写 task_executions）
+work/actions.py      只注册 Workspace/Draft/Tool/Memory；无消息/经济/验收指派
+work/prompt.py       最小 Work prompt
+work/availability.py IDLE/WORKING 原子切换
+work/team_registry.py 并行上限 3、WORKING 不可加入
+work/drafts.py       (agent_id, task_id) 私有草稿持久化
+work/cli.py          ./dev.sh work：Human → Front → Solo Task → Work
+```
+
 ---
 
 ## 10. 实施阶段
 
 | 阶段 | 内容 | 状态 |
 |---|---|---|
-| 0 | 本文档 + ADR-0055/0056 | **本次完成** |
-| 1 | FrontAgentRuntime + Brief/Result 契约 | `DESIGNED` |
-| 2 | TeamRuntime + Work 层精简 prompt | `DESIGNED` |
-| 3 | AgentAvailability + 并行 3 Team | `DESIGNED` |
-| 4 | Solo SUBMITTED + Human 接受 | `DESIGNED` |
-| 5 | Reopen / Iteration | `FUTURE`（6 细节 OPEN） |
+| 0 | 本文档 + ADR-0055/0056 | **已完成** |
+| 1 | Front 意图 / Brief / Result 契约 | **已实现**（`front/`）；CLI 接线为 `DESIGNED` |
+| 2 | Solo Work runtime + 精简 prompt / 动作集 | **已实现**（`work/`）；Team 多 Agent 执行为 `DESIGNED` |
+| 3 | AgentAvailability + 并行 3 Team 注册表 | **已实现**（`work/availability.py` / `team_registry.py`）；Front 调度接线为 `DESIGNED` |
+| 4 | Solo 自 SUBMIT / VERIFY / COMPLETE | **已实现** |
+| 5 | Reopen / Iteration V1 | **已实现**（FROZEN/陈旧锁为 `FUTURE`） |
 | 6 | 生活层邀请协议 | `FUTURE` |
 
 ---
@@ -468,12 +497,13 @@ Database
 ## 11. 未决问题
 
 1. Work 层无消息时，阻塞如何表达？
-2. Solo Task 的 Human 接受如何记录：Front 代理事件 / 新 HumanDecision 记录？
-3. Reopen 的 6 个细节。
+2. Front 意图识别失败/低置信度时，如何向 Human 澄清？
+3. `COMPLETED → Workspace FROZEN` 的自动联动。
 4. Draft 持久化位置：私有 Workspace 文件 vs 私有 DB 表。
 5. Front 如何选择 Team Lead：直接指定 / 按能力 / 按负载？
 6. Team Lead 自己 Solo 时，是否需要 `SUBMITTED` 之外的 `DELIVERED` 状态？
 7. 多 Team 共用同一个 Agent 的短/长期记忆时，是否需要并发锁？
+8. Reopen 后陈旧 Workspace 锁的治理策略。
 
 ---
 
@@ -484,5 +514,5 @@ Database
 - `docs/architecture/adr/0022-*.md`（FROZEN / Reopen）
 - `docs/architecture/adr/0055-life-work-layering-and-front-agent.md`
 - `docs/architecture/adr/0056-solo-completion-and-iteration-reopen.md`
-- `core/task.py`（当前 COMPLETED 终态）
+- `core/task.py`（COMPLETED 已可 Reopen）
 - `services/task_execution_service.py`（producer ≠ acceptor）

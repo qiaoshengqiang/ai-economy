@@ -516,6 +516,14 @@ SCHEMA_STATEMENTS: Final[tuple[str, ...]] = (
         participants        TEXT,
 
         status              TEXT NOT NULL DEFAULT 'CREATED',
+
+        -- SOLO / TEAM。只影响角色规则（Solo 允许承接方自验），
+        -- 不定义第二套生命周期。
+        mode                TEXT NOT NULL DEFAULT 'TEAM',
+
+        -- 当前 Iteration。COMPLETED 后 Reopen 时 +1；历史在 append-only 表中。
+        iteration           INTEGER NOT NULL DEFAULT 1,
+
         description         TEXT,
 
         -- 【只是逻辑标识，不是路径、不是权限】
@@ -1283,6 +1291,12 @@ COLUMN_MIGRATIONS: Final[dict] = {
         #     给它们 version=0 表示「还没人改过」。
         #     第一次 save() 会把它推到 1 —— 行为正确。
         ("version", "INTEGER NOT NULL DEFAULT 0"),
+        # ADR-0056：Solo 自完成 + Reopen / Iteration。
+        #
+        # 老库里的任务默认 TEAM / iteration=1 ——
+        # 它们没有 Solo 语义，也不能凭空多出历史轮次。
+        ("mode", "TEXT NOT NULL DEFAULT 'TEAM'"),
+        ("iteration", "INTEGER NOT NULL DEFAULT 1"),
     ],
     # Step 4C 给报价历史加了四个关联字段。
     # 老数据是 NULL（表示「不知道关联哪条消息」），这是合理的默认值。

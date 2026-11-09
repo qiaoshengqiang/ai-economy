@@ -76,7 +76,7 @@ from typing import (
 )
 
 from core.logging_setup import get_logger
-from core.task import Task, TaskStatus, TaskValidationError
+from core.task import Task, TaskMode, TaskStatus, TaskValidationError
 from core.task_execution import (
     COMPLETION_PROPOSAL_KEY,
     CompletionProposal,
@@ -429,6 +429,21 @@ class TaskExecutionService(TaskApplicationService):
         # 单独写出来而不是只靠 REQUIRED_ROLE 不含 CONTRACTOR，
         # 是因为「这个 Agent 恰好是 contractor」必须给出一条
         # **说得清**的错误，否则调用方会以为是自己少了某个 assignment。
+        #
+        # 【SOLO 的显式例外】
+        #     Solo Task 只有一个生产者；它没有团队内部 acceptor。
+        #     Human 也没有“接受”动作。因此 Solo 允许承接方自己
+        #     VERIFY / COMPLETE —— 见 ADR-0056。
+        #     这是**唯一**允许生产者自验的路径，Team Task 不受影响。
+        if (
+            actual == ExecutionRole.CONTRACTOR
+            and event_type in (
+                ExecutionEvent.VERIFY, ExecutionEvent.COMPLETE,
+            )
+            and task.mode == TaskMode.SOLO
+        ):
+            return []
+
         if actual == ExecutionRole.CONTRACTOR and event_type in (
             ExecutionEvent.VERIFY, ExecutionEvent.COMPLETE,
         ):
@@ -835,6 +850,91 @@ class TaskExecutionService(TaskApplicationService):
                 "feedback": verification.feedback,
                 "outcome": "verified" if verification.passed else "rework",
                 "rework": not verification.passed,
+            },
+        )
+
+    def validate_reopen(self, task: Task, actor: str) -> List[str]:
+        """
+        Reopen 的角色 / 状态规则（ADR-0056）。
+
+        V1 约定：
+
+            · 只有 COMPLETED 的任务可以 Reopen；
+            · 只有 Task Creator（Team Lead）可以 Reopen；
+            · Solo 时 creator = contractor，所以 Solo Agent 自己可以 Reopen；
+            · Front 不直接调用它 —— Front 只把 Human 的返工意图
+              路由给 Task Creator。
+
+        🔒 Reopen 不是“新建 Task”，也不释放 Workspace 锁。
+        """
+        errors: List[str] = []
+
+        if task.status != TaskStatus.COMPLETED:
+            errors.append(
+                f"任务 {task.task_id} 当前是 {task.status}，"
+                f"只有 COMPLETED 的任务可以 Reopen。"
+            )
+
+        if actor != task.creator:
+            errors.append(
+                f"{actor} 不能 Reopen 任务 {task.task_id}。\n"
+                f"  只有 Task Creator（{task.creator}）可以发起返工 / 新 Iteration。\n"
+                f"  Front 负责把 Human 的返工意图路由给 Creator，"
+                f"不直接修改 Task。"
+            )
+        return errors
+
+    def apply_reopen(
+        self,
+        task: Task,
+        *,
+        actor: str,
+        reason: str = "",
+    ) -> HandlerResult:
+        """
+        Reopen：COMPLETED → IN_PROGRESS，`iteration += 1`。
+
+        【为什么没有 incoming Message】
+            Work 层已经不再使用 Agent 间消息机制。
+            Reopen 由 Front 路由到 Task Creator 后，由应用层直接调用。
+
+        【保留什么】
+            · 旧 task_executions / submissions / verifications 全部保留；
+            · Workspace 不变；
+            · Lock 不变（不自动释放）。
+
+        【不做什么】
+            · 不新建 Task；
+            · 不覆盖旧验收；
+            · 不动 Wallet / Ledger。
+        """
+        errors = self.validate_reopen(task, actor)
+        if errors:
+            return HandlerResult(
+                ok=False,
+                action=HandlerAction.REOPENED,
+                task_id=task.task_id,
+                errors=tuple(errors),
+            )
+
+        previous_iteration = task.iteration
+        task.reopen(reason=reason or None)
+        saved = self.store.save(task)
+
+        logger.info(
+            "任务 %s 已 Reopen：iteration %s → %s，actor=%s",
+            saved.task_id, previous_iteration, saved.iteration, actor,
+        )
+        return HandlerResult(
+            ok=True,
+            action=HandlerAction.REOPENED,
+            task_id=saved.task_id,
+            details={
+                "iteration": saved.iteration,
+                "previous_iteration": previous_iteration,
+                "reason": reason,
+                "actor": actor,
+                "status": saved.status,
             },
         )
 

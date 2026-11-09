@@ -62,6 +62,34 @@ from core.task_workspace import TaskWorkspaceRef
 # ============================================================
 # 任务状态
 # ============================================================
+class TaskMode:
+    """
+    任务的工作模式。
+
+    SOLO
+        一个 Agent 独立完成。允许承接方自己 VERIFY / COMPLETE。
+        这是 `producer ≠ acceptor` 的显式例外。
+
+    TEAM
+        多个 Agent 协作。承接方不能自验；
+        VERIFY / COMPLETE 必须由发起方或验收责任人发送。
+
+    🔒 模式只影响**角色规则**，不改变任务生命周期：
+      两种模式都走同一套状态机。
+    """
+
+    SOLO = "SOLO"
+    TEAM = "TEAM"
+
+    @classmethod
+    def all(cls) -> List[str]:
+        return [cls.SOLO, cls.TEAM]
+
+    @classmethod
+    def is_known(cls, mode: str) -> bool:
+        return mode in cls.all()
+
+
 class TaskStatus:
     """
     任务生命周期状态。
@@ -135,13 +163,33 @@ class TaskStatus:
 
     @classmethod
     def terminal(cls) -> List[str]:
-        """终态：走到这里就不会再变了。"""
-        return [cls.COMPLETED, cls.REJECTED, cls.CANCELLED,
-                cls.EXPIRED, cls.FAILED]
+        """
+        真终态：走到这里就不会再变了。
+
+        🔴 `COMPLETED` **不在**这里。
+           它表示当前 Iteration 关闭，可以由 Task Creator 显式 Reopen。
+           见 ADR-0056。
+        """
+        return [cls.REJECTED, cls.CANCELLED, cls.EXPIRED, cls.FAILED]
+
+    @classmethod
+    def settled(cls) -> List[str]:
+        """
+        「当前 Iteration 已关闭」的状态。
+
+        和 terminal 的区别：
+            settled   可以 Reopen（COMPLETED）
+            terminal  永远不能离开
+        """
+        return [cls.COMPLETED]
 
     @classmethod
     def is_terminal(cls, status: str) -> bool:
         return status in cls.terminal()
+
+    @classmethod
+    def is_settled(cls, status: str) -> bool:
+        return status in cls.settled()
 
     @classmethod
     def is_known(cls, status: str) -> bool:
@@ -218,8 +266,20 @@ TRANSITIONS: Dict[str, frozenset] = {
         TaskStatus.FAILED,
     }),
 
-    # 终态：没有出边
-    TaskStatus.COMPLETED: frozenset(),
+    # 【COMPLETED 不是终态】
+    #
+    #   它表示**当前 Iteration 关闭**。Human 后续要求返工时，
+    #   由 Task Creator 显式 Reopen，回到 IN_PROGRESS，
+    #   同时 iteration +1。旧执行历史保留。
+    #
+    #   🔒 这条边不开放给普通 transition 调用：
+    #      `Task.reopen()` 是唯一的入口，它负责 iteration 递增。
+    #      见 ADR-0056。
+    TaskStatus.COMPLETED: frozenset({
+        TaskStatus.IN_PROGRESS,     # Reopen → 下一 Iteration
+    }),
+
+    # 真终态：没有出边
     TaskStatus.REJECTED: frozenset(),
     TaskStatus.CANCELLED: frozenset(),
     TaskStatus.EXPIRED: frozenset(),
@@ -470,6 +530,8 @@ class Task:
         updated_at: Optional[str] = None,
         offers: Optional[List[Offer]] = None,
         note: Optional[str] = None,
+        mode: str = TaskMode.TEAM,
+        iteration: int = 1,
         version: int = 0,
     ):
         # ---------- 校验 ----------
@@ -481,6 +543,16 @@ class Task:
             raise TaskValidationError(
                 f"未知的任务状态：{status!r}，合法值：{TaskStatus.all()}"
             )
+        if not TaskMode.is_known(mode):
+            raise TaskValidationError(
+                f"未知的任务模式：{mode!r}，合法值：{TaskMode.all()}"
+            )
+        if not isinstance(iteration, int) or isinstance(iteration, bool):
+            raise TaskValidationError(
+                f"iteration 必须是整数，收到 {iteration!r}"
+            )
+        if iteration < 1:
+            raise TaskValidationError(f"iteration 必须从 1 开始：{iteration}")
 
         # budget 和 agreed_price 都必须是 Money 或 None
         if budget is not None and not isinstance(budget, Money):
@@ -542,6 +614,12 @@ class Task:
         self.participants = list(participants or [])
         self.acceptance = dict(acceptance) if acceptance else None
 
+        # 【工作模式与迭代】
+        #   mode       SOLO 允许承接方自验；TEAM 保持 producer ≠ acceptor
+        #   iteration  COMPLETED 后 Reopen 会 +1，旧记录不删除
+        self.mode = mode
+        self.iteration = int(iteration)
+
         # 【任务需要什么能力】—— 这只是**声明**。
         #
         # 注意 Task 到此为止：它描述「需要什么」，
@@ -580,6 +658,7 @@ class Task:
         trace_id: Optional[str] = None,
         participants: Optional[List[str]] = None,
         note: Optional[str] = None,
+        mode: str = TaskMode.TEAM,
     ) -> "Task":
         """
         创建一个新任务。状态恒为 CREATED。
@@ -602,6 +681,7 @@ class Task:
             expires_at=expires_at,
             participants=participants,
             note=note,
+            mode=mode,
         )
 
     # ------------------------------------------------------------
@@ -622,12 +702,27 @@ class Task:
 
     @property
     def is_terminal(self) -> bool:
+        """真终态：REJECTED / CANCELLED / EXPIRED / FAILED。"""
         return TaskStatus.is_terminal(self._status)
 
     @property
+    def is_settled(self) -> bool:
+        """
+        当前 Iteration 是否已经关闭（COMPLETED）。
+
+        和 is_terminal 不同：settled 可以通过 `reopen()` 重新打开。
+        """
+        return TaskStatus.is_settled(self._status)
+
+    @property
+    def is_closed(self) -> bool:
+        """任务当前是否没有活跃 Iteration（settled 或 terminal）。"""
+        return self.is_terminal or self.is_settled
+
+    @property
     def is_open(self) -> bool:
-        """任务是否还在进行中（没到终态）。"""
-        return not self.is_terminal
+        """任务是否还有活跃 Iteration。"""
+        return not self.is_closed
 
     @property
     def workspace_id(self) -> Optional[str]:
@@ -659,23 +754,39 @@ class Task:
             return False
         return True
 
-    def transition_to(self, new_status: str) -> "Task":
+    def transition_to(
+        self, new_status: str, *, _reopen: bool = False
+    ) -> "Task":
         """
         状态转换。非法就抛 InvalidTaskTransition。
 
         【报错信息要说清楚「为什么不行」】
             只说「非法转换」没用，排查的人需要知道
             「现在是哪个状态、允许去哪儿」。
+
+        【`_reopen` 是内部参数】
+            COMPLETED → IN_PROGRESS 只能通过 `reopen()` 走：
+            因为 Reopen 还需要递增 iteration，普通 transition 会漏掉它。
         """
         if not TaskStatus.is_known(new_status):
             raise TaskValidationError(
                 f"未知的任务状态：{new_status!r}，合法值：{TaskStatus.all()}"
             )
 
+        if (
+            self._status == TaskStatus.COMPLETED
+            and new_status == TaskStatus.IN_PROGRESS
+            and not _reopen
+        ):
+            raise InvalidTaskTransition(
+                f"任务 {self.task_id} 已 COMPLETED；重新打开必须使用 "
+                f"Task.reopen()，以便开启新的 Iteration 并保留历史。"
+            )
+
         if self.is_terminal:
             raise InvalidTaskTransition(
                 f"任务 {self.task_id} 已经是终态 {self._status}，不能再转换到 {new_status}。\n"
-                f"终态意味着这个任务已经结束了（完成/拒绝/取消/过期/失败）。"
+                f"终态意味着这个任务已经结束了（拒绝/取消/过期/失败）。"
             )
 
         if not self.can_transition_to(new_status):
@@ -838,8 +949,37 @@ class Task:
         """结项（VERIFIED → COMPLETED）。"""
         return self.transition_to(TaskStatus.COMPLETED)
 
+    def reopen(self, reason: Optional[str] = None) -> "Task":
+        """
+        重新打开已完成的 Task（COMPLETED → IN_PROGRESS）。
+
+        【它做什么】
+            · iteration +1（开启下一轮）
+            · 状态回到 IN_PROGRESS，可以重新 SUBMIT / VERIFY / COMPLETE
+            · 旧执行历史、旧 SUBMIT、旧 VERIFY 全部保留（append-only）
+
+        【它不做什么】
+            · 不新建 Task
+            · 不删除/覆盖旧记录
+            · 不自动释放 Workspace 锁（Lock ≠ Task 状态）
+            · 不更改 Workspace
+
+        🔒 这是 COMPLETED → IN_PROGRESS 的唯一入口：
+           `transition_to` 会拒绝绕过 `reopen()` 的直接转换。
+        """
+        if self._status != TaskStatus.COMPLETED:
+            raise InvalidTaskTransition(
+                f"只有 COMPLETED 的任务可以 Reopen；"
+                f"任务 {self.task_id} 当前是 {self._status}。"
+            )
+        if reason:
+            self.note = reason
+        self.transition_to(TaskStatus.IN_PROGRESS, _reopen=True)
+        self.iteration += 1
+        return self
+
     def cancel(self, reason: Optional[str] = None) -> "Task":
-        """取消。任何非终态都可以取消。"""
+        """取消。任何活跃状态都可以取消（COMPLETED 需先 Reopen）。"""
         self.note = reason or self.note
         return self.transition_to(TaskStatus.CANCELLED)
 
@@ -1012,6 +1152,10 @@ class Task:
             "contractor": self.contractor,
             "participants": list(self.participants),
             "status": self._status,
+            # SOLO / TEAM；只影响角色规则，不影响状态机
+            "mode": self.mode,
+            # 当前 Iteration；Reopen 时 +1
+            "iteration": self.iteration,
             "description": self.description,
             "workspace_id": self.workspace_id,
             # 【两个不同的字段，不要合并】
@@ -1066,6 +1210,8 @@ class Task:
                 Offer.from_dict(item) for item in data.get("offers", [])
             ],
             note=data.get("note"),
+            mode=data.get("mode", TaskMode.TEAM),
+            iteration=data.get("iteration", 1),
             version=data.get("version", 0),
         )
 
@@ -1075,6 +1221,8 @@ class Task:
         return {
             "task_id": self.task_id,
             "status": self._status,
+            "mode": self.mode,
+            "iteration": self.iteration,
             "creator": self.creator,
             "contractor": self.contractor,
             "budget": str(self.budget) if self.budget else None,

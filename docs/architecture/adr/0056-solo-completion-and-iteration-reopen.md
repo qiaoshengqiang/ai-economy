@@ -1,6 +1,6 @@
 # ADR-0056：Solo 完成语义 + Iteration / Reopen
 
-- **状态**：Accepted（**原则已确认；Reopen 实现为 `FUTURE`**）
+- **状态**：Accepted（**Solo 自 COMPLETE + Iteration V1 已实现**）
 - **时间**：2026-11-09
 - **Supersedes**：无
 - **Superseded by**：无
@@ -23,96 +23,127 @@
 - `FROZEN` 不是永久只读；
 - Reopen 的 6 个细节仍 `OPEN`。
 
-当前实现与文档存在差距：
+实现前存在的差距（本 ADR 已解决前两项）：
 
-- `TaskStatus.COMPLETED` 是终态，`TRANSITIONS[COMPLETED] = ∅`；
-- Reopen 未实现；
-- Workspace FROZEN 未实现；
-- 锁与 Task 状态是分离机制，Reopen 时旧锁是否失效未定。
+- `TaskStatus.COMPLETED` 曾是终态，`TRANSITIONS[COMPLETED] = ∅`；**已修正**
+- Reopen 未实现；**已实现 Iteration V1**
+- Workspace FROZEN 未实现；仍为 `FUTURE`
+- 锁与 Task 状态是分离机制；Reopen 时旧锁**不自动失效**（V1 明确）
 
 ## Decision
 
-### 1. Solo 采用“SUBMITTED + Human 接受”
+### 1. Solo 由 Agent 自己 COMPLETE
 
 ```text
 Solo Task:
   IN_PROGRESS
     → SUBMITTED        ← Agent 自己可以发
-    → Front → Human
-    → Human 接受
-    → COMPLETED
-    → Human 要求返工
-    → IN_PROGRESS（下一 Iteration）
+    → VERIFIED         ← Agent 自己确认这一轮完成
+    → COMPLETED        ← Agent 自己关闭这一轮
 ```
 
-- `SUBMITTED` = Agent 自述“这一轮工作完成”；
-- `COMPLETED` = Human/非生产者接受后的生命周期关闭；
+- `SUBMITTED` = Agent 自述“这一轮交付”；
+- `VERIFIED` / `COMPLETED` 在 Solo 中允许由承接方自己发送；
+- **Human 没有“接受”动作**；
 - 不引入 QA Agent；
-- 不让 Solo Agent 自己发 COMPLETED；
-- `producer ≠ acceptor` 保持不变；
-- Front 只转达 Human 的决定，不替 Human 判断。
+- 不要求 Front 替人类做验收；
+- 这是对 `producer ≠ acceptor` 的**显式 Solo 例外**；
+- Team Task 仍然保留 `producer ≠ acceptor`，承接方不能自验。
 
-> 本阶段不新增 `DELIVERED` 状态。  
-> 如果未来需要更明确的“交付”状态，再单独设计。
+> 为什么不让 Front 验收：Front 是入口和路由，不是验收责任方；
+> 让它验收会把“人类入口”变成“隐藏 QA”，职责再次混在一起。
 
-### 2. COMPLETED 不是永久状态
+### 2. 人类反馈通过 Front 触发返工
+
+```text
+Human 后续输入
+    ↓
+Front 识别意图
+    ├─ 新需求 / 不同目标 → 新 Brief → 新 Task
+    ├─ 对已完成 Task 的修改 → Reopen 原 Task
+    ├─ 询问结果 → direct reply
+    └─ 其他 → 转给原 Team / 请人类澄清
+```
+
+- Human 不直接操作 Task；
+- Front 不创建 Task，也不改 Task 状态；
+- Front 把返工意图路由给原 Task 的 **Creator（Team Lead）**；
+- 由 Team Lead 执行 Reopen，并组织下一轮工作；
+- Solo 时 Creator 就是承接方，由它自己 Reopen。
+
+### 3. COMPLETED 不是永久状态
 
 - `COMPLETED` 表示**当前 Iteration 关闭**；
 - Task 可以在 Human 要求下 Reopen；
 - Reopen 必须保留旧执行 / SUBMIT / VERIFY / 完成历史；
-- Reopen 不得覆盖旧 Verification；
-- 目标发生变化时才新建 Task，普通返工用 Iteration。
+- Reopen 不覆盖旧 Verification；
+- 目标发生根本变化时新建 Task；普通返工用 Iteration。
 
-### 3. 目标 Iteration 模型（`PROPOSED`，未实现）
+### 4. Iteration V1（已实现）
 
 ```text
 Task-001
-  Iteration 1
+  iteration = 1
     execution · submissions · verification · completion
-  Iteration 2
-    new execution · new submissions · new verification
+  Reopen
+  iteration = 2
+    new execution · submissions · verification · completion
 ```
 
-### 4. Reopen 的 6 个细节仍 `OPEN`
+实现约定：
 
-1. 谁可以 Reopen？
-2. 何时必须新建 Task？
-3. 是否产生新的 Iteration ID？
-4. 是否恢复原 Workspace？
-5. 旧 Lock 是否全部无效？
-6. Permission 是否重新评估？
+| 问题 | V1 决定 |
+|---|---|
+| 谁可以 Reopen？ | Task Creator（Team Lead；Solo 时 creator = contractor） |
+| 何时新建 Task？ | 目标/交付物发生根本变化；普通修改用 Reopen |
+| 是否产生新 Iteration ID？ | 不新增实体；`Task.iteration` 整数 +1 |
+| 是否恢复原 Workspace？ | 是，继续使用同一个 `workspace_id` |
+| 旧 Lock 是否全部无效？ | **否**。Lock 独立于 Task 状态，不自动释放/过期 |
+| Permission 是否重新评估？ | V1 participants 不变；若变更按正常参与方规则处理 |
 
-本 ADR 只确认：
+> `COMPLETED → Workspace FROZEN` 仍是设计方向，但 Workspace
+> lifecycle FROZEN 尚未实现；本轮不把 Task 状态与 Workspace
+> lifecycle 强行耦合。Reopen 时 Workspace 继续使用原空间。
 
-- 允许 Reopen；
-- `COMPLETED` 非永久；
-- 历史必须保留；
-- 6 个细节在实现前继续讨论。
+### 5. Task Core 的终态重新定义
+
+```text
+terminal      = REJECTED · CANCELLED · EXPIRED · FAILED
+settled       = COMPLETED（当前 Iteration 关闭，可 Reopen）
+TRANSITIONS[COMPLETED] = { IN_PROGRESS }
+```
+
+- `COMPLETED` 不再属于 `terminal()`；
+- `Task.is_terminal` 对 COMPLETED 返回 **false**；
+- 新增 `Task.is_settled` / `Task.is_closed`；
+- `is_open` 仍然表示“还有活跃 Iteration”，COMPLETED 返回 false；
+- Reopen 是**显式领域动作** `Task.reopen()`，不是普通 `transition_to`。
 
 ## 明确不做
 
-- 不修改 Task Core 的状态机（本阶段）；
-- 不实现 Reopen（本阶段）；
-- 不让 Solo Agent 自己 VERIFY/COMPLETE；
+- 不让 Front 创建 Task 或直接改 Task 状态；
+- 不在 Solo 中要求 Human 接受；
+- 不让 Team Task 的承接方自验；
 - 不把 Reopen 当成新 Task；
 - 不把锁自动过期/自动释放混进 Reopen；
-- 不改变 `COMPLETED → FROZEN` 的设计方向。
+- 不在本轮实现 Workspace FROZEN。
 
 ## Consequences
 
 ### 正面
 
-- Solo 有明确的 Agent 完成状态 `SUBMITTED`；
-- 不破坏 producer ≠ acceptor；
-- Human 仍然是最终接受者；
-- 为 Reopen/Iteration 留下清晰的历史模型；
-- 不再把 `COMPLETED` 误读为永久死亡。
+- Solo 有明确的 Agent 自完成路径；
+- Human 不再承担 Task 操作负担；
+- 返工保留原 Task 与历史；
+- Team 的 `producer ≠ acceptor` 仍然成立；
+- `COMPLETED` 的语义与 `TASK_WORKSPACE.md` / ADR-0022 对齐。
 
 ### 负面 / 代价
 
-- Human 接受如何记录到 Task Core 仍需实现设计；
-- Reopen 6 个细节未定，不能提前编码；
-- 当前代码仍把 COMPLETED 当终态，文档与实现存在短期差距。
+- `COMPLETED` 不再是终态，旧的“终态不可离开”测试需要更新；
+- Reopen 后旧锁不会自动失效，长任务可能留下陈旧锁；
+- Workspace FROZEN 仍未与 COMPLETED 联动；
+- Front 的意图识别质量会直接影响返工是否正确路由。
 
 ## References
 

@@ -267,7 +267,9 @@ class TestPositive:
         assert row[0] == TaskStatus.COMPLETED, row
         # 用 TaskStore 重新 get 一次（也是从库里读）
         assert rt.tasks.get(TASK).status == TaskStatus.COMPLETED
-        assert rt.tasks.get(TASK).is_terminal is True
+        # ADR-0056：COMPLETED 只关闭当前 Iteration，可以 Reopen。
+        assert rt.tasks.get(TASK).is_settled is True
+        assert rt.tasks.get(TASK).is_terminal is False
 
     def test_07_runner_exits_completed_not_wall_limit(self, rt):
         """⑦ Production Runner 因 COMPLETED 正常退出（不靠 Wall Limit）。"""

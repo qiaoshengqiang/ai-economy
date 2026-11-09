@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Mapping, Optional
 
-from core.task import Task
+from core.task import Task, TaskMode
 from core.task_shared_context import ContextChangeType
 from services.assignment_ops import assign_acceptance
 
@@ -47,6 +47,7 @@ class TaskCreationService:
         producer: Any = None,
         acceptance_assignee: Any = None,
         workspace_plan: Any = None,
+        mode: str = TaskMode.TEAM,
     ) -> Dict[str, Any]:
         try:
             values = self._validate(
@@ -57,6 +58,7 @@ class TaskCreationService:
                 producer=producer,
                 acceptance_assignee=acceptance_assignee,
                 workspace_plan=workspace_plan,
+                mode=mode,
             )
         except TaskCreationError as exc:
             return {"ok": False, "code": exc.code, "message": exc.message}
@@ -85,6 +87,7 @@ class TaskCreationService:
             workspace_id=ws_id,
             participants=values["participants"],
             note=f"demand_run:{self.run.run_id}",
+            mode=values["mode"],
         )
         if values["producer"]:
             task.claim_producer(values["producer"])
@@ -173,6 +176,7 @@ class TaskCreationService:
             "acceptance_assignee": values["acceptor"],
             "workspace_plan": values["workspace_plan"],
             "status": task.status,
+            "mode": task.mode,
         }
 
     # ------------------------------------------------------------
@@ -186,7 +190,14 @@ class TaskCreationService:
         producer: Any,
         acceptance_assignee: Any,
         workspace_plan: Any = None,
+        mode: str = TaskMode.TEAM,
     ) -> Dict[str, Any]:
+        mode = str(mode or TaskMode.TEAM).strip().upper()
+        if not TaskMode.is_known(mode):
+            raise TaskCreationError(
+                "bad_mode",
+                f"mode 只能是 {TaskMode.all()}，收到 {mode!r}")
+
         creator = str(creator or "").strip()
         if not creator:
             raise TaskCreationError("bad_creator", "creator 不能为空")
@@ -212,10 +223,16 @@ class TaskCreationService:
         if creator not in people:
             raise TaskCreationError(
                 "bad_participants", "participants 必须包含 creator 自己")
-        if len(people) < 2:
+        if mode == TaskMode.SOLO:
+            if people != [creator]:
+                raise TaskCreationError(
+                    "bad_participants",
+                    "SOLO 任务只能有一个参与者，且必须是 creator 自己")
+        elif len(people) < 2:
             raise TaskCreationError(
                 "bad_participants",
-                "至少需要 2 个参与者（生产者 != 验收人；不能自己验自己）")
+                "TEAM 任务至少需要 2 个参与者"
+                "（生产者 != 验收人；不能自己验自己）")
         if len(people) > self.max_agents:
             raise TaskCreationError(
                 "too_many_agents",
@@ -256,7 +273,17 @@ class TaskCreationService:
                 "bad_producer", "producer 必须是 participants 之一")
 
         acceptor = str(acceptance_assignee or "").strip() or None
-        if acceptor:
+        if mode == TaskMode.SOLO:
+            # Solo 没有团队内部验收人；Agent 自己 VERIFY / COMPLETE。
+            if prod != creator:
+                raise TaskCreationError(
+                    "bad_producer", "SOLO 任务的 producer 必须是 creator 自己")
+            if acceptor:
+                raise TaskCreationError(
+                    "bad_acceptor",
+                    "SOLO 任务不需要 acceptance_assignee；"
+                    "承接方自己完成 VERIFY / COMPLETE（ADR-0056）")
+        elif acceptor:
             if acceptor not in people:
                 raise TaskCreationError(
                     "bad_acceptor", "acceptance_assignee 必须是 participants 之一")
@@ -269,8 +296,12 @@ class TaskCreationService:
                     "acceptor_is_producer",
                     "验收人不能是 producer（生产者不得自验）")
 
-        plan = self._validate_workspace_plan(
-            workspace_plan, people=people, producer=prod)
+        # SOLO 的 workspace_plan 可以省略；TEAM 仍然必须提供。
+        if mode == TaskMode.SOLO and workspace_plan is None:
+            plan = None
+        else:
+            plan = self._validate_workspace_plan(
+                workspace_plan, people=people, producer=prod)
 
         return {
             "creator": creator,
@@ -280,6 +311,7 @@ class TaskCreationService:
             "producer": prod,
             "acceptor": acceptor,
             "workspace_plan": plan,
+            "mode": mode,
         }
 
     def validate_workspace_plan(

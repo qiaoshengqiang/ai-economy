@@ -315,6 +315,58 @@ class TestTaskCreationService:
         assert second["ok"] is False
         assert second["code"] == "task_already_created"
 
+    def test_create_solo_task(self):
+        """ADR-0056：Solo 单参与者，无验收人，Creator 自己生产。"""
+        rt = _Runtime()
+        svc = TaskCreationService(rt, _run(), max_agents=5)
+        out = svc.create(
+            creator="agent_a", description="solo work",
+            participants=["agent_a"],
+            acceptance_criteria=["file exists"],
+            producer="agent_a",
+            mode="SOLO",
+        )
+        assert out["ok"] is True, out
+        assert out["mode"] == "SOLO"
+        task = rt.tasks[out["task_id"]]
+        assert task.mode == "SOLO"
+        assert task.contractor == "agent_a"
+        assert task.participants == ["agent_a"]
+        # Solo 不需要 root lock handoff
+        assert rt.workspace_gateway.handoffs == []
+
+    def test_solo_rejects_extra_participants(self):
+        with pytest.raises(TaskCreationError, match="SOLO"):
+            self._svc()._validate(
+                creator="agent_a", description="d",
+                participants=["agent_a", "agent_b"],
+                acceptance_criteria=["ok"], producer="agent_a",
+                acceptance_assignee=None, mode="SOLO")
+
+    def test_solo_rejects_acceptance_assignee(self):
+        with pytest.raises(TaskCreationError, match="acceptance_assignee"):
+            self._svc()._validate(
+                creator="agent_a", description="d",
+                participants=["agent_a"],
+                acceptance_criteria=["ok"], producer="agent_a",
+                acceptance_assignee="agent_b", mode="SOLO")
+
+    def test_solo_producer_must_be_creator(self):
+        with pytest.raises(TaskCreationError, match="producer"):
+            self._svc()._validate(
+                creator="agent_a", description="d",
+                participants=["agent_a"],
+                acceptance_criteria=["ok"], producer="agent_b",
+                acceptance_assignee=None, mode="SOLO")
+
+    def test_unknown_mode_rejected(self):
+        with pytest.raises(TaskCreationError, match="mode"):
+            self._svc()._validate(
+                creator="agent_a", description="d",
+                participants=["agent_a"],
+                acceptance_criteria=["ok"], producer="agent_a",
+                acceptance_assignee=None, mode="PAIR")
+
 
 # ============================================================
 # RunScheduler

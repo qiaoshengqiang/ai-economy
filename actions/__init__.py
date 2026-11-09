@@ -88,6 +88,9 @@ from actions.run_tool import (
 from actions.task_create import (
     ACTION_TASK_CREATE, TaskCreateExecutor,
 )
+from actions.work_complete import (
+    ACTION_WORK_COMPLETE, WorkCompleteExecutor,
+)
 from actions.public_working_memory import (
     ACTION_PUBLIC_WORKING_MEMORY_READ,
     ACTION_PUBLIC_WORKING_MEMORY_UPDATE,
@@ -153,6 +156,7 @@ __all__ = [
     "ACTION_SHARED_CONTEXT_READ", "SharedContextReadExecutor",
     "ACTION_RUN_TOOL", "RunToolExecutor",
     "ACTION_TASK_CREATE", "TaskCreateExecutor",
+    "ACTION_WORK_COMPLETE", "WorkCompleteExecutor",
     "ACTION_PUBLIC_WORKING_MEMORY_READ",
     "ACTION_PUBLIC_WORKING_MEMORY_UPDATE",
     "PublicWorkingMemoryReadExecutor", "PublicWorkingMemoryUpdateExecutor",

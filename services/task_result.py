@@ -71,6 +71,7 @@ class HandlerAction:
     VERIFIED = "verified"                # 发起方验收通过（SUBMITTED → VERIFIED）
     REWORK = "rework"                    # 发起方验收不通过，打回重做（→ IN_PROGRESS）
     COMPLETED = "completed"              # 发起方结项（VERIFIED → COMPLETED）
+    REOPENED = "reopened"                # 返工：COMPLETED → IN_PROGRESS（Iteration +1）
 
     # 通用
     ALREADY_PROCESSED = "already_processed"  # 这条消息之前处理过（幂等）

@@ -429,7 +429,7 @@ RunScheduler(
 行为：
 
 - 串行 round-robin；
-- Task 进入终态（COMPLETED / FAILED / CANCELLED / REJECTED / EXPIRED）立即停；
+- Task 结束（COMPLETED 为当前 Iteration 关闭，可 Reopen；FAILED / CANCELLED / REJECTED / EXPIRED 为真终态）立即停；
 - 墙钟 / 最大 turn / 连续无进展时停；
 - **无进展 = 没有真实进展**：状态变化 / 成功写入或编辑 / 新产物 /
   首次出现的有意义消息；单纯的 `workspace_read` / `run_tool` 不算；

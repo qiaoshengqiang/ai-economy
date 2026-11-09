@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from core.write_limits import MAX_SINGLE_WRITE_CHARS
 from actions import (
     ActionDispatcher,
     AssignAcceptanceExecutor,
@@ -78,13 +79,14 @@ def build_intake_dispatcher(create_fn: Any) -> ActionDispatcher:
     return ActionDispatcher([TaskCreateExecutor(create_fn)])
 
 
-#: 🔒 Demand Entry V1 的单次写入/编辑结构上限（字符数）。
+#: 🔒 单次写入/编辑结构上限（字符数）。
 #:
 #: 真实 run `demand_795139c7`：Agent 3 次 `finish_reason=length`，
 #: 仍然试图一次写完整文件。文字提醒没有改变行为 —— 这里把它变成
 #: **写入前的硬拒绝**：超限的 Action 不会落盘，Agent 必须拆成
 #: create + append / workspace_edit。
-MAX_SINGLE_WRITE_CHARS = 12_000
+#:
+#: 具体数值在 core/write_limits.py —— Work 层共用同一个上限。
 
 
 def build_task_dispatcher(

@@ -31,7 +31,7 @@ ACTION_TASK_CREATE = "task_create"
 
 _OUTPUT_FIELDS = (
     "task_id", "workspace_id", "description", "participants",
-    "producer", "acceptance_assignee", "status",
+    "producer", "acceptance_assignee", "status", "mode",
 )
 
 
@@ -58,6 +58,7 @@ class TaskCreateExecutor:
                 producer=params.get("producer"),
                 acceptance_assignee=params.get("acceptance_assignee"),
                 workspace_plan=params.get("workspace_plan"),
+                mode=params.get("mode"),
             )
         except Exception as exc:                              # noqa: BLE001
             return self._fail(intent, f"{type(exc).__name__}: {exc}",

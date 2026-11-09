@@ -1,6 +1,6 @@
 # ADR-0055：Life / Work 分层 + Front Agent
 
-- **状态**：Accepted（**设计已确认；实现为 `DESIGNED`**）
+- **状态**：Accepted（**分层已确认；Front 契约 / Solo Work 基础 / Availability 已实现；Team Runtime 为 `DESIGNED`**）
 - **时间**：2026-11-09
 - **Supersedes**：无
 - **Superseded by**：无
