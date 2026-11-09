@@ -353,6 +353,8 @@ class TestWorkPrompt:
         assert "index.html × 3" in prompt
         assert "workspace_edit" in prompt
         assert "把 cognitive_budget 提到 65536" in prompt
+        assert '"actions"' in prompt
+        assert "动作按声明顺序执行" in prompt
 
     def test_prompt_has_work_actions(self):
         context = WorkContext(

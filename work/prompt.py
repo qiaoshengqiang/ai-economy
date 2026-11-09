@@ -286,8 +286,8 @@ thinking / cognitive_budget。
 - 先确定模块边界和文件清单，再开始写第一个文件；
 - 入口文件先搭骨架，之后用 workspace_edit 增量修改，
   避免整文件反复重写；
-- 预计一次输出会很长（例如完整写一个大文件）时，先把
-  cognitive_budget 提到 65536，或者拆成 create + append；
+- 多个小文件可以放进一次 actions 列表；大文件仍建议先设置
+  cognitive_budget 再写，或拆成 create + append；
 - 每完成一个模块，尽量用 run_tool 验证一次，再继续下一个。
 
 ========== 可用动作与参数 ==========
@@ -309,6 +309,13 @@ thinking / cognitive_budget。
  "action":{{"type":"动作类型","parameters":{{...}}}}}}
 thinking / cognitive_budget 是可选的，省略就保持当前设置。
 如果只是普通回复，可以输出 {{"decision":"reply","content":"..."}}。
+
+如果要一次做多件事（例如一次写多个小文件），用动作列表：
+{{"decision":"act","reasoning":"...",
+ "actions":[{{"type":"workspace_write","parameters":{{...}}}},
+           {{"type":"workspace_write","parameters":{{...}}}}]}}
+动作按声明顺序执行；一个失败不阻止后面的。但如果整段输出被截断，
+所有动作都不会执行。
 """
 
 
