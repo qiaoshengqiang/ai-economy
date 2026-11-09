@@ -42,6 +42,7 @@ from work.availability import AgentAvailability
 from work.plan import WorkPlan, parse_work_plan
 from work.prompt import build_lead_plan_prompt
 from work.roles import WorkContext, WorkRole
+from work.runtime import SoloWorkRuntime
 from work.team_runtime import TeamWorkRuntime
 
 
@@ -326,13 +327,13 @@ class AIEOSController:
                 if item.agent_id != leader
             ]
             members = list(dict.fromkeys(members))
-            if not any(item.agent_id == leader for item in plan.items):
-                # Leader 也必须参与；如果它只分配别人，给它一个集成 item。
-                pass
-
+            # Leader 不选成员 = 它决定独立完成：按 SOLO 执行，
+            # 不把「没分配给别人」当成失败。
             if not members:
-                self._fail(job, "Leader 没有选择任何空闲成员")
-                return
+                self._message(
+                    "system",
+                    f"Leader {leader} 决定独立完成；按 Solo 执行。",
+                    job_id=job.job_id)
 
             acquired = self._acquire_members(members)
             if acquired is None:
@@ -342,7 +343,9 @@ class AIEOSController:
             for aid in members:
                 self._bind_agent(aid, job, "MEMBER")
 
-            created = self._create_task(job, leader, members, plan, decision)
+            mode = TaskMode.TEAM if members else TaskMode.SOLO
+            created = self._create_task(
+                job, leader, members, plan, decision, mode=mode)
             if not created.get("ok"):
                 self._fail(job, created.get("message") or "Task 创建失败")
                 return
@@ -350,25 +353,36 @@ class AIEOSController:
             job.task_id = task_id
             self._bind_task_to_agents([leader, *members], task_id)
             self._set_job(job, JobStatus.RUNNING)
+            detail = (
+                f"已选择成员 {', '.join(members)}" if members
+                else "独立执行")
             self._message(
                 "system",
-                f"Leader {leader} 已选择成员 {', '.join(members)}；"
-                f"Task {task_id} 开始执行。",
+                f"Leader {leader} {detail}；Task {task_id} 开始执行。",
                 job_id=job.job_id, task_id=task_id)
 
             task = self.rt.tasks.get(task_id)
             if task is None:
                 self._fail(job, "Task 创建后无法读取")
                 return
-            team = TeamWorkRuntime(
-                self.rt, task,
-                brief=decision.brief.to_dict(),
-                initial_plan=plan,
-                max_worker_turns=self.max_worker_turns,
-                max_integration_turns=self.max_integration_turns,
-                cognitive_budget=self.cognitive_budget,
-            )
-            result = team.run()
+            if members:
+                runner = TeamWorkRuntime(
+                    self.rt, task,
+                    brief=decision.brief.to_dict(),
+                    initial_plan=plan,
+                    max_worker_turns=self.max_worker_turns,
+                    max_integration_turns=self.max_integration_turns,
+                    cognitive_budget=self.cognitive_budget,
+                )
+            else:
+                runner = SoloWorkRuntime(
+                    self.rt, task,
+                    brief=decision.brief.to_dict(),
+                    max_turns=(
+                        self.max_worker_turns + self.max_integration_turns),
+                    cognitive_budget=self.cognitive_budget,
+                )
+            result = runner.run()
             job.tokens = int(getattr(result, "tokens", 0) or 0)
             job.turns = int(getattr(result, "turns", 0) or 0)
             front_result = front.result_from_work(result)
@@ -503,6 +517,8 @@ class AIEOSController:
         members: List[str],
         plan: WorkPlan,
         decision: Any,
+        *,
+        mode: str = TaskMode.TEAM,
     ) -> Dict[str, Any]:
         participants = [leader, *members]
         run = SimpleNamespace(
@@ -520,8 +536,12 @@ class AIEOSController:
             or decision.brief.deliverables
             or [decision.brief.goal]
         )
-        workspace_plan = self._workspace_plan(
-            leader, members, plan.directories)
+        # SOLO 没有其他成员，Leader 计划里的成员目录不适用；
+        # 交给默认的 workspace 供给。
+        workspace_plan = (
+            self._workspace_plan(leader, members, plan.directories)
+            if members else None
+        )
         return creation.create(
             creator=leader,
             description=_description_from_brief(decision.brief),
@@ -530,7 +550,7 @@ class AIEOSController:
             producer=leader,
             acceptance_assignee=None,
             workspace_plan=workspace_plan,
-            mode=TaskMode.TEAM,
+            mode=mode,
         )
 
     @staticmethod

@@ -219,6 +219,92 @@ def test_leader_plan_can_assign_all_work_to_members():
         controller.close()
 
 
+def test_job_without_members_degrades_to_solo(monkeypatch):
+    """Leader 只分配给自己时，不失败；按 SOLO 执行。"""
+    import work.controller as controller_module
+    from front import FrontBrief, FrontDecision, FrontIntent, FrontResult
+    from work.controller import WorkJob
+    from work.plan import parse_work_plan
+
+    class _Front:
+        def decide(self, _text, active_tasks=(), completed_tasks=()):
+            return FrontDecision(
+                intent=FrontIntent.HANDOFF,
+                brief=FrontBrief(goal="写一个 hello.py"))
+
+        def result_from_work(self, _result):
+            return FrontResult(
+                task_id="task_solo", status="COMPLETED", summary="done")
+
+        def format_result(self, result):
+            return result.to_human_text()
+
+    plan, error = parse_work_plan(
+        json.dumps({
+            "items": [{
+                "item_id": "item_1",
+                "assigned_to": "agent_b",
+                "goal": "写一个 hello.py",
+            }],
+            "qa": None,
+        }),
+        participants=["agent_b", "agent_c"],
+    )
+    assert plan is not None, error
+
+    seen = {}
+
+    class _Solo:
+        def __init__(self, _rt, task, **_kwargs):
+            seen["runner"] = "solo"
+            seen["task_id"] = task.task_id
+
+        def run(self):
+            return SimpleNamespace(ok=True, tokens=7, turns=2)
+
+    class _Team:
+        def __init__(self, *_args, **_kwargs):
+            seen["runner"] = "team"
+
+    runtime = SimpleNamespace(
+        directory=_Directory(["agent_a", "agent_b", "agent_c"]),
+        economy=SimpleNamespace(agent=lambda aid: SimpleNamespace(
+            has_brain=True)),
+        tasks=SimpleNamespace(
+            list_tasks=lambda limit=50: [],
+            get=lambda tid: SimpleNamespace(task_id=tid),
+        ),
+    )
+    controller = AIEOSController(runtime, front_agent="agent_a")
+    monkeypatch.setattr(controller, "_front_runtime", lambda: _Front())
+    monkeypatch.setattr(
+        controller, "_acquire_leader", lambda _job: "agent_b")
+    monkeypatch.setattr(
+        controller, "_leader_plan",
+        lambda _job, _leader, _brief: plan)
+
+    def _create(job, leader, members, plan_, decision, *, mode):
+        seen["members"] = list(members)
+        seen["mode"] = mode
+        return {"ok": True, "task_id": "task_solo"}
+
+    monkeypatch.setattr(controller, "_create_task", _create)
+    monkeypatch.setattr(controller_module, "SoloWorkRuntime", _Solo)
+    monkeypatch.setattr(controller_module, "TeamWorkRuntime", _Team)
+
+    job = WorkJob(job_id="job_solo", human_text="写一个 hello.py")
+    try:
+        controller._run_job(job)
+    finally:
+        controller.close()
+
+    assert seen["members"] == []
+    assert seen["mode"] == "SOLO"
+    assert seen["runner"] == "solo"
+    assert job.status == "COMPLETED"
+    assert job.task_id == "task_solo"
+
+
 def test_workspace_plan_declares_parent_directories():
     plan = AIEOSController._workspace_plan(
         "agent_a",

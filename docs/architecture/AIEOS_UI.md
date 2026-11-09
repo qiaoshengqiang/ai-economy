@@ -48,13 +48,14 @@ Front Agent（固定）
             选择一个 IDLE Agent 作为 Leader
                   ↓
             Leader 规划 + 从 IDLE Agent 中选择成员
-                  ↓
-            创建 TEAM Task
-                  ↓
-            TeamWorkRuntime（计划 / 并行 / 可选 QA / 汇总）
+                  ├─ 选了成员 → TEAM Task → TeamWorkRuntime
+                  └─ 没选成员 → SOLO Task → SoloWorkRuntime
                   ↓
             FrontResult → 输出框
 ```
+
+> Leader 决定独立完成（只把 item 分给自己）不是失败：控制面按
+> `SOLO` 执行，避免为了凑团队而制造无意义分工。
 
 ### 角色约束
 
@@ -101,11 +102,13 @@ GET  /api/health
 
 `AIEOSController` 只做编排：
 
-- 调用 `FrontAgentRuntime`；
+- 调用 `FrontAgentRuntime`（先对照进行中 / 已完成 Task，
+  避免把同一请求重复建任务）；
 - 选择空闲 Leader；
 - Leader 用 `build_lead_plan_prompt` 规划并选择成员；
-- 调用 `TaskCreationService` 创建 TEAM Task；
-- 调用 `TeamWorkRuntime(initial_plan=...)` 执行；
+- 有成员时调用 `TaskCreationService` 创建 TEAM Task，
+  调用 `TeamWorkRuntime(initial_plan=...)` 执行；
+- Leader 决定独立完成时创建 SOLO Task，调用 `SoloWorkRuntime` 执行；
 - 把 `WorkResult` 转成 `FrontResult` 显示。
 
 不复制：

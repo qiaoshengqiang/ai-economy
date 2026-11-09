@@ -174,6 +174,12 @@ class FrontAgentRuntime:
 ========== 你的职责 ==========
 只判断 Human 想要什么，并输出一个 Decision。你不生产、不验收、不创建 Task。
 
+先对照上面的 Task 列表，判断这是不是同一件事（措辞可以不同，看交付物和核心要求）：
+- 与进行中的 Task 实质相同 → follow_up，不要重复创建；
+- 与已完成的 Task 实质相同 → direct_reply，告诉 Human 已经完成并指出产物；
+  Human 明确要求修改时才用 rework；
+- 只有交付物或核心要求确实不同，才 handoff。
+
 可选 intent：
 
 1. direct_reply

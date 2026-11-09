@@ -141,6 +141,8 @@ def test_front_prompt_is_human_facing_and_does_not_invent_constraints():
     assert "不要向 Human 暴露" in prompt
     assert "不要把常见默认" in prompt
     assert "不要写「按现有 Brief 交付」" in prompt
+    assert "措辞可以不同" in prompt
+    assert "与已完成的 Task 实质相同 → direct_reply" in prompt
 
 
 def test_front_cannot_create_task():
