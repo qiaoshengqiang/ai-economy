@@ -166,6 +166,24 @@ def _render_last_turn(last: Optional[Dict[str, Any]]) -> str:
         lines.append(
             f"- 反复整文件重写：{detail}；"
             "优先用 workspace_edit 做局部修改。")
+    feedback = last.get("action_feedback")
+    if isinstance(feedback, list) and feedback:
+        lines.append("- 上一轮动作结果：")
+        for item in feedback[:10]:
+            if not isinstance(item, dict):
+                continue
+            status = "ok" if item.get("ok") else (
+                "未执行（截断）" if not item.get("executed") else "失败")
+            line = f"  - {item.get('action') or '?'}"
+            if item.get("target"):
+                line += f" {item['target']}"
+            line += f": {status}"
+            if item.get("code"):
+                line += f" ({item['code']})"
+            error = str(item.get("error") or "")
+            if error:
+                line += f" — {error[:240]}"
+            lines.append(line)
     if last.get("truncated"):
         lines.append(
             "- 上一轮输出被截断：下一次可把 cognitive_budget 提到 65536，"

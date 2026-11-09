@@ -188,6 +188,24 @@ class SoloWorkRuntime:
 
             action_types = [
                 str(getattr(i, "action_type", "")) for i in intents]
+            action_feedback = []
+            for intent, action_result in zip(intents, results):
+                params = getattr(intent, "parameters", None) or {}
+                metadata = getattr(action_result, "metadata", None) or {}
+                action_feedback.append({
+                    "action": str(getattr(intent, "action_type", "")),
+                    "target": str(
+                        params.get("path")
+                        or params.get("query")
+                        or params.get("item_id")
+                        or ""),
+                    "ok": bool(getattr(action_result, "success", False)),
+                    "executed": action_result is not None,
+                    "code": str(
+                        metadata.get("code") or "")
+                    if isinstance(metadata, dict) else "",
+                    "error": str(getattr(action_result, "error", "") or ""),
+                })
             for intent in intents:
                 if getattr(intent, "action_type", "") != "workspace_write":
                     continue
@@ -220,6 +238,7 @@ class SoloWorkRuntime:
                     getattr(agent, "brain", None),
                     "last_cognitive_budget", None),
                 "rewrites": rewrites,
+                "action_feedback": action_feedback,
             }
 
             if status_after == TaskStatus.COMPLETED:

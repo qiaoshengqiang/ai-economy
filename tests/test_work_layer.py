@@ -340,6 +340,15 @@ class TestWorkPrompt:
                     "clipped": "above_max",
                 },
                 "rewrites": {"index.html": 3},
+                "action_feedback": [
+                    {"action": "workspace_edit",
+                     "target": "app/service.py", "ok": False,
+                     "executed": True, "code": "old_string_not_found",
+                     "error": "old_string 在文件里没有找到"},
+                    {"action": "workspace_write",
+                     "target": "js/game.js", "ok": True,
+                     "executed": True, "code": "", "error": ""},
+                ],
             })
 
         assert "decision" in prompt and "work" in prompt
@@ -355,6 +364,9 @@ class TestWorkPrompt:
         assert "把 cognitive_budget 提到 65536" in prompt
         assert '"actions"' in prompt
         assert "动作按声明顺序执行" in prompt
+        assert "上一轮动作结果" in prompt
+        assert "workspace_edit app/service.py: 失败" in prompt
+        assert "old_string_not_found" in prompt
 
     def test_prompt_has_work_actions(self):
         context = WorkContext(
