@@ -10,6 +10,8 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, Iterable, List, Optional
 
+from core.write_limits import MAX_SINGLE_WRITE_CHARS
+
 MAX_DIRECTORY_CHARS = 4_000
 MAX_WORKSPACE_CHARS = 6_000
 MAX_CONTEXT_CHARS = 5_000
@@ -848,16 +850,15 @@ def build_task_prompt(
 - `workspace_write`
   write 必须给 `write_mode`: create / replace / append。
   create/replace 需要输出完整文件；能局部改就不要用 replace。
-  🔒 单次 `content` 最多 12000 字符；超限直接拒绝
-  （`content_too_large`），**不会写入**。大文件必须拆：
-  先用 create 写小骨架，再用 append 逐段追加；
-  不要一次重写整个大文件。
+  🔒 单次 `content` 最多 {MAX_SINGLE_WRITE_CHARS} 字符；超限直接拒绝
+  （`content_too_large`），**不会写入**。这只在确实超过单次输出预算时才发生；
+  大文件可以一次写入，不必为了旧上限做无意义拆分。
 - `workspace_edit`
   `path` / `old_string` / `new_string`；old_string 必须唯一命中；
   可选 `replace_all` / `expected_revision`。
   仍然走锁 / revision / audit；0 或多个命中会失败。
-  🔒 单次 `new_string` 最多 12000 字符；超限直接拒绝，
-  请拆成多次更小的局部编辑。
+  🔒 单次 `new_string` 最多 {MAX_SINGLE_WRITE_CHARS} 字符；超限直接拒绝，
+  只有确实超过单次输出预算时才需要拆成多次编辑。
 - `message_send`
   `to` / `message_type` / `text` / `payload`
   **普通协调消息**用 `TEXT` / `INFO` / `NOTE` / `QUESTION` / `REQUEST`。

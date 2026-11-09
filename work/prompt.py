@@ -8,11 +8,14 @@ Work 层最小 prompt
     · 身份经济 / 声誉 / 排名
     · Agent 间消息 / inbox / 收件人
     · 生活层邀请协议
-    · 每任务强制的 Public Working Memory / 冲突记录
+
+✅ Public Working Memory 是团队共享契约 / 计划 / 进度的主要载体，
+   每个 worker 的 prompt 都直接注入它，避免反复读 Shared Context。
 
 只给当前角色真正需要的：
 
-    目标 · DoD · Workspace 事实 · 任务级记忆 · 草稿 · 动作清单
+    目标 · DoD · 公共工作记忆 · Workspace 事实 ·
+    任务级记忆 · 草稿 · 动作 schema
 """
 
 from __future__ import annotations
@@ -21,6 +24,53 @@ import json
 from typing import Any, Dict, List, Optional
 
 from work.roles import WorkContext, WorkRole
+
+
+#: 动作参数 schema。
+#:
+#: 🔒 之前只列动作名，模型会猜 `target` / `pattern` / `command`，
+#:    导致大量“动作被拒绝 → 重来”的浪费。这里把字段名写死。
+ACTION_SCHEMA = """
+- workspace_read:
+  {"path":"<相对路径>", "offset":0, "limit":12000}
+  ⚠️ 路径字段必须叫 path，不要用 target。
+- workspace_search:
+  {"query":"<要搜的文本>", "path":"", "glob":"", "max_results":20}
+  ⚠️ 查询字段必须叫 query；glob 才是文件模式。
+- workspace_write:
+  {"path":"<相对路径>", "content":"<完整内容>",
+   "write_mode":"create|replace|append"}
+  write_mode 省略时默认 create；新文件用 create，替换已有文件用 replace，
+  追加用 append。大文件可以一次写，不必强行拆成很小。
+- workspace_edit:
+  {"path":"<相对路径>", "old_string":"<唯一旧片段>",
+   "new_string":"<新片段>", "replace_all":false}
+- run_tool:
+  {"tool":"python|pytest|node|playwright", "args":[...],
+   "source":"task|private", "path":"<入口文件>", "timeout_seconds":60}
+  ⚠️ 不要用 command 字段。
+- public_working_memory_read:
+  {}
+- public_working_memory_update:
+  {"expected_revision":<当前 revision>,
+   "items":{"<key>":{"kind":"plan|assignment|checklist|progress|note|conflict",
+                     "value":<任意 JSON>,
+                     "parent_key":"<可选>",
+                     "evidence":{"path":"<真实文件>","revision":<整数>}}},
+   "remove_keys":[]}
+- private_working_memory_read / private_working_memory_update:
+  同上，但只属于当前 Agent + 当前 Task。
+- short_term_memory_read / short_term_memory_update / short_term_memory_reinforce
+- long_term_memory_search / long_term_memory_read / long_term_memory_mark_used
+- private_write / private_read / private_list / private_delete:
+  只操作当前 Agent 的私有空间。
+- resource_create / resource_handoff / resource_release:
+  {"path":"<相对路径>", "to":"<agent_id>", "reason":"..."}
+- draft_write / draft_append / draft_read / draft_list / draft_delete
+- workspace_promote_drafts:
+  {"items":[{"draft_id":"...", "path":"...",
+             "write_mode":"create|replace|append"}]}
+"""
 
 
 def _render_workspace(runtime: Any, workspace_id: str,
@@ -75,6 +125,11 @@ def _render_brief(brief: Optional[Dict[str, Any]]) -> str:
     if not brief:
         return "（没有额外 Brief；以 Task description 为准）"
     return json.dumps(brief, ensure_ascii=False, indent=2)
+
+
+def _render_public_memory(context: WorkContext) -> str:
+    facts = str(context.public_memory_facts or "").strip()
+    return facts or "（公共工作记忆为空）"
 
 
 def _render_last_turn(last: Optional[Dict[str, Any]]) -> str:
@@ -164,6 +219,9 @@ def build_work_prompt(
 ========== 完成标准（Definition of Done） ==========
 {criteria}
 
+========== 公共工作记忆（团队共享契约 / 计划 / 进度） ==========
+{_render_public_memory(context)}
+
 ========== Workspace 事实 ==========
 workspace_id: {context.workspace_id}
 {workspace}
@@ -175,21 +233,13 @@ workspace_id: {context.workspace_id}
 {drafts}
 {_render_last_turn(last_turn)}
 {extra_instruction}
-========== 可用动作 ==========
-- workspace_read / workspace_search / workspace_write / workspace_edit
-- draft_write / draft_append / draft_read / draft_list / draft_delete
-- workspace_promote_drafts（一次把多个草稿落盘）
-- run_tool（受控工具：python / pytest / node / playwright 等）
-- resource_create / resource_handoff / resource_release（Workspace 锁）
-- shared_context_read
-- private_working_memory_read / private_working_memory_update
-- short_term_memory_read / short_term_memory_update / short_term_memory_reinforce
-- long_term_memory_search / long_term_memory_read / long_term_memory_mark_used
-- private_write / private_read / private_list / private_delete
-- work_complete
+========== 可用动作与参数 ==========
+{ACTION_SCHEMA}
+- work_complete:
+  {{"result_ref":"<逻辑名，不是路径>", "summary":"..."}}
 
 🔒 这是 Work 层：没有 Agent 间通信动作，也不讨论身份或经济。
-🔒 先读再改；写入前确认路径与锁；不要一次写超长文件。
+🔒 先读再改；写入前确认路径与锁；大文件可以一次写入，避免无意义拆分。
 🔒 不要声称完成而没有实际产物。
 
 {completion_hint}
@@ -209,8 +259,18 @@ def _render_items(items: Any) -> str:
     lines = []
     for item in items or []:
         paths = f"；paths={item.paths}" if getattr(item, "paths", None) else ""
+        acceptance = (
+            f"；acceptance={item.acceptance}"
+            if getattr(item, "acceptance", None) else "")
+        # 🔒 notes 常常就是 Leader 写的契约 / 接口约定。
+        #    之前不渲染它，worker 只能反复 shared_context_read。
+        notes = str(getattr(item, "notes", "") or "").strip()
+        if len(notes) > 2000:
+            notes = notes[:2000] + " …（已截断）"
+        notes_text = f"\n  notes: {notes}" if notes else ""
         lines.append(
-            f"- {item.item_id} @ {item.agent_id}: {item.goal}{paths}")
+            f"- {item.item_id} @ {item.agent_id}: {item.goal}"
+            f"{paths}{acceptance}{notes_text}")
     return "\n".join(lines) or "（无）"
 
 
@@ -307,17 +367,23 @@ def build_team_worker_prompt(
 {(chr(10).join(f"- {c}" for c in context.acceptance_criteria)
   or "（以分工目标为准）")}
 
+========== 公共工作记忆（团队共享契约 / 计划 / 进度） ==========
+{_render_public_memory(context)}
+
 ========== Workspace ==========
 {workspace}
 {_render_last_turn(last_turn)}
-========== 可用动作 ==========
-workspace_read / workspace_search / workspace_write / workspace_edit /
-run_tool / draft_* / workspace_promote_drafts / resource_* /
-shared_context_read / private_working_memory_* / short_term_memory_* /
-long_term_memory_* / private_* / work_item_done / work_item_blocked
+========== 可用动作与参数 ==========
+{ACTION_SCHEMA}
+- work_item_done:
+  {{"item_id":"...", "summary":"...", "paths":["..."]}}
+  （不要用 note 字段；说明写 summary）
+- work_item_blocked:
+  {{"item_id":"...", "reason":"..."}}
 
 🔒 只做分给你的 item。完成后调用 work_item_done（带 item_id）。
 🔒 被阻塞时调用 work_item_blocked（带 item_id + reason）。
+🔒 公共工作记忆里已有契约时，不要再反复读 Shared Context / config。
 🔒 没有 Agent 间通信动作；不要讨论身份或经济。
 🔒 不要替别人验收，也不要调用 work_complete。
 
@@ -350,17 +416,23 @@ def build_qa_prompt(
 ========== 成员回报 ==========
 {_render_item_state(item_state)}
 
+========== 公共工作记忆（团队共享契约 / 计划 / 进度） ==========
+{_render_public_memory(context)}
+
 ========== Workspace ==========
 {workspace}
 {_render_last_turn(last_turn)}
+========== 可用动作与参数 ==========
+{ACTION_SCHEMA}
+- work_qa_verdict:
+  {{"passed":true|false, "feedback":"..."}}
+
 ========== 你的职责 ==========
 检查整体交付是否满足 DoD。可以 workspace_read / workspace_search /
-run_tool 验证，然后调用：
-{{"decision":"act","reasoning":"...",
- "action":{{"type":"work_qa_verdict","parameters":{{
-   "passed":true,"feedback":"..."}}}}}}
+run_tool 验证，然后调用 work_qa_verdict。
 
 🔒 不通过必须给出可执行的 feedback。
+🔒 不要反复读 Shared Context；公共工作记忆已经是团队契约。
 🔒 没有 Agent 间通信动作；不要讨论身份或经济。
 """
 
@@ -390,6 +462,9 @@ def build_lead_integration_prompt(
 ========== 成员回报 ==========
 {_render_item_state(item_state)}
 {qa_text}
+========== 公共工作记忆（团队共享契约 / 计划 / 进度） ==========
+{_render_public_memory(context)}
+
 ========== Workspace ==========
 {workspace}
 {_render_last_turn(last_turn)}
@@ -399,10 +474,15 @@ def build_lead_integration_prompt(
 3. 处理 blocked item 或调整方案；
 4. 满足 DoD 后调用 work_complete。
 
-可用动作：workspace_read / workspace_search / workspace_write /
-workspace_edit / run_tool / draft_* / workspace_promote_drafts /
-resource_* / shared_context_read / memory 动作 / work_complete。
+========== 可用动作与参数 ==========
+{ACTION_SCHEMA}
+- work_complete:
+  {{"result_ref":"<逻辑名，不是路径>", "summary":"..."}}
+- work_plan_update（重新计划时）:
+  {{"expected_revision":<当前版本>, "reason":"...",
+    "operations":[...], "qa": null}}
 {replan_text}
+🔒 公共工作记忆是团队共享契约；不要反复读 Shared Context。
 🔒 没有 Agent 间通信动作；不要讨论身份或经济。
 🔒 如果设置了 QA，只有 QA 通过后才能完成。
 """
@@ -443,6 +523,9 @@ def build_leader_replan_prompt(
 ========== 成员回报 ==========
 {_render_item_state(item_state)}
 {feedback}
+========== 公共工作记忆 ==========
+{_render_public_memory(context)}
+
 ========== 团队成员 ==========
 {", ".join(participants)}
 

@@ -60,7 +60,8 @@ Life 层（Agent 社会）
 Work 层（具体执行）
   ├─ Task（= 团队容器）
   ├─ Workspace
-  ├─ Shared Context
+  ├─ Shared Context（精简：目标 / 验收 / 分工引用）
+  ├─ Public Working Memory（团队契约 / 计划 / 进度）
   ├─ Private Working Memory
   ├─ Short / Long-Term Memory
   ├─ Draft Buffer
@@ -90,7 +91,8 @@ Agent 完成任务后回到 Life 层，仍然保留身份、资产和历史。
 |---|---|
 | Task | 工作单元 + 团队容器 |
 | Workspace | 文件、锁、revision、audit |
-| Shared Context | Team 内共同认知 |
+| Shared Context | 精简的 Task 级共同认知（目标 / 验收 / 分工引用） |
+| Public Working Memory | 团队共享契约 / 计划 / 进度；**每个 worker prompt 直接注入** |
 | Private Working Memory | 当前 Task 的工作结构 |
 | Short / Long-Term Memory | 跨 Task 经验（Agent 全局） |
 | Draft Buffer | 私有草稿 + 批量 promotion |
@@ -210,7 +212,8 @@ max_parallel_teams: 3
 
 - Task Core（生命周期权威）；
 - Workspace Core v1（资源树 / 锁 / revision / audit）；
-- Shared Context；
+- Shared Context（精简使用）；
+- Public Working Memory（团队契约 / 计划 / 进度，进入每个 worker prompt）；
 - Private Working Memory；
 - Short / Long-Term Memory；
 - Draft Buffer + batch promotion；
@@ -233,11 +236,17 @@ Work 层的协作面：
 ```text
 Task
 Workspace
-Shared Context
+Shared Context（精简）
+Public Working Memory（团队契约 / 计划 / 进度）
 Private Working Memory
 Draft
 Result
 ```
+
+> **为什么 Shared Context 可以精简**：团队真正需要共享的
+> 契约、计划与进度放在 Public Working Memory，并由 runtime
+> 直接注入每个 worker prompt；Shared Context 只保留目标、验收
+> 和分工引用，不再作为每轮反复读取的全量上下文。
 
 Work 层用**结构化动作**代替消息：
 

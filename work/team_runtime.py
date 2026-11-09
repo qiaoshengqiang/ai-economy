@@ -133,6 +133,7 @@ class TeamWorkRuntime:
                 return result
 
             self._record_plan(self.plan)
+            self._publish_plan_to_public_memory(self.plan)
             self._provision_workspace(self.plan)
             self._init_item_state(self.plan)
             self._plan_history.append(self.plan.to_dict())
@@ -285,6 +286,74 @@ class TeamWorkRuntime:
                 self._event(
                     "team_qa_assign_failed",
                     error=f"{type(exc).__name__}: {exc}")
+
+    def _publish_plan_to_public_memory(self, plan: WorkPlan) -> None:
+        """
+        把当前计划写入 Public Working Memory。
+
+        🔒 这是 worker prompt 的直接输入：每个成员都能看到
+           ——谁负责什么、notes 里的契约、QA 是谁。
+           这样不需要再反复 shared_context_read。
+        """
+        service = getattr(self.rt, "public_working_memory", None)
+        if service is None:
+            return
+        try:
+            current = service.read(self.task.task_id, self.lead)
+            existing = set(current.items)
+            items = {}
+            desired = set()
+            desired.add("team.plan")
+            items["team.plan"] = {
+                "kind": "plan",
+                "value": {
+                    "revision": plan.revision,
+                    "qa": plan.qa,
+                    "notes": str(plan.notes or "")[:1000],
+                },
+            }
+            for item in plan.items:
+                key = f"item.{item.item_id}"
+                desired.add(key)
+                notes = str(item.notes or "")
+                if len(notes) > 1500:
+                    notes = notes[:1500] + " …（已截断）"
+                items[key] = {
+                    "kind": "assignment",
+                    "value": {
+                        "item_id": item.item_id,
+                        "agent_id": item.agent_id,
+                        "goal": item.goal,
+                        "paths": list(item.paths),
+                        "acceptance": list(item.acceptance),
+                        "notes": notes,
+                    },
+                }
+            if plan.qa:
+                desired.add("team.qa")
+                items["team.qa"] = {
+                    "kind": "note",
+                    "value": {"qa": plan.qa},
+                }
+            remove = sorted(
+                key for key in existing
+                if key.startswith("item.") and key not in desired
+            )
+            remove += ["team.qa"] if "team.qa" in existing and not plan.qa else []
+            service.update(
+                self.task.task_id,
+                self.lead,
+                expected_revision=current.revision,
+                items=items,
+                remove_keys=remove,
+            )
+            self._event(
+                "team_plan_published", revision=plan.revision,
+                items=sorted(desired))
+        except Exception as exc:                              # noqa: BLE001
+            self._event(
+                "team_plan_publish_failed",
+                error=f"{type(exc).__name__}: {exc}")
 
     # ------------------------------------------------------------
     # 阶段 2：Workspace 目录准备
@@ -464,7 +533,6 @@ class TeamWorkRuntime:
         agent = self._agent(self.lead)
         if agent is None or not getattr(agent, "has_brain", False):
             raise WorkLifecycleError(f"Team Leader {self.lead} 没有 Brain")
-        context = self._context(self.lead, WorkRole.LEAD)
         dispatcher = build_work_dispatcher(
             self.rt,
             task=self.task,
@@ -480,6 +548,7 @@ class TeamWorkRuntime:
             qa_feedback = ""
             if self._qa_verdict and not self._qa_verdict.get("passed"):
                 qa_feedback = str(self._qa_verdict.get("feedback") or "")
+            context = self._context(self.lead, WorkRole.LEAD)
             prompt = build_leader_replan_prompt(
                 context,
                 task_description=self.task.description,
@@ -564,6 +633,7 @@ class TeamWorkRuntime:
         self.plan = new_plan
         self._plan_history.append(new_plan.to_dict())
         self._record_plan_revision(new_plan, applied, reason)
+        self._publish_plan_to_public_memory(new_plan)
         if qa_provided and new_plan.qa != previous_qa:
             self._qa_verdict = None
             self._update_qa_assignment(previous_qa, new_plan.qa)
@@ -660,7 +730,6 @@ class TeamWorkRuntime:
         if agent is None or not getattr(agent, "has_brain", False):
             return {"agent_id": agent_id, "error": "no_brain"}
 
-        context = self._context(agent_id, WorkRole.MEMBER)
         dispatcher = build_work_dispatcher(
             self.rt,
             task=self.task,
@@ -676,6 +745,7 @@ class TeamWorkRuntime:
 
         for turn in range(1, self.max_worker_turns + 1):
             turns = turn
+            context = self._context(agent_id, WorkRole.MEMBER)
             prompt = build_team_worker_prompt(
                 context,
                 task_description=self.task.description,
@@ -784,7 +854,6 @@ class TeamWorkRuntime:
             return False
 
         self._qa_verdict = None
-        context = self._context(qa, WorkRole.QA)
         dispatcher = build_work_dispatcher(
             self.rt,
             task=self.task,
@@ -795,6 +864,7 @@ class TeamWorkRuntime:
         )
         seen_reads: set = set()
         for turn in range(1, self.max_qa_turns + 1):
+            context = self._context(qa, WorkRole.QA)
             prompt = build_qa_prompt(
                 context,
                 task_description=self.task.description,
@@ -863,7 +933,6 @@ class TeamWorkRuntime:
         if agent is None or not getattr(agent, "has_brain", False):
             raise WorkLifecycleError(f"Team Leader {self.lead} 没有 Brain")
 
-        context = self._context(self.lead, WorkRole.LEAD)
         dispatcher = build_work_dispatcher(
             self.rt,
             task=self.task,
@@ -880,6 +949,7 @@ class TeamWorkRuntime:
             qa_feedback = ""
             if self._qa_verdict and not self._qa_verdict.get("passed"):
                 qa_feedback = str(self._qa_verdict.get("feedback") or "")
+            context = self._context(self.lead, WorkRole.LEAD)
             prompt = build_lead_integration_prompt(
                 context,
                 task_description=self.task.description,
@@ -987,8 +1057,16 @@ class TeamWorkRuntime:
             workspace_id=task.workspace_id or "",
             acceptance_criteria=self._acceptance_criteria(),
             memory_facts=self._memory_facts(agent_id),
+            public_memory_facts=self._public_memory_facts(agent_id),
             draft_facts=self._draft_facts(agent_id),
         )
+
+    def _public_memory_facts(self, agent_id: str) -> str:
+        try:
+            return self.rt.public_working_memory.render(
+                self.task.task_id, agent_id)
+        except Exception:                                     # noqa: BLE001
+            return ""
 
     def _acceptance_criteria(self) -> List[str]:
         try:

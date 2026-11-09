@@ -14,7 +14,7 @@ Workspace 单次写入/编辑的**结构上限**
     ② 超限 `workspace_edit.new_string` → `content_too_large`，
        且 `edit_fn` **根本没被调用**；
     ③ 未配置上限时保持旧行为（实验调用方不受影响）；
-    ④ Demand Entry 的 dispatcher 真的把 12000 上限接上了。
+    ④ Demand Entry 的 dispatcher 真的把统一写入上限接上了。
 """
 
 from __future__ import annotations
@@ -188,7 +188,7 @@ def test_demand_dispatcher_wires_the_structural_limit():
     assert read_ex.stat_fn is not None, "Demand 读动作应启用 revision 探针缓存"
     assert write_ex.max_content_chars == MAX_SINGLE_WRITE_CHARS
     assert edit_ex.max_new_string_chars == MAX_SINGLE_WRITE_CHARS
-    assert MAX_SINGLE_WRITE_CHARS == 12_000
+    assert MAX_SINGLE_WRITE_CHARS == 64_000
 
     result = dispatcher.dispatch(
         _write_intent("x" * (MAX_SINGLE_WRITE_CHARS + 1)))

@@ -150,6 +150,56 @@ class TestWorkLifecycle:
 
 
 # ============================================================
+# 1.5 Work 动作参数适配
+# ============================================================
+class TestWorkActionAdapters:
+    def test_missing_write_mode_defaults_to_create(self):
+        from actions.workspace_write import WorkspaceWriteExecutor
+        from work.adapters import WorkWorkspaceWriteExecutor
+
+        seen = {}
+
+        def write_fn(*args, **kwargs):
+            seen.update(kwargs)
+            return {"ok": True, "path": "a.js", "mode": "create",
+                    "revision": 1, "chars": 1}
+
+        adapter = WorkWorkspaceWriteExecutor(
+            WorkspaceWriteExecutor(write_fn))
+        intent = ActionIntent(
+            action_type="workspace_write",
+            parameters={"path": "a.js", "content": "x"},
+            agent_id="agent_a")
+        result = adapter.execute(intent)
+
+        assert result.success is True
+        assert seen["write_mode"] == "create"
+
+    def test_target_alias_is_accepted(self):
+        from actions.workspace_write import WorkspaceWriteExecutor
+        from work.adapters import WorkWorkspaceWriteExecutor
+
+        seen = {}
+
+        def write_fn(*args, **kwargs):
+            seen["path"] = args[3]
+            return {"ok": True, "path": "a.js", "mode": "create",
+                    "revision": 1, "chars": 1}
+
+        adapter = WorkWorkspaceWriteExecutor(
+            WorkspaceWriteExecutor(write_fn))
+        intent = ActionIntent(
+            action_type="workspace_write",
+            parameters={"target": "a.js", "content": "x",
+                        "write_mode": "create"},
+            agent_id="agent_a")
+        result = adapter.execute(intent)
+
+        assert result.success is True
+        assert seen["path"] == "a.js"
+
+
+# ============================================================
 # 2. 动作集合
 # ============================================================
 class _FakeGateway:
@@ -223,10 +273,11 @@ class TestWorkPrompt:
         for banned in (
             "wallet", "Wallet", "AIC", "钱包", "价格", "议价",
             "message_send", "task_create", "assign_acceptance",
-            "public_working_memory", "inbox",
+            "inbox",
         ):
             assert banned not in prompt, banned
         assert "work_complete" in prompt
+        assert "公共工作记忆" in prompt
         assert "hello.txt exists" in prompt
 
     def test_prompt_has_work_actions(self):
@@ -235,8 +286,30 @@ class TestWorkPrompt:
         prompt = build_work_prompt(
             context, task_description="d", runtime=None)
         for action in ("workspace_read", "workspace_edit", "run_tool",
-                       "draft_write", "private_working_memory_update"):
+                       "draft_write", "private_working_memory_update",
+                       "public_working_memory_update"):
             assert action in prompt
+
+    def test_worker_prompt_includes_item_notes_and_public_memory(self):
+        from work.plan import WorkItem
+        from work.prompt import build_team_worker_prompt
+
+        context = WorkContext(
+            task_id="T-1", agent_id="agent_b", role=WorkRole.MEMBER,
+            public_memory_facts="[plan] contract: use Game.CONFIG")
+        item = WorkItem(
+            item_id="item_1", agent_id="agent_b", goal="写 player.js",
+            notes="接口契约：Game.Player.update(dt, input)")
+        prompt = build_team_worker_prompt(
+            context,
+            task_description="打飞机游戏",
+            items=[item],
+            item_state={},
+            runtime=None,
+        )
+        assert "Game.Player.update(dt, input)" in prompt
+        assert "Game.CONFIG" in prompt
+        assert "不要再反复读 Shared Context" in prompt
 
 
 # ============================================================

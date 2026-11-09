@@ -10,4 +10,13 @@ Agent 必须拆成 create + append / edit，而不是一次写完整文件。
 """
 
 #: 单次 workspace_write / workspace_edit 的最大字符数。
-MAX_SINGLE_WRITE_CHARS = 12_000
+#:
+#: 🔴 2026-11-09：从 12,000 提高到 64,000。
+#:
+#: 原因：模型单次输出预算允许 16k tokens（约 6 万字符），
+#: 旧上限 12k 会让「模型已经生成、且没有截断」的大文件被**写入前拒绝**，
+#: 然后整段重新生成 —— 这是纯浪费，不是安全边界。
+#:
+#: 新上限与单次输出预算对齐；超过它说明工作单元确实太大，
+#: 才要求拆成 create + append / edit。
+MAX_SINGLE_WRITE_CHARS = 64_000

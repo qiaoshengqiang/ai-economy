@@ -53,6 +53,9 @@ class WorkContext:
     workspace_facts: str = ""
     #: 私有工作记忆 / 短期记忆 / 长期记忆的只读渲染。
     memory_facts: str = ""
+    #: 任务级公共工作记忆（所有参与者共享的契约 / 计划 / 进度）。
+    #: 它是 Work prompt 的一等输入，不再依赖反复 shared_context_read。
+    public_memory_facts: str = ""
     #: 当前 Agent 在这个 Task 下的草稿元数据。
     draft_facts: str = ""
 

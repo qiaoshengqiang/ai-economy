@@ -220,8 +220,16 @@ class SoloWorkRuntime:
             workspace_id=workspace_id,
             acceptance_criteria=self._acceptance_criteria(),
             memory_facts=self._memory_facts(actor),
+            public_memory_facts=self._public_memory_facts(actor),
             draft_facts=self._draft_facts(actor),
         )
+
+    def _public_memory_facts(self, actor: str) -> str:
+        try:
+            return self.rt.public_working_memory.render(
+                self.task.task_id, actor)
+        except Exception:                                     # noqa: BLE001
+            return ""
 
     def _acceptance_criteria(self) -> List[str]:
         try:

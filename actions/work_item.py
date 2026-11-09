@@ -73,7 +73,7 @@ class _Base:
 
 class WorkItemDoneExecutor(_Base):
     action_types = frozenset({ACTION_WORK_ITEM_DONE})
-    _allowed = frozenset({"item_id", "summary", "paths"})
+    _allowed = frozenset({"item_id", "summary", "paths", "note"})
 
     def execute(self, intent: ActionIntent) -> ActionResult:
         params, failed = self._params(intent)
@@ -87,7 +87,8 @@ class WorkItemDoneExecutor(_Base):
             raw = self.fn(
                 agent_id=intent.agent_id,
                 item_id=item_id,
-                summary=str(params.get("summary") or ""),
+                summary=str(
+                    params.get("summary") or params.get("note") or ""),
                 paths=params.get("paths") or [],
             )
         except Exception as exc:                              # noqa: BLE001

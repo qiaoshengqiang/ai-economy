@@ -5,7 +5,7 @@ Work 层动作组合
 只注册**具体工作**需要的动作：
 
     Workspace · Draft · Tool Runtime · Resource Lock ·
-    Private / Shared Working Memory · Short / Long-Term Memory ·
+    Public / Private Working Memory · Short / Long-Term Memory ·
     work_complete
 
 🔒 刻意不注册：
@@ -14,8 +14,11 @@ Work 层动作组合
     · task_create            Task 已由 Team Lead 创建
     · assign_acceptance      Team 验收走原有执行服务；Solo 自己完成
     · public_query           生活层公开信息查询
-    · public_working_memory  每任务强制公共 WM 属于旧重框架
     · wallet / price / 经济  无
+
+✅ Public Working Memory 进入 Work 层：
+   它是团队共享契约 / 计划 / 进度的主要载体，并且每个 worker 的
+   prompt 都会直接注入其渲染结果，避免反复 shared_context_read。
 """
 
 from __future__ import annotations
@@ -43,11 +46,12 @@ from actions import (
     PrivateWorkingMemoryReadExecutor,
     PrivateWorkingMemoryUpdateExecutor,
     PrivateWriteExecutor,
+    PublicWorkingMemoryReadExecutor,
+    PublicWorkingMemoryUpdateExecutor,
     ResourceCreateExecutor,
     ResourceHandoffExecutor,
     ResourceReleaseExecutor,
     RunToolExecutor,
-    SharedContextReadExecutor,
     ShortTermMemoryReadExecutor,
     ShortTermMemoryReinforceExecutor,
     ShortTermMemoryUpdateExecutor,
@@ -59,11 +63,13 @@ from actions import (
     WorkspaceWriteExecutor,
 )
 from core.write_limits import MAX_SINGLE_WRITE_CHARS
+from work.adapters import (
+    WorkWorkspaceReadExecutor, WorkWorkspaceWriteExecutor,
+)
 from services.artifacts import (
     edit_artifact, read_artifact, search_artifacts, stat_artifact,
     write_artifact,
 )
-from services.context_ops import read_shared_context
 from services.private_workspace import (
     delete_private, list_private, read_private, write_private,
 )
@@ -77,7 +83,8 @@ WORK_ACTION_TYPES = frozenset({
     "workspace_edit", "draft_write", "draft_append", "draft_read",
     "draft_list", "draft_delete", "workspace_promote_drafts",
     "run_tool", "resource_create", "resource_handoff", "resource_release",
-    "shared_context_read", "private_working_memory_read",
+    "public_working_memory_read", "public_working_memory_update",
+    "private_working_memory_read",
     "private_working_memory_update", "short_term_memory_read",
     "short_term_memory_update", "short_term_memory_reinforce",
     "long_term_memory_search", "long_term_memory_read",
@@ -90,7 +97,6 @@ WORK_ACTION_TYPES = frozenset({
 #: Work 层**禁止**出现的动作（由测试直接断言）。
 FORBIDDEN_WORK_ACTION_TYPES = frozenset({
     "message_send", "task_create", "assign_acceptance", "public_query",
-    "public_working_memory_read", "public_working_memory_update",
 })
 
 
@@ -115,10 +121,6 @@ def build_work_dispatcher(
     """
     workspace_id = task.workspace.workspace_id if task.workspace else ""
     current_task_id = task.task_id
-    participants = set(task.participants or [])
-
-    def _is_participant(tid: str, agent_id: str) -> bool:
-        return tid == current_task_id and agent_id in participants
 
     def _edit(agent_id: str, path: str, old_string: str,
               new_string: str, *, replace_all: bool = False,
@@ -137,11 +139,6 @@ def build_work_dispatcher(
             case_sensitive=kwargs.get("case_sensitive", True),
             context_lines=kwargs.get("context_lines", 0),
         )
-
-    def _read_context(*, by: str) -> Any:
-        return read_shared_context(
-            runtime.alignment, current_task_id, by=by,
-            is_participant=_is_participant)
 
     def _run_tool(agent_id: str, *, tool: str, args: Any, source: str,
                   path: str, timeout_seconds: Any) -> Any:
@@ -175,6 +172,14 @@ def build_work_dispatcher(
             return runtime.economy.agent(str(agent_id)).workspace
         except Exception:                                     # noqa: BLE001
             return None
+
+    def _wm_read(agent_id: str) -> Any:
+        return runtime.public_working_memory.read(
+            current_task_id, agent_id)
+
+    def _wm_update(agent_id: str, **kwargs: Any) -> Any:
+        return runtime.public_working_memory.update(
+            current_task_id, agent_id, **kwargs)
 
     def _pwm_read(agent_id: str) -> Any:
         return runtime.private_working_memory.read(agent_id, current_task_id)
@@ -224,14 +229,14 @@ def build_work_dispatcher(
             runtime.workspace_gateway, workspace_id, agent_id, path)
 
     executors: List[Any] = [
-        WorkspaceReadExecutor(
+        WorkWorkspaceReadExecutor(WorkspaceReadExecutor(
             read_artifact, gateway=runtime.workspace_gateway,
-            workspace_id=workspace_id, stat_fn=stat_artifact),
+            workspace_id=workspace_id, stat_fn=stat_artifact)),
         WorkspaceSearchExecutor(_search),
-        WorkspaceWriteExecutor(
+        WorkWorkspaceWriteExecutor(WorkspaceWriteExecutor(
             write_artifact, gateway=runtime.workspace_gateway,
             workspace_id=workspace_id,
-            max_content_chars=MAX_SINGLE_WRITE_CHARS),
+            max_content_chars=MAX_SINGLE_WRITE_CHARS)),
         WorkspaceEditExecutor(
             _edit, max_new_string_chars=MAX_SINGLE_WRITE_CHARS),
         DraftWriteExecutor(drafts.write),
@@ -244,7 +249,8 @@ def build_work_dispatcher(
         ResourceCreateExecutor(_resource_create),
         ResourceHandoffExecutor(_resource_handoff),
         ResourceReleaseExecutor(_resource_release),
-        SharedContextReadExecutor(_read_context),
+        PublicWorkingMemoryReadExecutor(_wm_read),
+        PublicWorkingMemoryUpdateExecutor(_wm_update),
         PrivateWorkingMemoryReadExecutor(_pwm_read),
         PrivateWorkingMemoryUpdateExecutor(_pwm_update),
         ShortTermMemoryReadExecutor(_stm_read),

@@ -476,9 +476,10 @@ class TestTeamRuntime:
 # 3. 动作边界
 # ============================================================
 def test_work_action_set_has_no_messages_or_economy():
-    for banned in ("message_send", "task_create", "assign_acceptance",
-                   "public_working_memory_read"):
+    for banned in ("message_send", "task_create", "assign_acceptance"):
         assert banned not in WORK_ACTION_TYPES
+    assert "public_working_memory_read" in WORK_ACTION_TYPES
+    assert "public_working_memory_update" in WORK_ACTION_TYPES
     assert "work_item_done" in WORK_ACTION_TYPES
     assert "work_qa_verdict" in WORK_ACTION_TYPES
     assert "work_plan_update" in WORK_ACTION_TYPES
