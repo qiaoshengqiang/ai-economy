@@ -215,6 +215,25 @@ class TestActions:
         assert result.output["revision"] == 2
         assert seen["agent_id"] == "agent_a"
 
+    def test_unknown_update_is_rejected_but_empty_is_allowed(self):
+        ex = PrivateWorkingMemoryUpdateExecutor(
+            lambda *a, **kw: PrivateWorkingMemory(
+                agent_id="agent_a", task_id="T", revision=1,
+                nodes={}, updated_at="now"))
+        unknown = ex.execute(ActionIntent(
+            action_type=ACTION_PRIVATE_WORKING_MEMORY_UPDATE,
+            parameters={"expected_revision": 0, "content": "x"},
+            agent_id="agent_a"))
+        assert not unknown.success
+        assert unknown.metadata["code"] == "unknown_parameters"
+
+        # work checkpoint 明确允许“检查后没有变化”的空更新。
+        empty = ex.execute(ActionIntent(
+            action_type=ACTION_PRIVATE_WORKING_MEMORY_UPDATE,
+            parameters={"expected_revision": 0},
+            agent_id="agent_a"))
+        assert empty.success
+
 
 # ------------------------------------------------------------
 # Prompt wiring

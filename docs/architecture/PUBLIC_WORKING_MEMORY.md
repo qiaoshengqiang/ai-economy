@@ -2,7 +2,9 @@
 
 > **状态：`CURRENT`（2026-11-08，第一版）**
 >
-> 范围：**只实现公共区**。私有工作记忆、短期/长期记忆仍为 `FUTURE`。
+> 范围：公共工作记忆；私有工作记忆见
+> [`PRIVATE_WORKING_MEMORY.md`](PRIVATE_WORKING_MEMORY.md)。
+> 短期/长期记忆仍为 `FUTURE`。
 
 ---
 
@@ -52,9 +54,14 @@ PublicWorkingMemory
   "kind": "checklist",
   "value": {"deliverable_exists": true, "browser_verified": true},
   "author": "agent_a",
-  "updated_at": "2026-11-08T03:14:56Z"
+  "updated_at": "2026-11-08T03:14:56Z",
+  "parent_key": "plan.root"
 }
 ```
+
+`parent_key` 可选：用于表达「大架构 → 局部细节」的层级；
+`None` = 根条目。父子关系在更新时校验，不能形成环，也不能删除还有
+子条目的节点。
 
 ### kind
 
@@ -100,7 +107,7 @@ UPDATE ... WHERE task_id = ? AND revision = ?
 | action | 作用 | 参数 |
 |---|---|---|
 | `public_working_memory_read` | 读当前版本 | 无 |
-| `public_working_memory_update` | 基于 revision 更新条目 | `expected_revision` · `items` · `remove_keys` |
+| `public_working_memory_update` | 基于 revision 更新条目 | `expected_revision` · `items` · `remove_keys` · `content` |
 
 `update` 的 `items` 形状：
 
@@ -110,6 +117,15 @@ UPDATE ... WHERE task_id = ? AND revision = ?
   "value": {"deliverable_exists": true, "tests_passed": true}
 }}
 ```
+
+`content` 是「单条 note」的简写：
+
+```json
+{"expected_revision": 1, "content": "# 当前计划 ..."}
+```
+
+它会被存成 key=`note` 的 `note` item，**不会**再被静默忽略。
+`items`/`content`/`remove_keys` 全为空、或出现未知参数时，更新会明确失败。
 
 失败返回结构化 `ActionResult`（缺 revision、并发冲突、非参与者、非法 key 等）。
 
@@ -127,6 +143,23 @@ revision = 3
 [checklist] checklist  by agent_b at ...
   {...}
 ```
+
+如果 item 带 `parent_key`，渲染会按树缩进显示。
+
+Task prompt 还会额外显示 **Creator workspace_plan 的计划完成度**：
+
+```text
+========== 计划完成度（Creator workspace_plan） ==========
+directories:
+- src/  ✅  (owner=agent_a)
+- review/  ❌ missing  (owner=agent_e)
+files:
+- index.html  ✅  (owner=agent_a)
+- src/train.js  ❌ missing  (owner=agent_a)
+```
+
+这是系统从 `workspace_plan` + Workspace 实际状态派生的**客观检查**，
+不是公共工作记忆，也不是 Task 状态；它不会自动替 Agent 写记忆。
 
 Agent 据此知道当前 revision 和他人的计划/清单。
 工作循环结束后的 decision checkpoint 会提示：

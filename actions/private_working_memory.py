@@ -52,11 +52,25 @@ class PrivateWorkingMemoryReadExecutor:
 class PrivateWorkingMemoryUpdateExecutor:
     action_types = frozenset({ACTION_PRIVATE_WORKING_MEMORY_UPDATE})
 
+    _ALLOWED_PARAMS = frozenset({
+        "expected_revision", "nodes", "remove_nodes",
+    })
+
     def __init__(self, update_fn: Callable[..., Any]):
         self.update_fn = update_fn
 
     def execute(self, intent: ActionIntent) -> ActionResult:
         params = dict(getattr(intent, "parameters", None) or {})
+        unknown = sorted(set(params) - self._ALLOWED_PARAMS)
+        if unknown:
+            return ActionResult(
+                success=False, output=None,
+                error=(f"private_working_memory_update 不认识的参数：{unknown}；"
+                       "请使用 expected_revision / nodes / remove_nodes"),
+                action_id=intent.intent_id,
+                action_type=intent.action_type,
+                metadata={"code": "unknown_parameters",
+                          "unknown": unknown})
         expected = params.get("expected_revision")
         if expected is None:
             return ActionResult(
@@ -83,6 +97,8 @@ class PrivateWorkingMemoryUpdateExecutor:
                 action_id=intent.intent_id,
                 action_type=intent.action_type,
                 metadata={"code": "invalid_remove_nodes"})
+        # 🔒 空更新是**合法**的：work checkpoint 明确允许“检查后没有变化”。
+        #    但未知参数仍必须失败，避免 content 之类的字段被静默忽略。
         try:
             memory = self.update_fn(
                 intent.agent_id,

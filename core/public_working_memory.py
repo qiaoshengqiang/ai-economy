@@ -133,6 +133,9 @@ class WorkingMemoryItem:
     value: Any
     author: str
     updated_at: str
+    #: 🔴 可选的父节点 key，用于表达“大架构 → 局部细节”的层级。
+    #: None = 根条目；旧数据没有该字段时默认为 None。
+    parent_key: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -141,6 +144,7 @@ class WorkingMemoryItem:
             "value": self.value,
             "author": self.author,
             "updated_at": self.updated_at,
+            "parent_key": self.parent_key,
         }
 
     @classmethod
@@ -151,6 +155,8 @@ class WorkingMemoryItem:
             value=raw.get("value"),
             author=str(raw.get("author") or ""),
             updated_at=str(raw.get("updated_at") or ""),
+            parent_key=(str(raw["parent_key"])
+                        if raw.get("parent_key") else None),
         )
 
 
@@ -227,6 +233,29 @@ def validate_item(key: str, kind: str, value: Any) -> Tuple[str, str, str]:
     return key, kind, body
 
 
+def _validate_hierarchy(items: Mapping[str, WorkingMemoryItem]) -> None:
+    """parent_key 必须存在，且不能形成环。"""
+    for item in items.values():
+        if item.parent_key is None:
+            continue
+        if item.parent_key == item.key:
+            raise WorkingMemoryValidationError(
+                f"working memory item {item.key!r} 不能以自己为 parent_key")
+        if item.parent_key not in items:
+            raise WorkingMemoryValidationError(
+                f"working memory item {item.key!r} 的 parent_key="
+                f"{item.parent_key!r} 不存在")
+        seen = {item.key}
+        current = item.parent_key
+        while current is not None:
+            if current in seen:
+                raise WorkingMemoryValidationError(
+                    f"working memory 层级出现环：{sorted(seen)} → {current!r}")
+            seen.add(current)
+            parent = items.get(current)
+            current = parent.parent_key if parent is not None else None
+
+
 def _check_total(items: Iterable[WorkingMemoryItem]) -> None:
     total = sum(len(_dump_value(i.value)) for i in items)
     if total > MAX_TOTAL_CHARS:
@@ -270,13 +299,30 @@ def apply_update(
                 f"working memory item {key!r} 必须是对象 "
                 "（含 kind / value）")
         key2, kind, _ = validate_item(key, raw.get("kind"), raw.get("value"))
+        # 🔒 `parent_key` 缺省时保留已有层级；显式 null 才是“移到根”。
+        if "parent_key" in raw:
+            parent_raw = raw.get("parent_key")
+            parent_key = (validate_key(parent_raw)
+                          if parent_raw else None)
+        else:
+            existing = next_items.get(key2)
+            parent_key = existing.parent_key if existing else None
         next_items[key2] = WorkingMemoryItem(
             key=key2, kind=kind, value=raw.get("value"),
-            author=str(author), updated_at=now)
+            author=str(author), updated_at=now, parent_key=parent_key)
 
-    for key in (remove_keys or []):
-        next_items.pop(str(key), None)
+    remove_set = {str(key) for key in (remove_keys or [])}
+    for key in remove_set:
+        children = [item.key for item in next_items.values()
+                    if item.parent_key == key and item.key not in remove_set]
+        if children:
+            raise WorkingMemoryValidationError(
+                f"不能删除 {key!r}：它还有子条目 {sorted(children)}；"
+                "请先删除/移动子条目。")
+    for key in remove_set:
+        next_items.pop(key, None)
 
+    _validate_hierarchy(next_items)
     _check_total(next_items.values())
 
     return PublicWorkingMemory(

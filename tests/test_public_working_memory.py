@@ -103,6 +103,45 @@ class TestDomain:
             apply_update(None, task_id="T", author="a", expected_revision=0,
                          items={"x": {"kind": "note", "value": "x" * 5000}})
 
+    def test_hierarchy_parent_key(self):
+        mem = apply_update(
+            None, task_id="T-1", author="a", expected_revision=0,
+            items={
+                "plan": {"kind": "plan", "value": {}},
+                "train": {"kind": "plan", "value": {},
+                          "parent_key": "plan"},
+            })
+        assert mem.items["train"].parent_key == "plan"
+
+    def test_hierarchy_rejects_missing_parent_and_cycles(self):
+        with pytest.raises(WorkingMemoryValidationError, match="parent_key"):
+            apply_update(
+                None, task_id="T", author="a", expected_revision=0,
+                items={"x": {"kind": "plan", "value": {},
+                             "parent_key": "missing"}})
+        with pytest.raises(WorkingMemoryValidationError, match="环"):
+            apply_update(
+                None, task_id="T", author="a", expected_revision=0,
+                items={
+                    "a": {"kind": "plan", "value": {},
+                          "parent_key": "b"},
+                    "b": {"kind": "plan", "value": {},
+                          "parent_key": "a"},
+                })
+
+    def test_remove_parent_with_children_is_rejected(self):
+        mem = apply_update(
+            None, task_id="T", author="a", expected_revision=0,
+            items={
+                "plan": {"kind": "plan", "value": {}},
+                "train": {"kind": "plan", "value": {},
+                          "parent_key": "plan"},
+            })
+        with pytest.raises(WorkingMemoryValidationError, match="子条目"):
+            apply_update(
+                mem, task_id="T", author="a", expected_revision=1,
+                remove_keys=["plan"])
+
 
 # ------------------------------------------------------------
 # 持久化 / 服务
@@ -208,6 +247,40 @@ class TestActions:
         assert result.output["revision"] == 3
         assert seen["agent_id"] == "agent_a"
         assert seen["expected_revision"] == 2
+
+    def test_content_is_stored_as_a_note_not_silently_ignored(self):
+        seen = {}
+
+        def update(agent_id, *, expected_revision, items, remove_keys):
+            seen["items"] = items
+            return PublicWorkingMemory(
+                task_id="T", revision=expected_revision + 1,
+                items={}, updated_at="now")
+
+        ex = PublicWorkingMemoryUpdateExecutor(update)
+        result = ex.execute(ActionIntent(
+            action_type=ACTION_PUBLIC_WORKING_MEMORY_UPDATE,
+            parameters={"expected_revision": 0, "content": "# 协作板"},
+            agent_id="agent_a"))
+        assert result.success
+        assert seen["items"] == {
+            "note": {"kind": "note", "value": "# 协作板"}}
+
+    def test_unknown_and_empty_updates_are_rejected(self):
+        ex = PublicWorkingMemoryUpdateExecutor(lambda *a, **kw: None)
+        unknown = ex.execute(ActionIntent(
+            action_type=ACTION_PUBLIC_WORKING_MEMORY_UPDATE,
+            parameters={"expected_revision": 0, "board": "x"},
+            agent_id="agent_a"))
+        assert not unknown.success
+        assert unknown.metadata["code"] == "unknown_parameters"
+
+        empty = ex.execute(ActionIntent(
+            action_type=ACTION_PUBLIC_WORKING_MEMORY_UPDATE,
+            parameters={"expected_revision": 0},
+            agent_id="agent_a"))
+        assert not empty.success
+        assert empty.metadata["code"] == "empty_update"
 
 
 # ------------------------------------------------------------

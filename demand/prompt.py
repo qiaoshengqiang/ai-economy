@@ -181,6 +181,60 @@ def _safe(render: Any, fallback: str) -> str:
         return f"{fallback}：{type(exc).__name__}: {exc}"
 
 
+def _render_plan_status(runtime: Any, workspace_id: str, agent_id: str,
+                        plan: Optional[Dict[str, Any]]) -> str:
+    """
+    把 Creator 的 workspace_plan 与 Workspace 实际状态做对照。
+
+    🔒 这是**系统派生的客观检查**，不是公共工作记忆，也不是 Task 状态。
+    """
+    if not isinstance(plan, dict) or not workspace_id:
+        return ""
+    directories = plan.get("directories") or {}
+    files = plan.get("files") or {}
+    if not directories and not files:
+        return ""
+    gateway = getattr(runtime, "workspace_gateway", None)
+    if gateway is None:
+        return ""
+    lines = ["========== 计划完成度（Creator workspace_plan） =========="]
+    missing = 0
+
+    def _exists(path: str, is_dir: bool) -> bool:
+        try:
+            if is_dir:
+                return bool(gateway.list(
+                    workspace_id, path, agent_id).success)
+            return bool(gateway.read(
+                workspace_id, path, agent_id).success)
+        except Exception:                                     # noqa: BLE001
+            return False
+
+    if directories:
+        lines.append("directories:")
+        for path, owner in directories.items():
+            ok = _exists(str(path), True)
+            missing += 0 if ok else 1
+            lines.append(
+                f"- {path}/  {'✅' if ok else '❌ missing'}  "
+                f"(owner={owner})")
+    if files:
+        lines.append("files:")
+        for path, owner in files.items():
+            ok = _exists(str(path), False)
+            missing += 0 if ok else 1
+            lines.append(
+                f"- {path}  {'✅' if ok else '❌ missing'}  "
+                f"(owner={owner})")
+    if missing:
+        lines.append(
+            "⚠️ 以上是 Creator 计划的客观缺口；缺失项需要 Agent 动作补齐，"
+            "不会因为其它文件写成功而自动完成。")
+    else:
+        lines.append("✅ 计划中的目录与文件都已存在。")
+    return "\n".join(lines)
+
+
 def _render_budget(runtime: Any, agent_id: str, *,
                    cap: Optional[int],
                    feedback: Optional[Dict[str, Any]]) -> str:
@@ -461,6 +515,10 @@ def build_task_prompt(
     directory = render_directory(runtime)
     workspace = _render_workspace(runtime, task.workspace.workspace_id
                                  if task.workspace else "", agent_id)
+    plan_status = _render_plan_status(
+        runtime,
+        task.workspace.workspace_id if task.workspace else "",
+        agent_id, getattr(run, "workspace_plan", None))
     context = _render_context(runtime, task.task_id)
     public_working_memory = _safe(
         lambda: runtime.public_working_memory.render(task.task_id, agent_id),
@@ -540,6 +598,8 @@ def build_task_prompt(
 ========== Workspace 事实（当前版本；下面都是相对路径） ==========
 {workspace}
 
+{plan_status}
+
 🔒 `workspace_read` / `workspace_search` / `workspace_write` /
 `workspace_edit` / `resource_handoff` 的 `path` **不要带开头 `/`**；
 `.` 表示 Workspace root。
@@ -594,11 +654,22 @@ def build_task_prompt(
 - `private_write/read/list/delete`：你自己的私有文件空间。
 - `resource_create` / `resource_handoff` / `resource_release`：
   建目录 / 交接责任 / 释放独立责任。
-- `public_working_memory_read/update`：Task 范围的计划/分工/进度。
-- `private_working_memory_read/update`：你自己的工作结构/发现/问题。
+- `public_working_memory_read`
+- `public_working_memory_update`
+  `expected_revision` / `items` / `remove_keys` / `content`
+  `items`: `key -> {{kind, value, parent_key?}}`；
+  kind 只支持 plan / assignment / checklist / progress / note。
+  `parent_key` 表达层级（大架构 → 局部细节）；
+  `content` 是“单条 note”的简写。
+- `private_working_memory_read`
+- `private_working_memory_update`
+  `expected_revision` / `nodes` / `remove_nodes`
+  `nodes`: `node_id -> {{kind, title, content?, parent_id?}}`；
+  kind 只支持 goal / branch / task / finding / issue / note；
+  `parent_id` 表达你自己的抽象分解树。
+  工作记忆是**你自己的记录**；系统不自动写、不自动总结。
 - `short_term_memory_read/update/reinforce`：跨任务短期记忆。
 - `long_term_memory_search/read/mark_used/consolidate`：长期记忆 + 权重。
-  工作记忆是**你自己的记录**；系统不自动写、不自动总结。
   `workspace_search` 只读，**不会**把结果写进任何记忆。
 
 ========== 工具与执行边界（结构事实） ==========

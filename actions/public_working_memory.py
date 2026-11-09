@@ -58,11 +58,28 @@ class PublicWorkingMemoryReadExecutor:
 class PublicWorkingMemoryUpdateExecutor:
     action_types = frozenset({ACTION_PUBLIC_WORKING_MEMORY_UPDATE})
 
+    #: 允许的参数字段。未知字段**必须失败**，不能静默忽略 ——
+    #: 真实 run 里 Agent 用 `content` 写协作板，结果更新成功但 items 为空。
+    _ALLOWED_PARAMS = frozenset({
+        "expected_revision", "items", "remove_keys", "content",
+    })
+
     def __init__(self, update_fn: Callable[..., Any]):
         self.update_fn = update_fn
 
     def execute(self, intent: ActionIntent) -> ActionResult:
         params = dict(getattr(intent, "parameters", None) or {})
+        unknown = sorted(set(params) - self._ALLOWED_PARAMS)
+        if unknown:
+            return ActionResult(
+                success=False, output=None,
+                error=(f"public_working_memory_update 不认识的参数：{unknown}；"
+                       "请使用 expected_revision / items / remove_keys / "
+                       "content（content 是单条 note 的简写）"),
+                action_id=intent.intent_id,
+                action_type=intent.action_type,
+                metadata={"code": "unknown_parameters",
+                          "unknown": unknown})
         expected = params.get("expected_revision")
         if expected is None:
             return ActionResult(
@@ -76,7 +93,7 @@ class PublicWorkingMemoryUpdateExecutor:
         if items is not None and not isinstance(items, dict):
             return ActionResult(
                 success=False, output=None,
-                error="items 必须是对象：key -> {kind, value}",
+                error="items 必须是对象：key -> {kind, value, parent_key?}",
                 action_id=intent.intent_id,
                 action_type=intent.action_type,
                 metadata={"code": "invalid_items"})
@@ -88,6 +105,31 @@ class PublicWorkingMemoryUpdateExecutor:
                 action_id=intent.intent_id,
                 action_type=intent.action_type,
                 metadata={"code": "invalid_remove_keys"})
+        content = params.get("content")
+        if content is not None:
+            if items is not None:
+                return ActionResult(
+                    success=False, output=None,
+                    error="content 和 items 只能二选一；"
+                          "content 是单条 note 的简写",
+                    action_id=intent.intent_id,
+                    action_type=intent.action_type,
+                    metadata={"code": "content_and_items"})
+            if not isinstance(content, str):
+                return ActionResult(
+                    success=False, output=None,
+                    error="content 必须是字符串",
+                    action_id=intent.intent_id,
+                    action_type=intent.action_type,
+                    metadata={"code": "invalid_content"})
+            items = {"note": {"kind": "note", "value": content}}
+        if not items and not remove:
+            return ActionResult(
+                success=False, output=None,
+                error="这次更新没有任何条目（items/content/remove_keys 都为空）",
+                action_id=intent.intent_id,
+                action_type=intent.action_type,
+                metadata={"code": "empty_update"})
         try:
             memory = self.update_fn(
                 intent.agent_id,

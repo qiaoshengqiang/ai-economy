@@ -199,6 +199,17 @@ Stage 2 Creator / 规划
 Front brief 写入 `run.json` 的 `run.brief`；Creator 计划写入
 `run.workspace_plan`，便于事后审计。
 
+### 3.3 工作记忆与计划完成度（2026-11-09）
+
+- Public WM 支持 `parent_key` 层级，按树渲染；
+- `public_working_memory_update` 的 `content` 会存成单条 `note`，
+  未知参数/空更新会明确失败；
+- Private WM 的 `parent_id` 树保持不变；
+- Task prompt 每轮从 `run.workspace_plan` + Workspace 实际状态
+  派生“计划完成度”（缺失目录/文件）；
+- Prompt 给出 Public/Private WM 的 schema；
+- 系统**不自动写**工作记忆，也不自动总结。
+
 ---
 
 ## 4. `task_create`

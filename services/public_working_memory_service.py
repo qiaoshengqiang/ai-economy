@@ -88,14 +88,26 @@ class PublicWorkingMemoryService:
             lines.append("（还没有条目）")
             return "\n".join(lines)
 
-        for key in sorted(memory.items):
-            item = memory.items[key]
-            value = json.dumps(item.value, ensure_ascii=False, sort_keys=True)
-            if len(value) > 1200:
-                value = value[:1200] + " …（已截断）"
-            lines.append(
-                f"[{item.kind}] {key}  by {item.author} "
-                f"at {item.updated_at}\n  {value}")
+        children: Dict[Optional[str], List[str]] = {}
+        for key, item in memory.items.items():
+            children.setdefault(item.parent_key, []).append(key)
+        for key in children:
+            children[key].sort()
+
+        def walk(parent_key: Optional[str], depth: int) -> None:
+            indent = "  " * depth
+            for key in children.get(parent_key, []):
+                item = memory.items[key]
+                value = json.dumps(
+                    item.value, ensure_ascii=False, sort_keys=True)
+                if len(value) > 1200:
+                    value = value[:1200] + " …（已截断）"
+                lines.append(
+                    f"{indent}[{item.kind}] {key}  by {item.author} "
+                    f"at {item.updated_at}\n{indent}  {value}")
+                walk(key, depth + 1)
+
+        walk(None, 0)
         return "\n".join(lines)
 
 

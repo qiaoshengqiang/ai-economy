@@ -190,6 +190,58 @@ def test_task_prompt_states_decomposition_as_optional_direction():
     assert "是否拆分由你决定" in prompt
 
 
+def test_task_prompt_documents_working_memory_schema():
+    prompt = build_task_prompt(
+        run=_run(), task=_task(), runtime=_runtime(),
+        agent_id="agent_a", inbox=[], budget_cap=32768)
+    assert "parent_key" in prompt
+    assert "goal / branch / task" in prompt
+    assert "private_working_memory_update" in prompt
+    assert "node_id" in prompt
+    assert "parent_id" in prompt
+    assert "content` 是“单条 note”的简写" in prompt
+
+
+def test_plan_status_shows_missing_planned_resources():
+    from types import SimpleNamespace
+
+    class _PlanGateway:
+        def list(self, workspace_id, path, agent_id):
+            return SimpleNamespace(
+                success=path in ("src", "src/world"),
+                result={"entries": []})
+
+        def read(self, workspace_id, path, agent_id):
+            return SimpleNamespace(
+                success=path in ("index.html", "src/main.js",
+                                 "src/track.js"),
+                result={"content": "x"})
+
+    runtime = _runtime()
+    runtime.workspace_gateway = _PlanGateway()
+    run = _run()
+    run.workspace_plan = {
+        "root_owner": "agent_a",
+        "directories": {"src": "agent_a", "review": "agent_e"},
+        "files": {
+            "index.html": "agent_a",
+            "src/main.js": "agent_a",
+            "src/track.js": "agent_a",
+            "src/train.js": "agent_a",
+            "review/REPORT.md": "agent_e",
+        },
+    }
+    prompt = build_task_prompt(
+        run=run, task=_task(), runtime=runtime,
+        agent_id="agent_a", inbox=[], budget_cap=32768)
+
+    assert "计划完成度" in prompt
+    assert "src/train.js  ❌ missing" in prompt
+    assert "review/  ❌ missing" in prompt
+    assert "index.html  ✅" in prompt
+    assert "不会因为其它文件写成功而自动完成" in prompt
+
+
 def test_work_unit_pressure_prompts_rearchitecture():
     """预算/输出反复撞上限时，必须给 Agent 一个“拆小”的明确信号。"""
     feedback = {
