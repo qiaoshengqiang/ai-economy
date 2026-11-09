@@ -10,7 +10,7 @@
   <header class="topbar">
     <div class="brand">
       <div class="logo">AIEOS</div>
-      <div class="subtitle">Human ↔ Front Agent ↔ Team</div>
+      <div class="subtitle">Human ↔ Front Agent ↔ Solo Agent</div>
     </div>
     <div class="top-status">
       <span class="pill" id="front-badge">Front: —</span>
@@ -30,7 +30,7 @@
         <textarea id="prompt" rows="4"
           placeholder="告诉 Front Agent 你想做什么，例如：做一个简单的打飞机游戏……"></textarea>
         <div class="composer-actions">
-          <span class="muted" id="composer-hint">提交后 Front 会判断：直接回复，或交给一个空闲 Leader 组队。</span>
+          <span class="muted" id="composer-hint">提交后 Front 会判断：直接回复，或交给一个空闲 Agent 独立完成。</span>
           <button class="primary" id="submit-btn">提交</button>
         </div>
       </div>
@@ -68,7 +68,7 @@
         <select id="front-select"></select>
       </label>
       <label class="field">
-        <span>最大并行 Team</span>
+        <span>最大并行任务</span>
         <input id="max-teams" type="number" min="1" max="8" />
         <small class="muted">当前 GUI 进程内生效；重启后按启动参数重新创建。</small>
       </label>

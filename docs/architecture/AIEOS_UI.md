@@ -1,4 +1,4 @@
-# AIEOS UI —— Human ↔ Front ↔ Team
+# AIEOS UI —— Human ↔ Front ↔ Solo Agent
 
 > **状态：`CURRENT`（2026-11-10）**
 >
@@ -38,47 +38,50 @@ DB: runs/ui/aieos.db
 
 ## 2. 交互模型
 
+> **当前模式：`solo_only=True`。** 一个任务只交给一个 Agent 独立完成，
+> 不做 Leader 规划、不组队。Team 代码仍保留，但 UI 不会触发。
+
 ```text
 Human
   ↓ 输入框 / 提交按钮
 Front Agent（固定）
   ├─ direct_reply / clarify → 直接显示在输出框
+  ├─ follow_up / rework / cancel → 已有 Task
   └─ handoff → Brief
                   ↓
-            选择一个 IDLE Agent 作为 Leader
+            选择一个 IDLE Agent
                   ↓
-            Leader 规划 + 从 IDLE Agent 中选择成员
-                  ├─ 选了成员 → TEAM Task → TeamWorkRuntime
-                  └─ 没选成员 → SOLO Task → SoloWorkRuntime
+            创建 SOLO Task
+                  ↓
+            SoloWorkRuntime
                   ↓
             FrontResult → 输出框
 ```
 
-> Leader 决定独立完成（只把 item 分给自己）不是失败：控制面按
-> `SOLO` 执行，避免为了凑团队而制造无意义分工。
-
 ### 角色约束
 
 - Front Agent **永不创建 Task**；
-- Front Agent 不参与组队；
-- Leader 是普通 Agent，也是 Task Creator；
-- Leader 只能从当前 `IDLE` 的 Agent 中选择成员；
-- Task 就是团队容器，不新增 Team 实体；
-- 工作结束时释放所有 Agent 回到 `IDLE`。
+- Front Agent 不参与执行；
+- 承接的 Agent 是普通 Agent，也是 Task Creator；
+- 同一任务只占用一个 Agent；
+- 工作结束时释放 Agent 回到 `IDLE`。
 
 ### 已有 Task 的后续输入
 
 | Front 判断 | 控制面行为 |
 |---|---|
 | `follow_up`，Task 有 Job 在跑 | 只回复真实状态，不重复执行 |
-| `follow_up`，Task 已中断 | 用原团队从当前状态恢复执行 |
-| `rework`，Task 已完成 | 追加本轮要求 → Reopen（iteration +1）→ 原团队重跑 |
+| `follow_up`，Task 已中断 | 用原 Agent 从当前状态恢复执行 |
+| `rework`，Task 已完成 | 追加本轮要求 → Reopen（iteration +1）→ 原 Agent 重跑 |
 | `rework`，Task 未完成 | 按 `follow_up` 恢复执行 |
 | `cancel`，Task 有 Job 在跑 | 标记停止 → Task `CANCELLED`；Agent 显示 `STOPPING`，当前步骤结束后释放 |
 | `cancel`，Task 没有 Job | 直接把 Task 置为 `CANCELLED` |
 
 > `direct_reply` **不能**声称“已经停止”——停止必须由 Front 输出
 > `cancel`，控制面才真的取消 Task 并释放 Agent。
+>
+> Solo 模式下，旧的 TEAM 任务不能继续 / 返工；Front 会被控制面
+> 明确告知，Human 需要重新提交一个新任务。
 
 Front 看到的开放 Task 状态来自两个事实：Task Core 的状态 + 是否有
 Job 正在执行。没有 Job 的开放 Task 标记为 `INTERRUPTED`，
@@ -93,10 +96,10 @@ Job 正在执行。没有 Job 的开放 Task 标记为 `INTERRUPTED`，
 | 输入框 | 输入 Human Demand |
 | 提交按钮 | 提交给 Front Agent |
 | 输出显示框 | Human / Front / 系统消息 |
-| Task 卡片列表 | task_id · 状态 · Leader · 成员 · 迭代 |
+| Task 卡片列表 | task_id · 状态 · 执行 Agent · 参与者 · 迭代 |
 | Task 卡片点击 | 在输出框打印：执行历史 / Workspace 文件 / 公共 WM / LLM 调用汇总 |
-| Agent 状态 | `IDLE` / `WORKING` · `FRONT` / `LEADER` / `MEMBER` |
-| 设置按钮 | 修改 Front Agent / 最大并行 Team |
+| Agent 状态 | `IDLE` / `WORKING` / `STOPPING` · `FRONT` / `WORKER` |
+| 设置按钮 | 修改 Front Agent / 最大并行任务 |
 
 ---
 
@@ -105,7 +108,7 @@ Job 正在执行。没有 Job 的开放 Task 标记为 `INTERRUPTED`，
 ```text
 ui/server.py          标准库 HTTP server + 静态文件
 ui/static/            无构建 HTML / CSS / JS
-work/controller.py    AIEOSController：Front / Leader / Team 编排
+work/controller.py    AIEOSController：Front / Solo Agent 编排
 ```
 
 ### API
@@ -122,12 +125,11 @@ GET  /api/health
 
 - 调用 `FrontAgentRuntime`（先对照进行中 / 已完成 Task，
   避免把同一请求重复建任务）；
-- 选择空闲 Leader；
-- Leader 用 `build_lead_plan_prompt` 规划并选择成员；
-- 有成员时调用 `TaskCreationService` 创建 TEAM Task，
-  调用 `TeamWorkRuntime(initial_plan=...)` 执行；
-- Leader 决定独立完成时创建 SOLO Task，调用 `SoloWorkRuntime` 执行；
-- 把 `WorkResult` 转成 `FrontResult` 显示。
+- `solo_only=True` 时选择一个空闲 Agent；
+- 调用 `TaskCreationService` 创建 SOLO Task；
+- 调用 `SoloWorkRuntime` 执行；
+- 把 `WorkResult` 转成 `FrontResult` 显示；
+- `solo_only=False` 时保留旧的 Leader / Team 路径（仅用于对照实验）。
 
 不复制：
 
@@ -146,8 +148,8 @@ GET  /api/health
 - 任务结果直接来自 DB / runtime，不生成 `result.json`；
 - 每次 UI Job 的可见日志保存到 `runs/ui/jobs/<job_id>.json`（job + messages）；
 - 完整 prompt / response / phase 明细尚未落盘；
-- 「Leader 运行中重新计划」沿用 `work_plan_update`；
-- 设置中的最大并行 Team 在进程内生效；重启按启动参数。
+- Team 路径的「运行中重新计划」仍沿用 `work_plan_update`（当前 UI 不触发）；
+- 设置中的最大并行任务数在进程内生效；重启按启动参数。
 
 ---
 

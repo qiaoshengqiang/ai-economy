@@ -1,24 +1,26 @@
 """
-AIEOSController —— Human → Front → Leader → Team 的持续运行控制面
+AIEOSController —— Human → Front → Solo Agent 的持续运行控制面
 ================================================================
 
-GUI / CLI 共用的应用层：
+当前阶段只跑 Solo（`solo_only=True`）：
 
     Human 输入
       ↓
     FrontAgentRuntime（固定 Front Agent）
       ├─ direct_reply / clarify → 直接回给 Human
+      ├─ follow_up / rework / cancel → 已有 Task
       └─ handoff → Brief
                     ↓
-              选择一个 IDLE Agent 作为 Leader
+              选择一个 IDLE Agent
                     ↓
-              Leader 规划 + 从 IDLE Agent 中选择成员
+              创建 SOLO Task
                     ↓
-              创建 TEAM Task
-                    ↓
-              TeamWorkRuntime（计划 / 并行 / QA / 汇总）
+              SoloWorkRuntime
                     ↓
               FrontResult → Human
+
+🕘 Team 路径（Leader 规划 / TeamWorkRuntime）保留在代码里，
+   但 UI 的 `solo_only=True` 不会触发它；需要时显式设回 False。
 
 🔒 这里不重复实现 Task / Workspace / Memory / Work runtime；
    只负责编排已经存在的机制。
@@ -50,6 +52,7 @@ class JobStatus:
     RECEIVED = "RECEIVED"
     QUEUED = "QUEUED"
     FRONT_ANALYZING = "FRONT_ANALYZING"
+    WAITING_FOR_AGENT = "WAITING_FOR_AGENT"
     WAITING_FOR_LEADER = "WAITING_FOR_LEADER"
     LEADER_PLANNING = "LEADER_PLANNING"
     WAITING_FOR_MEMBERS = "WAITING_FOR_MEMBERS"
@@ -65,6 +68,7 @@ class JobStatus:
 #: Job 仍占用 Task 的状态；其余状态下的开放 Task 视为「已中断」。
 _RUNNING_JOB_STATUSES = frozenset({
     JobStatus.FRONT_ANALYZING,
+    JobStatus.WAITING_FOR_AGENT,
     JobStatus.WAITING_FOR_LEADER,
     JobStatus.LEADER_PLANNING,
     JobStatus.WAITING_FOR_MEMBERS,
@@ -122,11 +126,14 @@ class AIEOSController:
         max_worker_turns: int = 8,
         max_integration_turns: int = 8,
         cognitive_budget: int = 32768,
+        solo_only: bool = True,
         settings_path: Optional[Path] = None,
         log_dir: Optional[Path] = None,
     ) -> None:
         self.rt = runtime
         self.front_agent = str(front_agent)
+        #: 当前阶段只允许一个 Agent 独立完成（不组队）。
+        self.solo_only = bool(solo_only)
         self.max_parallel_teams = max(1, int(max_parallel_teams))
         self.max_agents_per_team = max(2, int(max_agents_per_team))
         self.max_worker_turns = max(1, int(max_worker_turns))
@@ -320,6 +327,11 @@ class AIEOSController:
                 return
 
             # ---- handoff ----
+            if self.solo_only:
+                leader, members = self._run_handoff_solo(
+                    job, decision, front)
+                return
+
             leader = self._acquire_leader(job)
             if not leader:
                 self._fail(job, "没有空闲 Agent 可以作为 Leader")
@@ -435,6 +447,103 @@ class AIEOSController:
                 self._touch(job)
                 self._condition.wait(timeout=1.0)
         return None
+
+    def _acquire_worker(self, job: WorkJob) -> Optional[str]:
+        """Solo 模式：等待一个空闲 Agent 承接整个 Task。"""
+        candidates = [
+            aid for aid in self._agent_ids
+            if aid != self.front_agent and self._agent_has_brain(aid)
+        ]
+        with self._condition:
+            while not self._closed:
+                for aid in sorted(candidates):
+                    if self.availability.try_acquire(aid):
+                        return aid
+                job.status = JobStatus.WAITING_FOR_AGENT
+                self._touch(job)
+                self._condition.wait(timeout=1.0)
+        return None
+
+    def _run_handoff_solo(
+        self,
+        job: WorkJob,
+        decision: Any,
+        front: Any,
+    ) -> tuple[str, List[str]]:
+        """Front handoff → 一个 Agent → SOLO Task → SoloWorkRuntime。"""
+        worker = self._acquire_worker(job)
+        if not worker:
+            self._fail(job, "没有空闲 Agent 可以承接任务")
+            return "", []
+
+        job.leader = worker
+        self._bind_agent(worker, job, "WORKER")
+        self._set_job(job, JobStatus.RUNNING)
+
+        created = self._create_solo_task(job, worker, decision)
+        if not created.get("ok"):
+            self._fail(job, created.get("message") or "Task 创建失败")
+            return worker, []
+
+        task_id = str(created["task_id"])
+        job.task_id = task_id
+        self._bind_task_to_agents([worker], task_id)
+        self._message(
+            "system",
+            f"Agent {worker} 开始 Solo 执行；Task {task_id}。",
+            job_id=job.job_id, task_id=task_id)
+
+        task = self.rt.tasks.get(task_id)
+        if task is None:
+            self._fail(job, "Task 创建后无法读取")
+            return worker, []
+
+        runner = SoloWorkRuntime(
+            self.rt, task,
+            brief=decision.brief.to_dict(),
+            max_turns=(
+                self.max_worker_turns + self.max_integration_turns),
+            cognitive_budget=self.cognitive_budget,
+            should_stop=lambda: job.cancelled,
+        )
+        result = runner.run()
+        if job.cancelled:
+            self._finish_cancelled(job, task_id)
+        else:
+            self._finish_work(job, front, task_id, result)
+        return worker, []
+
+    def _create_solo_task(
+        self,
+        job: WorkJob,
+        worker: str,
+        decision: Any,
+    ) -> Dict[str, Any]:
+        run = SimpleNamespace(
+            run_id=f"aieos_{job.job_id}",
+            root_task_id=None,
+            budget_aic=10.0,
+            workspace_id="",
+            workspace_plan=None,
+            status="INIT",
+        )
+        creation = TaskCreationService(
+            self.rt, run, max_agents=self.max_agents_per_team)
+        criteria = (
+            decision.brief.acceptance_expectations
+            or decision.brief.deliverables
+            or [decision.brief.goal]
+        )
+        return creation.create(
+            creator=worker,
+            description=_description_from_brief(decision.brief),
+            participants=[worker],
+            acceptance_criteria=criteria,
+            producer=worker,
+            acceptance_assignee=None,
+            workspace_plan=None,
+            mode=TaskMode.SOLO,
+        )
 
     def _leader_plan(
         self,
@@ -573,6 +682,16 @@ class AIEOSController:
         if task is None:
             self._reply_direct(
                 job, "找不到这个任务；它可能已经被清理了。", decision.task_id)
+            return "", []
+
+        if self.solo_only and task.mode != TaskMode.SOLO:
+            self._reply_direct(
+                job,
+                f"任务 {task.task_id} 是旧的 Team 任务；当前只支持 Solo，"
+                "不能继续它。请重新提交为一个新任务；"
+                "如果要停止它，直接说停止。",
+                task.task_id,
+            )
             return "", []
 
         if self._is_live(task.task_id):
@@ -885,6 +1004,7 @@ class AIEOSController:
                     1 for job in self._jobs.values()
                     if job.status in (
                         JobStatus.FRONT_ANALYZING,
+                        JobStatus.WAITING_FOR_AGENT,
                         JobStatus.WAITING_FOR_LEADER,
                         JobStatus.LEADER_PLANNING,
                         JobStatus.WAITING_FOR_MEMBERS,
@@ -1067,6 +1187,10 @@ class AIEOSController:
             return active, completed
         live = self._live_task_ids()
         for task in tasks:
+            # Solo 模式不把旧的 TEAM 任务当作可继续 / 可返工的对象；
+            # 它们只保留在任务卡片里作为历史。
+            if self.solo_only and task.mode != TaskMode.SOLO:
+                continue
             ref = {
                 "task_id": task.task_id,
                 "status": task.status,

@@ -12,7 +12,7 @@ FrontAgentRuntime —— Human 意图入口
         └─ clarify
 
 🔒 Front Agent 永不创建 Task。
-   它只输出 Decision / Brief；Task 由 Team Lead 创建。
+   它只输出 Decision / Brief；Task 由承接的 Agent 创建。
 """
 
 from __future__ import annotations
@@ -156,7 +156,7 @@ class FrontAgentRuntime:
 
         return f"""你是 {self.agent_id}，Human 与 Agent Economy 之间的唯一入口。
 你在和 Human 聊天：所有 reply / question 都要像自然、友好的助手回复。
-不要向 Human 暴露 Brief、Leader、Creator、Task、验收链、路由、范围等内部术语，
+不要向 Human 暴露 Brief、Creator、Task、验收链、路由、范围等内部术语，
 除非 Human 明确在问系统怎么工作。
 
 ========== Human 输入 ==========
@@ -190,7 +190,7 @@ status 为 INTERRUPTED 表示任务之前中断了、现在没有在执行：
    {{"intent":"direct_reply","reply":"...","reason":"..."}}
 
 2. handoff
-   这是一个新的工作请求。只产出 Brief；Task 由 Team Lead 创建。
+   这是一个新的工作请求。只产出 Brief；Task 由承接的 Agent 创建。
    {{"intent":"handoff","brief":{{"goal":"一句话目标",
      "deliverables":["..."],"constraints":["..."],
      "acceptance_expectations":["..."],"ambiguities":["..."],
@@ -206,7 +206,7 @@ status 为 INTERRUPTED 表示任务之前中断了、现在没有在执行：
    Human 要求对**已完成的 Task**返工。只能引用上面已完成的 task_id。
    {{"intent":"rework","task_id":"...","reply":"给 Human 的简短确认",
      "reason":"..."}}
-   reply 是给 Human 的，例如「收到，我会把修改交给原来的团队」；
+   reply 是给 Human 的，例如「收到，我会让原来负责这个任务的 Agent 修改」；
    不要写「转给 Creator 的说明」这类内部指令。
 
 4. follow_up

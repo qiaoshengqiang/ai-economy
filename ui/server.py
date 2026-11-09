@@ -8,7 +8,7 @@ AIEOS UI Server —— 人类与 Front Agent 的唯一入口
       ↕
     AIEOSController
       ↕
-    Front / Leader / Team / Task / Workspace
+    Front / Solo Agent / Task / Workspace
 
 🔒 只用标准库 `http.server`，不引入新依赖。
 🔒 绑定 127.0.0.1；不暴露到公网。
@@ -178,6 +178,8 @@ def main(argv=None) -> int:
         max_worker_turns=max(1, int(args.worker_turns)),
         max_integration_turns=max(1, int(args.integration_turns)),
         cognitive_budget=max(1, int(args.cognitive_budget)),
+        # 当前阶段只跑 Solo；Team 路径保留在代码里但不由 UI 触发。
+        solo_only=True,
         settings_path=db_path.parent / "ui_settings.json",
         log_dir=db_path.parent / "jobs",
     )

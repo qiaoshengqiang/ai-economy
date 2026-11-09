@@ -197,9 +197,9 @@
       const meta = document.createElement("div");
       meta.className = "task-meta";
       const leader = document.createElement("span");
-      leader.textContent = `Leader: ${task.leader || "—"}`;
+      leader.textContent = `执行 Agent: ${task.leader || "—"}`;
       const members = document.createElement("span");
-      members.textContent = `成员: ${(task.members || []).join(", ") || "—"}`;
+      members.textContent = `参与者: ${(task.members || []).join(", ") || "—"}`;
       const iteration = document.createElement("span");
       iteration.textContent = `迭代 ${task.iteration || 1}`;
       meta.appendChild(leader);
@@ -218,8 +218,8 @@
     const llm = detail.llm || {};
     const lines = [
       `【任务 ${task.task_id || "?"}】${task.status || "?"} · ${task.mode || "?"} · iteration ${task.iteration || 1}`,
-      `Leader: ${task.creator || "—"}　Contractor: ${task.contractor || "—"}`,
-      `成员: ${(task.participants || []).join(", ") || "—"}`,
+      `执行 Agent: ${task.creator || "—"}　Contractor: ${task.contractor || "—"}`,
+      `参与者: ${(task.participants || []).join(", ") || "—"}`,
       `描述: ${task.description || "—"}`,
     ];
     if (job.status) {
