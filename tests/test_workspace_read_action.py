@@ -600,3 +600,112 @@ def test_end_to_end_leading_slash_read_succeeds():
         assert res.output["path"] == "plot/outline_chapter1.md"
     finally:
         h.close()
+
+
+# ======================================================================
+# 读缓存：同一 revision + 同一范围，不重复读正文
+# ======================================================================
+def _stat(rev=1, resource_id="RES-1"):
+    def fn(gateway, workspace_id, agent_id, path):
+        return {"ok": True, "path": path, "resource_id": resource_id,
+                "revision": rev, "chars": 5}
+    return fn
+
+
+def test_second_read_of_same_revision_does_not_call_read_fn():
+    reads = []
+
+    def fake_read(gateway, workspace_id, agent_id, path):
+        reads.append(path)
+        return {"ok": True, "path": path, "revision": 1,
+                "chars": 5, "content": "正文内容"}
+
+    ex = _executor(fake_read, gateway="GW", workspace_id="WS-1",
+                   stat_fn=_stat())
+    first = ex.execute(_intent("x.md"))
+    second = ex.execute(_intent("x.md"))
+
+    assert first.success and second.success
+    assert second.output["content"] == "正文内容"
+    assert reads == ["x.md"], "相同 revision + 范围不应再次读正文"
+    assert ex.cache_hits == 1
+
+
+def test_revision_change_invalidates_cache():
+    reads = []
+    state = {"rev": 1}
+
+    def fake_read(gateway, workspace_id, agent_id, path):
+        reads.append(path)
+        return {"ok": True, "path": path, "revision": state["rev"],
+                "chars": 5, "content": f"content-r{state['rev']}"}
+
+    def stat_fn(gateway, workspace_id, agent_id, path):
+        return {"ok": True, "path": path, "resource_id": "RES-1",
+                "revision": state["rev"], "chars": 5}
+
+    ex = _executor(fake_read, gateway="GW", workspace_id="WS-1",
+                   stat_fn=stat_fn)
+    ex.execute(_intent("x.md"))
+    state["rev"] = 2
+    second = ex.execute(_intent("x.md"))
+
+    assert len(reads) == 2
+    assert second.output["content"] == "content-r2"
+
+
+def test_cache_key_includes_read_range():
+    reads = []
+
+    def fake_read(gateway, workspace_id, agent_id, path, **kwargs):
+        reads.append((path, kwargs))
+        return {"ok": True, "path": path, "revision": 1,
+                "chars": 5, "content": "正文内容", "start_line": 1,
+                "end_line": 2, "total_lines": 5, "total_chars": 5,
+                "offset": 1, "limit": 2, "truncated": True}
+
+    ex = _executor(fake_read, gateway="GW", workspace_id="WS-1",
+                   stat_fn=_stat())
+    ex.execute(_intent("x.md"))
+    ex.execute(_intent("x.md"))
+    # 相同全文读命中缓存；换一个范围必须重新读。
+    from actions.intent import ActionIntent
+    ex.execute(ActionIntent(
+        action_type="workspace_read",
+        parameters={"path": "x.md", "offset": 1, "limit": 2},
+        agent_id="novel_reader"))
+
+    assert len(reads) == 2, "范围不同不能共用缓存"
+
+
+def test_stat_failure_falls_back_to_read_without_cache():
+    reads = []
+
+    def fake_read(gateway, workspace_id, agent_id, path):
+        reads.append(path)
+        return {"ok": True, "path": path, "revision": 1,
+                "chars": 5, "content": "正文内容"}
+
+    ex = _executor(fake_read, gateway="GW", workspace_id="WS-1",
+                   stat_fn=lambda *a, **k: {"ok": False, "code": "boom"})
+    ex.execute(_intent("x.md"))
+    ex.execute(_intent("x.md"))
+
+    assert len(reads) == 2
+    assert ex.cache_hits == 0
+
+
+def test_without_stat_fn_reads_every_time_like_before():
+    reads = []
+
+    def fake_read(gateway, workspace_id, agent_id, path):
+        reads.append(path)
+        return {"ok": True, "path": path, "revision": 1,
+                "chars": 5, "content": "正文内容"}
+
+    ex = _executor(fake_read, gateway="GW", workspace_id="WS-1")
+    ex.execute(_intent("x.md"))
+    ex.execute(_intent("x.md"))
+
+    assert len(reads) == 2
+    assert ex.cache_hits == 0

@@ -49,7 +49,8 @@ from actions import (
     WorkspaceWriteExecutor,
 )
 from services.artifacts import (
-    edit_artifact, read_artifact, search_artifacts, write_artifact,
+    edit_artifact, read_artifact, search_artifacts, stat_artifact,
+    write_artifact,
 )
 from services.assignment_ops import assign_acceptance
 from services.context_ops import read_shared_context
@@ -216,7 +217,7 @@ def build_task_dispatcher(
     return ActionDispatcher([
         WorkspaceReadExecutor(
             read_artifact, gateway=runtime.workspace_gateway,
-            workspace_id=ws_id),
+            workspace_id=ws_id, stat_fn=stat_artifact),
         WorkspaceSearchExecutor(_search),
         WorkspaceWriteExecutor(
             write_artifact, gateway=runtime.workspace_gateway,

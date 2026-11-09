@@ -115,14 +115,78 @@ class WorkspaceReadExecutor:
         *,
         gateway: Any = None,
         workspace_id: str = "",
+        stat_fn: Optional[Callable[..., Any]] = None,
+        cache_max_entries: int = 32,
+        cache_max_chars: int = 256_000,
     ) -> None:
         if read_fn is None or not callable(read_fn):
             raise ValueError(
                 "WorkspaceReadExecutor 需要一个可调用的 read_fn —— "
                 "它由组合根注入（例如 services.artifacts.read_artifact）")
+        if stat_fn is not None and not callable(stat_fn):
+            raise ValueError("stat_fn 必须是可调用对象或 None")
         self.read_fn = read_fn
         self.gateway = gateway
         self.workspace_id = workspace_id
+        #: 🔒 可选的“只读元数据”函数（revision / resource_id / chars）。
+        #: 传了才启用缓存；不传时行为完全不变。
+        self.stat_fn = stat_fn
+        self.cache_max_entries = max(1, int(cache_max_entries))
+        self.cache_max_chars = max(1, int(cache_max_chars))
+        self._cache: dict = {}
+        self._cache_chars = 0
+        self.cache_hits = 0
+
+    # ------------------------------------------------------------
+    def _metadata(self, agent_id: str, path: str) -> Optional[dict]:
+        """
+        只读 revision 探针。
+
+        🔒 缓存命中时仍然做一次**元数据**检查：Workspace 是唯一权威，
+           不能因为进程内缓存就返回过期正文。检查不返回 content。
+        """
+        if self.stat_fn is None:
+            return None
+        try:
+            raw = self.stat_fn(
+                self.gateway, self.workspace_id, agent_id, path)
+        except Exception:                                     # noqa: BLE001
+            return None
+        if not isinstance(raw, dict) or not raw.get("ok"):
+            return None
+        return raw
+
+    def _remember(self, key: tuple, output: dict) -> None:
+        content = output.get("content")
+        size = len(content) if isinstance(content, str) else 0
+        if size > self.cache_max_chars:
+            return
+        old = self._cache.pop(key, None)
+        if old is not None:
+            old_content = old.get("content")
+            self._cache_chars -= (len(old_content)
+                                  if isinstance(old_content, str) else 0)
+        self._cache[key] = dict(output)
+        self._cache_chars += size
+        while (len(self._cache) > self.cache_max_entries
+               or self._cache_chars > self.cache_max_chars):
+            old_key, old_output = next(iter(self._cache.items()))
+            del self._cache[old_key]
+            old_content = old_output.get("content")
+            self._cache_chars -= (len(old_content)
+                                  if isinstance(old_content, str) else 0)
+
+    @staticmethod
+    def _success(intent: ActionIntent, output: dict) -> ActionResult:
+        return ActionResult(
+            success=True,
+            output=output,
+            error=None,
+            action_id=intent.intent_id,
+            action_type=intent.action_type,
+            # 🔒 成功没有错误码 —— 显式 None，不编一个 "ok" 出来。
+            metadata={"code": None},
+        )
 
     # ------------------------------------------------------------
     def execute(self, intent: ActionIntent) -> ActionResult:
@@ -137,6 +201,20 @@ class WorkspaceReadExecutor:
         path = str(params.get("path") or "")
         offset = params.get("offset")
         limit = params.get("limit")
+
+        cache_key = None
+        metadata = None
+        if ((offset is None or isinstance(offset, int))
+                and (limit is None or isinstance(limit, int))):
+            metadata = self._metadata(intent.agent_id, path)
+        if metadata is not None:
+            cache_key = (
+                path, metadata.get("resource_id"),
+                metadata.get("revision"), offset, limit)
+            cached = self._cache.get(cache_key)
+            if cached is not None:
+                self.cache_hits += 1
+                return self._success(intent, dict(cached))
 
         try:
             if offset is None and limit is None:
@@ -162,15 +240,14 @@ class WorkspaceReadExecutor:
 
         if raw.get("ok"):
             output = {k: raw[k] for k in _OUTPUT_FIELDS if k in raw}
-            return ActionResult(
-                success=True,
-                output=output,
-                error=None,
-                action_id=intent.intent_id,
-                action_type=intent.action_type,
-                # 🔒 成功没有错误码 —— 显式 None，不编一个 "ok" 出来。
-                metadata={"code": None},
-            )
+            if cache_key is not None and raw.get("revision") is not None:
+                # 用**实际 read 返回的 revision** 做 key，避免 stat 与 read
+                # 之间的并发写把旧内容记到新 revision 下。
+                self._remember(
+                    (path, metadata.get("resource_id"),
+                     raw.get("revision"), offset, limit),
+                    output)
+            return self._success(intent, output)
 
         return self._fail(
             intent,

@@ -296,6 +296,46 @@ def read_artifact(
     }
 
 
+def stat_artifact(
+    gateway: Any,
+    workspace_id: str,
+    agent_id: str,
+    path: str,
+) -> Dict[str, Any]:
+    """
+    只读 Artifact 元数据（不返回正文）。
+
+    返回：
+        成功 → {"ok": True, "path": ..., "resource_id": ...,
+                "revision": ..., "chars": ...}
+        失败 → {"ok": False, "path": ..., "code": ..., "message": ...}
+
+    🔒 读缓存用它判断 revision 是否变化；正文命中缓存时不再调用
+       `gateway.read()`，因此不会把整份 content 搬进 Python。
+    """
+    target = _norm(path)
+    path_err = validate_artifact_path(path)
+    if path_err:
+        return _fail(target, "bad_path", path_err)
+
+    got = gateway.stat(workspace_id, "/" + target, agent_id)
+    if not got.success:
+        err = dict(got.error or {})
+        return _fail(
+            target,
+            map_gateway_code(str(err.get("code") or "")),
+            str(err.get("message") or "读取失败"),
+            gateway_code=err.get("code"),
+        )
+
+    res = dict(got.result or {})
+    out: Dict[str, Any] = {"ok": True, "path": target}
+    for key in ("resource_id", "revision", "chars"):
+        if key in res:
+            out[key] = res[key]
+    return out
+
+
 # ================================================================
 #: 搜索的硬上限（防止一次搜索把整个大仓库读进上下文）。
 SEARCH_MAX_FILES = 200

@@ -258,6 +258,32 @@ prompt 显示 streak、当前持有的锁、未回应请求数；creator 还能�
 > **测试墙钟不是 AIEOS 领域事实。** 正式系统不限制任务时间；
 > `TIME_LIMIT` 只是实验夹具，不进入 Agent prompt，也不改变 Task 状态。
 
+### 3.6 NO_PROGRESS 截断宽限 + 最小窗口 + 读缓存（2026-11-09）
+
+真实 run `demand_65c51fe6`：A 的 turn 15 被截断（`EMPTY_CONTENT`，
+0 actions），截断压力已经记录、准备下一轮显示；但 2 人团队
+3 cycles = 6 turns 的 stall 窗口在 A 恢复前就停了。
+
+现在：
+
+- `TurnOutcome.truncated` 记录 `finish_reason=length`；
+- 每个 Agent 有一次**截断恢复宽限**：只有当本 cycle 本来就要触发
+  `NO_PROGRESS` 时才使用，且只消耗一次；
+- `min_no_progress_turns=8`：至少 8 个 turn 无强进展才允许停；
+- 宽限只给“认知未完成”，不自动重试、不自动改预算。
+
+**读缓存**：
+
+- `WorkspaceReadExecutor` 可注入 `stat_fn`；
+- `WorkspaceGateway.stat()` 只读 `resource_id / revision / chars`，
+  不返回正文；
+- 同一 `path + resource_id + revision + 范围` 命中缓存时，
+  不再调用 `gateway.read()`；
+- 缓存上限 32 条 / 256,000 字符；失败不缓存；
+- 未注入 `stat_fn` 的调用方行为不变。
+
+> 缓存仍以 Workspace revision 为准；它不是第二份权威状态。
+
 ---
 
 ## 4. `task_create`

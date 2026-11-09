@@ -465,6 +465,51 @@ class WorkspaceGateway:
                 snapshot[resource.path] = holder
         return snapshot
 
+    def stat(
+        self, workspace_id: str, path: str, agent_id: str
+    ) -> OperationResult:
+        """
+        只读元数据：revision / resource_id / chars，**不返回正文**。
+
+        🔒 这是读缓存的 revision 探针：正文没变时不必再读一遍 content。
+           权限与 read() 相同：必须是 Task Participant。
+        """
+        op_id = new_operation_id()
+
+        if not self._participant(workspace_id, agent_id):
+            return OperationResult.fail(
+                operation_id=op_id,
+                code=ErrorCode.NOT_TASK_PARTICIPANT,
+                message="不是这个 Task Workspace 的 Participant",
+            )
+
+        try:
+            normalized = normalize_path(path)
+        except WorkspacePathError as exc:
+            return OperationResult.fail(
+                operation_id=op_id,
+                code=ErrorCode.OUTSIDE_WORKSPACE,
+                message=str(exc),
+            )
+
+        row = self.store.metadata_by_path(workspace_id, normalized)
+        if row is None:
+            return OperationResult.fail(
+                operation_id=op_id,
+                code=ErrorCode.RESOURCE_NOT_FOUND,
+                message=f"路径不存在：{normalized}",
+            )
+        return OperationResult.ok(
+            operation_id=op_id,
+            result={
+                "resource_id": row.get("resource_id"),
+                "path": row.get("path"),
+                "type": row.get("resource_type"),
+                "revision": row.get("revision"),
+                "chars": row.get("chars"),
+            },
+        )
+
     def read(
         self, workspace_id: str, path: str, agent_id: str
     ) -> OperationResult:

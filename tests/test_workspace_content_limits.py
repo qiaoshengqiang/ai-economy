@@ -184,6 +184,8 @@ def test_demand_dispatcher_wires_the_structural_limit():
 
     write_ex = dispatcher._executors["workspace_write"]
     edit_ex = dispatcher._executors["workspace_edit"]
+    read_ex = dispatcher._executors["workspace_read"]
+    assert read_ex.stat_fn is not None, "Demand 读动作应启用 revision 探针缓存"
     assert write_ex.max_content_chars == MAX_SINGLE_WRITE_CHARS
     assert edit_ex.max_new_string_chars == MAX_SINGLE_WRITE_CHARS
     assert MAX_SINGLE_WRITE_CHARS == 12_000

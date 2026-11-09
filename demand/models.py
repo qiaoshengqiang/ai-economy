@@ -92,3 +92,9 @@ class TurnOutcome:
     #:    普通协调消息只能算“弱进展”；`NO_PROGRESS` 只看强进展，
     #:    否则一封接一封的说明就能让 run 永远不触发 stall。
     strong_progress: bool = False
+    #: 🔴 这一 turn 的认知是否被输出上限截断
+    #:    （`finish_reason=length`，含 EMPTY_CONTENT）。
+    #:
+    #:    Scheduler 用它给一次恢复机会：截断不是“Agent 选择不做”，
+    #:    它需要下一轮看到压力后拆小/提高预算。
+    truncated: bool = False

@@ -383,6 +383,60 @@ class TestRunScheduler:
             max_turns=20, no_progress_cycles=2)
         assert s.run().exit_reason == "NO_PROGRESS"
 
+    def test_truncated_turn_gets_one_grace_cycle(self):
+        """认知被截断不是“选择不做”；给它一次下一轮恢复的机会。"""
+        calls = {"n": 0}
+
+        def turn(a):
+            calls["n"] += 1
+            return TurnOutcome(
+                a, actions=0, truncated=(calls["n"] == 1))
+
+        s = RunScheduler(
+            participants=["a"], run_turn=turn,
+            task_status=lambda: "IN_PROGRESS",
+            max_turns=10, no_progress_cycles=1,
+            min_no_progress_turns=1)
+        result = s.run()
+        assert result.exit_reason == "NO_PROGRESS"
+        assert result.turns == 2, "截断后应至少再来一轮，而不是立刻停"
+
+    def test_repeated_truncation_does_not_extend_forever(self):
+        """每个 Agent 只享受一次截断宽限；连续截断仍会停。"""
+        s = RunScheduler(
+            participants=["a"],
+            run_turn=lambda a: TurnOutcome(a, actions=0, truncated=True),
+            task_status=lambda: "IN_PROGRESS",
+            max_turns=10, no_progress_cycles=1,
+            min_no_progress_turns=1)
+        result = s.run()
+        assert result.exit_reason == "NO_PROGRESS"
+        assert result.turns == 2
+
+    def test_no_progress_waits_for_minimum_turns(self):
+        """1 人团队 3 cycles 只有 3 turn；至少 8 turn 才允许停。"""
+        s = RunScheduler(
+            participants=["a"],
+            run_turn=lambda a: TurnOutcome(a, actions=0),
+            task_status=lambda: "IN_PROGRESS",
+            max_turns=20, no_progress_cycles=1,
+            min_no_progress_turns=8)
+        result = s.run()
+        assert result.exit_reason == "NO_PROGRESS"
+        assert result.turns == 8
+
+    def test_minimum_window_applies_to_two_participants(self):
+        """2 人团队 3 cycles = 6 turn；最小窗口 8 turn 才停。"""
+        s = RunScheduler(
+            participants=["a", "b"],
+            run_turn=lambda a: TurnOutcome(a, actions=0),
+            task_status=lambda: "IN_PROGRESS",
+            max_turns=20, no_progress_cycles=3,
+            min_no_progress_turns=8)
+        result = s.run()
+        assert result.exit_reason == "NO_PROGRESS"
+        assert result.turns == 8
+
     def test_real_progress_resets_the_counter(self):
         s = RunScheduler(
             participants=["a"],

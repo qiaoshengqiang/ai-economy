@@ -516,6 +516,7 @@ class DemandRunner:
             progress=progress,
             progress_reason=progress_reason,
             strong_progress=strong_progress,
+            truncated=bool(budget.get("truncated")),
         )
 
     # ------------------------------------------------------------

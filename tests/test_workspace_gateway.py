@@ -214,6 +214,25 @@ class TestScenarioA:
         assert after["/src"] == "B"
         assert after["/src/main.py"] == "B"
 
+    def test_stat_returns_metadata_without_content(self, rig):
+        rig.bootstrap()
+        rig.gateway.create("W1", "/", "a.py", "file", "A",
+                           content="secret")
+
+        got = rig.gateway.stat("W1", "/a.py", "A")
+        assert got.success
+        assert got.result["revision"] == 1
+        assert got.result["chars"] == 6
+        assert "content" not in got.result
+
+        outsider = rig.gateway.stat("W1", "/a.py", "Z")
+        assert outsider.success is False
+        assert outsider.error["code"] == "NOT_TASK_PARTICIPANT"
+
+        missing = rig.gateway.stat("W1", "/missing.py", "A")
+        assert missing.success is False
+        assert missing.error["code"] == "RESOURCE_NOT_FOUND"
+
     def test_read_does_not_produce_event_or_audit(self, rig):
         """🔒 list()/read() **不产生 Event、不记读 Audit**（任务书 §17）。"""
         before_e = len(rig.event_types())

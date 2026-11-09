@@ -83,6 +83,26 @@ class WorkspaceStore:
         )
         return self._to_resource(row) if row else None
 
+    def metadata_by_path(
+        self, workspace_id: str, path: str
+    ) -> Optional[dict[str, Any]]:
+        """
+        只取元数据（**不读 content 正文**）。
+
+        🔒 读缓存需要“当前 revision 是否变化”，但不该为了检查 revision
+           再把整份正文从 SQLite 读出来。`length(content)` 也由 SQLite
+           计算，不把正文搬进 Python。
+        """
+        row = self.db.fetchone(
+            "SELECT resource_id, workspace_id, parent_id, name, path, "
+            "resource_type, state, revision, length(content) AS chars, "
+            "created_by, created_at, updated_at "
+            "FROM workspace_resources "
+            "WHERE workspace_id = ? AND path = ?",
+            (workspace_id, normalize_path(path)),
+        )
+        return dict(row) if row is not None else None
+
     def children_of(self, parent_id: Optional[str]) -> list[Resource]:
         if parent_id is None:
             return []
