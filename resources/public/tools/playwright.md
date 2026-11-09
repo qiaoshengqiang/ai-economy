@@ -39,7 +39,10 @@ Python 的 `playwright` 包。
 const { test, expect } = require('@playwright/test');
 
 test('page boots', async ({ page }) => {
-  await page.goto('http://127.0.0.1:8000/index.html');
+  // 🔒 runtime 会为正式 suite 起一个静态服务器，并把入口 URL 放在
+  //    BASE_URL；不要硬编码 8000 端口（smoke gate 用的是随机端口）。
+  const url = process.env.BASE_URL || 'http://127.0.0.1:8000/index.html';
+  await page.goto(url);
   await expect(page.locator('body')).toContainText('...');
 });
 ```
@@ -59,6 +62,10 @@ test('page boots', async ({ page }) => {
 {"type":"run_tool",
  "parameters":{"tool":"playwright","args":["tests/foo.spec.js"]}}
 ```
+
+> 🔒 Runtime 在正式 suite 运行期间会为 Workspace 入口页起一个临时静态
+> 服务器，并设置 `BASE_URL`（例如 `http://127.0.0.1:54321/index.html`）。
+> spec 应优先使用 `process.env.BASE_URL`；不要硬编码 `8000` 端口。
 
 ### 3. 读结果
 

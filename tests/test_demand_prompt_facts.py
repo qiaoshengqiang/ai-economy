@@ -393,3 +393,73 @@ def test_pending_request_is_prioritized_at_top():
     assert "不要继续无关的重复读取" in prompt
     # 必须出现在 Task Core 之前
     assert prompt.index("未回应的请求") < prompt.index("Task Core")
+
+
+def test_prompt_treats_other_agents_claims_as_opinions_and_checks_private_wm_first():
+    prompt = build_task_prompt(
+        run=_run(), task=_task(), runtime=_runtime(),
+        agent_id="agent_a", inbox=[], budget_cap=32768,
+        budget_feedback=None)
+    assert "观点 vs 事实" in prompt
+    assert "不是 Domain Fact" in prompt
+    assert "先查你的**私有工作记忆**" in prompt
+    assert "workspace_read" in prompt and "workspace_search" in prompt
+    assert "path + revision" in prompt
+    # 私有 WM 检查必须排在 Workspace 验证之前
+    assert prompt.index("先查你的**私有工作记忆**") < prompt.index(
+        "再用 `workspace_read`")
+
+
+def test_prompt_shows_lock_change_and_that_you_now_hold_it():
+    prompt = build_task_prompt(
+        run=_run(), task=_task(), runtime=_runtime(),
+        agent_id="agent_a", inbox=[], budget_cap=32768,
+        budget_feedback=None,
+        lock_changes=[{"path": "/index.html", "from": "agent_c",
+                       "to": "agent_a"}])
+    assert "锁变更（自你上次 turn 以来" in prompt
+    assert "index.html: lock agent_c → agent_a" in prompt
+    assert "你现在持有这个资源的写锁" in prompt
+
+
+def test_prompt_shows_read_only_streak_and_held_locks():
+    prompt = build_task_prompt(
+        run=_run(), task=_task(), runtime=_runtime(),
+        agent_id="agent_c", inbox=[], budget_cap=32768,
+        budget_feedback=None,
+        read_only_streak=5,
+        held_locks=["index.html"],
+        pending_requests=[{"from_agent": "agent_a",
+                           "message_type": "REQUEST",
+                           "text": "请补齐", "turn": 40}])
+    assert "你的动作事实（不是指令）" in prompt
+    assert "连续 5 轮只有读取" in prompt
+    assert "index.html" in prompt
+    assert "未回应的 REQUEST" in prompt
+
+
+def test_prompt_shows_other_agents_read_only_facts_to_creator():
+    prompt = build_task_prompt(
+        run=_run(), task=_task(), runtime=_runtime(),
+        agent_id="agent_a", inbox=[], budget_cap=32768,
+        budget_feedback=None,
+        stalled_agents=[{
+            "agent_id": "agent_c",
+            "read_only_streak": 5,
+            "held_locks": ["index.html"],
+            "pending_requests": 3,
+        }])
+    assert "其他 Agent 的动作事实（不是指令）" in prompt
+    assert "agent_c: 连续 5 轮只有读取/搜索" in prompt
+    assert "持有写锁 index.html" in prompt
+    assert "未回应请求 3 条" in prompt
+
+
+def test_prompt_documents_workspace_plan_update():
+    prompt = build_task_prompt(
+        run=_run(), task=_task(), runtime=_runtime(),
+        agent_id="agent_a", inbox=[], budget_cap=32768,
+        budget_feedback=None)
+    assert "workspace_plan_update" in prompt
+    assert "仅 creator" in prompt
+    assert "计划完成度" in prompt

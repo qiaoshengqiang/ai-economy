@@ -43,6 +43,7 @@ from actions import (
     ShortTermMemoryUpdateExecutor,
     TaskCreateExecutor,
     WorkspaceEditExecutor,
+    WorkspacePlanUpdateExecutor,
     WorkspaceReadExecutor,
     WorkspaceSearchExecutor,
     WorkspaceWriteExecutor,
@@ -80,6 +81,7 @@ def build_task_dispatcher(
     *,
     task: Any,
     bridge: Any,
+    update_plan: Any = None,
 ) -> ActionDispatcher:
     ws_id = task.workspace.workspace_id if task.workspace else ""
     task_id = task.task_id
@@ -222,6 +224,8 @@ def build_task_dispatcher(
             max_content_chars=MAX_SINGLE_WRITE_CHARS),
         WorkspaceEditExecutor(
             _edit, max_new_string_chars=MAX_SINGLE_WRITE_CHARS),
+        *([WorkspacePlanUpdateExecutor(update_plan)]
+          if update_plan is not None else []),
         MessageSendExecutor(_send, comm=runtime.communication),
         PublicQueryExecutor(public.query),
         PrivateWriteExecutor(write_private, workspace_of=_ws_of),

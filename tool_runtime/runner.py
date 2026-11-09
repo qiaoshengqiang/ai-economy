@@ -305,55 +305,77 @@ class ToolRunner:
         images_before = self._image_snapshot(run.work)
         command = [*spec.command, *clean_args]
         env = self._env(run, spec)
-        started = time.perf_counter()
+        suite_server = None
+        suite_url = ""
         try:
-            proc = subprocess.Popen(
-                command,
-                cwd=str(run.work),
-                env=env,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                shell=False,
-                start_new_session=True,
-            )
-        except FileNotFoundError as exc:
-            return self._pre_run_failure(
-                tool_name, run.run_id, f"tool_not_found: {exc}")
-        except Exception as exc:                              # noqa: BLE001
-            return self._pre_run_failure(
-                tool_name, run.run_id, f"spawn_failed: {exc}")
-
-        timed_out = False
-        try:
-            stdout, stderr = proc.communicate(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            timed_out = True
-            self._kill_group(proc)
+            # 🔒 smoke gate 的静态服务器在 smoke 结束后就关闭了；
+            #    正式 suite 需要自己的服务器。把入口页 URL 通过
+            #    BASE_URL 暴露给 spec，避免 Agent 猜端口。
+            if spec.name == "playwright":
+                entry = self._smoke_entry(run.work)
+                if entry and entry.startswith(("http://", "https://")):
+                    env["BASE_URL"] = entry
+                elif entry:
+                    suite_server, suite_url = self._serve_work(
+                        run.work, entry)
+                    env["BASE_URL"] = suite_url
+            started = time.perf_counter()
             try:
-                stdout, stderr = proc.communicate(timeout=5)
-            except subprocess.TimeoutExpired:
-                stdout, stderr = "", ""
-        duration_ms = round((time.perf_counter() - started) * 1000, 1)
+                proc = subprocess.Popen(
+                    command,
+                    cwd=str(run.work),
+                    env=env,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    shell=False,
+                    start_new_session=True,
+                )
+            except FileNotFoundError as exc:
+                return self._pre_run_failure(
+                    tool_name, run.run_id, f"tool_not_found: {exc}")
+            except Exception as exc:                          # noqa: BLE001
+                return self._pre_run_failure(
+                    tool_name, run.run_id, f"spawn_failed: {exc}")
 
-        stdout = stdout or ""
-        stderr = stderr or ""
-        stdout, cut_out = _clip(stdout)
-        stderr, cut_err = _clip(stderr)
-        exit_code = proc.returncode
-        ok = (not timed_out) and exit_code == 0
-        code = "" if ok else ("timeout" if timed_out else "tool_exit_nonzero")
-        return ToolRunResult(
-            ran=True, ok=ok, tool=spec.name, run_id=run.run_id,
-            exit_code=exit_code, stdout=stdout, stderr=stderr,
-            timed_out=timed_out, duration_ms=duration_ms,
-            code=code, materialized_files=int(materialized),
-            output_truncated=cut_out or cut_err,
-            config_used=config_used, smoke=smoke,
-            images=self._new_images(run.work, images_before))
+            timed_out = False
+            try:
+                stdout, stderr = proc.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                self._kill_group(proc)
+                try:
+                    stdout, stderr = proc.communicate(timeout=5)
+                except subprocess.TimeoutExpired:
+                    stdout, stderr = "", ""
+            duration_ms = round((time.perf_counter() - started) * 1000, 1)
+
+            stdout = stdout or ""
+            stderr = stderr or ""
+            stdout, cut_out = _clip(stdout)
+            stderr, cut_err = _clip(stderr)
+            exit_code = proc.returncode
+            ok = (not timed_out) and exit_code == 0
+            code = "" if ok else ("timeout" if timed_out
+                                  else "tool_exit_nonzero")
+            return ToolRunResult(
+                ran=True, ok=ok, tool=spec.name, run_id=run.run_id,
+                exit_code=exit_code, stdout=stdout, stderr=stderr,
+                timed_out=timed_out, duration_ms=duration_ms,
+                code=code, materialized_files=int(materialized),
+                output_truncated=cut_out or cut_err,
+                config_used=config_used, smoke=smoke,
+                images=self._new_images(run.work, images_before))
+        finally:
+            if suite_server is not None:
+                try:
+                    suite_server.shutdown()
+                    suite_server.server_close()
+                except Exception:                             # noqa: BLE001
+                    pass
 
     # ------------------------------------------------------------
     # Playwright：项目配置发现 + 冒烟门禁

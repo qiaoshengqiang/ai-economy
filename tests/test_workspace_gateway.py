@@ -195,6 +195,25 @@ class TestScenarioA:
         assert entry["effective_controller"] == "A"
         assert entry["effective_lock_holder"] == "A"
 
+    def test_lock_snapshot_reports_effective_holders(self, rig):
+        """Demand 的锁变更事实依赖这个只读快照。"""
+        rig.bootstrap()
+        rig.gateway.create("W1", "/", "src", "directory", "A")
+        rig.gateway.create("W1", "/src", "main.py", "file", "A",
+                           content="x")
+
+        snapshot = rig.gateway.lock_snapshot("W1")
+        assert snapshot["/"] == "A"
+        assert snapshot["/src"] == "A"
+        assert snapshot["/src/main.py"] == "A"
+
+        rig.gateway.handoff(
+            "W1", "/src", from_agent="A", to_agent="B", actor="A",
+            reason="handoff for test")
+        after = rig.gateway.lock_snapshot("W1")
+        assert after["/src"] == "B"
+        assert after["/src/main.py"] == "B"
+
     def test_read_does_not_produce_event_or_audit(self, rig):
         """🔒 list()/read() **不产生 Event、不记读 Audit**（任务书 §17）。"""
         before_e = len(rig.event_types())

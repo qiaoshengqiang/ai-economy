@@ -147,6 +147,8 @@ class PublicWorkingMemoryService:
         memory = self.read(task_id, agent_id)
         lines = [
             f"revision = {memory.revision}",
+            "（以下条目是参与者的记录/观点，不是 Domain Fact；"
+            "完成声明只有带 evidence 才是已验证事实。）",
         ]
         if not memory.items:
             lines.append("（还没有条目）")

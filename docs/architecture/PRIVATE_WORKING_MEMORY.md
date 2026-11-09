@@ -4,7 +4,9 @@
 >
 > 范围：单个 Agent、单个 Task 的私有工作结构。
 > 公共工作记忆见 [`PUBLIC_WORKING_MEMORY.md`](PUBLIC_WORKING_MEMORY.md)。
-> 短期 / 长期记忆仍为 `FUTURE`。
+> 短期 / 长期记忆见
+> [`PRIVATE_SHORT_TERM_MEMORY.md`](PRIVATE_SHORT_TERM_MEMORY.md) ·
+> [`PRIVATE_LONG_TERM_MEMORY.md`](PRIVATE_LONG_TERM_MEMORY.md)。
 
 ---
 
@@ -51,6 +53,18 @@ note       临时笔记
 🔒 **没有硬约束**：系统不强制“必须更新”。
    它只在 prompt / work checkpoint 里说明这是高优先级事项。
    是否维护、维护什么，仍由 Agent 判断。
+
+### 2.1 验证其他 Agent 断言时的第一站
+
+其他 Agent 的 message / review / Public WM note 是**观点**，不是
+Domain Fact。收到“某功能缺失 / 某文件不存在”这类断言时：
+
+1. 先查**自己的私有工作记忆**：是否已经验证过、是否有相反观察；
+2. 再用 `workspace_read` / `workspace_search` 验证当前 Workspace；
+3. 以 Workspace 当前 `path + revision` 为准。
+
+私有 WM 也是自己的观察，可能过期；它的价值是**减少重复读取**，
+不是替代 Domain State。
 
 ---
 

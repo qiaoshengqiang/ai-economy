@@ -33,6 +33,11 @@ Task 范围内、**参与者可见、可更新**的操作状态：
 
 > **`Memory ≠ Alignment`**：要把工作记忆里的推测升级为共识，
 > 仍然走 Shared Context 的 Proposal → Alignment。
+>
+> **条目是观点，不是 Domain Fact。** 其他 Agent 写下的计划、评审、
+> 完成声明都是参与者的记录/观察；只有带 `evidence` 且通过 Workspace
+> 校验的完成声明才是已验证事实。执行者应先用私有工作记忆核对，
+> 再用 `workspace_read` / `workspace_search` 验证当前 Workspace。
 
 ---
 

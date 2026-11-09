@@ -226,6 +226,38 @@ Demand Entry 的 `workspace_write.content` 与 `workspace_edit.new_string`
 > 这是 **Demand 入口的组合根约束**，不是 Workspace 资源树的结构上限；
 > 实验调用方不传 `max_content_chars` 时保持旧行为。
 
+### 3.5 观点 vs 事实 + 动作事实（2026-11-09）
+
+真实 run `demand_cc61c0b5` 的教训：E 的静态审查说“无枕木列”，
+A 把它当成 Domain Fact，直接写成 PATCH；但 R1 实际已有 `slp` 枕木
+InstancedMesh，PATCH 再次声明 `const slp`，导致不可用。
+
+Task prompt 现在明确：
+
+- 其他 Agent 的 message / review / Public WM note 是**观点/观察**，
+  不是 Domain Fact；
+- 验证顺序是：
+  ① 先查**自己的私有工作记忆**（是否已验证、是否有相反观察）；
+  ② 再用 `workspace_read` / `workspace_search` 验证当前 Workspace；
+  ③ 以 Workspace 当前 `path + revision` 为准；
+- 不把别人的观点直接写进 PATCH、计划或完成声明；
+- 观点与 Workspace 冲突时，先纠正观点再行动。
+
+**锁变更事实**：每个 Agent 的 prompt 显示自它上次 turn 以来
+`path: lock from → to`。如果新 holder 是自己，明确显示
+“你现在持有这个资源的写锁”。这是事实，不是建议。
+
+**单 Agent 动作事实**：连续 3 轮以上只有 read/search/query 时，
+prompt 显示 streak、当前持有的锁、未回应请求数；creator 还能看到
+其他 Agent 的同类事实。它基于**动作历史**，不是墙钟，也不替 Agent 决策。
+
+**计划更新**：新增 `workspace_plan_update`（仅 creator），
+用完整 `{root_owner, directories, files}` 替换 `run.workspace_plan`，
+复用 `task_create` 的 owner / 父目录校验。计划完成度随后以新 plan 为准。
+
+> **测试墙钟不是 AIEOS 领域事实。** 正式系统不限制任务时间；
+> `TIME_LIMIT` 只是实验夹具，不进入 Agent prompt，也不改变 Task 状态。
+
 ---
 
 ## 4. `task_create`

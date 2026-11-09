@@ -8,6 +8,12 @@
 > 守卫 `tests/test_system_map_is_current.py` 立刻变红。
 > 所以它不会悄悄过期。
 
+> **观点 ≠ 事实。** 其他 Agent 的消息、评审、公共工作记忆条目是
+> **观点/观察**，不是 Domain Fact。关键断言（某功能缺失、某文件不存在）
+> 先用**你自己的私有工作记忆**核对已有观察，再用
+> `workspace_read` / `workspace_search` 验证当前 Workspace；
+> 引用时写 `path + revision`。
+
 ---
 
 ## 1. 这个环境里存在什么
@@ -61,6 +67,10 @@
 | `private_list` | 列出**你自己的**文件空间里有什么 | **无参数** |
 | `private_delete` | 删**你自己的**文件空间里的一个文件 | `path` |
 | `run_tool` | 在独立 run 目录执行公共工具库中的工具 | `tool` · `args` · `source` · `path` · `timeout_seconds` |
+
+> Demand 入口的 Creator 还可使用 `workspace_plan_update`
+> （完整 `root_owner` / `directories` / `files`）更新交付计划；
+> 它只存在于 Demand 组合根，参数见 Task prompt。
 
 **公共工具库**（只读，由项目预装）：
 `python` · `pytest` · `node` · `playwright`

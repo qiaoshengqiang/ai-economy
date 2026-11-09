@@ -282,6 +282,13 @@ class TaskCreationService:
             "workspace_plan": plan,
         }
 
+    def validate_workspace_plan(
+        self, plan: Any, *, people: List[str], producer: str,
+    ) -> Dict[str, Any]:
+        """公开入口：运行中的 Creator 更新 plan 时复用同一套结构校验。"""
+        return self._validate_workspace_plan(
+            plan, people=people, producer=producer)
+
     def _validate_workspace_plan(
         self, plan: Any, *, people: List[str], producer: str,
     ) -> Dict[str, Any]:

@@ -27,7 +27,7 @@ from demand.prompt import (
     build_brief_prompt, build_intake_prompt, build_task_prompt,
 )
 from demand.scheduler import RunScheduler
-from demand.task_creation import TaskCreationService
+from demand.task_creation import TaskCreationError, TaskCreationService
 
 #: 这些消息类型的“新消息”**不算真实进展**：
 #: 它们的价值应体现在 Task 状态变化上；被拒绝时也不该延长 run。
@@ -41,6 +41,16 @@ _PROTOCOL_MESSAGE_TYPES = frozenset({
 #: 普通消息只是弱进展 —— 否则协调/解释会无限延长 run。
 _STRONG_PROGRESS_REASONS = frozenset({
     "task_status", "workspace_write", "workspace_edit", "resource_create",
+})
+
+#: 只有这些动作是“只读/查询”；连续出现时给 Agent 一个动作事实。
+#: 🔒 不包含 message_send / resource_handoff / 写入 —— 那些都会重置 streak。
+_READ_ONLY_ACTIONS = frozenset({
+    "workspace_read", "workspace_search", "public_query",
+    "public_working_memory_read", "private_working_memory_read",
+    "private_read", "private_list", "short_term_memory_read",
+    "long_term_memory_search", "long_term_memory_read",
+    "shared_context_read",
 })
 
 
@@ -84,6 +94,10 @@ class DemandRunner:
         self._seen_reads: Dict[str, set] = {}
         #: 尚未回应的 REQUEST/QUESTION（按 Agent）。
         self._pending_requests: Dict[str, List[Dict[str, Any]]] = {}
+        #: 每个 Agent 的“连续只读 turn 数”——只描述动作历史，不是墙钟。
+        self._read_only_streak: Dict[str, int] = {}
+        #: 每个 Agent 上次 turn 结束时的锁快照（用于显示锁变更事实）。
+        self._last_lock_snapshot: Dict[str, Dict[str, str]] = {}
         #: 最近一次 turn 的模型原文（Front brief 解析用）。
         self._last_turn_content = ""
         #: 最近一次 task_create 失败原因（Creator 重试时可见）。
@@ -208,7 +222,8 @@ class DemandRunner:
             return
         self.task = task
         self.task_dispatcher = build_task_dispatcher(
-            self.rt, task=task, bridge=self.bridge)
+            self.rt, task=task, bridge=self.bridge,
+            update_plan=self._update_workspace_plan)
 
         order: List[str] = []
         if task.contractor:
@@ -250,16 +265,124 @@ class DemandRunner:
                 agent_id=agent_id, ok=False, error="task disappeared")
         messages = inbox.get("received") or []
         self._collect_pending_requests(agent_id, messages)
+        workspace_id = (
+            task.workspace.workspace_id if task.workspace else "")
+        current_locks = self._lock_snapshot(workspace_id)
+        previous_locks = self._last_lock_snapshot.get(agent_id)
+        lock_changes = (
+            self._diff_locks(previous_locks, current_locks)
+            if previous_locks is not None else [])
+        held = sorted(
+            path for path, holder in current_locks.items()
+            if holder == agent_id)
+        pending = self._pending_requests.get(agent_id) or []
         prompt = build_task_prompt(
             run=self.run, task=task, runtime=self.rt,
             agent_id=agent_id, inbox=messages,
             budget_cap=self.cognitive_budget,
             budget_feedback=self._last_turn_by_agent.get(agent_id),
-            pending_requests=self._pending_requests.get(agent_id))
-        return self._turn(
-            agent_id, prompt, self.task_dispatcher,
-            task_id=task.task_id, initial_phase="decision",
-            work_loop=True, follow_up=True, attempt=0)
+            pending_requests=pending,
+            lock_changes=lock_changes,
+            read_only_streak=self._read_only_streak.get(agent_id, 0),
+            held_locks=held,
+            stalled_agents=(
+                self._stalled_agents(task, current_locks, exclude=agent_id)
+                if agent_id == task.creator else []))
+        try:
+            return self._turn(
+                agent_id, prompt, self.task_dispatcher,
+                task_id=task.task_id, initial_phase="decision",
+                work_loop=True, follow_up=True, attempt=0)
+        finally:
+            # 🔒 记录**本 turn 结束后**的锁快照；下一轮只显示相对它的变化。
+            self._last_lock_snapshot[agent_id] = self._lock_snapshot(
+                workspace_id)
+
+    # ------------------------------------------------------------
+    def _update_workspace_plan(self, agent_id: str, *, plan: Any,
+                               reason: str = "") -> Dict[str, Any]:
+        """
+        Creator 更新 `run.workspace_plan`。
+
+        🔒 只允许 creator；复用 task_create 的同一套结构校验。
+           这不是 Task Core 状态，也不是工作记忆。
+        """
+        task = self._status_task()
+        if task is None:
+            return {"ok": False, "code": "task_not_found",
+                    "message": "Task 不存在，无法更新 workspace_plan"}
+        if agent_id != task.creator:
+            return {"ok": False, "code": "not_creator",
+                    "message": ("只有 creator 可以更新 workspace_plan；"
+                                f"你是 {agent_id}")}
+        producer = task.contractor or task.creator
+        try:
+            validated = self._creation.validate_workspace_plan(
+                plan, people=list(task.participants), producer=producer)
+        except TaskCreationError as exc:
+            return {"ok": False, "code": exc.code, "message": exc.message}
+        self.run.workspace_plan = validated
+        self._write_run()
+        self._event(
+            "workspace_plan_updated", agent_id=agent_id,
+            plan=validated, reason=str(reason or ""))
+        return {"ok": True, "workspace_plan": validated}
+
+    def _lock_snapshot(self, workspace_id: str) -> Dict[str, str]:
+        if not workspace_id:
+            return {}
+        try:
+            return dict(self.rt.workspace_gateway.lock_snapshot(workspace_id))
+        except Exception:                                     # noqa: BLE001
+            return {}
+
+    @staticmethod
+    def _next_read_only_streak(current: Any,
+                               action_types: List[str]) -> int:
+        if action_types and all(
+                a in _READ_ONLY_ACTIONS for a in action_types):
+            return int(current or 0) + 1
+        return 0
+
+    @staticmethod
+    def _diff_locks(previous: Dict[str, str],
+                    current: Dict[str, str]) -> List[Dict[str, Any]]:
+        changes: List[Dict[str, Any]] = []
+        for path in sorted(set(previous) | set(current)):
+            old = previous.get(path, "none")
+            new = current.get(path, "none")
+            if old == new:
+                continue
+            changes.append({"path": path, "from": old, "to": new})
+        return changes
+
+    def _stalled_agents(
+        self, task: Any, current_locks: Dict[str, str], *,
+        exclude: str,
+    ) -> List[Dict[str, Any]]:
+        """
+        给 creator 的**动作事实**：哪些其他 Agent 连续只读、持有什么锁、
+        有多少未回应请求。不是指令，也不包含墙钟。
+        """
+        out: List[Dict[str, Any]] = []
+        for aid in task.participants:
+            if aid == exclude:
+                continue
+            streak = int(self._read_only_streak.get(aid, 0))
+            if streak < 3:
+                continue
+            out.append({
+                "agent_id": aid,
+                "read_only_streak": streak,
+                "held_locks": sorted(
+                    path for path, holder in current_locks.items()
+                    if holder == aid),
+                "pending_requests": len(
+                    self._pending_requests.get(aid) or []),
+            })
+        out.sort(key=lambda item: (-item["read_only_streak"],
+                                   item["agent_id"]))
+        return out
 
     # ------------------------------------------------------------
     def _turn(
@@ -331,6 +454,11 @@ class DemandRunner:
         action_types: List[str] = []
         for intent in intents:
             action_types.append(str(getattr(intent, "action_type", "")))
+
+        # 🔒 只描述**动作历史**：连续只有读/搜/查询的 turn 数。
+        #    出现写/编辑/handoff/消息/计划更新等任何结构性动作就清零。
+        self._read_only_streak[agent_id] = self._next_read_only_streak(
+            self._read_only_streak.get(agent_id, 0), action_types)
 
         budget = self._budget_feedback(segments, initial_phase, agent_id)
         envelope_errors = self._record_envelope_errors(agent_id, segments)

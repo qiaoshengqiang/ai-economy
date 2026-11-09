@@ -65,6 +65,9 @@ from actions.workspace_edit import (
 from actions.workspace_search import (
     ACTION_WORKSPACE_SEARCH, WorkspaceSearchExecutor,
 )
+from actions.workspace_plan import (
+    ACTION_WORKSPACE_PLAN_UPDATE, WorkspacePlanUpdateExecutor,
+)
 from actions.shared_context_read import (
     ACTION_SHARED_CONTEXT_READ, SharedContextReadExecutor,
 )
@@ -123,6 +126,7 @@ __all__ = [
     "ACTION_WORKSPACE_WRITE", "WorkspaceWriteExecutor",
     "ACTION_WORKSPACE_EDIT", "WorkspaceEditExecutor",
     "ACTION_WORKSPACE_SEARCH", "WorkspaceSearchExecutor",
+    "ACTION_WORKSPACE_PLAN_UPDATE", "WorkspacePlanUpdateExecutor",
     "ACTION_WORKSPACE_READ", "WorkspaceReadExecutor",
     "ACTION_MESSAGE_SEND", "MessageSendExecutor",
     "ACTION_PUBLIC_QUERY", "PublicQueryExecutor",

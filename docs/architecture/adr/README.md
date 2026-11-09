@@ -72,6 +72,7 @@
 | [0046](0046-two-stage-intake-and-workspace-plan.md) | **两阶段 Intake + Workspace Plan 锁一致性** | Accepted（**已实现**） | Demand 角色压缩修复 | Demand / Workspace |
 | [0047](0047-working-memory-hierarchy-and-plan-visibility.md) | **工作记忆层级 + 计划完成度可见** | Accepted（**已实现**） | 工作记忆实现修复 | Demand / Memory |
 | [0048](0048-write-limit-and-working-memory-evidence.md) | **单次写入硬上限 + 工作记忆 Evidence** | Accepted（**已实现**） | 大文件截断 / 虚假完成声明 | Demand / Workspace / Memory |
+| [0049](0049-opinion-vs-fact-and-action-facts.md) | **观点 vs 事实、锁变更可见、单 Agent 动作事实** | Accepted（**已实现**） | 观点被当事实 / 锁误读 / 单 Agent 停摆 | Demand / Memory / Workspace |
 | [0028](0028-read-visibility-and-native-communication.md) | **Read 靠 Task Participation；Communication 是 Agent 基础能力** | Accepted（实现为 FUTURE） | Read / Visibility / Communication | Workspace / Communication |
 
 ---

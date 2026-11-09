@@ -447,6 +447,24 @@ class WorkspaceGateway:
             },
         )
 
+    def lock_snapshot(self, workspace_id: str) -> dict[str, str]:
+        """
+        返回 `path → effective lock holder` 的只读快照。
+
+        🔒 这是**系统诊断**用的读取，不是 Agent 动作；不改变任何状态。
+           Demand 层用它比较同一 Agent 两次 turn 之间的锁变更，
+           避免 Agent 需要从“当前 holder”推断“之前是谁”。
+        """
+        tree = self.store.load_tree(workspace_id)
+        snapshot: dict[str, str] = {}
+        for resource in self.store.all_resources(workspace_id):
+            if resource.is_deleted:
+                continue
+            holder = tree.effective_lock(resource)
+            if holder:
+                snapshot[resource.path] = holder
+        return snapshot
+
     def read(
         self, workspace_id: str, path: str, agent_id: str
     ) -> OperationResult:

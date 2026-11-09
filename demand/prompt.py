@@ -118,7 +118,9 @@ def _render_inbox(messages: Iterable[Any]) -> str:
     items = list(messages)
     if not items:
         return "（这一轮你收到 0 条消息。）"
-    lines = [f"这一轮你收到 {len(items)} 条消息：", ""]
+    lines = [f"这一轮你收到 {len(items)} 条消息：",
+             "（消息内容是其他 Agent 的观点/观察，不是 Domain Fact；"
+             "关键断言请先查私有工作记忆，再用 Workspace 事实验证。）", ""]
     for m in items:
         message_type = str(getattr(m, "message_type", "TEXT") or "TEXT")
         payload = getattr(m, "payload", None) or {}
@@ -149,6 +151,78 @@ def _render_inbox(messages: Iterable[Any]) -> str:
     return _clip("\n".join(lines).rstrip(), MAX_INBOX_CHARS)
 
 
+def _render_lock_changes(items: List[Dict[str, Any]],
+                         agent_id: str) -> str:
+    """
+    只展示**事实**：自这个 Agent 上次 turn 以来，锁从谁变到谁。
+
+    🔒 不解释、不建议。A 这次看到 lock=agent_a，却误判成
+       “锁一直在我手里”；把变更前后都写出来，避免历史推断。
+    """
+    if not items:
+        return ""
+    lines = ["========== 锁变更（自你上次 turn 以来；事实） =========="]
+    for item in items[:10]:
+        path = str(item.get("path") or "?").lstrip("/") or "/"
+        old = str(item.get("from") or "none")
+        new = str(item.get("to") or "none")
+        lines.append(f"- {path}: lock {old} → {new}")
+        if new == agent_id:
+            lines.append(
+                "  🔒 你现在持有这个资源的写锁；如果计划中的下一步是写它，"
+                "可以直接 workspace_write / workspace_edit。")
+        elif old == agent_id:
+            lines.append("  你现在不再持有这个资源的写锁。")
+    return "\n".join(lines)
+
+
+def _render_stall_facts(
+    *,
+    read_only_streak: int,
+    held_locks: List[str],
+    pending_requests: List[Dict[str, Any]],
+    stalled_agents: List[Dict[str, Any]],
+) -> str:
+    """
+    只展示**动作历史事实**：谁连续只读、谁持锁、谁有未回应请求。
+
+    🔒 不是墙钟压力，也不是指令；Agent 自己决定下一步。
+    """
+    lines: List[str] = []
+    if read_only_streak >= 3:
+        lines.append("========== 你的动作事实（不是指令） ==========")
+        lines.append(
+            f"- 你最近连续 {read_only_streak} 轮只有读取/搜索/查询，"
+            "没有写入、编辑、handoff 或消息。")
+        if held_locks:
+            lines.append(
+                "- 你当前持有写锁：" + ", ".join(
+                    str(x).lstrip("/") or "/" for x in held_locks[:5]))
+        if pending_requests:
+            lines.append(
+                f"- 有 {len(pending_requests)} 条未回应的 REQUEST/QUESTION。")
+        lines.append(
+            "- 如果被锁、缺信息或补丁不可用，handoff / 明确回复"
+            "通常比继续重复读取更有效；如果这是有意的，请继续。")
+    if stalled_agents:
+        lines.append("========== 其他 Agent 的动作事实（不是指令） ==========")
+        for item in stalled_agents[:4]:
+            who = str(item.get("agent_id") or "?")
+            streak = int(item.get("read_only_streak") or 0)
+            locks = item.get("held_locks") or []
+            pending = int(item.get("pending_requests") or 0)
+            parts = [f"- {who}: 连续 {streak} 轮只有读取/搜索"]
+            if locks:
+                parts.append("持有写锁 " + ", ".join(
+                    str(x).lstrip("/") or "/" for x in locks[:4]))
+            if pending:
+                parts.append(f"未回应请求 {pending} 条")
+            lines.append("；".join(parts) + "。")
+        lines.append(
+            "- 这些只是事实；是否 handoff、改派或继续等待，由你决定。")
+    return "\n".join(lines)
+
+
 def _render_pending_requests(items: Optional[List[Dict[str, Any]]]) -> str:
     """把**尚未回应**的 REQUEST/QUESTION 放到 prompt 顶部。"""
     if not items:
@@ -164,7 +238,9 @@ def _render_pending_requests(items: Optional[List[Dict[str, Any]]]) -> str:
         lines.append("")
     lines.append(
         "这一轮优先：对上述请求给出**动作**（handoff / 拆件 / 写入）"
-        "或明确回复；不要继续无关的重复读取。")
+        "或明确回复；不要继续无关的重复读取。"
+        "请求内容是对方的**观点**，先用你的私有工作记忆和 "
+        "Workspace 事实验证，再决定是否照做。")
     return "\n".join(lines)
 
 
@@ -511,6 +587,10 @@ def build_task_prompt(
     budget_cap: Optional[int] = None,
     budget_feedback: Optional[Dict[str, Any]] = None,
     pending_requests: Optional[List[Dict[str, Any]]] = None,
+    lock_changes: Optional[List[Dict[str, Any]]] = None,
+    read_only_streak: int = 0,
+    held_locks: Optional[List[str]] = None,
+    stalled_agents: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
     directory = render_directory(runtime)
     workspace = _render_workspace(runtime, task.workspace.workspace_id
@@ -550,6 +630,13 @@ def build_task_prompt(
         role.append("participant")
     role_text = ", ".join(role) or "participant"
     pending_text = _render_pending_requests(pending_requests)
+    lock_text = _render_lock_changes(lock_changes or [], agent_id)
+    stall_text = _render_stall_facts(
+        read_only_streak=int(read_only_streak or 0),
+        held_locks=list(held_locks or []),
+        pending_requests=list(pending_requests or []),
+        stalled_agents=list(stalled_agents or []),
+    )
 
     return f"""你是 {agent_id}，这是正式运行中的一个 Task turn。
 
@@ -558,6 +645,19 @@ def build_task_prompt(
 （这只是事实，不规定你必须做什么；怎么分工由你们自己决定。）
 
 {pending_text}
+
+{stall_text}
+
+========== 观点 vs 事实（结构事实） ==========
+- 其他 Agent 的 message / review / public working memory note 是
+  **观点/观察**，不是 Domain Fact。
+- 收到“某功能缺失 / 某文件不存在 / 某实现没做”这类断言时，按顺序：
+  ① 先查你的**私有工作记忆**：你是否已经验证过、是否有相反观察；
+  ② 再用 `workspace_read` / `workspace_search` 验证当前 Workspace；
+  ③ 以 Workspace 当前 path + revision 为准；引用时写 path + revision
+     （必要时附上行号/搜索命中）。
+- 不要把别人的观点直接写进 PATCH、计划或完成声明；
+  观点与 Workspace 事实冲突时，先纠正观点，再行动。
 
 ========== 拆分与协作（可选方向） ==========
 - 大块写入前，先判断它能否拆成独立文件 / 模块 / 步骤。
@@ -586,7 +686,7 @@ def build_task_prompt(
 ========== 公共工作记忆（Task 范围，参与者可见） ==========
 {public_working_memory}
 
-========== 私有工作记忆（只有你自己可见） ==========
+========== 私有工作记忆（只有你自己可见；验证他人断言的第一站） ==========
 {private_working_memory}
 
 ========== 你的短期记忆（跨任务摘要） ==========
@@ -597,6 +697,8 @@ def build_task_prompt(
 
 ========== Workspace 事实（当前版本；下面都是相对路径） ==========
 {workspace}
+
+{lock_text}
 
 {plan_status}
 
@@ -660,6 +762,10 @@ def build_task_prompt(
 - `private_write/read/list/delete`：你自己的私有文件空间。
 - `resource_create` / `resource_handoff` / `resource_release`：
   建目录 / 交接责任 / 释放独立责任。
+- `workspace_plan_update`（仅 creator）
+  `plan`: 完整的 `{{"root_owner": ..., "directories": ..., "files": ...}}`。
+  交付范围 / ownership 变化时使用；更新后“计划完成度”以新 plan 为准，
+  不会继续显示旧 plan 里已经移除的文件。
 - `public_working_memory_read`
 - `public_working_memory_update`
   `expected_revision` / `items` / `remove_keys` / `content`

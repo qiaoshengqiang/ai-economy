@@ -302,3 +302,40 @@ def test_smoke_gate_allows_slow_cdn_pages():
     assert "timeout: 20000" in SMOKE_SPEC_SOURCE
     assert "timeout: 35000" in SMOKE_CONFIG_SOURCE
     assert "timeout: 8000" not in SMOKE_SPEC_SOURCE
+
+
+@pytest.mark.skipif(
+    not _playwright_ready(),
+    reason="Playwright 包或本机 Google Chrome 未安装",
+)
+def test_playwright_suite_gets_base_url_for_workspace_entry(runner):
+    """
+    smoke gate 的服务器在 smoke 后关闭；正式 suite 必须能拿到入口 URL。
+
+    真实 run `demand_cc61c0b5`：E 的 spec 硬编码 8000/8080，全部
+    ERR_CONNECTION_REFUSED，验收无法复跑。
+    """
+    html = (
+        "<!DOCTYPE html><html><body>"
+        '<h1 id="served">served-ok</h1>'
+        "</body></html>"
+    )
+    spec = (
+        "const { test, expect } = require('@playwright/test');\n"
+        "test('base url is served', async ({ page }) => {\n"
+        "  expect(process.env.BASE_URL).toBeTruthy();\n"
+        "  await page.goto(process.env.BASE_URL, "
+        "{ waitUntil: 'domcontentloaded' });\n"
+        "  await expect(page.locator('#served')).toHaveText('served-ok');\n"
+        "});\n"
+    )
+    gw = _Gateway({
+        "index.html": html,
+        "tests/base.spec.js": spec,
+    })
+    result = runner.run_from_task(
+        gw, "WS-TEST", "agent_a", tool="playwright",
+        args=["tests/base.spec.js"])
+    assert result.ran and result.ok, result.to_agent_dict()
+    assert result.smoke["ok"] is True
+    assert "1 passed" in result.stdout
