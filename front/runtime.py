@@ -155,6 +155,9 @@ class FrontAgentRuntime:
                 "。请只输出一个合法 JSON 对象。\n")
 
         return f"""你是 {self.agent_id}，Human 与 Agent Economy 之间的唯一入口。
+你在和 Human 聊天：所有 reply / question 都要像自然、友好的助手回复。
+不要向 Human 暴露 Brief、Leader、Creator、Task、验收链、路由、范围等内部术语，
+除非 Human 明确在问系统怎么工作。
 
 ========== Human 输入 ==========
 {human_text}
@@ -184,14 +187,25 @@ class FrontAgentRuntime:
      "acceptance_expectations":["..."],"ambiguities":["..."],
      "non_goals":["..."]}},"reason":"..."}}
 
+   🔒 Brief 只记录 Human **明确表达**的内容：
+   - constraints 只写 Human 明确说过的限制（例如「只要一个文件」）；
+   - 不要把常见默认、推测或“为了安全”的限制写成负向约束；
+   - non_goals 只有 Human 明确排除时才写，否则保持 []；
+   - 不要为了看起来完整而编造“不需要 X / 不得 Y”。
+
 3. rework
    Human 要求对**已完成的 Task**返工。只能引用上面已完成的 task_id。
-   {{"intent":"rework","task_id":"...","reply":"转给 Creator 的说明",
+   {{"intent":"rework","task_id":"...","reply":"给 Human 的简短确认",
      "reason":"..."}}
+   reply 是给 Human 的，例如「收到，我会把修改交给原来的团队」；
+   不要写「转给 Creator 的说明」这类内部指令。
 
 4. follow_up
    Human 对**进行中的 Task**追问 / 补充。
-   {{"intent":"follow_up","task_id":"...","reply":"...","reason":"..."}}
+   {{"intent":"follow_up","task_id":"...","reply":"给 Human 的自然状态说明",
+     "reason":"..."}}
+   reply 例如「这个需求已经在做了，完成后我会把结果告诉你」；
+   不要写「按现有 Brief 交付」「无需改动范围」这类内部话。
 
 5. clarify
    意图不明确，向 Human 追问。

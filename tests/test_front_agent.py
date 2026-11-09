@@ -124,6 +124,25 @@ def test_parser_rejects_direct_reply_without_text():
     assert error == "direct_reply_missing_reply"
 
 
+def test_front_prompt_is_human_facing_and_does_not_invent_constraints():
+    captured = {}
+
+    def think(prompt):
+        captured["prompt"] = prompt
+        return json.dumps({
+            "intent": "follow_up",
+            "task_id": "task_1",
+            "reply": "这个需求已经在做了，完成后我会告诉你。",
+        })
+
+    runtime = FrontAgentRuntime("front", think)
+    runtime.decide("继续做", active_tasks=[{"task_id": "task_1"}])
+    prompt = captured["prompt"]
+    assert "不要向 Human 暴露" in prompt
+    assert "不要把常见默认" in prompt
+    assert "不要写「按现有 Brief 交付」" in prompt
+
+
 def test_front_cannot_create_task():
     source = inspect.getsource(RuntimeClass)
     assert "Task.create" not in source
