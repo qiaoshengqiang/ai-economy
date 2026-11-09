@@ -130,6 +130,20 @@ def _parse_members(raw: str) -> List[str]:
     return out
 
 
+def _team_workspace_plan(lead: str, members: List[str]) -> Dict[str, Any]:
+    """
+    构造 Team 的初始 workspace_plan。
+
+    🔒 `TaskCreationService` 要求所有父目录都显式声明；
+       这里把 `work/` 交给 Leader，子目录交给各自成员。
+    """
+    directories: Dict[str, str] = {}
+    for aid in members:
+        directories["work"] = lead
+        directories[f"work/{aid}"] = aid
+    return {"root_owner": lead, "directories": directories, "files": {}}
+
+
 def _description_from_brief(brief: Any) -> str:
     lines = [brief.goal]
     if brief.deliverables:
@@ -246,6 +260,9 @@ def main(argv=None) -> int:
 
     members = _parse_members(args.members) if args.team else []
     participants = [lead] + [m for m in members if m != lead]
+    if args.team and len(participants) < 2:
+        print("❌ --team 至少需要一个 --members（Leader 之外的成员）")
+        return 2
 
     availability = AgentAvailability()
     reserved: List[str] = []
@@ -270,13 +287,8 @@ def main(argv=None) -> int:
         mode = "TEAM" if args.team else "SOLO"
         workspace_plan = None
         if args.team:
-            workspace_plan = {
-                "root_owner": lead,
-                "directories": {
-                    f"work/{aid}": aid for aid in participants if aid != lead
-                },
-                "files": {},
-            }
+            workspace_plan = _team_workspace_plan(
+                lead, [aid for aid in participants if aid != lead])
         creation = TaskCreationService(
             runtime, run, max_agents=max(1, len(participants)))
         created = creation.create(

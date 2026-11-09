@@ -359,6 +359,25 @@ class TestTaskCreationService:
                 acceptance_criteria=["ok"], producer="agent_b",
                 acceptance_assignee=None, mode="SOLO")
 
+    def test_team_workspace_plan_declares_parent_directory(self):
+        """
+        Team CLI 的 work/<agent> 计划必须显式声明父目录 work/，
+        否则 TaskCreationService 会拒绝（用户手动测试的回归）。
+        """
+        from work.cli import _team_workspace_plan
+
+        plan = _team_workspace_plan(
+            "agent_a", ["agent_b", "agent_c"])
+        values = self._svc()._validate(
+            creator="agent_a", description="team task",
+            participants=["agent_a", "agent_b", "agent_c"],
+            acceptance_criteria=["ok"], producer="agent_a",
+            acceptance_assignee=None, workspace_plan=plan,
+            mode="TEAM")
+        assert values["mode"] == "TEAM"
+        assert values["workspace_plan"]["directories"]["work"] == "agent_a"
+        assert values["workspace_plan"]["directories"]["work/agent_b"] == "agent_b"
+
     def test_unknown_mode_rejected(self):
         with pytest.raises(TaskCreationError, match="mode"):
             self._svc()._validate(
