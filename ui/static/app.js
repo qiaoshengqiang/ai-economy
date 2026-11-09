@@ -38,6 +38,35 @@
     toastTimer = setTimeout(() => { els.toast.hidden = true; }, 6500);
   }
 
+  async function copyText(text) {
+    const value = String(text || "");
+    if (!value) return false;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      try {
+        await navigator.clipboard.writeText(value);
+        return true;
+      } catch (e) {
+        // 某些宿主不会给 Clipboard 权限，走 fallback。
+      }
+    }
+    try {
+      const area = document.createElement("textarea");
+      area.value = value;
+      area.setAttribute("readonly", "");
+      area.style.position = "fixed";
+      area.style.left = "-9999px";
+      area.style.top = "0";
+      document.body.appendChild(area);
+      area.select();
+      area.setSelectionRange(0, area.value.length);
+      const ok = document.execCommand("copy");
+      area.remove();
+      return !!ok;
+    } catch (e) {
+      return false;
+    }
+  }
+
   async function api(path, options = {}) {
     const response = await fetch(path, {
       headers: { "Content-Type": "application/json" },
@@ -76,8 +105,31 @@
       meta.textContent = `${role}${message.task_id ? " · " + message.task_id : ""}`;
       const text = document.createElement("div");
       text.textContent = message.text || "";
+      const actions = document.createElement("div");
+      actions.className = "msg-actions";
+      const copy = document.createElement("button");
+      copy.type = "button";
+      copy.className = "copy-btn";
+      copy.textContent = "复制";
+      copy.setAttribute("aria-label", "复制这条消息");
+      copy.addEventListener("click", async (event) => {
+        event.stopPropagation();
+        const ok = await copyText(message.text || "");
+        if (ok) {
+          copy.textContent = "已复制";
+          copy.classList.add("copied");
+          setTimeout(() => {
+            copy.textContent = "复制";
+            copy.classList.remove("copied");
+          }, 1200);
+        } else {
+          showToast("复制失败，请手动选择文本", true);
+        }
+      });
+      actions.appendChild(copy);
       item.appendChild(meta);
       item.appendChild(text);
+      item.appendChild(actions);
       box.appendChild(item);
     });
     if (atBottom) box.scrollTop = box.scrollHeight;

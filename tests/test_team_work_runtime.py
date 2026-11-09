@@ -336,6 +336,27 @@ class TestTeamRuntime:
                    for event in result.events)
         assert result.summary == "团队完成并汇总"
 
+    def test_plain_leader_reply_is_forced_into_complete(self, db):
+        """Leader 只回文字时，runtime 用最小完成 prompt 再推一次。"""
+        agents = {
+            "agent_a": _ScriptedAgent(
+                think=_plan(),
+                actions=[None, None, _complete()]),
+            "agent_b": _ScriptedAgent(actions=[_done("item_1", "agent_b")]),
+            "agent_c": _ScriptedAgent(actions=[_done("item_2", "agent_c")]),
+        }
+        task = _task()
+        runtime = _TeamRuntime(db, task, agents)
+        result = TeamWorkRuntime(
+            runtime, task, max_worker_turns=2,
+            max_integration_turns=2,
+        ).run()
+
+        assert result.ok is True, result.error
+        assert runtime.tasks.get(task.task_id).status == TaskStatus.COMPLETED
+        assert any(event["event"] == "team_force_complete_turn"
+                   for event in result.events)
+
     def test_initial_plan_skips_leader_planning_call(self, db):
         """Front/Controller 已经让 Leader 规划过时，runtime 不再重复规划。"""
         from work.plan import parse_work_plan

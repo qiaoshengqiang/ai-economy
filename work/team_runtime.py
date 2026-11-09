@@ -909,7 +909,51 @@ class TeamWorkRuntime:
                 action_types=[getattr(i, "action_type", "") for i in intents])
             if self._qa_verdict is not None:
                 return bool(self._qa_verdict.get("passed"))
-        return False
+        self._force_qa_verdict(agent, dispatcher)
+        return bool(self._qa_verdict and self._qa_verdict.get("passed"))
+
+    def _force_qa_verdict(self, agent: Any, dispatcher: Any) -> None:
+        """QA 只回文本、没有 verdict 时，再给一次最小 schema 机会。"""
+        prompt = f"""QA 结论必须落成一个动作，不能只回文字。
+
+Task: {self.task.task_id}
+目标: {self.task.description[:1200]}
+
+只输出一个 JSON 动作：
+{{"decision":"act","reasoning":"...",
+ "action":{{"type":"work_qa_verdict","parameters":{{
+   "passed":true,
+   "feedback":"如果通过可以写简短说明"
+ }}}}}}
+如果不通过，把 passed 改成 false，并在 feedback 写清楚要修什么。
+"""
+        for attempt in range(1, 3):
+            try:
+                run = agent.act(
+                    messages=prompt,
+                    dispatcher=dispatcher,
+                    execute=True,
+                    task_id=self.task.task_id,
+                    cognitive_budget_cap=self.cognitive_budget,
+                    call_purpose="work",
+                    follow_up_on_reads=False,
+                    work_loop=False,
+                    max_work_steps=0,
+                    initial_phase="decision",
+                    repair_malformed=True,
+                )
+            except Exception as exc:                          # noqa: BLE001
+                self._event(
+                    "team_force_qa_error", attempt=attempt,
+                    error=f"{type(exc).__name__}: {exc}")
+                continue
+            _segments, intents = self._consume_run(run)
+            self._event(
+                "team_force_qa_turn", attempt=attempt,
+                action_types=[
+                    getattr(i, "action_type", "") for i in intents])
+            if self._qa_verdict is not None:
+                return
 
     def _qa_verdict_fn(
         self, *, agent_id: str, passed: bool, feedback: str,
@@ -1000,9 +1044,89 @@ class TeamWorkRuntime:
             if not intents:
                 empty_streak += 1
                 if empty_streak >= 2:
-                    return
+                    break
             else:
                 empty_streak = 0
+
+        if (
+            include_complete
+            and self.task.status != TaskStatus.COMPLETED
+            and self._all_items_settled()
+            and self._qa_allows_completion()
+        ):
+            self._force_leader_completion()
+
+    def _all_items_settled(self) -> bool:
+        with self._lock:
+            return all(
+                state.get("status") in (
+                    ItemStatus.DONE, ItemStatus.CANCELLED)
+                for state in self._item_state.values()
+            )
+
+    def _qa_allows_completion(self) -> bool:
+        if not self.plan or not self.plan.qa:
+            return True
+        return bool(self._qa_verdict and self._qa_verdict.get("passed"))
+
+    def _force_leader_completion(self) -> None:
+        """
+        所有 item 已 DONE 后，Leader 可能只回了一段总结而没有调用
+        work_complete。这里用**最小完成 prompt**再推进一次：
+        只允许输出 work_complete 动作。
+        """
+        agent = self._agent(self.lead)
+        if agent is None or not getattr(agent, "has_brain", False):
+            return
+        dispatcher = build_work_dispatcher(
+            self.rt,
+            task=self.task,
+            drafts=self.drafts,
+            promote_drafts=self._promote_drafts,
+            complete_fn=self._complete_fn,
+            include_complete=True,
+        )
+        prompt = f"""所有 item 已经 DONE。现在只需要完成 Team Task。
+
+Task: {self.task.task_id}
+目标: {self.task.description[:1200]}
+
+不要再解释、不要再读取文件。只输出一个 JSON 动作：
+{{"decision":"act","reasoning":"团队工作已完成，进入收尾",
+ "action":{{"type":"work_complete","parameters":{{
+   "result_ref":"team-result-{self.task.task_id}",
+   "summary":"一句话总结最终交付"
+ }}}}}}
+"""
+        for attempt in range(1, 3):
+            try:
+                run = agent.act(
+                    messages=prompt,
+                    dispatcher=dispatcher,
+                    execute=True,
+                    task_id=self.task.task_id,
+                    cognitive_budget_cap=self.cognitive_budget,
+                    call_purpose="work",
+                    follow_up_on_reads=False,
+                    work_loop=False,
+                    max_work_steps=0,
+                    initial_phase="decision",
+                    repair_malformed=True,
+                )
+            except Exception as exc:                          # noqa: BLE001
+                self._event(
+                    "team_force_complete_error",
+                    attempt=attempt,
+                    error=f"{type(exc).__name__}: {exc}")
+                continue
+            _segments, intents = self._consume_run(run)
+            self._event(
+                "team_force_complete_turn",
+                attempt=attempt,
+                action_types=[
+                    getattr(i, "action_type", "") for i in intents])
+            if self.task.status == TaskStatus.COMPLETED:
+                return
 
     # ------------------------------------------------------------
     # 完成回调
