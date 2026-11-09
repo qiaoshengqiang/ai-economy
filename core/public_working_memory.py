@@ -65,6 +65,9 @@ ITEM_KINDS = frozenset({
     "checklist",   # 完成清单 / owner 确认项
     "progress",    # 当前进度
     "note",        # 需要共享的抽象信息
+    # 🔴 观点/事实冲突：记录“某个 Agent 的断言”与“Workspace 事实”
+    #    不一致，供断言作者自己纠正。它不是系统裁决。
+    "conflict",
 })
 
 #: 禁止用这些 key 复制 Task Core 的权威字段。
@@ -231,6 +234,19 @@ def validate_item(key: str, kind: str, value: Any) -> Tuple[str, str, str]:
         raise WorkingMemoryValidationError(
             f"working memory kind 不合法：{kind!r}；"
             f"只支持 {sorted(ITEM_KINDS)}")
+    if kind == "conflict":
+        if not isinstance(value, Mapping):
+            raise WorkingMemoryValidationError(
+                f"conflict item {key!r} 的 value 必须是对象，"
+                "至少包含 claim_by / claim / fact")
+        missing = [
+            name for name in ("claim_by", "claim", "fact")
+            if not str(value.get(name) or "").strip()
+        ]
+        if missing:
+            raise WorkingMemoryValidationError(
+                f"conflict item {key!r} 缺少字段：{missing}；"
+                "需要 claim_by / claim / fact")
     body = _dump_value(value)
     if len(body) > MAX_ITEM_CHARS:
         raise WorkingMemoryValidationError(

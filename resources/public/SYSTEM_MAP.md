@@ -22,7 +22,7 @@
 |---|---|---|
 | **Task** | 一件被正式承接的工作。有状态机（`CREATED → OFFERED → … → COMPLETED`） | 可以**邀约**别人（`TASK_OFFER`）、接受/拒绝/还价、提交成果、给出验收结论 |
 | **Task Shared Context** | 这个 Task 的**共同认知**：目标 · 约束 · 验收标准 · 决定 · 假设 · 待解问题 · **验收责任指派** · 事实 · 术语。它**只增不改**，每一版都留着 | `shared_context_read` 读**当前**那一版；`assign_acceptance` 指派验收责任 |
-| **Public Working Memory** | Task 范围内**参与者可见、可更新**的操作状态：总计划 · 分工 · 完成清单 · 进度 · 要共享的抽象信息。items 支持 `parent_key` 层级 | `public_working_memory_read` / `public_working_memory_update`（`items` / `content` / `remove_keys`） |
+| **Public Working Memory** | Task 范围内**参与者可见、可更新**的操作状态：总计划 · 分工 · 完成清单 · 进度 · 要共享的抽象信息。items 支持 `parent_key` 层级；`kind="conflict"` 可记录观点/事实冲突 | `public_working_memory_read` / `public_working_memory_update`（`items` / `content` / `remove_keys`） |
 | **Private Working Memory** | **只有你自己可见**的工作结构：抽象分支 · 当前任务 · 重大问题 · 重大发现 · 笔记。任务结项后当前工作记忆清空，历史保留 | `private_working_memory_read` / `private_working_memory_update` |
 | **Private Short-Term Memory** | **跨任务的近期摘要**：做过什么 · 实现过什么结构 · 哪些现象值得重视。固定容量 8；超过一半出现清理信号，抽象成长期记忆是 Agent 的工作 | `short_term_memory_read` / `update` / `reinforce` |
 | **Private Long-Term Memory** | 短期记忆的高级抽象：做过哪些事 · 印象深刻的事件 · 对应短期存档。按权重读取；低权重可主动 search/read | `long_term_memory_search` / `read` / `mark_used` / `consolidate` |

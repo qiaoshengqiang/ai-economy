@@ -455,6 +455,16 @@ def test_prompt_shows_other_agents_read_only_facts_to_creator():
     assert "未回应请求 3 条" in prompt
 
 
+def test_prompt_documents_conflict_records_in_public_working_memory():
+    prompt = build_task_prompt(
+        run=_run(), task=_task(), runtime=_runtime(),
+        agent_id="agent_a", inbox=[], budget_cap=32768,
+        budget_feedback=None)
+    assert "kind=\"conflict\"" in prompt
+    assert "claim_by" in prompt and "claim" in prompt and "fact" in prompt
+    assert "冲突记录是" in prompt
+
+
 def test_prompt_documents_workspace_plan_update():
     prompt = build_task_prompt(
         run=_run(), task=_task(), runtime=_runtime(),

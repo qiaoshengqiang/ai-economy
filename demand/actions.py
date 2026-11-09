@@ -62,6 +62,9 @@ from services.public_reference import PublicReference
 from services.resource_control import (
     create_directory, handoff_resource, release_resource,
 )
+from demand.submit_check import (
+    check_submit_deliverable, format_submit_check_failure,
+)
 
 
 def build_intake_dispatcher(create_fn: Any) -> ActionDispatcher:
@@ -94,6 +97,31 @@ def build_task_dispatcher(
         return tid == task_id and agent_id in participants
 
     def _send(comm: Any, **kwargs: Any) -> Any:
+        message_type = str(kwargs.get("message_type") or "").strip().upper()
+        from_agent = str(kwargs.get("from_agent") or "")
+        if (message_type == "SUBMIT"
+                and task.contractor
+                and from_agent == task.contractor):
+            try:
+                report = check_submit_deliverable(
+                    runtime.workspace_gateway, ws_id, from_agent)
+            except Exception as exc:                          # noqa: BLE001
+                return {
+                    "ok": False,
+                    "to": str(kwargs.get("to_agent") or ""),
+                    "message_type": "SUBMIT",
+                    "code": "submit_check_error",
+                    "message": (f"SUBMIT 前的 DOM/import 检查自身失败："
+                                f"{type(exc).__name__}: {exc}"),
+                }
+            if not report.get("ok"):
+                return {
+                    "ok": False,
+                    "to": str(kwargs.get("to_agent") or ""),
+                    "message_type": "SUBMIT",
+                    "code": "submit_check_failed",
+                    "message": format_submit_check_failure(report),
+                }
         return bridge.run(send_message_as(comm, **kwargs))
 
     def _edit(agent_id: str, path: str, old_string: str,

@@ -150,6 +150,14 @@ class PublicWorkingMemoryService:
             "（以下条目是参与者的记录/观点，不是 Domain Fact；"
             "完成声明只有带 evidence 才是已验证事实。）",
         ]
+        conflicts = sorted(
+            key for key, item in memory.items.items()
+            if item.kind == "conflict")
+        if conflicts:
+            lines.append(
+                f"⚠️ 观点/事实冲突记录 {len(conflicts)} 条："
+                + ", ".join(conflicts[:8])
+                + (" …" if len(conflicts) > 8 else ""))
         if not memory.items:
             lines.append("（还没有条目）")
             return "\n".join(lines)

@@ -91,6 +91,38 @@ PublicWorkingMemory
 | `checklist` | 完成清单 / owner 最终确认项 |
 | `progress` | 当前进度 / 阻塞 |
 | `note` | 需要共享的抽象信息 |
+| `conflict` | 某 Agent 的断言与 Workspace 事实不一致的**争议记录** |
+
+### 观点/事实冲突记录
+
+当 Agent A 用 Workspace 事实验证了 Agent E 的断言，并发现两者冲突时，
+A 可以写一条 `kind="conflict"` 的公共工作记忆：
+
+```json
+{
+  "conflict:clock": {
+    "kind": "conflict",
+    "value": {
+      "claim_by": "agent_e",
+      "claim": "tick() 使用未声明的 clock/elapsed",
+      "fact": "src/main.js R1 line 74-75 已声明 const clock / let elapsed",
+      "status": "corrected_by_fact"
+    },
+    "evidence": {"path": "src/main.js", "revision": 1}
+  }
+}
+```
+
+规则：
+
+- value 必须包含 `claim_by` / `claim` / `fact`；
+- `evidence` 可选，但推荐附上被验证 artifact 的 path + revision；
+- 渲染时会在 Public WM 顶部列出冲突记录的数量和 key；
+- 断言作者看到 `claim_by` 是自己时，应核对 evidence；
+  如果确实错了，更新自己的 Private WM / 公开回复，不要重复旧断言。
+
+> 🔒 它是**争议记录，不是系统裁决**。`fact` 仍然是记录者的观察；
+> `evidence` 只证明 artifact 存在/revision 一致，不自动证明语义真值。
 
 ### 限制
 

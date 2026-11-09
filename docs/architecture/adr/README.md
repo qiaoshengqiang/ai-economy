@@ -74,6 +74,7 @@
 | [0048](0048-write-limit-and-working-memory-evidence.md) | **单次写入硬上限 + 工作记忆 Evidence** | Accepted（**已实现**） | 大文件截断 / 虚假完成声明 | Demand / Workspace / Memory |
 | [0049](0049-opinion-vs-fact-and-action-facts.md) | **观点 vs 事实、锁变更可见、单 Agent 动作事实** | Accepted（**已实现**） | 观点被当事实 / 锁误读 / 单 Agent 停摆 | Demand / Memory / Workspace |
 | [0050](0050-stall-grace-minimum-window-and-read-cache.md) | **NO_PROGRESS 截断宽限 + 最小窗口 + 读缓存** | Accepted（**已实现**） | 截断恢复被过早停止 / 重复读正文 | Demand / Workspace |
+| [0051](0051-submit-smoke-and-conflict-record.md) | **SUBMIT 前 DOM/import 门禁 + 观点/事实冲突记录** | Accepted（**已实现**） | 首帧崩溃 / 错误观点无记录 | Demand / Memory / Workspace |
 | [0028](0028-read-visibility-and-native-communication.md) | **Read 靠 Task Participation；Communication 是 Agent 基础能力** | Accepted（实现为 FUTURE） | Read / Visibility / Communication | Workspace / Communication |
 
 ---

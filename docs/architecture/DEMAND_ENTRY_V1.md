@@ -284,6 +284,32 @@ prompt 显示 streak、当前持有的锁、未回应请求数；creator 还能�
 
 > 缓存仍以 Workspace revision 为准；它不是第二份权威状态。
 
+### 3.7 SUBMIT 前 DOM/import Smoke + 观点/事实冲突记录（2026-11-09）
+
+真实 run `demand_6b2fd87b`：`index.html` R2 删掉了 `id="app"`，
+`src/main.js` 仍然 `$('app')`，页面首帧 TypeError；`src/world.js`
+也没有被 import。SUBMIT 前没有任何结构检查。
+
+**SUBMIT 门禁**（Demand 层，不改变 Task Core）：
+
+- 只对 contractor 发出的 `SUBMIT` 生效；
+- 静态检查 `index.html` 本地脚本是否存在；
+- 检查 JS 的本地 `import` 是否能解析到真实文件；
+- 检查 JS 的 `getElementById` / `$()` / `querySelector('#id')`
+  引用的 DOM id 是否在 `index.html` 中；
+- 缺失 id / 缺失本地 import → 返回 `submit_check_failed`，
+  **SUBMIT 消息不会发出**，Task 保持 `IN_PROGRESS`；
+- 可空检查（`if (loading) ...`）只给 warning；
+- 未被引用的 JS / `.js` 目录只给 warning。
+
+**观点/事实冲突记录**：
+
+- Public WM 新增 `kind="conflict"`；
+- value 至少包含 `claim_by / claim / fact`；
+- 推荐附 `evidence={path, revision}`；
+- 断言作者看到 `claim_by` 是自己时，应核对 evidence 并更新自己的记忆/回复；
+- 它是争议记录，不是系统裁决。
+
 ---
 
 ## 4. `task_create`

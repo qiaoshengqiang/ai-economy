@@ -205,6 +205,35 @@ class TestStoreAndService:
         assert "plan" in text and "agent_a" in text
         assert "self-report" in text
 
+    def test_conflict_kind_requires_claim_by_claim_and_fact(self, db, store):
+        _task(store)
+        service = PublicWorkingMemoryService(
+            PublicWorkingMemoryStore(db), store)
+
+        with pytest.raises(WorkingMemoryValidationError, match="claim_by"):
+            service.update(
+                "T-WM", "agent_a", expected_revision=0,
+                items={"conflict:x": {
+                    "kind": "conflict",
+                    "value": {"claim": "没有 clock", "fact": "有 clock"},
+                }})
+
+        mem = service.update(
+            "T-WM", "agent_a", expected_revision=0,
+            items={"conflict:clock": {
+                "kind": "conflict",
+                "value": {
+                    "claim_by": "agent_e",
+                    "claim": "tick() 使用未声明的 clock/elapsed",
+                    "fact": "main.js R1 line 74-75 已声明 clock/elapsed",
+                },
+            }})
+        assert mem.items["conflict:clock"].kind == "conflict"
+
+        text = service.render("T-WM", "agent_b")
+        assert "观点/事实冲突记录 1 条" in text
+        assert "conflict:clock" in text
+
     def test_evidence_must_point_to_a_real_artifact(self, db, store):
         from types import SimpleNamespace
 

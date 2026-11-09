@@ -658,6 +658,13 @@ def build_task_prompt(
      （必要时附上行号/搜索命中）。
 - 不要把别人的观点直接写进 PATCH、计划或完成声明；
   观点与 Workspace 事实冲突时，先纠正观点，再行动。
+- 如果你用 Workspace 事实推翻了另一个 Agent 的断言，把它记录进
+  公共工作记忆：`kind="conflict"`，value 至少包含
+  `{{"claim_by": "...", "claim": "...", "fact": "..."}}`；
+  能引用 artifact 时附 `evidence={{"path": "...", "revision": N}}`。
+- 如果你在公共工作记忆看到 `kind="conflict"` 且 `claim_by` 是你，
+  先核对 evidence；如果确实错了，更新你的私有 WM / 公开回复，
+  不要重复旧断言。冲突记录是“争议记录”，不是系统裁决。
 
 ========== 拆分与协作（可选方向） ==========
 - 大块写入前，先判断它能否拆成独立文件 / 模块 / 步骤。
@@ -770,7 +777,8 @@ def build_task_prompt(
 - `public_working_memory_update`
   `expected_revision` / `items` / `remove_keys` / `content`
   `items`: `key -> {{kind, value, parent_key?, evidence?}}`；
-  kind 只支持 plan / assignment / checklist / progress / note。
+  kind 只支持 plan / assignment / checklist / progress / note /
+  conflict。conflict 的 value 至少包含 claim_by / claim / fact；
   `parent_key` 表达层级（大架构 → 局部细节）；
   `evidence`: `{{"path":"真实 artifact 路径","revision":N}}`，系统会校验路径/revision；
   没有 evidence 的条目会显示为 self-report，不是已验证事实。
