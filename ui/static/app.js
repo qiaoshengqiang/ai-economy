@@ -27,6 +27,8 @@
   let polling = false;
   let submitting = false;
   let toastTimer = 0;
+  // 点击 Task 卡片后生成的日志消息（只在本次页面会话里保留）。
+  let taskLogs = [];
 
   function showToast(text, isError = false) {
     els.toast.textContent = String(text || "");
@@ -69,7 +71,8 @@
       const meta = document.createElement("span");
       meta.className = "meta";
       const role = message.role === "human" ? "你" :
-        message.role === "front" ? "Front Agent" : "系统";
+        message.role === "front" ? "Front Agent" :
+        message.role === "task" ? "Task log" : "系统";
       meta.textContent = `${role}${message.task_id ? " · " + message.task_id : ""}`;
       const text = document.createElement("div");
       text.textContent = message.text || "";
@@ -124,7 +127,8 @@
     }
     list.forEach((task) => {
       const card = document.createElement("div");
-      card.className = `task-card ${task.status || ""}`;
+      card.className = `task-card clickable ${task.status || ""}`;
+      card.addEventListener("click", () => openTask(task.task_id));
       const top = document.createElement("div");
       top.className = "task-top";
       const id = document.createElement("span");
@@ -156,6 +160,72 @@
     });
   }
 
+  function formatTaskLog(detail) {
+    const task = detail.task || {};
+    const job = detail.job || {};
+    const llm = detail.llm || {};
+    const lines = [
+      `【任务 ${task.task_id || "?"}】${task.status || "?"} · ${task.mode || "?"} · iteration ${task.iteration || 1}`,
+      `Leader: ${task.creator || "—"}　Contractor: ${task.contractor || "—"}`,
+      `成员: ${(task.participants || []).join(", ") || "—"}`,
+      `描述: ${task.description || "—"}`,
+    ];
+    if (job.status) {
+      lines.push(`Job: ${job.status}${job.error ? " · " + job.error : ""}`);
+    }
+    if (detail.executions && detail.executions.length) {
+      lines.push("", "执行历史:");
+      detail.executions.forEach((item) => {
+        let outcome = "";
+        if (item.verification) {
+          outcome = item.verification.passed ? " · 验收通过" : " · 验收不通过";
+        }
+        if (item.result && item.result.summary) {
+          outcome += ` · ${item.result.summary}`;
+        }
+        lines.push(
+          `- ${item.created_at || ""} ${item.event_type || ""} by ` +
+          `${item.from_agent || "?"} → ${item.status_after || "?"}${outcome}`);
+      });
+    }
+    if (detail.workspace_files && detail.workspace_files.length) {
+      lines.push("", "Workspace 文件:");
+      detail.workspace_files.forEach((file) => {
+        const rev = file.revision == null ? "" : ` R${file.revision}`;
+        const chars = file.chars == null ? "" : ` · ${file.chars} chars`;
+        lines.push(`- ${file.path}${rev}${chars}`);
+      });
+    }
+    if (detail.public_memory) {
+      lines.push("", "公共工作记忆（抽象架构）:", detail.public_memory);
+    }
+    lines.push(
+      "",
+      `LLM: ${llm.calls || 0} calls · ` +
+      `${llm.input_tokens || 0} in · ${llm.output_tokens || 0} out · ` +
+      `${llm.cost_ai || 0} AIC`);
+    if (job.summary) lines.push(`结果: ${job.summary}`);
+    return lines.join("\n");
+  }
+
+  async function openTask(taskId) {
+    try {
+      const detail = await api(`/api/task/${encodeURIComponent(taskId)}`);
+      taskLogs = taskLogs.filter((item) => item.task_id !== taskId);
+      taskLogs.push({
+        role: "task",
+        text: formatTaskLog(detail),
+        task_id: taskId,
+        at: new Date().toISOString(),
+      });
+      render();
+      // 打开任务日志后滚到输出框底部。
+      els.messages.scrollTop = els.messages.scrollHeight;
+    } catch (error) {
+      showToast(`任务读取失败：${error.message}`, true);
+    }
+  }
+
   function renderSettings() {
     if (!state) return;
     const front = state.front_agent || "";
@@ -175,7 +245,7 @@
     if (!state) return;
     els.frontBadge.textContent = `Front: ${state.front_agent || "—"}`;
     els.runningBadge.textContent = `Running: ${state.running_jobs || 0}`;
-    renderMessages(state.messages);
+    renderMessages([...(state.messages || []), ...taskLogs]);
     renderAgents(state.agents);
     renderTasks(state.tasks);
     // 设置弹窗打开时不要被轮询覆盖用户正在编辑的值。

@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import json
 import mimetypes
+import re
 import sys
 from pathlib import Path
 from urllib.parse import unquote, urlparse
@@ -93,6 +94,16 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/state":
             self._send_json(self.controller.state())
+            return
+        if path.startswith("/api/task/"):
+            task_id = path[len("/api/task/"):].strip()
+            if not task_id or not re.fullmatch(r"[A-Za-z0-9_.:-]+", task_id):
+                self.send_error(400)
+                return
+            try:
+                self._send_json(self.controller.task_detail(task_id))
+            except ValueError as exc:
+                self._send_json({"ok": False, "error": str(exc)}, status=404)
             return
         if path == "/api/health":
             self._send_json({"ok": True})

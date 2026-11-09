@@ -57,6 +57,25 @@ class _FakeController:
             self.settings["front_agent"] = front_agent
         return self.settings
 
+    def task_detail(self, task_id):
+        if task_id != "task_ok":
+            raise ValueError("找不到 Task")
+        return {
+            "task": {"task_id": task_id, "status": "COMPLETED",
+                     "mode": "TEAM", "iteration": 1,
+                     "creator": "agent_b", "contractor": "agent_b",
+                     "participants": ["agent_b", "agent_c"],
+                     "description": "test task", "created_at": "t",
+                     "updated_at": "t", "workspace_id": "WS"},
+            "job": None,
+            "executions": [],
+            "workspace_files": [],
+            "public_memory": "",
+            "llm": {"calls": 0, "input_tokens": 0,
+                    "output_tokens": 0, "cost_ai": 0},
+            "messages": [],
+        }
+
 
 @pytest.fixture
 def server():
@@ -114,6 +133,18 @@ def test_submit_and_settings_api(server):
                             {"front_agent": "agent_b"})
     assert status == 200
     assert payload["settings"]["front_agent"] == "agent_b"
+
+
+def test_task_detail_api(server):
+    _fake, base = server
+    status, body = _get(base + "/api/task/task_ok")
+    payload = json.loads(body)
+    assert status == 200
+    assert payload["task"]["task_id"] == "task_ok"
+    assert payload["task"]["status"] == "COMPLETED"
+
+    with pytest.raises(urllib.error.HTTPError):
+        _get(base + "/api/task/task_missing")
 
 
 def test_unknown_api_is_404(server):

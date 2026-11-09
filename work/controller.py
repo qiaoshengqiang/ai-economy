@@ -606,6 +606,140 @@ class AIEOSController:
                 ),
             }
 
+    def task_detail(self, task_id: str) -> Dict[str, Any]:
+        """任务卡片点击后的日志数据。"""
+        try:
+            task = self.rt.tasks.get(task_id)
+        except Exception:                                     # noqa: BLE001
+            task = None
+        if task is None:
+            raise ValueError(f"找不到 Task：{task_id}")
+
+        executions = []
+        try:
+            for record in self.rt.tasks.executions_for(task_id):
+                executions.append({
+                    "event_type": record.event_type,
+                    "from_agent": record.from_agent,
+                    "status_after": record.status_after,
+                    "created_at": record.created_at,
+                    "result": (
+                        record.result.to_dict() if record.result else None),
+                    "verification": (
+                        record.verification.to_dict()
+                        if record.verification else None),
+                })
+        except Exception:                                     # noqa: BLE001
+            executions = []
+
+        job = None
+        with self._lock:
+            for item in self._jobs.values():
+                if item.task_id == task_id:
+                    job = item.to_dict()
+        calls = self._llm_summary(task_id)
+        return {
+            "task": {
+                "task_id": task.task_id,
+                "status": task.status,
+                "mode": task.mode,
+                "iteration": task.iteration,
+                "creator": task.creator,
+                "contractor": task.contractor,
+                "participants": list(task.participants or []),
+                "workspace_id": task.workspace_id,
+                "description": task.description,
+                "created_at": task.created_at,
+                "updated_at": task.updated_at,
+            },
+            "job": job,
+            "executions": executions,
+            "workspace_files": self._workspace_files(task),
+            "public_memory": self._public_memory_text(task),
+            "llm": calls,
+            "messages": [
+                message for message in self._messages
+                if message.get("task_id") == task_id
+            ],
+        }
+
+    def _llm_summary(self, task_id: str) -> Dict[str, Any]:
+        try:
+            row = self.rt.recorder.db.fetchone(
+                """
+                SELECT COUNT(*) AS calls,
+                       COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                       COALESCE(SUM(output_tokens), 0) AS output_tokens,
+                       COALESCE(SUM(cost_ai), 0) AS cost_ai
+                  FROM llm_calls
+                 WHERE task_id = ?
+                """,
+                (str(task_id),),
+            )
+        except Exception:                                     # noqa: BLE001
+            return {"calls": 0, "input_tokens": 0,
+                    "output_tokens": 0, "cost_ai": 0.0}
+        if row is None:
+            return {"calls": 0, "input_tokens": 0,
+                    "output_tokens": 0, "cost_ai": 0.0}
+        return {
+            "calls": int(row["calls"] or 0),
+            "input_tokens": int(row["input_tokens"] or 0),
+            "output_tokens": int(row["output_tokens"] or 0),
+            "cost_ai": round(float(row["cost_ai"] or 0), 4),
+        }
+
+    def _workspace_files(self, task: Any) -> List[Dict[str, Any]]:
+        workspace_id = task.workspace_id or ""
+        agent_id = task.creator or (
+            task.participants[0] if task.participants else "")
+        if not workspace_id or not agent_id:
+            return []
+        gateway = getattr(self.rt, "workspace_gateway", None)
+        if gateway is None:
+            return []
+        files: List[Dict[str, Any]] = []
+
+        def walk(path: str, depth: int) -> None:
+            if len(files) >= 100:
+                return
+            try:
+                result = gateway.list(workspace_id, path, agent_id)
+            except Exception:                                 # noqa: BLE001
+                return
+            if not getattr(result, "success", False):
+                return
+            payload = getattr(result, "result", None) or {}
+            for entry in payload.get("entries", []) or []:
+                name = str(entry.get("name") or "")
+                if not name:
+                    continue
+                child = (
+                    f"{path.rstrip('/')}/{name}" if path not in ("", "/")
+                    else name)
+                if str(entry.get("type") or "") == "directory":
+                    if depth < 4:
+                        walk(child, depth + 1)
+                else:
+                    files.append({
+                        "path": child,
+                        "revision": entry.get("revision"),
+                        "chars": entry.get("chars"),
+                        "type": entry.get("type") or "file",
+                    })
+
+        walk("/", 0)
+        return files
+
+    def _public_memory_text(self, task: Any) -> str:
+        service = getattr(self.rt, "public_working_memory", None)
+        if service is None:
+            return ""
+        try:
+            return service.render(task.task_id, task.creator)
+        except Exception:                                     # noqa: BLE001
+            return ""
+
     def _task_cards(self) -> List[Dict[str, Any]]:
         cards = []
         try:

@@ -147,6 +147,16 @@ button { cursor: pointer; }
   color: #e9d9ad;
   font-size: 12px;
 }
+.msg.task {
+  align-self: stretch;
+  max-width: 100%;
+  background: rgba(94, 224, 255, .06);
+  border: 1px solid rgba(94, 224, 255, .22);
+  color: #c7e8f2;
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  line-height: 1.6;
+}
 .empty { color: var(--muted); text-align: center; padding: 28px 10px; }
 
 .composer {
@@ -231,6 +241,11 @@ button { cursor: pointer; }
   border-radius: 12px;
   padding: 11px 12px;
   background: var(--panel-2);
+}
+.task-card.clickable { cursor: pointer; transition: border-color .15s, transform .15s; }
+.task-card.clickable:hover {
+  border-color: rgba(94, 224, 255, .6);
+  transform: translateY(-1px);
 }
 .task-card.COMPLETED { border-left-color: var(--good); }
 .task-card.FAILED, .task-card.IN_PROGRESS { border-left-color: var(--warn); }
