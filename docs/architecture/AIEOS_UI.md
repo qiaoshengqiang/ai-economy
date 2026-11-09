@@ -66,6 +66,19 @@ Front Agent（固定）
 - Task 就是团队容器，不新增 Team 实体；
 - 工作结束时释放所有 Agent 回到 `IDLE`。
 
+### 已有 Task 的后续输入
+
+| Front 判断 | 控制面行为 |
+|---|---|
+| `follow_up`，Task 有 Job 在跑 | 只回复真实状态，不重复执行 |
+| `follow_up`，Task 已中断 | 用原团队从当前状态恢复执行 |
+| `rework`，Task 已完成 | 追加本轮要求 → Reopen（iteration +1）→ 原团队重跑 |
+| `rework`，Task 未完成 | 按 `follow_up` 恢复执行 |
+
+Front 看到的开放 Task 状态来自两个事实：Task Core 的状态 + 是否有
+Job 正在执行。没有 Job 的开放 Task 标记为 `INTERRUPTED`，
+不会被描述成「正在处理中」。
+
 ---
 
 ## 3. 界面元素

@@ -60,6 +60,16 @@ class JobStatus:
     CLARIFY = "CLARIFY"
 
 
+#: Job 仍占用 Task 的状态；其余状态下的开放 Task 视为「已中断」。
+_RUNNING_JOB_STATUSES = frozenset({
+    JobStatus.FRONT_ANALYZING,
+    JobStatus.WAITING_FOR_LEADER,
+    JobStatus.LEADER_PLANNING,
+    JobStatus.WAITING_FOR_MEMBERS,
+    JobStatus.RUNNING,
+})
+
+
 @dataclass
 class WorkJob:
     job_id: str
@@ -297,16 +307,8 @@ class AIEOSController:
             if decision.intent in (
                 FrontIntent.REWORK, FrontIntent.FOLLOW_UP,
             ):
-                self._message(
-                    "front",
-                    decision.reply or "这个请求需要对应 Team 处理；"
-                    "当前 GUI 先展示已有 Task 状态。",
-                    job_id=job.job_id,
-                    task_id=decision.task_id,
-                )
-                job.status = JobStatus.DIRECT_REPLY
-                job.summary = decision.reply or decision.intent
-                self._touch(job)
+                leader, members = self._resume_or_rework(
+                    job, decision, front)
                 return
 
             # ---- handoff ----
@@ -383,19 +385,7 @@ class AIEOSController:
                     cognitive_budget=self.cognitive_budget,
                 )
             result = runner.run()
-            job.tokens = int(getattr(result, "tokens", 0) or 0)
-            job.turns = int(getattr(result, "turns", 0) or 0)
-            front_result = front.result_from_work(result)
-            self._message(
-                "front",
-                front.format_result(front_result),
-                job_id=job.job_id, task_id=task_id)
-            job.summary = front_result.summary or front_result.status
-            job.status = (
-                JobStatus.COMPLETED if result.ok else JobStatus.FAILED)
-            if not result.ok:
-                job.error = result.error or f"Task {task_id} 未完成"
-            self._touch(job)
+            self._finish_work(job, front, task_id, result)
         except Exception as exc:                              # noqa: BLE001
             self._fail(job, f"{type(exc).__name__}: {exc}")
         finally:
@@ -553,6 +543,157 @@ class AIEOSController:
             mode=mode,
         )
 
+    # ------------------------------------------------------------
+    # follow_up / rework：继续或重跑已有 Task
+    # ------------------------------------------------------------
+    def _resume_or_rework(
+        self,
+        job: WorkJob,
+        decision: Any,
+        front: Any,
+    ) -> tuple[str, List[str]]:
+        """Front 指向已有 Task 时，真正恢复执行 / Reopen，而不是只回一句话。"""
+        try:
+            task = self.rt.tasks.get(decision.task_id)
+        except Exception:                                     # noqa: BLE001
+            task = None
+        if task is None:
+            self._reply_direct(
+                job, "找不到这个任务；它可能已经被清理了。", decision.task_id)
+            return "", []
+
+        if self._is_live(task.task_id):
+            self._reply_direct(
+                job,
+                f"任务 {task.task_id} 正在执行中（{task.status}），"
+                "完成后我会把结果告诉你。",
+                task.task_id,
+            )
+            return "", []
+
+        if task.status == TaskStatus.COMPLETED:
+            if decision.intent != FrontIntent.REWORK:
+                self._reply_direct(
+                    job,
+                    f"任务 {task.task_id} 已经完成了；"
+                    "需要修改的话告诉我改什么。",
+                    task.task_id,
+                )
+                return "", []
+            action = "rework"
+        elif task.is_open:
+            action = "resume"
+        else:
+            self._reply_direct(
+                job,
+                f"任务 {task.task_id} 当前是 {task.status}，不能再继续或返工。",
+                task.task_id,
+            )
+            return "", []
+
+        participants = [str(p) for p in (task.participants or [])]
+        if task.creator not in participants:
+            participants.insert(0, task.creator)
+        leader = task.creator
+        if not self.availability.try_acquire(leader):
+            self._reply_direct(
+                job,
+                f"原团队（{leader}）正在忙，等它空闲后我再继续这个任务。",
+                task.task_id,
+            )
+            return "", []
+        members = [aid for aid in participants if aid != leader]
+        if self._acquire_members(members) is None:
+            self.availability.release(leader)
+            self._reply_direct(
+                job,
+                "原团队成员正在忙，等他们空闲后我再继续这个任务。",
+                task.task_id,
+            )
+            return "", []
+
+        job.leader = leader
+        job.members = list(members)
+        job.task_id = task.task_id
+        self._bind_agent(leader, job, "LEADER")
+        for aid in members:
+            self._bind_agent(aid, job, "MEMBER")
+        self._bind_task_to_agents([leader, *members], task.task_id)
+        self._set_job(job, JobStatus.RUNNING)
+
+        if action == "rework":
+            turn = int(getattr(task, "iteration", 1) or 1) + 1
+            if decision.reply:
+                self._message(
+                    "front", decision.reply,
+                    job_id=job.job_id, task_id=task.task_id)
+            # Reopen 不覆盖旧历史；把本轮要求追加到 Task 描述，
+            # 让 Leader / 成员都能看到 Human 这次改了什么。
+            task.description = (
+                f"{task.description}\n\n返工要求（第 {turn} 轮）：\n"
+                f"{job.human_text}")
+            self.rt.tasks.save(task)
+            self._message(
+                "system", f"原团队开始第 {turn} 轮返工。",
+                job_id=job.job_id, task_id=task.task_id)
+            reason = job.human_text
+        else:
+            self._message(
+                "system",
+                f"任务 {task.task_id} 之前中断了，从现有状态继续。",
+                job_id=job.job_id, task_id=task.task_id)
+            reason = ""
+
+        if task.mode == TaskMode.TEAM:
+            runner = TeamWorkRuntime(
+                self.rt, task,
+                max_worker_turns=self.max_worker_turns,
+                max_integration_turns=self.max_integration_turns,
+                cognitive_budget=self.cognitive_budget,
+            )
+        else:
+            runner = SoloWorkRuntime(
+                self.rt, task,
+                max_turns=(
+                    self.max_worker_turns + self.max_integration_turns),
+                cognitive_budget=self.cognitive_budget,
+            )
+        result = (
+            runner.reopen_and_run(reason=reason)
+            if action == "rework" else runner.run())
+        self._finish_work(job, front, task.task_id, result)
+        return leader, members
+
+    def _finish_work(
+        self,
+        job: WorkJob,
+        front: Any,
+        task_id: str,
+        result: Any,
+    ) -> None:
+        job.tokens = int(getattr(result, "tokens", 0) or 0)
+        job.turns = int(getattr(result, "turns", 0) or 0)
+        front_result = front.result_from_work(result)
+        self._message(
+            "front",
+            front.format_result(front_result),
+            job_id=job.job_id, task_id=task_id)
+        job.summary = front_result.summary or front_result.status
+        job.status = (
+            JobStatus.COMPLETED if result.ok else JobStatus.FAILED)
+        if not result.ok:
+            job.error = result.error or f"Task {task_id} 未完成"
+        self._touch(job)
+
+    def _reply_direct(
+        self, job: WorkJob, text: str, task_id: str = "",
+    ) -> None:
+        self._message(
+            "front", text, job_id=job.job_id, task_id=task_id)
+        job.status = JobStatus.DIRECT_REPLY
+        job.summary = text
+        self._touch(job)
+
     @staticmethod
     def _workspace_plan(
         leader: str,
@@ -561,7 +702,13 @@ class AIEOSController:
     ) -> Dict[str, Any]:
         dirs: Dict[str, str] = {}
         for path, owner in (directories or {}).items():
-            clean = str(path).strip().lstrip("/")
+            # Leader 常用 "." / "/" 表示根目录；root_owner 已经单独表达，
+            # 这里必须丢弃这些标记，否则会变成空目录名。
+            clean = "/".join(
+                part for part in
+                str(path).strip().replace("\\", "/").split("/")
+                if part and part != "."
+            )
             if clean:
                 dirs[clean] = str(owner)
         if not dirs:
@@ -782,12 +929,23 @@ class AIEOSController:
             })
         return cards
 
+    def _live_task_ids(self) -> set:
+        with self._lock:
+            return {
+                job.task_id for job in self._jobs.values()
+                if job.task_id and job.status in _RUNNING_JOB_STATUSES
+            }
+
+    def _is_live(self, task_id: str) -> bool:
+        return str(task_id) in self._live_task_ids()
+
     def _task_refs(self):
         active, completed = [], []
         try:
             tasks = self.rt.tasks.list_tasks(limit=50)
         except Exception:                                     # noqa: BLE001
             return active, completed
+        live = self._live_task_ids()
         for task in tasks:
             ref = {
                 "task_id": task.task_id,
@@ -797,6 +955,10 @@ class AIEOSController:
             if task.status == TaskStatus.COMPLETED:
                 completed.append(ref)
             elif task.is_open:
+                if task.task_id not in live:
+                    # 状态仍是 IN_PROGRESS，但没有 Job 在跑（例如进程重启、
+                    # 上一轮失败）。不能把它说成「正在处理中」。
+                    ref["status"] = "INTERRUPTED"
                 active.append(ref)
         return active, completed
 

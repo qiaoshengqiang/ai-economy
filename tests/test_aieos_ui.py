@@ -305,6 +305,170 @@ def test_job_without_members_degrades_to_solo(monkeypatch):
     assert job.task_id == "task_solo"
 
 
+def test_workspace_plan_accepts_root_marker_directory():
+    """Leader 用 "." 表示根目录时，不能变成空目录名。"""
+    from demand.task_creation import TaskCreationService
+
+    plan = AIEOSController._workspace_plan(
+        "agent_a", ["agent_b"], {".": "agent_b", "game/src": "agent_b"})
+    service = TaskCreationService(SimpleNamespace(), SimpleNamespace())
+    validated = service.validate_workspace_plan(
+        plan, people=["agent_a", "agent_b"], producer="agent_a")
+    assert "." not in validated["directories"]
+    assert validated["directories"]["game/src"] == "agent_b"
+    assert validated["directories"]["game"] == "agent_a"
+
+
+def test_task_refs_marks_open_task_without_job_as_interrupted():
+    task = SimpleNamespace(
+        task_id="task_old", status="IN_PROGRESS",
+        description="写 hello world", is_open=True)
+    runtime = SimpleNamespace(
+        directory=_Directory(["agent_a"]),
+        economy=SimpleNamespace(agent=lambda aid: SimpleNamespace(
+            has_brain=True)),
+        tasks=SimpleNamespace(list_tasks=lambda limit=50: [task]),
+    )
+    controller = AIEOSController(runtime, front_agent="agent_a")
+    try:
+        active, completed = controller._task_refs()
+    finally:
+        controller.close()
+    assert completed == []
+    assert active == [{
+        "task_id": "task_old",
+        "status": "INTERRUPTED",
+        "summary": "写 hello world",
+    }]
+
+
+def test_followup_resumes_interrupted_task(monkeypatch):
+    import work.controller as controller_module
+    from front import FrontDecision, FrontIntent, FrontResult
+    from work.controller import WorkJob
+
+    class _Front:
+        def decide(self, _text, active_tasks=(), completed_tasks=()):
+            return FrontDecision(
+                intent=FrontIntent.FOLLOW_UP,
+                task_id="task_old",
+                reply="这个任务之前中断了，我现在继续。",
+            )
+
+        def result_from_work(self, _result):
+            return FrontResult(
+                task_id="task_old", status="COMPLETED", summary="done")
+
+        def format_result(self, result):
+            return result.to_human_text()
+
+    task = SimpleNamespace(
+        task_id="task_old", status="IN_PROGRESS", mode="TEAM",
+        creator="agent_b", contractor="agent_b",
+        participants=["agent_b", "agent_c"], is_open=True,
+        description="写 hello world", iteration=1,
+    )
+    runtime = SimpleNamespace(
+        directory=_Directory(["agent_a", "agent_b", "agent_c"]),
+        economy=SimpleNamespace(agent=lambda aid: SimpleNamespace(
+            has_brain=True)),
+        tasks=SimpleNamespace(
+            list_tasks=lambda limit=50: [],
+            get=lambda tid: task,
+            save=lambda _task: None,
+        ),
+    )
+
+    class _Team:
+        def __init__(self, _rt, task_, **_kwargs):
+            self.task = task_
+
+        def run(self):
+            return SimpleNamespace(ok=True, tokens=3, turns=1)
+
+    controller = AIEOSController(runtime, front_agent="agent_a")
+    monkeypatch.setattr(controller, "_front_runtime", lambda: _Front())
+    monkeypatch.setattr(controller_module, "TeamWorkRuntime", _Team)
+
+    job = WorkJob(job_id="job_resume", human_text="继续做")
+    try:
+        controller._run_job(job)
+    finally:
+        controller.close()
+
+    assert job.task_id == "task_old"
+    assert job.status == "COMPLETED"
+    assert any(
+        "之前中断了" in message["text"]
+        for message in controller.state()["messages"]
+    )
+
+
+def test_rework_reopens_completed_task_with_new_request(monkeypatch):
+    import work.controller as controller_module
+    from front import FrontDecision, FrontIntent, FrontResult
+    from work.controller import WorkJob
+
+    seen = {}
+
+    class _Front:
+        def decide(self, _text, active_tasks=(), completed_tasks=()):
+            return FrontDecision(
+                intent=FrontIntent.REWORK,
+                task_id="task_done",
+                reply="收到，我让原团队改。",
+            )
+
+        def result_from_work(self, _result):
+            return FrontResult(
+                task_id="task_done", status="COMPLETED", summary="已改")
+
+        def format_result(self, result):
+            return result.to_human_text()
+
+    task = SimpleNamespace(
+        task_id="task_done", status="COMPLETED", mode="TEAM",
+        creator="agent_b", contractor="agent_b",
+        participants=["agent_b", "agent_c"], is_open=False,
+        description="做一个静态网页", iteration=1,
+    )
+    runtime = SimpleNamespace(
+        directory=_Directory(["agent_a", "agent_b", "agent_c"]),
+        economy=SimpleNamespace(agent=lambda aid: SimpleNamespace(
+            has_brain=True)),
+        tasks=SimpleNamespace(
+            list_tasks=lambda limit=50: [],
+            get=lambda tid: task,
+            save=lambda _task: None,
+        ),
+    )
+
+    class _Team:
+        def __init__(self, _rt, task_, **_kwargs):
+            self.task = task_
+
+        def reopen_and_run(self, *, reason=""):
+            seen["reason"] = reason
+            return SimpleNamespace(ok=True, tokens=5, turns=2)
+
+    controller = AIEOSController(runtime, front_agent="agent_a")
+    monkeypatch.setattr(controller, "_front_runtime", lambda: _Front())
+    monkeypatch.setattr(controller_module, "TeamWorkRuntime", _Team)
+
+    job = WorkJob(
+        job_id="job_rework",
+        human_text="把网页文字改成 BLG加油！")
+    try:
+        controller._run_job(job)
+    finally:
+        controller.close()
+
+    assert seen["reason"] == "把网页文字改成 BLG加油！"
+    assert "返工要求（第 2 轮）" in task.description
+    assert "BLG加油！" in task.description
+    assert job.status == "COMPLETED"
+
+
 def test_workspace_plan_declares_parent_directories():
     plan = AIEOSController._workspace_plan(
         "agent_a",

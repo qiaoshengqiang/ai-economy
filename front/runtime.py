@@ -180,6 +180,9 @@ class FrontAgentRuntime:
   Human 明确要求修改时才用 rework；
 - 只有交付物或核心要求确实不同，才 handoff。
 
+status 为 INTERRUPTED 表示任务之前中断了、现在没有在执行：
+不要回答“正在处理中”；Human 想继续时用 follow_up，系统会恢复执行。
+
 可选 intent：
 
 1. direct_reply
@@ -207,10 +210,11 @@ class FrontAgentRuntime:
    不要写「转给 Creator 的说明」这类内部指令。
 
 4. follow_up
-   Human 对**进行中的 Task**追问 / 补充。
+   Human 对**进行中 / 中断的 Task**追问、确认或要求继续。
    {{"intent":"follow_up","task_id":"...","reply":"给 Human 的自然状态说明",
      "reason":"..."}}
-   reply 例如「这个需求已经在做了，完成后我会把结果告诉你」；
+   reply 例如「这个需求已经在做了，完成后我会把结果告诉你」，
+   或「这个任务之前中断了，我现在继续」；
    不要写「按现有 Brief 交付」「无需改动范围」这类内部话。
 
 5. clarify
