@@ -473,3 +473,14 @@ def test_prompt_documents_workspace_plan_update():
     assert "workspace_plan_update" in prompt
     assert "仅 creator" in prompt
     assert "计划完成度" in prompt
+
+
+def test_prompt_documents_thinking_schema():
+    prompt = build_task_prompt(
+        run=_run(), task=_task(), runtime=_runtime(),
+        agent_id="agent_a", inbox=[], budget_cap=32768,
+        budget_feedback=None)
+    assert '"thinking"' in prompt
+    assert '"enabled": true' in prompt
+    assert "low / medium / high / max" in prompt
+    assert "不写就保持当前策略" in prompt

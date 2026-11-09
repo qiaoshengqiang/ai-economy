@@ -179,6 +179,9 @@ class Decision:
     thinking: Optional[Dict[str, Dict[str, Any]]] = None
     #: `thinking` 字段写了但形状不合法时的原因（空字符串 = 没写/合法）。
     thinking_error: str = ""
+    #: 形状不合法时的原始 `thinking` 值（诊断用；合法/未写时为 None）。
+    #: 🔒 它只用于日志定位，不参与策略。
+    thinking_raw: Any = None
     #: 🔴 Agent 对**认知预算**的决定（可选，按 phase）。
     #:
     #:    形状：{"work": 32768} / {"decision": 8192, "work": 16384}

@@ -77,6 +77,37 @@ class TestEnvelopeThinking:
         assert len(d.intents) == 1
         assert d.thinking is None
         assert d.thinking_error == "invalid_thinking"
+        assert d.thinking_raw == {"enabled": "yes"}
+
+    def test_provider_style_type_is_normalized(self):
+        d = decision_from_text("a", json.dumps({
+            "decision": "act",
+            "thinking": {"type": "enabled", "effort": "high"},
+            "action": {"type": "workspace_read",
+                       "parameters": {"path": "x"}},
+        }))
+        assert d.thinking == {"*": {"enabled": True, "effort": "high"}}
+        assert d.thinking_error == ""
+
+    def test_string_effort_shorthand_is_normalized(self):
+        d = decision_from_text("a", json.dumps({
+            "decision": "act",
+            "thinking": "high",
+            "action": {"type": "workspace_read",
+                       "parameters": {"path": "x"}},
+        }))
+        assert d.thinking == {"*": {"enabled": True, "effort": "high"}}
+        assert d.thinking_error == ""
+
+    def test_effort_only_is_normalized_to_enabled(self):
+        d = decision_from_text("a", json.dumps({
+            "decision": "act",
+            "thinking": {"effort": "high"},
+            "action": {"type": "workspace_read",
+                       "parameters": {"path": "x"}},
+        }))
+        assert d.thinking == {"*": {"enabled": True, "effort": "high"}}
+        assert d.thinking_error == ""
 
     def test_intake_phase_is_supported(self):
         d = decision_from_text("a", json.dumps({

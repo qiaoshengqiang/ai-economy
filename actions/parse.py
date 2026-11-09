@@ -105,11 +105,36 @@ THINKING_PHASES = ("intake", "decision", "work")
 
 def _normalize_single_thinking(raw: Any) -> Optional[Dict[str, Any]]:
     """`{"enabled": bool, "effort": str?}` 的单相校验。"""
+    # 兼容常见简写：thinking: "high" / "off"
+    if isinstance(raw, str):
+        token = raw.strip().lower()
+        if token in THINKING_EFFORTS:
+            return {"enabled": True, "effort": token}
+        if token in ("off", "disabled"):
+            return {"enabled": False}
+        if token in ("on", "enabled"):
+            return {"enabled": True}
+        return None
     if not isinstance(raw, dict):
         return None
     enabled = raw.get("enabled")
     if not isinstance(enabled, bool):
-        return None
+        # 兼容 provider 形状：{"type": "enabled"|"disabled"}
+        type_raw = raw.get("type")
+        if isinstance(type_raw, str):
+            token = type_raw.strip().lower()
+            if token in ("enabled", "on", "true"):
+                enabled = True
+            elif token in ("disabled", "off", "false"):
+                enabled = False
+        # 兼容 {"effort": "high"}：显式给了强度，默认开启。
+        if not isinstance(enabled, bool):
+            effort_only = raw.get("effort")
+            if (isinstance(effort_only, str)
+                    and effort_only.strip().lower() in THINKING_EFFORTS):
+                enabled = True
+            else:
+                return None
     effort = raw.get("effort")
     if effort is None:
         return {"enabled": enabled}
@@ -140,6 +165,9 @@ def normalize_thinking(raw: Any) -> Optional[Dict[str, Dict[str, Any]]]:
     形状不合法返回 None —— 调用方据此记 `thinking_error`，
     但**不**因此丢掉同一信封里的动作。
     """
+    if isinstance(raw, str):
+        norm = _normalize_single_thinking(raw)
+        return {"*": norm} if norm is not None else None
     if not isinstance(raw, dict):
         return None
 
@@ -422,6 +450,7 @@ def decision_from_text(agent_id: str, text: Optional[str]) -> Decision:
             kind=DECISION_REPLY, reasoning=reasoning or (text or ""),
             dropped_actions=dropped, envelope_error=error,
             thinking=thinking, thinking_error=thinking_error,
+            thinking_raw=(raw_thinking if thinking_error else None),
             cognitive_budget=cognitive_budget,
             cognitive_budget_error=cognitive_budget_error,
             created_at=utc_now_iso(),
@@ -432,6 +461,7 @@ def decision_from_text(agent_id: str, text: Optional[str]) -> Decision:
         kind=DECISION_ACT, reasoning=reasoning,
         intents=intents, dropped_actions=dropped,
         thinking=thinking, thinking_error=thinking_error,
+        thinking_raw=(raw_thinking if thinking_error else None),
         cognitive_budget=cognitive_budget,
         cognitive_budget_error=cognitive_budget_error,
         created_at=utc_now_iso(),

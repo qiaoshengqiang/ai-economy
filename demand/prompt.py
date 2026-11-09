@@ -854,5 +854,12 @@ def build_task_prompt(
 {_envelope_example()}
 可选：在信封顶层放 `thinking`（按相设置思考强度）或
 `cognitive_budget`（当前相整数 / 分相对象），只影响**下一步**。
+`thinking` 推荐形状（`enabled` 必须是布尔值；`effort` 可选）：
+  {{"thinking": {{"enabled": true, "effort": "high"}}}}
+  或分相：
+  {{"thinking": {{"decision": {{"enabled": false, "effort": "low"}},
+                "work": {{"enabled": true, "effort": "high"}}}}}}
+`effort` 取值：low / medium / high / max / minimal / xhigh / ultra / none。
+不写就保持当前策略。
 如果没有动作，可以普通回复（不产生 Action）。
 """

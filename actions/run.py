@@ -429,10 +429,14 @@ def _run_one_segment(agent: Any, agent_id: str, messages: Any,
 
     thinking_error = getattr(decision, "thinking_error", "")
     if thinking_error:
+        raw_thinking = getattr(decision, "thinking_raw", None)
+        raw_note = ""
+        if raw_thinking is not None:
+            raw_note = f" raw={str(raw_thinking)[:300]}"
         logger.warning(
             "Cognition thinking 指令非法（%s）：agent=%s seg=%d —— "
-            "已忽略该指令；同一信封里的动作不受影响。",
-            thinking_error, agent_id, index)
+            "已忽略该指令；同一信封里的动作不受影响。%s",
+            thinking_error, agent_id, index, raw_note)
 
     budget_error = getattr(decision, "cognitive_budget_error", "")
     if budget_error:
