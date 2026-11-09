@@ -187,6 +187,7 @@ def _dispatcher():
         item_done_fn=lambda **k: {"ok": False},
         item_blocked_fn=lambda **k: {"ok": False},
         qa_verdict_fn=lambda **k: {"ok": False},
+        plan_update_fn=lambda **k: {"ok": False},
     )
 
 

@@ -373,10 +373,15 @@ def build_lead_integration_prompt(
     qa_feedback: str = "",
     runtime: Any = None,
     last_turn: Optional[Dict[str, Any]] = None,
+    include_plan_update: bool = False,
 ) -> str:
     workspace = context.workspace_facts or _render_workspace(
         runtime, context.workspace_id, context.agent_id)
     qa_text = f"\n========== QA 反馈 ==========\n{qa_feedback}\n" if qa_feedback else ""
+    replan_text = (
+        "\n如果 blocked / pending item 或 QA 反馈需要调整分工，"
+        "可以调用 work_plan_update（reassign / add / cancel / update）。\n"
+        if include_plan_update else "")
     return f"""你是 {context.agent_id}，Team Leader。现在做集成、接线、收尾。
 
 ========== 任务目标 ==========
@@ -397,7 +402,74 @@ def build_lead_integration_prompt(
 可用动作：workspace_read / workspace_search / workspace_write /
 workspace_edit / run_tool / draft_* / workspace_promote_drafts /
 resource_* / shared_context_read / memory 动作 / work_complete。
-
+{replan_text}
 🔒 没有 Agent 间通信动作；不要讨论身份或经济。
 🔒 如果设置了 QA，只有 QA 通过后才能完成。
+"""
+
+
+def build_leader_replan_prompt(
+    context: WorkContext,
+    *,
+    task_description: str,
+    item_state: Dict[str, Any],
+    plan: Any,
+    participants: List[str],
+    qa_feedback: str = "",
+    runtime: Any = None,
+) -> str:
+    """
+    Leader 在两轮之间重新计划。
+
+    🔒 这个阶段只调用 work_plan_update，不直接生产。
+    """
+    blocked = [
+        item_id for item_id, state in (item_state or {}).items()
+        if str(state.get("status") or "") in ("BLOCKED", "PENDING")
+    ]
+    feedback = (
+        f"\n========== 需要处理 ==========\n"
+        f"- blocked/pending items: {blocked}\n"
+        + (f"- QA feedback: {qa_feedback}\n" if qa_feedback else "")
+    )
+    return f"""你是 {context.agent_id}，Team Leader。当前是**重新计划阶段**。
+
+========== 任务目标 ==========
+{task_description}
+
+========== 当前计划（revision {getattr(plan, "revision", 1)}） ==========
+{json.dumps(plan.to_dict(), ensure_ascii=False, indent=2)}
+
+========== 成员回报 ==========
+{_render_item_state(item_state)}
+{feedback}
+========== 团队成员 ==========
+{", ".join(participants)}
+
+========== 你的职责 ==========
+只调整计划，不直接生产。根据 blocked / pending / QA 反馈决定：
+
+- reassign 改派给另一个成员；
+- add 增加一个补丁 / 集成 item；
+- cancel 取消不再需要的 item；
+- update 修改 item 目标 / 验收 / 路径；
+- qa 可以新增、替换或清除（不能是 Leader 自己）。
+
+只输出一个动作：
+{{"decision":"act","reasoning":"...","action":{{
+  "type":"work_plan_update",
+  "parameters":{{
+    "expected_revision":{getattr(plan, "revision", 1)},
+    "reason":"...",
+    "operations":[
+      {{"op":"reassign","item_id":"item_2","assigned_to":"agent_d"}},
+      {{"op":"add","item":{{"item_id":"item_3",
+        "assigned_to":"agent_b","goal":"补集成测试"}}}}
+    ],
+    "qa": null
+  }}
+}}}}
+
+🔒 不要在这里调用 work_complete。
+🔒 没有 Agent 间通信动作；不要讨论身份或经济。
 """

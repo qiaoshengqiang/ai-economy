@@ -82,6 +82,7 @@ class WorkResult:
     error: str = ""
     artifacts: List[str] = field(default_factory=list)
     events: List[Dict[str, Any]] = field(default_factory=list)
+    plan_history: List[Dict[str, Any]] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -99,4 +100,5 @@ class WorkResult:
             "error": self.error,
             "artifacts": list(self.artifacts),
             "events": list(self.events),
+            "plan_history": list(self.plan_history),
         }

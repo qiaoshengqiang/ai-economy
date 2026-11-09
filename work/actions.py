@@ -26,6 +26,7 @@ from actions import (
     ActionDispatcher,
     WorkItemBlockedExecutor,
     WorkItemDoneExecutor,
+    WorkPlanUpdateExecutor,
     WorkQaVerdictExecutor,
     DraftAppendExecutor,
     DraftDeleteExecutor,
@@ -83,7 +84,7 @@ WORK_ACTION_TYPES = frozenset({
     "long_term_memory_mark_used", "long_term_memory_consolidate",
     "private_write", "private_read", "private_list", "private_delete",
     "work_item_done", "work_item_blocked", "work_qa_verdict",
-    "work_complete",
+    "work_plan_update", "work_complete",
 })
 
 #: Work 层**禁止**出现的动作（由测试直接断言）。
@@ -103,6 +104,7 @@ def build_work_dispatcher(
     item_done_fn: Any = None,
     item_blocked_fn: Any = None,
     qa_verdict_fn: Any = None,
+    plan_update_fn: Any = None,
     include_complete: bool = True,
     extra_executors: Optional[List[Any]] = None,
 ) -> ActionDispatcher:
@@ -263,6 +265,8 @@ def build_work_dispatcher(
         executors.append(WorkItemBlockedExecutor(item_blocked_fn))
     if qa_verdict_fn is not None:
         executors.append(WorkQaVerdictExecutor(qa_verdict_fn))
+    if plan_update_fn is not None:
+        executors.append(WorkPlanUpdateExecutor(plan_update_fn))
     if include_complete:
         if complete_fn is None:
             raise ValueError(

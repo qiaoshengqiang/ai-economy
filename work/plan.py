@@ -64,10 +64,14 @@ class WorkPlan:
     qa: Optional[str] = None
     directories: Dict[str, str] = field(default_factory=dict)
     notes: str = ""
+    #: 计划版本。Leader 运行中重新计划时 +1；旧版本保留在 history 里。
+    revision: int = 1
 
     def __post_init__(self) -> None:
         if not self.items:
             raise ValueError("WorkPlan 至少需要一个 item")
+        if not isinstance(self.revision, int) or self.revision < 1:
+            raise ValueError("WorkPlan.revision 必须是从 1 开始的整数")
         self.qa = str(self.qa or "").strip() or None
         self.directories = {
             str(path).strip().lstrip("/"): str(owner).strip()
@@ -87,6 +91,7 @@ class WorkPlan:
 
     def to_dict(self) -> Dict[str, Any]:
         return {
+            "revision": self.revision,
             "items": [item.to_dict() for item in self.items],
             "qa": self.qa,
             "directories": dict(self.directories),

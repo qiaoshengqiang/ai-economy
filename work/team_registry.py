@@ -50,6 +50,7 @@ class TeamRegistry:
         self.max_parallel_teams = max(1, int(max_parallel_teams))
         self._lock = threading.RLock()
         self._teams: Dict[str, TeamSlot] = {}
+        self._by_task: Dict[str, str] = {}
 
     # ------------------------------------------------------------
     def can_start(self) -> bool:
@@ -108,20 +109,45 @@ class TeamRegistry:
                 workspace_id=str(workspace_id or ""),
             )
             self._teams[task_id] = slot
+            self._by_task[task_id] = task_id
             return True, "", slot
 
-    def release(self, task_id: str) -> bool:
+    def bind_task(self, slot_id: str, task_id: str) -> bool:
+        """
+        把预占槽位（例如 request_id）绑定到真实 Task。
+
+        🔒 这不允许换人；只更新引用。
+        """
         with self._lock:
-            slot = self._teams.pop(str(task_id), None)
+            slot = self._teams.get(str(slot_id))
             if slot is None:
                 return False
+            self._by_task.pop(slot.task_id, None)
+            slot.task_id = str(task_id)
+            self._by_task[slot.task_id] = str(slot_id)
+            return True
+
+    def release(self, slot_or_task_id: str) -> bool:
+        with self._lock:
+            key = str(slot_or_task_id)
+            slot = self._teams.pop(key, None)
+            if slot is None:
+                key = self._by_task.get(key, "")
+                slot = self._teams.pop(key, None)
+            if slot is None:
+                return False
+            self._by_task.pop(slot.task_id, None)
             for aid in slot.agents:
                 self.availability.release(aid)
             return True
 
     def get(self, task_id: str) -> Optional[TeamSlot]:
         with self._lock:
-            return self._teams.get(str(task_id))
+            slot = self._teams.get(str(task_id))
+            if slot is not None:
+                return slot
+            slot_id = self._by_task.get(str(task_id))
+            return self._teams.get(slot_id) if slot_id else None
 
     def active(self) -> List[TeamSlot]:
         with self._lock:

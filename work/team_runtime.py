@@ -32,7 +32,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from core.task import Task, TaskMode, TaskStatus
 from core.task_execution import TaskResultRef
-from services.assignment_ops import assign_acceptance
+from services.assignment_ops import assign_acceptance, revoke_acceptance
 from services.resource_control import create_directory, handoff_resource
 
 from work.actions import build_work_dispatcher
@@ -42,9 +42,11 @@ from work.plan import WorkItem, WorkPlan, parse_work_plan
 from work.prompt import (
     build_lead_integration_prompt,
     build_lead_plan_prompt,
+    build_leader_replan_prompt,
     build_qa_prompt,
     build_team_worker_prompt,
 )
+from work.replan import ReplanError, apply_plan_operations
 from work.roles import WorkContext, WorkResult, WorkRole
 
 
@@ -55,6 +57,7 @@ class ItemStatus:
     DONE = "DONE"
     BLOCKED = "BLOCKED"
     PENDING = "PENDING"
+    CANCELLED = "CANCELLED"
 
 
 class TeamWorkRuntime:
@@ -72,6 +75,7 @@ class TeamWorkRuntime:
         max_integration_turns: int = 8,
         max_qa_turns: int = 3,
         max_parallel_workers: int = 4,
+        max_replans: int = 3,
         cognitive_budget: int = 32768,
         event_sink: Any = None,
     ) -> None:
@@ -90,6 +94,7 @@ class TeamWorkRuntime:
         self.max_integration_turns = max(1, int(max_integration_turns))
         self.max_qa_turns = max(1, int(max_qa_turns))
         self.max_parallel_workers = max(1, int(max_parallel_workers))
+        self.max_replans = max(0, int(max_replans))
         self.cognitive_budget = max(1, int(cognitive_budget))
         self.event_sink = event_sink
         self.lifecycle = WorkLifecycle(runtime.tasks)
@@ -105,6 +110,7 @@ class TeamWorkRuntime:
         self._turn_count = 0
         self._events: List[Dict[str, Any]] = []
         self._completion_summary = ""
+        self._plan_history: List[Dict[str, Any]] = []
 
     # ------------------------------------------------------------
     # 主流程
@@ -129,12 +135,18 @@ class TeamWorkRuntime:
             self._record_plan(self.plan)
             self._provision_workspace(self.plan)
             self._init_item_state(self.plan)
+            self._plan_history.append(self.plan.to_dict())
 
             self._run_workers(self.plan)
+            self._run_replan_loop()
 
             if self.plan.qa:
                 if not self._run_qa():
+                    before_repair = self.plan.revision
                     self._run_leader_repair()
+                    if self.plan.revision != before_repair:
+                        self._sync_item_state(self.plan)
+                    self._run_workers(self.plan)
                     self._run_qa()
 
             self._run_leader_finalize()
@@ -146,6 +158,7 @@ class TeamWorkRuntime:
             result.events = list(self._events)
             result.summary = self._final_summary()
             result.artifacts = self._artifacts()
+            result.plan_history = list(self._plan_history)
 
             if self.task.status != TaskStatus.COMPLETED:
                 result.error = result.error or "Team 未完成（Task 未进入 COMPLETED）"
@@ -347,7 +360,15 @@ class TeamWorkRuntime:
 
     def _run_workers(self, plan: WorkPlan) -> None:
         groups: Dict[str, List[WorkItem]] = {}
+        with self._lock:
+            active_ids = {
+                item_id for item_id, state in self._item_state.items()
+                if state.get("status") not in (
+                    ItemStatus.DONE, ItemStatus.CANCELLED)
+            }
         for item in plan.items:
+            if item.item_id not in active_ids:
+                continue
             groups.setdefault(item.agent_id, []).append(item)
         if not groups:
             return
@@ -373,6 +394,266 @@ class TeamWorkRuntime:
             for state in self._item_state.values():
                 if state["status"] in (ItemStatus.TODO, ItemStatus.WORKING):
                     state["status"] = ItemStatus.PENDING
+
+    # ------------------------------------------------------------
+    # 阶段 3.5：Leader 重新计划
+    # ------------------------------------------------------------
+    def _needs_replan(self) -> bool:
+        with self._lock:
+            return any(
+                state.get("status") in (
+                    ItemStatus.BLOCKED, ItemStatus.PENDING)
+                for state in self._item_state.values()
+            )
+
+    def _run_replan_loop(self) -> None:
+        """
+        两轮之间允许 Leader 改计划。
+
+        只调整计划；当前轮不强行中断。改完后再开下一轮 worker。
+        """
+        for attempt in range(1, self.max_replans + 1):
+            if not self._needs_replan():
+                return
+            before = self.plan.revision if self.plan else 0
+            self._run_leader_replan()
+            after = self.plan.revision if self.plan else before
+            if after == before:
+                self._event(
+                    "team_replan_no_change", attempt=attempt,
+                    revision=before)
+                return
+            self._event(
+                "team_replan_applied", attempt=attempt,
+                previous_revision=before, revision=after)
+            self._provision_workspace(self.plan)
+            self._sync_item_state(self.plan)
+            self._run_workers(self.plan)
+
+    def _sync_item_state(self, plan: WorkPlan) -> None:
+        """把新计划同步到 runtime 的 item 状态。"""
+        plan_ids = {item.item_id for item in plan.items}
+        by_id = {item.item_id: item for item in plan.items}
+        with self._lock:
+            for item_id, state in self._item_state.items():
+                if item_id not in plan_ids:
+                    state["status"] = ItemStatus.CANCELLED
+            for item_id in plan_ids:
+                item = by_id[item_id]
+                state = self._item_state.get(item_id)
+                if state is None:
+                    self._item_state[item_id] = {
+                        "item_id": item.item_id,
+                        "agent_id": item.agent_id,
+                        "goal": item.goal,
+                        "status": ItemStatus.TODO,
+                        "summary": "",
+                        "paths": list(item.paths),
+                    }
+                    continue
+                previous_agent = state.get("agent_id")
+                state["agent_id"] = item.agent_id
+                state["goal"] = item.goal
+                state["paths"] = list(item.paths)
+                if previous_agent != item.agent_id:
+                    state["status"] = ItemStatus.TODO
+                    state["summary"] = (
+                        f"reassigned from {previous_agent} to {item.agent_id}")
+
+    def _run_leader_replan(self) -> None:
+        agent = self._agent(self.lead)
+        if agent is None or not getattr(agent, "has_brain", False):
+            raise WorkLifecycleError(f"Team Leader {self.lead} 没有 Brain")
+        context = self._context(self.lead, WorkRole.LEAD)
+        dispatcher = build_work_dispatcher(
+            self.rt,
+            task=self.task,
+            drafts=self.drafts,
+            promote_drafts=self._promote_drafts,
+            plan_update_fn=self._plan_update_fn,
+            include_complete=False,
+        )
+        seen_reads: set = set()
+        empty_streak = 0
+        before = self.plan.revision
+        for turn in range(1, self.max_integration_turns + 1):
+            qa_feedback = ""
+            if self._qa_verdict and not self._qa_verdict.get("passed"):
+                qa_feedback = str(self._qa_verdict.get("feedback") or "")
+            prompt = build_leader_replan_prompt(
+                context,
+                task_description=self.task.description,
+                item_state=self._item_snapshot(),
+                plan=self.plan,
+                participants=list(self.task.participants or []),
+                qa_feedback=qa_feedback,
+                runtime=self.rt,
+            )
+            run = agent.act(
+                messages=prompt,
+                dispatcher=dispatcher,
+                execute=True,
+                task_id=self.task.task_id,
+                cognitive_budget_cap=self.cognitive_budget,
+                call_purpose="work",
+                follow_up_on_reads=True,
+                work_loop=True,
+                max_work_steps=2,
+                initial_phase="work",
+                seen_reads=seen_reads,
+                repair_malformed=True,
+            )
+            _segments, intents = self._consume_run(run)
+            self._event(
+                "team_replan_turn", turn=turn,
+                action_types=[getattr(i, "action_type", "") for i in intents])
+            if self.plan.revision != before:
+                return
+            if not intents:
+                empty_streak += 1
+                if empty_streak >= 2:
+                    return
+            else:
+                empty_streak = 0
+
+    def _plan_update_fn(
+        self,
+        *,
+        agent_id: str,
+        expected_revision: int,
+        operations: Any,
+        qa: Any,
+        qa_provided: bool,
+        reason: str,
+    ) -> Dict[str, Any]:
+        if agent_id != self.lead:
+            return {"ok": False, "code": "not_leader",
+                    "message": f"只有 Leader {self.lead} 可以更新计划"}
+        if self.plan is None:
+            return {"ok": False, "code": "no_plan",
+                    "message": "还没有计划"}
+        if expected_revision != self.plan.revision:
+            return {
+                "ok": False, "code": "stale_plan_revision",
+                "message": (
+                    f"expected_revision={expected_revision}，"
+                    f"当前是 {self.plan.revision}；请重新读取计划"),
+            }
+        with self._lock:
+            status = {
+                item_id: str(state.get("status") or "")
+                for item_id, state in self._item_state.items()
+            }
+        try:
+            new_plan, applied = apply_plan_operations(
+                self.plan,
+                operations,
+                participants=self.task.participants or [],
+                leader=self.lead,
+                item_status=status,
+                qa=qa,
+                qa_provided=qa_provided,
+                reason=reason,
+            )
+        except ReplanError as exc:
+            return {"ok": False, "code": "replan_rejected",
+                    "message": str(exc)}
+
+        previous = self.plan.revision
+        previous_qa = self.plan.qa
+        self.plan = new_plan
+        self._plan_history.append(new_plan.to_dict())
+        self._record_plan_revision(new_plan, applied, reason)
+        if qa_provided and new_plan.qa != previous_qa:
+            self._qa_verdict = None
+            self._update_qa_assignment(previous_qa, new_plan.qa)
+        self._event(
+            "team_plan_updated", revision=new_plan.revision,
+            previous_revision=previous, applied=applied, reason=reason)
+        return {
+            "ok": True,
+            "revision": new_plan.revision,
+            "previous_revision": previous,
+            "applied": applied,
+            "summary": f"plan revision {previous} → {new_plan.revision}",
+        }
+
+    def _update_qa_assignment(
+        self, previous_qa: Optional[str], new_qa: Optional[str],
+    ) -> None:
+        alignment = getattr(self.rt, "alignment", None)
+        if alignment is None:
+            return
+        try:
+            if new_qa:
+                assigned = assign_acceptance(
+                    alignment,
+                    self.task.task_id,
+                    by=self.lead,
+                    to=new_qa,
+                    reason="Team Leader 更新 QA",
+                    is_participant=lambda tid, aid: (
+                        tid == self.task.task_id
+                        and aid in (self.task.participants or [])),
+                )
+                if not assigned.get("ok"):
+                    self._event(
+                        "team_qa_assign_failed",
+                        error=str(assigned.get("message") or assigned))
+            elif previous_qa:
+                revoked = revoke_acceptance(
+                    alignment,
+                    self.task.task_id,
+                    by=self.lead,
+                    target=previous_qa,
+                    reason="Team Leader 清除 QA",
+                )
+                if not revoked.get("ok"):
+                    self._event(
+                        "team_qa_revoke_failed",
+                        error=str(revoked.get("message") or revoked))
+        except Exception as exc:                              # noqa: BLE001
+            self._event(
+                "team_qa_assignment_error",
+                error=f"{type(exc).__name__}: {exc}")
+
+    def _record_plan_revision(
+        self,
+        plan: WorkPlan,
+        applied: List[Dict[str, Any]],
+        reason: str,
+    ) -> None:
+        """把计划 revision 写进 Shared Context（如果可用）。"""
+        alignment = getattr(self.rt, "alignment", None)
+        if alignment is None:
+            return
+        try:
+            current = alignment.current(self.task.task_id)
+            statement = (
+                f"WorkPlan revision {plan.revision}: "
+                f"{len(plan.items)} items; applied={applied}; "
+                f"reason={reason or 'replan'}")
+            change = alignment.propose(
+                self.task.task_id,
+                proposed_by=self.lead,
+                change_type="FACT",
+                new_value={
+                    "statement": statement,
+                    "source": f"team_plan:{plan.revision}",
+                },
+                expected_revision=current.revision,
+                reason="记录 Team 计划修订",
+            )
+            alignment.accept(
+                self.task.task_id,
+                getattr(change, "change_id", None),
+                decided_by=self.lead,
+                reason="FACT 声明类，允许自批",
+            )
+        except Exception as exc:                              # noqa: BLE001
+            self._event(
+                "team_plan_record_failed", revision=plan.revision,
+                error=f"{type(exc).__name__}: {exc}")
 
     def _run_worker(self, agent_id: str, items: List[WorkItem]) -> Dict[str, Any]:
         agent = self._agent(agent_id)
@@ -486,7 +767,8 @@ class TeamWorkRuntime:
                 if s["agent_id"] == agent_id
             ]
         return bool(states) and all(
-            s["status"] in (ItemStatus.DONE, ItemStatus.BLOCKED)
+            s["status"] in (
+                ItemStatus.DONE, ItemStatus.BLOCKED, ItemStatus.CANCELLED)
             for s in states)
 
     # ------------------------------------------------------------
@@ -562,8 +844,11 @@ class TeamWorkRuntime:
     # 阶段 5：Leader 修复 / 汇总收尾
     # ------------------------------------------------------------
     def _run_leader_repair(self) -> None:
-        """QA 未通过时，Leader 先修复；不暴露 work_complete。"""
-        self._run_leader_turns(include_complete=False)
+        """QA 未通过时，Leader 先修复 / 重新计划；不暴露 work_complete。"""
+        self._run_leader_turns(
+            include_complete=False,
+            include_plan_update=True,
+        )
 
     def _run_leader_finalize(self) -> None:
         self._run_leader_turns(include_complete=True)
@@ -572,6 +857,7 @@ class TeamWorkRuntime:
         self,
         *,
         include_complete: bool,
+        include_plan_update: bool = False,
     ) -> None:
         agent = self._agent(self.lead)
         if agent is None or not getattr(agent, "has_brain", False):
@@ -584,6 +870,8 @@ class TeamWorkRuntime:
             drafts=self.drafts,
             promote_drafts=self._promote_drafts,
             complete_fn=self._complete_fn,
+            plan_update_fn=(
+                self._plan_update_fn if include_plan_update else None),
             include_complete=include_complete,
         )
         seen_reads: set = set()
@@ -598,6 +886,7 @@ class TeamWorkRuntime:
                 item_state=self._item_snapshot(),
                 qa_feedback=qa_feedback,
                 runtime=self.rt,
+                include_plan_update=include_plan_update,
             )
             run = agent.act(
                 messages=prompt,
@@ -641,6 +930,22 @@ class TeamWorkRuntime:
         feedback: str,
     ) -> Dict[str, Any]:
         try:
+            with self._lock:
+                unfinished = [
+                    item_id for item_id, state in self._item_state.items()
+                    if state.get("status") in (
+                        ItemStatus.TODO, ItemStatus.WORKING,
+                        ItemStatus.BLOCKED, ItemStatus.PENDING,
+                    )
+                ]
+            if unfinished:
+                return {
+                    "ok": False,
+                    "code": "items_unfinished",
+                    "message": (
+                        "还有未完成 item：" + ", ".join(sorted(unfinished)) +
+                        "；请先 reassign / add / cancel，或完成它们。"),
+                }
             if self.plan and self.plan.qa:
                 if not self._qa_verdict or not self._qa_verdict.get("passed"):
                     return {
@@ -790,6 +1095,7 @@ class TeamWorkRuntime:
                 item_id: dict(state)
                 for item_id, state in self._item_state.items()
                 if state.get("agent_id") == agent_id
+                and state.get("status") != ItemStatus.CANCELLED
             }
 
     def _consume_run(self, run: Any) -> Tuple[List[Any], List[Any]]:

@@ -96,6 +96,9 @@ from actions.work_item import (
     ACTION_WORK_QA_VERDICT,
     WorkItemBlockedExecutor, WorkItemDoneExecutor, WorkQaVerdictExecutor,
 )
+from actions.work_plan_update import (
+    ACTION_WORK_PLAN_UPDATE, WorkPlanUpdateExecutor,
+)
 from actions.public_working_memory import (
     ACTION_PUBLIC_WORKING_MEMORY_READ,
     ACTION_PUBLIC_WORKING_MEMORY_UPDATE,
@@ -166,6 +169,7 @@ __all__ = [
     "ACTION_WORK_QA_VERDICT",
     "WorkItemDoneExecutor", "WorkItemBlockedExecutor",
     "WorkQaVerdictExecutor",
+    "ACTION_WORK_PLAN_UPDATE", "WorkPlanUpdateExecutor",
     "ACTION_PUBLIC_WORKING_MEMORY_READ",
     "ACTION_PUBLIC_WORKING_MEMORY_UPDATE",
     "PublicWorkingMemoryReadExecutor", "PublicWorkingMemoryUpdateExecutor",

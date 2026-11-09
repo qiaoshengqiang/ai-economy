@@ -45,6 +45,7 @@ from demand.task_creation import TaskCreationService              # noqa: E402
 from front import FrontAgentRuntime, FrontIntent                  # noqa: E402
 from work.availability import AgentAvailability                   # noqa: E402
 from work.runtime import SoloWorkRuntime                          # noqa: E402
+from work.scheduler import RequestStatus, TeamScheduler           # noqa: E402
 from work.team_runtime import TeamWorkRuntime                     # noqa: E402
 
 
@@ -264,18 +265,10 @@ def main(argv=None) -> int:
         print("❌ --team 至少需要一个 --members（Leader 之外的成员）")
         return 2
 
-    availability = AgentAvailability()
-    reserved: List[str] = []
-    for aid in participants:
-        availability.register(aid)
-        if not availability.try_acquire(aid):
-            for done in reserved:
-                availability.release(done)
-            print(f"❌ Agent {aid} 当前不是 IDLE")
-            return 2
-        reserved.append(aid)
+    description = _description_from_brief(decision.brief)
+    criteria = _criteria_from_brief(decision.brief)
 
-    try:
+    def _create_task(*, mode: str, workspace_plan: Any) -> Dict[str, Any]:
         run = SimpleNamespace(
             run_id=run_id,
             root_task_id=None,
@@ -284,33 +277,54 @@ def main(argv=None) -> int:
             workspace_plan=None,
             status="INIT",
         )
-        mode = "TEAM" if args.team else "SOLO"
-        workspace_plan = None
-        if args.team:
-            workspace_plan = _team_workspace_plan(
-                lead, [aid for aid in participants if aid != lead])
         creation = TaskCreationService(
             runtime, run, max_agents=max(1, len(participants)))
-        created = creation.create(
+        return creation.create(
             creator=lead,
-            description=_description_from_brief(decision.brief),
+            description=description,
             participants=participants,
-            acceptance_criteria=_criteria_from_brief(decision.brief),
+            acceptance_criteria=criteria,
             producer=lead,
             acceptance_assignee=None,
             workspace_plan=workspace_plan,
             mode=mode,
         )
-        if not created.get("ok"):
-            print(f"❌ Task 创建失败：{created.get('message') or created}")
+
+    if args.team:
+        scheduler = TeamScheduler(
+            max_parallel_teams=3,
+            max_agents_per_team=5,
+        )
+        request = scheduler.submit(
+            decision.brief.to_dict(),
+            lead=lead,
+            members=[aid for aid in participants if aid != lead],
+        )
+
+        def _start(req):
+            return _create_task(
+                mode="TEAM",
+                workspace_plan=_team_workspace_plan(
+                    lead, [aid for aid in participants if aid != lead]),
+            )
+
+        started = scheduler.start_next(_start)
+        if started is None:
+            print("⏳ 当前并行 Team 已满，请求已进入队列")
+            return 0
+        if started.status != RequestStatus.RUNNING:
+            print(f"❌ Team 启动失败：{started.error or started.status}")
             return 1
 
-        task = runtime.tasks.get(created["task_id"])
+        task = runtime.tasks.get(started.task_id)
         if task is None:
+            scheduler.finish(
+                started.request_id, status=RequestStatus.FAILED,
+                error="task_not_found")
             print("❌ Task 创建后无法读取")
             return 1
 
-        if args.team:
+        try:
             team = TeamWorkRuntime(
                 runtime, task,
                 brief=decision.brief.to_dict(),
@@ -319,20 +333,48 @@ def main(argv=None) -> int:
                 cognitive_budget=int(args.cognitive_budget),
             )
             work_result = team.run()
-        else:
-            solo = SoloWorkRuntime(
-                runtime, task,
-                brief=decision.brief.to_dict(),
-                max_turns=int(args.max_turns),
-                cognitive_budget=int(args.cognitive_budget),
-            )
-            work_result = solo.run()
+        except Exception as exc:                              # noqa: BLE001
+            scheduler.finish(
+                started.request_id, status=RequestStatus.FAILED,
+                error=f"{type(exc).__name__}: {exc}")
+            raise
+        scheduler.finish(
+            started.request_id,
+            status=(RequestStatus.COMPLETED if work_result.ok
+                    else RequestStatus.FAILED),
+            error=work_result.error,
+        )
+        print(front.format_result(
+            front.result_from_work(work_result)))
+        return 0 if work_result.ok else 1
+
+    # ---- Solo ----
+    availability = AgentAvailability()
+    availability.register(lead)
+    if not availability.try_acquire(lead):
+        print(f"❌ Team Lead {lead} 当前不是 IDLE")
+        return 2
+    try:
+        created = _create_task(mode="SOLO", workspace_plan=None)
+        if not created.get("ok"):
+            print(f"❌ Task 创建失败：{created.get('message') or created}")
+            return 1
+        task = runtime.tasks.get(created["task_id"])
+        if task is None:
+            print("❌ Task 创建后无法读取")
+            return 1
+        solo = SoloWorkRuntime(
+            runtime, task,
+            brief=decision.brief.to_dict(),
+            max_turns=int(args.max_turns),
+            cognitive_budget=int(args.cognitive_budget),
+        )
+        work_result = solo.run()
         print(front.format_result(
             front.result_from_work(work_result)))
         return 0 if work_result.ok else 1
     finally:
-        for aid in reserved:
-            availability.release(aid)
+        availability.release(lead)
 
 
 if __name__ == "__main__":

@@ -19,6 +19,7 @@ from work.lifecycle import WorkLifecycle, WorkLifecycleError
 from work.plan import WorkItem, WorkPlan, parse_work_plan
 from work.roles import WorkRole, WorkResult, WorkContext
 from work.runtime import SoloWorkRuntime
+from work.scheduler import RequestStatus, TeamRequest, TeamScheduler
 from work.team_runtime import TeamWorkRuntime
 
 __all__ = [
@@ -26,4 +27,5 @@ __all__ = [
     "WorkItem", "WorkPlan", "parse_work_plan",
     "WorkRole", "WorkResult", "WorkContext",
     "SoloWorkRuntime", "TeamWorkRuntime",
+    "TeamScheduler", "TeamRequest", "RequestStatus",
 ]

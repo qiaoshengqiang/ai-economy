@@ -65,6 +65,8 @@ Leader 做计划 / 架构
 - 成员用 `work_item_done` / `work_item_blocked` 结构化回报；
 - Work 层没有消息机制；
 - QA 可选：设置后必须通过；不设置时 Leader 负责收尾；
+- Leader 可用 `work_plan_update` 在两轮之间改派 / 增加 / 取消 item；
+- `TeamScheduler` 负责队列与 `max_parallel_teams=3`，启动前原子预占 Agent；
 - 旧消息路径的 `producer ≠ acceptor` 不变。
 
 ### 5. AgentAvailability

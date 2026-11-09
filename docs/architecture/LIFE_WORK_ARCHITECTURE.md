@@ -278,6 +278,40 @@ Leader：work_complete
   - 不设置 QA：Leader 汇总后自己完成（显式 Team 例外）；
 - 旧消息路径 `TaskExecutionService` 的 Team `producer ≠ acceptor` 规则不变。
 
+#### 运行中重新计划（`CURRENT`）
+
+Leader 可以在两轮之间用 `work_plan_update` 调整计划：
+
+```text
+reassign  改派 blocked / pending item
+add       增加补丁 / 集成 item
+cancel    取消不再需要的 item
+update    修改目标 / 验收 / 路径
+```
+
+- 必须带 `expected_revision`；
+- `DONE` 的 item 不能改派 / 取消；
+- 旧 plan revision 保留；
+- 当前轮不强行中断，改计划只对下一轮生效；
+- blocked / pending 未处理完时，Leader 不能 `work_complete`。
+
+#### Team 调度 / 排队（`CURRENT`，内存版）
+
+```text
+Front → Brief → TeamScheduler.queue
+                    ├─ QUEUED
+                    ├─ WAITING_FOR_AGENTS
+                    ├─ RUNNING（最多 3）
+                    └─ COMPLETED / FAILED / CANCELLED
+```
+
+- 队列里放 Brief，不提前创建 Task；
+- 启动前原子预占 Lead + members 的 `IDLE`；
+- 最多 `max_parallel_teams = 3`；
+- 全部参与者可用才启动，不做“半启动”；
+- 完成后释放 Agent，再推进队列；
+- V1 队列在进程内；持久化队列为 `FUTURE`。
+
 ---
 
 ## 6. Solo Task 完成语义
@@ -509,6 +543,8 @@ front/parser.py      解析模型输出；rework 只接受 COMPLETED Task
 work/runtime.py      SoloWorkRuntime：精简 prompt + Work 动作 + work_complete
 work/team_runtime.py TeamWorkRuntime：Leader 计划 / 并行 / 可选 QA / 汇总收尾
 work/plan.py         WorkPlan / WorkItem / Leader 计划解析
+work/replan.py       运行中计划更新（reassign / add / cancel / update）
+work/scheduler.py    TeamScheduler：队列 / 并行上限 / 原子预占
 work/lifecycle.py    无消息的 START/SUBMIT/VERIFY/COMPLETE/Reopen（写 task_executions）
 work/actions.py      只注册 Workspace/Draft/Tool/Memory；无消息/经济/验收指派
 work/prompt.py       最小 Work prompt
@@ -527,7 +563,7 @@ work/cli.py          ./dev.sh work：Human → Front → Solo Task → Work
 | 0 | 本文档 + ADR-0055/0056 | **已完成** |
 | 1 | Front 意图 / Brief / Result 契约 | **已实现**（`front/`）+ `./dev.sh work` |
 | 2 | Solo / Team Work runtime + 精简 prompt / 动作集 | **已实现**（`work/runtime.py` / `work/team_runtime.py`） |
-| 3 | AgentAvailability + 并行 3 Team 注册表 | **已实现**（`work/availability.py` / `team_registry.py`）；Front 排队仍 `DESIGNED` |
+| 3 | AgentAvailability + 并行 3 + Team 队列 | **已实现**（`work/availability.py` / `team_registry.py` / `scheduler.py`）；持久化队列为 `FUTURE` |
 | 4 | Solo 自 SUBMIT / VERIFY / COMPLETE | **已实现** |
 | 5 | Reopen / Iteration V1 | **已实现**（FROZEN/陈旧锁为 `FUTURE`） |
 | 6 | 生活层邀请协议 | `FUTURE` |
@@ -541,8 +577,8 @@ work/cli.py          ./dev.sh work：Human → Front → Solo Task → Work
 3. Front 如何选择 Team Lead：直接指定 / 按能力 / 按负载？
 4. 多 Team 共用同一个 Agent 的短/长期记忆时，是否需要并发锁？
 5. QA 多次不通过时，是继续修复 / 重新计划 / 交给 Human？当前 V1 是修复一轮后再 QA，仍失败则不完成。
-6. Team Leader 在运行中重新计划（增删 item）是否走 `work_plan_update`；当前 V1 计划在开始时固定。
-8. Reopen 后陈旧 Workspace 锁的治理策略。
+6. Team 队列持久化与进程重启恢复（当前 V1 是内存队列）。
+7. Reopen 后陈旧 Workspace 锁的治理策略。
 
 ---
 

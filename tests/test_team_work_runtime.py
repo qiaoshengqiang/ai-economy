@@ -143,6 +143,41 @@ def _plan(qa=None):
     })
 
 
+def _plan_single():
+    return json.dumps({
+        "items": [
+            {"item_id": "item_1", "assigned_to": "agent_b",
+             "goal": "模块 B"},
+        ],
+        "qa": None,
+        "directories": {},
+    })
+
+
+def _blocked(item_id, agent_id, reason="卡住了"):
+    return {
+        "type": "work_item_blocked",
+        "agent_id": agent_id,
+        "parameters": {"item_id": item_id, "reason": reason},
+    }
+
+
+def _plan_update_reassign(item_id, assigned_to, revision=1):
+    return {
+        "type": "work_plan_update",
+        "agent_id": "agent_a",
+        "parameters": {
+            "expected_revision": revision,
+            "reason": "改派 blocked item",
+            "operations": [{
+                "op": "reassign",
+                "item_id": item_id,
+                "assigned_to": assigned_to,
+            }],
+        },
+    }
+
+
 # ============================================================
 # 1. Plan parser
 # ============================================================
@@ -183,7 +218,79 @@ class TestWorkPlan:
 
 
 # ============================================================
-# 2. Team runtime
+# 2. Replan operations
+# ============================================================
+class TestReplan:
+    def _plan(self):
+        plan, error = parse_work_plan(
+            _plan(), participants=["agent_a", "agent_b", "agent_c"])
+        assert error == ""
+        return plan
+
+    def test_reassign(self):
+        from work.replan import apply_plan_operations
+
+        plan = self._plan()
+        new, applied = apply_plan_operations(
+            plan,
+            [{"op": "reassign", "item_id": "item_1",
+              "assigned_to": "agent_c"}],
+            participants=["agent_a", "agent_b", "agent_c"],
+            leader="agent_a",
+            item_status={"item_1": "BLOCKED"},
+        )
+        assert new.revision == plan.revision + 1
+        assert new.items[0].agent_id == "agent_c"
+        assert applied[0]["op"] == "reassign"
+
+    def test_add_and_cancel(self):
+        from work.replan import apply_plan_operations
+
+        plan = self._plan()
+        new, _ = apply_plan_operations(
+            plan,
+            [
+                {"op": "add", "item": {
+                    "item_id": "item_3",
+                    "assigned_to": "agent_b",
+                    "goal": "补测试"}},
+                {"op": "cancel", "item_id": "item_2"},
+            ],
+            participants=["agent_a", "agent_b", "agent_c"],
+            leader="agent_a",
+            item_status={"item_1": "DONE"},
+        )
+        assert [item.item_id for item in new.items] == ["item_1", "item_3"]
+
+    def test_cannot_reassign_done_item(self):
+        from work.replan import ReplanError, apply_plan_operations
+
+        with pytest.raises(ReplanError, match="item_already_done"):
+            apply_plan_operations(
+                self._plan(),
+                [{"op": "reassign", "item_id": "item_1",
+                  "assigned_to": "agent_c"}],
+                participants=["agent_a", "agent_b", "agent_c"],
+                leader="agent_a",
+                item_status={"item_1": "DONE"},
+            )
+
+    def test_cannot_set_leader_as_qa(self):
+        from work.replan import ReplanError, apply_plan_operations
+
+        with pytest.raises(ReplanError, match="qa_is_leader"):
+            apply_plan_operations(
+                self._plan(),
+                [{"op": "update", "item_id": "item_1", "goal": "x"}],
+                participants=["agent_a", "agent_b", "agent_c"],
+                leader="agent_a",
+                qa="agent_a",
+                qa_provided=True,
+            )
+
+
+# ============================================================
+# 3. Team runtime
 # ============================================================
 class TestTeamRuntime:
     def test_workers_parallel_and_leader_completes(self, db):
@@ -268,6 +375,65 @@ class TestTeamRuntime:
         assert result.ok is False
         assert runtime.tasks.get(task.task_id).status != TaskStatus.COMPLETED
 
+    def test_blocked_item_replans_and_completes(self, db):
+        """
+        item blocked → Leader reassign → 新成员完成 → Leader 收尾。
+        """
+        agents = {
+            "agent_a": _ScriptedAgent(
+                think=_plan_single(),
+                actions=[
+                    _plan_update_reassign("item_1", "agent_c"),
+                    _complete(),
+                ]),
+            "agent_b": _ScriptedAgent(
+                actions=[_blocked("item_1", "agent_b")]),
+            "agent_c": _ScriptedAgent(
+                actions=[_done("item_1", "agent_c")]),
+        }
+        task = _task()
+        runtime = _TeamRuntime(db, task, agents)
+
+        result = TeamWorkRuntime(
+            runtime, task, max_worker_turns=1,
+            max_integration_turns=1, max_replans=2,
+        ).run()
+
+        assert result.ok is True, result.error
+        assert runtime.tasks.get(task.task_id).status == TaskStatus.COMPLETED
+        assert any(event["event"] == "team_plan_updated"
+                   for event in result.events)
+        assert any(event["event"] == "team_replan_applied"
+                   for event in result.events)
+        assert len(result.plan_history) >= 2
+        assert result.plan_history[-1]["revision"] == 2
+
+    def test_stale_plan_revision_blocks_completion(self, db):
+        agents = {
+            "agent_a": _ScriptedAgent(
+                think=_plan_single(),
+                actions=[
+                    _plan_update_reassign("item_1", "agent_c", revision=0),
+                    _complete(),
+                ]),
+            "agent_b": _ScriptedAgent(
+                actions=[_blocked("item_1", "agent_b")]),
+            "agent_c": _ScriptedAgent(
+                actions=[_done("item_1", "agent_c")]),
+        }
+        task = _task()
+        runtime = _TeamRuntime(db, task, agents)
+
+        result = TeamWorkRuntime(
+            runtime, task, max_worker_turns=1,
+            max_integration_turns=1, max_replans=1,
+        ).run()
+
+        assert result.ok is False
+        assert runtime.tasks.get(task.task_id).status != TaskStatus.COMPLETED
+        assert any(event["event"] == "team_replan_no_change"
+                   for event in result.events)
+
     def test_invalid_plan_fails_without_completing(self, db):
         agents = {
             "agent_a": _ScriptedAgent(think="not json", actions=[]),
@@ -315,4 +481,5 @@ def test_work_action_set_has_no_messages_or_economy():
         assert banned not in WORK_ACTION_TYPES
     assert "work_item_done" in WORK_ACTION_TYPES
     assert "work_qa_verdict" in WORK_ACTION_TYPES
+    assert "work_plan_update" in WORK_ACTION_TYPES
     assert "work_complete" in WORK_ACTION_TYPES
