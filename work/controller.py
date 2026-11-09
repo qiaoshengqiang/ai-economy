@@ -467,13 +467,8 @@ class AIEOSController:
                     "system", f"Leader 计划无效：{error}",
                     job_id=job.job_id)
                 continue
-            # Leader 必须是参与者（它自己也可以有 item）
-            if not any(item.agent_id == leader for item in plan.items):
-                self._message(
-                    "system",
-                    "Leader 计划没有包含自己的集成/收尾 item，重新规划。",
-                    job_id=job.job_id)
-                continue
+            # Leader 不强制拥有 item：
+            #   单文件任务常常由成员生产，Leader 只负责检查/汇总/交付。
             assigned = {
                 item.agent_id for item in plan.items
                 if item.agent_id != leader

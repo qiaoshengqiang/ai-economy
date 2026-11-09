@@ -180,6 +180,45 @@ def test_controller_state_marks_front_and_idle_agents():
         controller.close()
 
 
+def test_leader_plan_can_assign_all_work_to_members():
+    """单文件任务：Leader 只检查/汇总，不强制自己拥有 item。"""
+    from front import FrontBrief
+    from work.controller import WorkJob
+
+    plan_json = json.dumps({
+        "items": [{
+            "item_id": "item_1",
+            "assigned_to": "agent_b",
+            "goal": "写一个 hello.html",
+            "paths": ["hello.html"],
+        }],
+        "qa": None,
+        "directories": {".": "agent_b"},
+    })
+
+    class _Agent:
+        has_brain = True
+
+        def think(self, _prompt):
+            return plan_json
+
+    runtime = SimpleNamespace(
+        directory=_Directory(["agent_a", "agent_b", "agent_c"]),
+        economy=SimpleNamespace(agent=lambda aid: _Agent()),
+        tasks=SimpleNamespace(list_tasks=lambda limit=50: []),
+    )
+    controller = AIEOSController(runtime, front_agent="agent_c")
+    try:
+        job = WorkJob(job_id="job_test", human_text="写一个 hello.html")
+        plan = controller._leader_plan(
+            job, "agent_a",
+            FrontBrief(goal="写一个 hello.html"))
+        assert plan is not None
+        assert [item.agent_id for item in plan.items] == ["agent_b"]
+    finally:
+        controller.close()
+
+
 def test_workspace_plan_declares_parent_directories():
     plan = AIEOSController._workspace_plan(
         "agent_a",
