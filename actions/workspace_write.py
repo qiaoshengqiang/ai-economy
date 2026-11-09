@@ -82,14 +82,23 @@ class WorkspaceWriteExecutor:
         *,
         gateway: Any = None,
         workspace_id: str = "",
+        max_content_chars: Optional[int] = None,
     ) -> None:
         if write_fn is None or not callable(write_fn):
             raise ValueError(
                 "WorkspaceWriteExecutor 需要一个可调用的 write_fn —— "
                 "它由组合根注入（例如 services.artifacts.write_artifact）")
+        if max_content_chars is not None and int(max_content_chars) <= 0:
+            raise ValueError(
+                "max_content_chars 必须是正整数或 None —— "
+                "0/负数会静默禁掉所有写入")
         self.write_fn = write_fn
         self.gateway = gateway
         self.workspace_id = workspace_id
+        #: 🔒 单次 `content` 的**结构上限**（字符数），由组合根决定。
+        #: None = 不限制（实验/旧调用方保持兼容）。
+        self.max_content_chars = (int(max_content_chars)
+                                  if max_content_chars is not None else None)
 
     # ------------------------------------------------------------
     def execute(self, intent: ActionIntent) -> ActionResult:
@@ -104,6 +113,22 @@ class WorkspaceWriteExecutor:
         path = str(params.get("path") or "")
         write_mode = str(params.get("write_mode") or "")
         content = params.get("content")
+
+        # 🔒 结构上限在调用 write_fn **之前**检查：超限不写入。
+        #    这不是建议 —— Agent 必须把大文件拆成 create + append/edit。
+        if self.max_content_chars is not None:
+            body = content if isinstance(content, str) else str(content or "")
+            if len(body) > self.max_content_chars:
+                return self._fail(
+                    intent,
+                    (f"单次写入 content 有 {len(body)} 字符，超过上限 "
+                     f"{self.max_content_chars}；本次**没有写入**。"
+                     "请拆分：先用 create 写小骨架，再用 append / "
+                     "workspace_edit 逐段补全；不要一次重写整个大文件。"),
+                    code="content_too_large", path=path,
+                    write_mode=write_mode,
+                    chars=len(body), max_chars=self.max_content_chars,
+                )
 
         try:
             raw = self.write_fn(
@@ -146,7 +171,8 @@ class WorkspaceWriteExecutor:
     # ------------------------------------------------------------
     def _fail(self, intent: ActionIntent, message: str, *,
               code: str, path: str, write_mode: str,
-              gateway_code: Optional[str] = None) -> ActionResult:
+              gateway_code: Optional[str] = None,
+              **extra: Any) -> ActionResult:
         """
         统一的失败结果。
 
@@ -158,6 +184,7 @@ class WorkspaceWriteExecutor:
                           "write_mode": write_mode}
         if gateway_code:
             metadata["gateway_code"] = gateway_code
+        metadata.update(extra)
         return ActionResult(
             success=False,
             output=None,

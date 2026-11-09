@@ -66,6 +66,15 @@ def build_intake_dispatcher(create_fn: Any) -> ActionDispatcher:
     return ActionDispatcher([TaskCreateExecutor(create_fn)])
 
 
+#: 🔒 Demand Entry V1 的单次写入/编辑结构上限（字符数）。
+#:
+#: 真实 run `demand_795139c7`：Agent 3 次 `finish_reason=length`，
+#: 仍然试图一次写完整文件。文字提醒没有改变行为 —— 这里把它变成
+#: **写入前的硬拒绝**：超限的 Action 不会落盘，Agent 必须拆成
+#: create + append / workspace_edit。
+MAX_SINGLE_WRITE_CHARS = 12_000
+
+
 def build_task_dispatcher(
     runtime: Any,
     *,
@@ -209,8 +218,10 @@ def build_task_dispatcher(
         WorkspaceSearchExecutor(_search),
         WorkspaceWriteExecutor(
             write_artifact, gateway=runtime.workspace_gateway,
-            workspace_id=ws_id),
-        WorkspaceEditExecutor(_edit),
+            workspace_id=ws_id,
+            max_content_chars=MAX_SINGLE_WRITE_CHARS),
+        WorkspaceEditExecutor(
+            _edit, max_new_string_chars=MAX_SINGLE_WRITE_CHARS),
         MessageSendExecutor(_send, comm=runtime.communication),
         PublicQueryExecutor(public.query),
         PrivateWriteExecutor(write_private, workspace_of=_ws_of),

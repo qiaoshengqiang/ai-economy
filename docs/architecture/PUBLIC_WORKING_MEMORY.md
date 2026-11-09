@@ -55,13 +55,27 @@ PublicWorkingMemory
   "value": {"deliverable_exists": true, "browser_verified": true},
   "author": "agent_a",
   "updated_at": "2026-11-08T03:14:56Z",
-  "parent_key": "plan.root"
+  "parent_key": "plan.root",
+  "evidence": {"path": "index.html", "revision": 3}
 }
 ```
 
 `parent_key` 可选：用于表达「大架构 → 局部细节」的层级；
 `None` = 根条目。父子关系在更新时校验，不能形成环，也不能删除还有
 子条目的节点。
+
+`evidence` 可选：`{"path": <Workspace 相对路径>, "revision": <整数>}`。
+它表示这条记忆中的完成声明有一个**真实 artifact** 作为证据：
+
+- service 会调用 WorkspaceGateway 读取该路径；
+- 路径不存在 → 更新失败；
+- `revision` 与当前 revision 不一致 → 更新失败；
+- 没有 `evidence` 的条目仍然可以写，但渲染时会明确标记
+  `self-report, not verified`。
+
+> 🔒 `evidence` 是**记录时刻**的校验，不是持续监控：
+> 文件之后被修改，旧 evidence 不会自动失效。需要反映最新状态时，
+> Agent 应重新用当前 revision 更新该条目。
 
 ### kind
 
@@ -127,6 +141,18 @@ UPDATE ... WHERE task_id = ? AND revision = ?
 它会被存成 key=`note` 的 `note` item，**不会**再被静默忽略。
 `items`/`content`/`remove_keys` 全为空、或出现未知参数时，更新会明确失败。
 
+带证据的条目：
+
+```json
+{"checklist:acceptance": {
+  "kind": "checklist",
+  "value": {"tests_passed": true},
+  "evidence": {"path": "tests/acceptance.spec.js", "revision": 2}
+}}
+```
+
+`evidence.path` 必须真实存在且 revision 一致，否则更新失败。
+
 失败返回结构化 `ActionResult`（缺 revision、并发冲突、非参与者、非法 key 等）。
 
 ---
@@ -145,6 +171,15 @@ revision = 3
 ```
 
 如果 item 带 `parent_key`，渲染会按树缩进显示。
+
+每个 item 还会显示证据状态：
+
+```text
+evidence: index.html @R3 (verified)
+evidence: (none — self-report, not verified)
+```
+
+这让人能区分「Agent 声称完成」与「有真实 artifact 的完成声明」。
 
 Task prompt 还会额外显示 **Creator workspace_plan 的计划完成度**：
 

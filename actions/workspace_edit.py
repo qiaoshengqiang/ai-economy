@@ -23,7 +23,7 @@ WorkspaceEditExecutor —— 用 old_string → new_string 局部修改
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
 from actions.intent import ActionResult, ActionIntent
 
@@ -38,12 +38,22 @@ _OUTPUT_FIELDS = (
 class WorkspaceEditExecutor:
     action_types = frozenset({ACTION_WORKSPACE_EDIT})
 
-    def __init__(self, edit_fn: Callable[..., Any]) -> None:
+    def __init__(self, edit_fn: Callable[..., Any], *,
+                 max_new_string_chars: Optional[int] = None) -> None:
         if edit_fn is None or not callable(edit_fn):
             raise ValueError(
                 "WorkspaceEditExecutor 需要一个可调用的 edit_fn —— "
                 "它由组合根注入（例如 services.artifacts.edit_artifact）")
+        if max_new_string_chars is not None and int(max_new_string_chars) <= 0:
+            raise ValueError(
+                "max_new_string_chars 必须是正整数或 None —— "
+                "0/负数会静默禁掉所有编辑")
         self.edit_fn = edit_fn
+        #: 🔒 单次 `new_string` 的**结构上限**（字符数），由组合根决定。
+        #: None = 不限制（实验/旧调用方保持兼容）。
+        self.max_new_string_chars = (
+            int(max_new_string_chars)
+            if max_new_string_chars is not None else None)
 
     def execute(self, intent: ActionIntent) -> ActionResult:
         params = dict(getattr(intent, "parameters", None) or {})
@@ -61,6 +71,19 @@ class WorkspaceEditExecutor:
             return self._fail(
                 intent, "new_string 必须是字符串",
                 code="bad_argument", path=path)
+
+        # 🔒 结构上限在调用 edit_fn **之前**检查：超限不改文件。
+        if (self.max_new_string_chars is not None
+                and len(new_string) > self.max_new_string_chars):
+            return self._fail(
+                intent,
+                (f"单次 new_string 有 {len(new_string)} 字符，超过上限 "
+                 f"{self.max_new_string_chars}；本次**没有修改**。"
+                 "请把编辑拆成多次更小的 workspace_edit，"
+                 "或先用小片段建立骨架再逐段补全。"),
+                code="content_too_large", path=path,
+                chars=len(new_string),
+                max_chars=self.max_new_string_chars)
 
         try:
             raw = self.edit_fn(

@@ -204,11 +204,27 @@ Front brief 写入 `run.json` 的 `run.brief`；Creator 计划写入
 - Public WM 支持 `parent_key` 层级，按树渲染；
 - `public_working_memory_update` 的 `content` 会存成单条 `note`，
   未知参数/空更新会明确失败；
+- Public WM item 支持可选 `evidence = {path, revision}`：
+  系统校验 artifact 存在且 revision 一致；没有 evidence 的条目
+  渲染为 `self-report, not verified`；
 - Private WM 的 `parent_id` 树保持不变；
 - Task prompt 每轮从 `run.workspace_plan` + Workspace 实际状态
   派生“计划完成度”（缺失目录/文件）；
 - Prompt 给出 Public/Private WM 的 schema；
 - 系统**不自动写**工作记忆，也不自动总结。
+
+### 3.4 单次写入/编辑硬上限（2026-11-09）
+
+Demand Entry 的 `workspace_write.content` 与 `workspace_edit.new_string`
+各有 **12,000 字符**的单次上限：
+
+- 超限在调用 `write_artifact` / `edit_artifact` **之前**被拒绝；
+- 返回 `success=false` + `metadata.code="content_too_large"`；
+- `metadata` 带 `chars` / `max_chars`，prompt 也明确写出该结构事实；
+- 大文件必须拆成 `create` 小骨架 + `append` / 多次局部 `workspace_edit`。
+
+> 这是 **Demand 入口的组合根约束**，不是 Workspace 资源树的结构上限；
+> 实验调用方不传 `max_content_chars` 时保持旧行为。
 
 ---
 

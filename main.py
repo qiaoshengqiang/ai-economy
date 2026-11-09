@@ -1300,6 +1300,9 @@ def build_runtime(
         # 🔒 结构上限的唯一来源：config.yaml 的 `workspace:` 段。
         limits=WorkspaceLimits.from_mapping(resolved.workspace),
     )
+    # Public WM 的 evidence 校验需要 WorkspaceGateway；组合根在 Gateway
+    # 构造完成后注入（服务本身不依赖 services/workspace_gateway 的类型）。
+    public_working_memory.attach_gateway(workspace_gateway)
 
     # ---- Change Pipeline（第二阶段 · Phase 1）----
     #

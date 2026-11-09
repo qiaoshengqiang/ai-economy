@@ -629,10 +629,16 @@ def build_task_prompt(
 - `workspace_write`
   write 必须给 `write_mode`: create / replace / append。
   create/replace 需要输出完整文件；能局部改就不要用 replace。
+  🔒 单次 `content` 最多 12000 字符；超限直接拒绝
+  （`content_too_large`），**不会写入**。大文件必须拆：
+  先用 create 写小骨架，再用 append 逐段追加；
+  不要一次重写整个大文件。
 - `workspace_edit`
   `path` / `old_string` / `new_string`；old_string 必须唯一命中；
   可选 `replace_all` / `expected_revision`。
   仍然走锁 / revision / audit；0 或多个命中会失败。
+  🔒 单次 `new_string` 最多 12000 字符；超限直接拒绝，
+  请拆成多次更小的局部编辑。
 - `message_send`
   `to` / `message_type` / `text` / `payload`
   **普通协调消息**用 `TEXT` / `INFO` / `NOTE` / `QUESTION` / `REQUEST`。
@@ -657,10 +663,14 @@ def build_task_prompt(
 - `public_working_memory_read`
 - `public_working_memory_update`
   `expected_revision` / `items` / `remove_keys` / `content`
-  `items`: `key -> {{kind, value, parent_key?}}`；
+  `items`: `key -> {{kind, value, parent_key?, evidence?}}`；
   kind 只支持 plan / assignment / checklist / progress / note。
   `parent_key` 表达层级（大架构 → 局部细节）；
+  `evidence`: `{{"path":"真实 artifact 路径","revision":N}}`，系统会校验路径/revision；
+  没有 evidence 的条目会显示为 self-report，不是已验证事实。
   `content` 是“单条 note”的简写。
+  🔒 不要在写文件的同一个信封里声称完成：先执行 workspace_write/edit，
+  拿到 success + revision，再在后续更新中用 evidence 记录完成。
 - `private_working_memory_read`
 - `private_working_memory_update`
   `expected_revision` / `nodes` / `remove_nodes`

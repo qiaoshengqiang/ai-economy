@@ -203,6 +203,52 @@ class TestStoreAndService:
         text = service.render("T-WM", "agent_b")
         assert "revision = 1" in text
         assert "plan" in text and "agent_a" in text
+        assert "self-report" in text
+
+    def test_evidence_must_point_to_a_real_artifact(self, db, store):
+        from types import SimpleNamespace
+
+        class _Gateway:
+            def read(self, workspace_id, path, agent_id):
+                ok = path == "index.html"
+                return SimpleNamespace(
+                    success=ok,
+                    result={"revision": 2} if ok else None,
+                    error=None if ok else {"message": "not found"})
+
+        _task(store)
+        service = PublicWorkingMemoryService(
+            PublicWorkingMemoryStore(db), store, gateway=_Gateway())
+
+        with pytest.raises(WorkingMemoryValidationError, match="evidence"):
+            service.update(
+                "T-WM", "agent_a", expected_revision=0,
+                items={"done": {
+                    "kind": "progress",
+                    "value": "index.html done",
+                    "evidence": {"path": "missing.html", "revision": 1},
+                }})
+
+        # evidence 里的未知字段（拼写错误）必须失败，不能静默忽略。
+        with pytest.raises(WorkingMemoryValidationError, match="不认识的字段"):
+            service.update(
+                "T-WM", "agent_a", expected_revision=0,
+                items={"done": {
+                    "kind": "progress",
+                    "value": "index.html done",
+                    "evidence": {"path": "index.html", "revisoin": 2},
+                }})
+
+        mem = service.update(
+            "T-WM", "agent_a", expected_revision=0,
+            items={"done": {
+                "kind": "progress",
+                "value": "index.html done",
+                "evidence": {"path": "index.html", "revision": 2},
+            }})
+        assert mem.items["done"].evidence["path"] == "index.html"
+        text = service.render("T-WM", "agent_b")
+        assert "evidence: index.html @R2 (verified)" in text
 
 
 # ------------------------------------------------------------

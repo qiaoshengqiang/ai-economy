@@ -34,8 +34,8 @@
 
 | `action.type` | 作用 | 参数 |
 |---|---|---|
-| `workspace_write` | 写一个产物到 Task Workspace | `path` · `content` · `write_mode`（`create`/`replace`/`append`） |
-| `workspace_edit` | 用 `old_string → new_string` **局部修改**已存在的文件 | `path` · `old_string` · `new_string` · `replace_all`（可选） · `expected_revision`（可选） |
+| `workspace_write` | 写一个产物到 Task Workspace | `path` · `content` · `write_mode`（`create`/`replace`/`append`）；单次 `content` ≤ 12000 字符 |
+| `workspace_edit` | 用 `old_string → new_string` **局部修改**已存在的文件 | `path` · `old_string` · `new_string` · `replace_all`（可选） · `expected_revision`（可选）；单次 `new_string` ≤ 12000 字符 |
 | `workspace_read` | 读 Task Workspace 里某个文件的**当前内容**（可范围读取） | `path` · `offset`（1-based，可选） · `limit`（可选） |
 | `workspace_search` | 在 Task Workspace 里做**只读字面搜索** | `query` · `path`（可选） · `glob`（可选） · `max_results`（可选） · `case_sensitive`（可选） · `context_lines`（可选） |
 | `message_send` | 按**显式**消息类型发一条消息 | `to` · `text` · `message_type` · `payload` |

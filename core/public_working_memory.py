@@ -136,6 +136,9 @@ class WorkingMemoryItem:
     #: 🔴 可选的父节点 key，用于表达“大架构 → 局部细节”的层级。
     #: None = 根条目；旧数据没有该字段时默认为 None。
     parent_key: Optional[str] = None
+    #: 🔴 可选的 artifact 证据：{"path": "...", "revision": N}。
+    #: 表示这条记忆中的完成声明来自一次真实的 Workspace 写入/产物。
+    evidence: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -145,10 +148,12 @@ class WorkingMemoryItem:
             "author": self.author,
             "updated_at": self.updated_at,
             "parent_key": self.parent_key,
+            "evidence": dict(self.evidence) if self.evidence else None,
         }
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any]) -> "WorkingMemoryItem":
+        evidence = raw.get("evidence")
         return cls(
             key=str(raw.get("key") or ""),
             kind=str(raw.get("kind") or ""),
@@ -157,6 +162,7 @@ class WorkingMemoryItem:
             updated_at=str(raw.get("updated_at") or ""),
             parent_key=(str(raw["parent_key"])
                         if raw.get("parent_key") else None),
+            evidence=dict(evidence) if isinstance(evidence, Mapping) else None,
         )
 
 
@@ -307,9 +313,22 @@ def apply_update(
         else:
             existing = next_items.get(key2)
             parent_key = existing.parent_key if existing else None
+        if "evidence" in raw:
+            evidence_raw = raw.get("evidence")
+            if evidence_raw is None:
+                evidence = None
+            elif not isinstance(evidence_raw, Mapping):
+                raise WorkingMemoryValidationError(
+                    f"working memory item {key2!r} 的 evidence 必须是对象")
+            else:
+                evidence = dict(evidence_raw)
+        else:
+            existing = next_items.get(key2)
+            evidence = existing.evidence if existing else None
         next_items[key2] = WorkingMemoryItem(
             key=key2, kind=kind, value=raw.get("value"),
-            author=str(author), updated_at=now, parent_key=parent_key)
+            author=str(author), updated_at=now,
+            parent_key=parent_key, evidence=evidence)
 
     remove_set = {str(key) for key in (remove_keys or [])}
     for key in remove_set:

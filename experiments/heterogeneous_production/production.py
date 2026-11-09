@@ -1890,7 +1890,8 @@ def _working_memory(rt: Any) -> PublicWorkingMemoryService:
     if service is not None:
         return service
     return PublicWorkingMemoryService(
-        PublicWorkingMemoryStore(rt.economy.db), rt.tasks)
+        PublicWorkingMemoryStore(rt.economy.db), rt.tasks,
+        gateway=getattr(rt, "workspace_gateway", None))
 
 
 #: 每个 (agent, task) 的短期记忆**只从 DB 读一次**，之后用缓存。
