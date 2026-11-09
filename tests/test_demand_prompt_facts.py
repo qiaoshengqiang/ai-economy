@@ -484,3 +484,53 @@ def test_prompt_documents_thinking_schema():
     assert '"enabled": true' in prompt
     assert "low / medium / high / max" in prompt
     assert "不写就保持当前策略" in prompt
+
+
+def test_plan_status_renders_phases_placeholders_and_checkpoints():
+    from types import SimpleNamespace
+
+    class _PhaseGateway:
+        def list(self, workspace_id, path, agent_id):
+            return SimpleNamespace(success=True, result={
+                "entries": [{"name": "main.js", "type": "file"}]})
+
+        def read(self, workspace_id, path, agent_id):
+            ok = path in ("index.html", "src/main.js")
+            return SimpleNamespace(
+                success=ok,
+                result={"content": "x"} if ok else None)
+
+    runtime = _runtime()
+    runtime.workspace_gateway = _PhaseGateway()
+    run = _run()
+    run.workspace_plan = {
+        "root_owner": "agent_a",
+        "directories": {"src": "agent_a"},
+        "files": {
+            "index.html": "agent_a",
+            "src/main.js": "agent_a",
+            "src/world.js": "agent_a",
+        },
+        "phases": [
+            {"name": "skeleton", "depends_on": [],
+             "files": ["index.html", "src/main.js"],
+             "checkpoint": "page can load"},
+            {"name": "world", "depends_on": ["skeleton"],
+             "files": ["src/world.js"], "checkpoint": "world renders"},
+        ],
+        "placeholders": ["src/main.js"],
+    }
+    run.plan_checkpoints = {
+        "skeleton": {"phase": "skeleton", "passed": True,
+                     "by": "agent_a", "note": "smoke"},
+    }
+    prompt = build_task_prompt(
+        run=run, task=_task(), runtime=runtime,
+        agent_id="agent_a", inbox=[], budget_cap=32768)
+
+    assert "计划阶段" in prompt
+    assert "skeleton" in prompt and "checkpoint passed" in prompt
+    assert "world" in prompt and "❌ files missing: src/world.js" in prompt
+    assert "⬜ placeholder" in prompt
+    assert "checkpoint 目标：page can load" in prompt
+    assert "workspace_plan_checkpoint" in prompt

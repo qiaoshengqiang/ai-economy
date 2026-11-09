@@ -223,7 +223,8 @@ class DemandRunner:
         self.task = task
         self.task_dispatcher = build_task_dispatcher(
             self.rt, task=task, bridge=self.bridge,
-            update_plan=self._update_workspace_plan)
+            update_plan=self._update_workspace_plan,
+            record_checkpoint=self._record_plan_checkpoint)
 
         order: List[str] = []
         if task.contractor:
@@ -321,12 +322,98 @@ class DemandRunner:
                 plan, people=list(task.participants), producer=producer)
         except TaskCreationError as exc:
             return {"ok": False, "code": exc.code, "message": exc.message}
+        old_phases = {
+            str(item.get("name")): json.dumps(item, ensure_ascii=False,
+                                               sort_keys=True)
+            for item in ((self.run.workspace_plan or {}).get("phases") or [])
+        }
+        new_phases = {
+            str(item.get("name")): json.dumps(item, ensure_ascii=False,
+                                               sort_keys=True)
+            for item in (validated.get("phases") or [])
+        }
+        checkpoints = dict(
+            getattr(self.run, "plan_checkpoints", None) or {})
+        for name in list(checkpoints):
+            # phase 被删除 / 定义改变 ⇒ 旧检查点失效。
+            if name not in new_phases or old_phases.get(name) != new_phases[name]:
+                checkpoints.pop(name, None)
+        self.run.plan_checkpoints = checkpoints or None
         self.run.workspace_plan = validated
         self._write_run()
         self._event(
             "workspace_plan_updated", agent_id=agent_id,
             plan=validated, reason=str(reason or ""))
         return {"ok": True, "workspace_plan": validated}
+
+    def _record_plan_checkpoint(
+        self, agent_id: str, *, phase: str, passed: bool,
+        evidence: Optional[Dict[str, Any]] = None,
+        note: str = "",
+    ) -> Dict[str, Any]:
+        """
+        记录一个 phase 的检查结果。
+
+        🔒 这是 Agent 自己的阶段检查记录，不是 Task 验收。
+           检查方式由 Agent 决定（run_tool / read / 其他）；系统只做
+           phase 存在性与可选 artifact evidence 的结构校验。
+        """
+        task = self._status_task()
+        if task is None:
+            return {"ok": False, "code": "task_not_found",
+                    "message": "Task 不存在，无法记录 checkpoint"}
+        if not task.is_participant(agent_id):
+            return {"ok": False, "code": "not_participant",
+                    "message": f"Agent {agent_id!r} 不是 Task participant"}
+        phases = {
+            str(item.get("name")): item
+            for item in ((self.run.workspace_plan or {}).get("phases") or [])
+        }
+        if phase not in phases:
+            return {"ok": False, "code": "unknown_phase",
+                    "message": (f"workspace_plan 没有 phase {phase!r}；"
+                                f"可用：{sorted(phases)}")}
+        evidence_data = dict(evidence or {})
+        path = str(evidence_data.get("path") or "").strip()
+        if path:
+            workspace_id = (
+                task.workspace.workspace_id if task.workspace else "")
+            try:
+                got = self.rt.workspace_gateway.read(
+                    workspace_id, "/" + path.lstrip("/"), agent_id)
+            except Exception as exc:                          # noqa: BLE001
+                return {"ok": False, "code": "evidence_error",
+                        "message": f"{type(exc).__name__}: {exc}"}
+            if not got.success:
+                return {"ok": False, "code": "evidence_not_found",
+                        "message": f"checkpoint evidence 指向不存在的 "
+                                   f"artifact：{path!r}"}
+            expected = evidence_data.get("revision")
+            if expected is not None:
+                actual = (got.result or {}).get("revision")
+                try:
+                    expected_int = int(expected)
+                except (TypeError, ValueError):
+                    return {"ok": False, "code": "bad_evidence_revision",
+                            "message": "evidence.revision 必须是整数"}
+                if actual is None or int(actual) != expected_int:
+                    return {"ok": False, "code": "evidence_revision_mismatch",
+                            "message": (f"evidence.revision={expected_int} "
+                                        f"与当前 revision={actual} 不一致")}
+        record = {
+            "phase": phase,
+            "passed": bool(passed),
+            "by": agent_id,
+            "at": utc_now_iso(),
+            "note": str(note or "")[:2000],
+            "evidence": evidence_data or None,
+        }
+        checkpoints = dict(getattr(self.run, "plan_checkpoints", None) or {})
+        checkpoints[phase] = record
+        self.run.plan_checkpoints = checkpoints
+        self._write_run()
+        self._event("workspace_plan_checkpoint", **record)
+        return {"ok": True, "checkpoint": record}
 
     def _lock_snapshot(self, workspace_id: str) -> Dict[str, str]:
         if not workspace_id:

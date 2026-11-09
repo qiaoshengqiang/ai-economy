@@ -16,7 +16,7 @@ V1 边界：
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 from core.task import Task
 from core.task_shared_context import ContextChangeType
@@ -383,11 +383,140 @@ class TaskCreationService:
                      "或把 producer 改成该 Agent。"))
             normalized_files[path] = owner
 
-        return {
+        result = {
             "root_owner": root_owner,
             "directories": dict(sorted(declared_dirs.items())),
             "files": dict(sorted(normalized_files.items())),
         }
+        # 🔒 phases / placeholders 是**可选扩展**：旧 plan 不写这两项时，
+        #    返回结构保持原样（向后兼容）。
+        if plan.get("phases") is not None:
+            result["phases"] = self._validate_plan_phases(
+                plan.get("phases"), files=normalized_files)
+        if plan.get("placeholders") is not None:
+            result["placeholders"] = self._validate_plan_placeholders(
+                plan.get("placeholders"), files=normalized_files)
+        return result
+
+    def _validate_plan_phases(
+        self, raw: Any, *, files: Mapping[str, str],
+    ) -> List[Dict[str, Any]]:
+        """
+        校验可选的开发阶段/依赖/检查点。
+
+        🔒 这是**通用**的：checkpoint 只是 Creator 写的自由文本目标，
+           系统不硬编码 pytest / playwright / DOM 检查。
+        """
+        if not isinstance(raw, list) or not raw:
+            raise TaskCreationError(
+                "bad_workspace_plan",
+                "workspace_plan.phases 必须是非空列表")
+
+        phases: List[Dict[str, Any]] = []
+        names: set[str] = set()
+        for item in raw:
+            if not isinstance(item, Mapping):
+                raise TaskCreationError(
+                    "bad_workspace_plan",
+                    "workspace_plan.phases 的每一项必须是对象")
+            name = str(item.get("name") or "").strip()
+            if not name:
+                raise TaskCreationError(
+                    "bad_workspace_plan",
+                    "workspace_plan phase.name 不能为空")
+            if name in names:
+                raise TaskCreationError(
+                    "bad_workspace_plan",
+                    f"workspace_plan phase 重复：{name!r}")
+            names.add(name)
+
+            depends_raw = item.get("depends_on") or []
+            if not isinstance(depends_raw, list):
+                raise TaskCreationError(
+                    "bad_workspace_plan",
+                    f"phase {name!r} 的 depends_on 必须是字符串列表")
+            depends_on: List[str] = []
+            for dep in depends_raw:
+                dep = str(dep or "").strip()
+                if dep and dep not in depends_on:
+                    depends_on.append(dep)
+
+            files_raw = item.get("files") or []
+            if not isinstance(files_raw, list):
+                raise TaskCreationError(
+                    "bad_workspace_plan",
+                    f"phase {name!r} 的 files 必须是字符串列表")
+            phase_files: List[str] = []
+            for file_path in files_raw:
+                normalized = self._normalize_plan_path(file_path)
+                if not normalized:
+                    raise TaskCreationError(
+                        "bad_workspace_plan",
+                        f"phase {name!r} 的 files 含空路径")
+                if normalized not in files:
+                    raise TaskCreationError(
+                        "bad_workspace_plan",
+                        (f"phase {name!r} 引用了未在 workspace_plan.files "
+                         f"声明的文件：{normalized!r}"))
+                if normalized not in phase_files:
+                    phase_files.append(normalized)
+
+            checkpoint = str(item.get("checkpoint") or "").strip()
+            phases.append({
+                "name": name,
+                "depends_on": depends_on,
+                "files": phase_files,
+                "checkpoint": checkpoint,
+            })
+
+        by_name = {phase["name"]: phase for phase in phases}
+        for phase in phases:
+            for dep in phase["depends_on"]:
+                if dep == phase["name"]:
+                    raise TaskCreationError(
+                        "bad_workspace_plan",
+                        f"phase {phase['name']!r} 不能依赖自己")
+                if dep not in by_name:
+                    raise TaskCreationError(
+                        "bad_workspace_plan",
+                        (f"phase {phase['name']!r} 依赖不存在的 phase "
+                         f"{dep!r}"))
+
+        def visit(name: str, stack: tuple[str, ...]) -> None:
+            if name in stack:
+                raise TaskCreationError(
+                    "bad_workspace_plan",
+                    "workspace_plan.phases 依赖出现环："
+                    + " → ".join(stack + (name,)))
+            for dep in by_name[name]["depends_on"]:
+                visit(dep, stack + (name,))
+
+        for phase in phases:
+            visit(phase["name"], ())
+        return phases
+
+    def _validate_plan_placeholders(
+        self, raw: Any, *, files: Mapping[str, str],
+    ) -> List[str]:
+        if not isinstance(raw, list):
+            raise TaskCreationError(
+                "bad_workspace_plan",
+                "workspace_plan.placeholders 必须是字符串列表")
+        out: List[str] = []
+        for file_path in raw:
+            normalized = self._normalize_plan_path(file_path)
+            if not normalized:
+                raise TaskCreationError(
+                    "bad_workspace_plan",
+                    "workspace_plan.placeholders 含空路径")
+            if normalized not in files:
+                raise TaskCreationError(
+                    "bad_workspace_plan",
+                    (f"workspace_plan.placeholders 引用了未声明的文件："
+                     f"{normalized!r}"))
+            if normalized not in out:
+                out.append(normalized)
+        return out
 
     @staticmethod
     def _normalize_plan_path(raw: Any) -> str:

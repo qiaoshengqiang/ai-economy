@@ -258,11 +258,14 @@ def _safe(render: Any, fallback: str) -> str:
 
 
 def _render_plan_status(runtime: Any, workspace_id: str, agent_id: str,
-                        plan: Optional[Dict[str, Any]]) -> str:
+                        plan: Optional[Dict[str, Any]],
+                        checkpoints: Optional[Dict[str, Any]] = None) -> str:
     """
     把 Creator 的 workspace_plan 与 Workspace 实际状态做对照。
 
     🔒 这是**系统派生的客观检查**，不是公共工作记忆，也不是 Task 状态。
+    🔒 `phases` 的阶段检查点是 **Agent 自己记录的结果**，不是系统验收；
+       系统只负责显示依赖/文件存在性和记录。
     """
     if not isinstance(plan, dict) or not workspace_id:
         return ""
@@ -273,6 +276,9 @@ def _render_plan_status(runtime: Any, workspace_id: str, agent_id: str,
     gateway = getattr(runtime, "workspace_gateway", None)
     if gateway is None:
         return ""
+    placeholders = {
+        str(item) for item in (plan.get("placeholders") or [])
+    }
     lines = ["========== 计划完成度（Creator workspace_plan） =========="]
     missing = 0
 
@@ -297,17 +303,73 @@ def _render_plan_status(runtime: Any, workspace_id: str, agent_id: str,
     if files:
         lines.append("files:")
         for path, owner in files.items():
-            ok = _exists(str(path), False)
-            missing += 0 if ok else 1
-            lines.append(
-                f"- {path}  {'✅' if ok else '❌ missing'}  "
-                f"(owner={owner})")
+            path = str(path)
+            ok = _exists(path, False)
+            if not ok:
+                missing += 1
+                state = "❌ missing"
+            elif path in placeholders:
+                state = "⬜ placeholder（已创建，尚未实现）"
+            else:
+                state = "✅"
+            lines.append(f"- {path}  {state}  (owner={owner})")
     if missing:
         lines.append(
             "⚠️ 以上是 Creator 计划的客观缺口；缺失项需要 Agent 动作补齐，"
             "不会因为其它文件写成功而自动完成。")
     else:
         lines.append("✅ 计划中的目录与文件都已存在。")
+
+    phases = plan.get("phases") or []
+    if isinstance(phases, list) and phases:
+        known = checkpoints if isinstance(checkpoints, dict) else {}
+        passed = {
+            str(name) for name, item in known.items()
+            if isinstance(item, dict) and item.get("passed")
+        }
+        lines.append("")
+        lines.append(
+            "========== 计划阶段（Creator workspace_plan；"
+            "检查点是 Agent 记录，不是系统验收） ==========")
+        for phase in phases:
+            if not isinstance(phase, dict):
+                continue
+            name = str(phase.get("name") or "")
+            deps = [str(x) for x in (phase.get("depends_on") or [])]
+            phase_files = [str(x) for x in (phase.get("files") or [])]
+            missing_files = [
+                f for f in phase_files if not _exists(f, False)]
+            checkpoint = known.get(name) if isinstance(known, dict) else None
+            checkpoint = checkpoint if isinstance(checkpoint, dict) else {}
+            waiting = [d for d in deps if d not in passed]
+            if checkpoint.get("passed"):
+                state = (f"✅ checkpoint passed (by "
+                         f"{checkpoint.get('by') or '?'}；self-report)")
+            elif checkpoint and checkpoint.get("passed") is False:
+                state = (f"❌ checkpoint failed (by "
+                         f"{checkpoint.get('by') or '?'}；self-report)")
+            elif waiting:
+                state = "⏳ pending；waiting=" + ", ".join(waiting)
+            elif missing_files:
+                state = "❌ files missing: " + ", ".join(missing_files)
+            else:
+                state = "▶ files present；checkpoint not recorded"
+            extras: List[str] = []
+            if checkpoint.get("passed") and missing_files:
+                extras.append("⚠️ checkpoint passed 但文件缺失："
+                              + ", ".join(missing_files))
+            phase_placeholders = [
+                f for f in phase_files if f in placeholders]
+            if phase_placeholders:
+                extras.append("⬜ placeholder：" + ", ".join(phase_placeholders))
+            lines.append(
+                f"- {state}  {name}  depends_on={deps or []}  "
+                f"files={phase_files or []}")
+            target = str(phase.get("checkpoint") or "").strip()
+            if target:
+                lines.append(f"  checkpoint 目标：{target}")
+            for extra in extras:
+                lines.append(f"  {extra}")
     return "\n".join(lines)
 
 
@@ -598,7 +660,8 @@ def build_task_prompt(
     plan_status = _render_plan_status(
         runtime,
         task.workspace.workspace_id if task.workspace else "",
-        agent_id, getattr(run, "workspace_plan", None))
+        agent_id, getattr(run, "workspace_plan", None),
+        getattr(run, "plan_checkpoints", None))
     context = _render_context(runtime, task.task_id)
     public_working_memory = _safe(
         lambda: runtime.public_working_memory.render(task.task_id, agent_id),
@@ -673,6 +736,19 @@ def build_task_prompt(
 - 一个 producer + 一个巨大文件不是默认方案；串行墙钟通常随模块数增长。
 - AI Economy OS 的目标之一是低 AIC、短墙钟、高质量；合理分工通常
   有助于减少单个 Agent 的上下文负担和返工。是否拆分由你决定。
+
+========== 规划与落地顺序（结构事实） ==========
+- `workspace_plan` 可包含 `phases`：
+  `[{{"name": "...", "depends_on": [], "files": [...], "checkpoint": "..."}}]`。
+  `phases` 是开发顺序/依赖，不是 Task 状态；`checkpoint` 只是自由文本目标。
+- 先建目录 + 入口 skeleton + 模块最小骨架，再按 phases 填充；
+  不要先写大量内容，最后才发现入口/import 不存在。
+- 需要 `resource_handoff` 的文件/目录必须**已经存在**：先创建，再 handoff。
+- `placeholders` 可标记“已创建但尚未实现”的文件；实现后从 placeholders 移除。
+- 每个 phase 结束时，**你自己选择**检查方式（`run_tool` / workspace_read /
+  其他），再用 `workspace_plan_checkpoint` 记录 passed/evidence/note。
+  系统不硬编码“每阶段必须跑 DOM/import/smoke”；Web 任务的最终 SUBMIT
+  仍有单独的 DOM/import 门禁。
 
 ========== Task Core（唯一生命周期权威） ==========
 - task_id: {task.task_id}
@@ -770,9 +846,14 @@ def build_task_prompt(
 - `resource_create` / `resource_handoff` / `resource_release`：
   建目录 / 交接责任 / 释放独立责任。
 - `workspace_plan_update`（仅 creator）
-  `plan`: 完整的 `{{"root_owner": ..., "directories": ..., "files": ...}}`。
-  交付范围 / ownership 变化时使用；更新后“计划完成度”以新 plan 为准，
+  `plan`: 完整的 `{{"root_owner": ..., "directories": ..., "files": ...,
+  "phases": [...], "placeholders": [...]}}`。
+  交付范围 / ownership / 开发顺序变化时使用；更新后“计划完成度”以新 plan 为准，
   不会继续显示旧 plan 里已经移除的文件。
+- `workspace_plan_checkpoint`
+  `phase` / `passed`（布尔）/ `evidence`（可选对象）/ `note`（可选）。
+  记录某个 phase 的检查结果；检查方式由你选择（run_tool / read / 其他）。
+  它是 Agent 的阶段检查记录，不是 Task 验收。
 - `public_working_memory_read`
 - `public_working_memory_update`
   `expected_revision` / `items` / `remove_keys` / `content`

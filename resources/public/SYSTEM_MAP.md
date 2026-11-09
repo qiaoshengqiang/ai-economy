@@ -69,8 +69,11 @@
 | `run_tool` | 在独立 run 目录执行公共工具库中的工具 | `tool` · `args` · `source` · `path` · `timeout_seconds` |
 
 > Demand 入口的 Creator 还可使用 `workspace_plan_update`
-> （完整 `root_owner` / `directories` / `files`）更新交付计划；
-> 它只存在于 Demand 组合根，参数见 Task prompt。
+> （完整 `root_owner` / `directories` / `files` / `phases` /
+> `placeholders`）更新交付计划；participant 可用
+> `workspace_plan_checkpoint` 记录某个 phase 的检查结果。
+> 它们只存在于 Demand 组合根，参数见 Task prompt；checkpoint 是
+> Agent 自报，不是 Task 验收。
 
 **公共工具库**（只读，由项目预装）：
 `python` · `pytest` · `node` · `playwright`

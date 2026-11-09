@@ -43,6 +43,9 @@ class DemandRun:
     brief: Optional[Dict[str, Any]] = None
     #: Creator 阶段产出的 Workspace 责任计划（root/directory/file owner）。
     workspace_plan: Optional[Dict[str, Any]] = None
+    #: 可选的阶段检查点记录：phase → {passed, by, at, note, evidence}。
+    #: 🔒 这是 Agent 自己记录的检查结果，不是 Task 状态/系统验收。
+    plan_checkpoints: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -67,6 +70,9 @@ class DemandRun:
             "workspace_plan": (
                 dict(self.workspace_plan)
                 if self.workspace_plan else None),
+            "plan_checkpoints": (
+                dict(self.plan_checkpoints)
+                if self.plan_checkpoints else None),
         }
 
 

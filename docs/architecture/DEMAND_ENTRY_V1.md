@@ -310,6 +310,39 @@ prompt 显示 streak、当前持有的锁、未回应请求数；creator 还能�
 - 断言作者看到 `claim_by` 是自己时，应核对 evidence 并更新自己的记忆/回复；
 - 它是争议记录，不是系统裁决。
 
+### 3.8 Workspace Plan 阶段 / 检查点 / 占位（2026-11-09）
+
+真实 run `demand_da850bbc` 暴露：plan 只有“文件 → owner”，
+没有开发顺序/依赖/检查点，A 先写 index 再写 engine/world，
+但 index 引用的 main.js 从未创建，engine/world 成了死代码。
+
+`workspace_plan` 现在可选：
+
+```json
+{
+  "phases": [
+    {"name": "skeleton", "depends_on": [],
+     "files": ["index.html", "src/main.js"],
+     "checkpoint": "入口能加载，本地 import 可解析"},
+    {"name": "world", "depends_on": ["skeleton"],
+     "files": ["src/world.js"], "checkpoint": "world 能渲染"}
+  ],
+  "placeholders": ["src/world.js"]
+}
+```
+
+- `phases`：通用开发顺序/依赖；`checkpoint` 是自由文本目标，
+  系统**不硬编码** DOM/import/Playwright；
+- `placeholders`：已创建但未实现的文件，计划完成度显示 `⬜`；
+- `workspace_plan_checkpoint`：Agent 记录某 phase 的
+  `passed / evidence / note`；检查方式由 Agent 自己选择；
+- checkpoint 是 Agent 自报，不是 Task 验收；
+- Plan 更新时，删除/变更的 phase 对应 checkpoint 自动失效。
+
+Provisioning 仍然是 Creator 的显式动作，不由 `task_create` 自动创建
+所有空文件：先建目录 + 入口 skeleton + 模块最小骨架，再按 phases 填充；
+需要交接的文件/目录必须先存在。
+
 ---
 
 ## 4. `task_create`
