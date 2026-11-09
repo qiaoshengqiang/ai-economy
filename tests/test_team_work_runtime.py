@@ -368,6 +368,30 @@ class TestReplanLockHandoff:
 
         assert gateway.handoffs == []
 
+    def test_implicit_item_directories_are_added(self, db):
+        task = _task()
+        runtime = _TeamRuntime(db, task, {})
+        team = TeamWorkRuntime(runtime, task)
+        plan, error = parse_work_plan(
+            json.dumps({
+                "items": [{
+                    "item_id": "item_1",
+                    "assigned_to": "agent_b",
+                    "goal": "写审计报告",
+                    "paths": ["mod_audit/report.md", "mod_storage"],
+                }],
+                "qa": None,
+                "directories": {},
+            }),
+            participants=["agent_a", "agent_b", "agent_c"],
+        )
+        assert plan is not None, error
+
+        team._ensure_plan_directories(plan)
+
+        assert plan.directories["mod_audit"] == "agent_b"
+        assert plan.directories["mod_storage"] == "agent_b"
+
     def test_qa_pass_cannot_ignore_blocked_items(self, db):
         task = _task()
         runtime = _TeamRuntime(db, task, {})

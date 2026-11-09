@@ -145,6 +145,7 @@ class TeamWorkRuntime:
                 return result
 
             self._record_plan(self.plan)
+            self._ensure_plan_directories(self.plan)
             self._publish_plan_to_public_memory(self.plan)
             self._provision_workspace(self.plan)
             self._init_item_state(self.plan)
@@ -409,6 +410,48 @@ class TeamWorkRuntime:
     # ------------------------------------------------------------
     # 阶段 2：Workspace 目录准备
     # ------------------------------------------------------------
+    def _ensure_plan_directories(self, plan: WorkPlan) -> None:
+        """把 item.paths 里隐含的目录补进计划。
+
+        Leader 经常只写 ``directories`` 的一部分，却在 item.paths
+        里写 ``mod_audit/report.md``。如果不补，成员会因为父目录不存在
+        / 没有锁而阻塞 —— 这不是成员的错。
+        """
+        dirs = dict(plan.directories or {})
+        claims: Dict[str, set] = {}
+        for item in plan.items:
+            for raw in item.paths:
+                path = str(raw or "").strip().strip("/")
+                if not path:
+                    continue
+                parent = posixpath.dirname(path)
+                base = posixpath.basename(path)
+                candidates = []
+                if parent:
+                    candidates.append(parent)
+                if base and "." not in base:
+                    candidates.append(path)
+                for candidate in candidates:
+                    if not candidate:
+                        continue
+                    claims.setdefault(candidate, set()).add(item.agent_id)
+                    parts = candidate.split("/")
+                    for index in range(1, len(parts)):
+                        ancestor = "/".join(parts[:index])
+                        dirs.setdefault(ancestor, self.lead)
+
+        for path, owners in claims.items():
+            if path in dirs:
+                continue
+            if len(owners) > 1:
+                dirs[path] = self.lead
+                self._event(
+                    "team_directory_shared", path=path,
+                    owners=sorted(owners))
+            else:
+                dirs[path] = next(iter(owners))
+        plan.directories = dirs
+
     def _provision_workspace(self, plan: WorkPlan) -> None:
         """
         按 Leader 的 directories 计划创建目录并移交锁。
@@ -711,6 +754,7 @@ class TeamWorkRuntime:
         # 改派 item 时必须同时移交对应目录/文件的责任，
         # 否则新 owner 会被父目录 Directory Lock 挡住。
         self._handoff_reassigned_items(previous_plan, new_plan, applied)
+        self._ensure_plan_directories(new_plan)
         self._plan_history.append(new_plan.to_dict())
         self._record_plan_revision(new_plan, applied, reason)
         self._publish_plan_to_public_memory(new_plan)
