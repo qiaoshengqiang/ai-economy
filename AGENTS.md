@@ -30,7 +30,7 @@
 | | |
 |---|---|
 | **阶段** | `Workspace Core V1 已冻结 · Agent Core V1 已实现 · Tool Runtime V1 已实现 · Vision V1 已实现 · Demand Entry V1 已实现 · 观察实验` |
-| **测试基线** | 以 `./dev.sh test` 当前输出为准（最近：**5209 passed, 2 skipped, 30 deselected**） |
+| **测试基线** | 以 `./dev.sh test` 当前输出为准（最近：**5215 passed, 2 skipped, 30 deselected**） |
 | **协议版本** | `protocol_version = "1"` |
 | **命令数** | 25（`./dev.sh` 查看全部） |
 | **数据库表** | **28** |
@@ -79,7 +79,7 @@ Tool Runtime  V1 · 公共只读工具库（python/pytest/node/playwright）· �
 ③ Front Agent 也是 Agent；系统使用同一套 Task / Agent 模型，不引入 `HumanTask`。
 ④ Front Agent 承担 `Human → OS` 入口；Agent 之间仍然可以直接协作。
 
-> **兼容性 ≠ 提前实现**：`V1 简单 + 边界清楚 + 接口稳定 = 可扩展`。
+> **兼容性 ≠ 提前实现**：`V1 简单 + 边界清楚 + 接口稳定 = 可扩展`。Life/Work 架构（`DESIGNED`）见 [`LIFE_WORK_ARCHITECTURE.md`](docs/architecture/LIFE_WORK_ARCHITECTURE.md)（ADR-0055/0056）。
 
 ---
 
