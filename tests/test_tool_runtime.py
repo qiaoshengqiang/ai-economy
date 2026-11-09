@@ -113,6 +113,15 @@ def test_unknown_tool_is_structured_failure(runner):
     assert "不在公共工具库" in result.message
 
 
+def test_too_long_arg_is_a_clear_structured_failure(runner):
+    result = runner.run_from_task(
+        _Gateway({}), "WS-TEST", "agent_a",
+        tool="python", args=["-c", "x" * 2001])
+    assert result.ran is False
+    assert result.code == "pre_run_failed"
+    assert "2000" in result.message
+
+
 def test_run_tool_executor_treats_test_failure_as_executed():
     def run_fn(agent_id, **kwargs):
         return {"ran": True, "ok": False, "exit_code": 1,

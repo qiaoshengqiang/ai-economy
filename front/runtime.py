@@ -217,7 +217,14 @@ status 为 INTERRUPTED 表示任务之前中断了、现在没有在执行：
    或「这个任务之前中断了，我现在继续」；
    不要写「按现有 Brief 交付」「无需改动范围」这类内部话。
 
-5. clarify
+5. cancel
+   Human 明确要求停止 / 取消一个**进行中的 Task**。
+   {{"intent":"cancel","task_id":"...","reply":"给 Human 的确认","reason":"..."}}
+   只能引用上面进行中的 task_id。
+   🔒 不要说“已经停了”却不输出 cancel —— direct_reply 不会终止任何工作；
+      停止必须走这个 intent，系统才会真的停掉执行并释放 Agent。
+
+6. clarify
    意图不明确，向 Human 追问。
    {{"intent":"clarify","question":"...","reason":"..."}}
 

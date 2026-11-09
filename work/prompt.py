@@ -50,6 +50,7 @@ ACTION_SCHEMA = """
   {"tool":"python|pytest|node|playwright", "args":[...],
    "source":"task|private", "path":"<入口文件>", "timeout_seconds":60}
   ⚠️ 不要用 command 字段。
+  ⚠️ args 每项 ≤ 2000 字符；长脚本先 private_write 落文件，再运行文件。
 - public_working_memory_read:
   {}
 - public_working_memory_update:

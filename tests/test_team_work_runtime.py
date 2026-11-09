@@ -390,6 +390,16 @@ class TestReplanLockHandoff:
 # 3. Team runtime
 # ============================================================
 class TestTeamRuntime:
+    def test_should_stop_returns_before_any_work(self, db):
+        task = _task()
+        runtime = _TeamRuntime(db, task, {})
+        result = TeamWorkRuntime(
+            runtime, task, should_stop=lambda: True).run()
+
+        assert result.ok is False
+        assert "停止" in result.error
+        assert runtime.tasks.get(task.task_id).status == TaskStatus.CREATED
+
     def test_workers_parallel_and_leader_completes(self, db):
         barrier = threading.Barrier(2, timeout=5)
 

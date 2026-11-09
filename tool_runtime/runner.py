@@ -255,7 +255,9 @@ class ToolRunner:
         clean_args = self._clean_args(args)
         if clean_args is None:
             return self._pre_run_failure(
-                tool_name, run.run_id, "args 必须是字符串列表（最多 100 项）")
+                tool_name, run.run_id,
+                "args 必须是最多 100 项的字符串列表，"
+                "每项长度 ≤ 2000 字符；长脚本请先写文件再运行")
 
         timeout = self._timeout(timeout_seconds)
         if timeout is None:

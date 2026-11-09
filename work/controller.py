@@ -54,6 +54,8 @@ class JobStatus:
     LEADER_PLANNING = "LEADER_PLANNING"
     WAITING_FOR_MEMBERS = "WAITING_FOR_MEMBERS"
     RUNNING = "RUNNING"
+    CANCELLING = "CANCELLING"
+    CANCELLED = "CANCELLED"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
     DIRECT_REPLY = "DIRECT_REPLY"
@@ -67,6 +69,7 @@ _RUNNING_JOB_STATUSES = frozenset({
     JobStatus.LEADER_PLANNING,
     JobStatus.WAITING_FOR_MEMBERS,
     JobStatus.RUNNING,
+    JobStatus.CANCELLING,
 })
 
 
@@ -83,6 +86,7 @@ class WorkJob:
     error: str = ""
     tokens: int = 0
     turns: int = 0
+    cancelled: bool = False
     created_at: str = ""
     updated_at: str = ""
 
@@ -99,6 +103,7 @@ class WorkJob:
             "error": self.error,
             "tokens": self.tokens,
             "turns": self.turns,
+            "cancelled": self.cancelled,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -304,6 +309,9 @@ class AIEOSController:
                 job.summary = decision.question
                 self._touch(job)
                 return
+            if decision.intent == FrontIntent.CANCEL:
+                self._cancel_work(job, decision)
+                return
             if decision.intent in (
                 FrontIntent.REWORK, FrontIntent.FOLLOW_UP,
             ):
@@ -375,6 +383,7 @@ class AIEOSController:
                     max_worker_turns=self.max_worker_turns,
                     max_integration_turns=self.max_integration_turns,
                     cognitive_budget=self.cognitive_budget,
+                    should_stop=lambda: job.cancelled,
                 )
             else:
                 runner = SoloWorkRuntime(
@@ -383,8 +392,12 @@ class AIEOSController:
                     max_turns=(
                         self.max_worker_turns + self.max_integration_turns),
                     cognitive_budget=self.cognitive_budget,
+                    should_stop=lambda: job.cancelled,
                 )
             result = runner.run()
+            if job.cancelled:
+                self._finish_cancelled(job, task_id)
+                return
             self._finish_work(job, front, task_id, result)
         except Exception as exc:                              # noqa: BLE001
             self._fail(job, f"{type(exc).__name__}: {exc}")
@@ -650,6 +663,7 @@ class AIEOSController:
                 max_worker_turns=self.max_worker_turns,
                 max_integration_turns=self.max_integration_turns,
                 cognitive_budget=self.cognitive_budget,
+                should_stop=lambda: job.cancelled,
             )
         else:
             runner = SoloWorkRuntime(
@@ -657,11 +671,15 @@ class AIEOSController:
                 max_turns=(
                     self.max_worker_turns + self.max_integration_turns),
                 cognitive_budget=self.cognitive_budget,
+                should_stop=lambda: job.cancelled,
             )
         result = (
             runner.reopen_and_run(reason=reason)
             if action == "rework" else runner.run())
-        self._finish_work(job, front, task.task_id, result)
+        if job.cancelled:
+            self._finish_cancelled(job, task.task_id)
+        else:
+            self._finish_work(job, front, task.task_id, result)
         return leader, members
 
     def _finish_work(
@@ -692,6 +710,101 @@ class AIEOSController:
             "front", text, job_id=job.job_id, task_id=task_id)
         job.status = JobStatus.DIRECT_REPLY
         job.summary = text
+        self._touch(job)
+
+    # ------------------------------------------------------------
+    # cancel：真正停止执行中的 Task
+    # ------------------------------------------------------------
+    def _cancel_work(self, job: WorkJob, decision: Any) -> None:
+        task_id = str(getattr(decision, "task_id", "") or "").strip()
+        try:
+            task = self.rt.tasks.get(task_id)
+        except Exception:                                     # noqa: BLE001
+            task = None
+        if task is None:
+            self._reply_direct(
+                job, "找不到要停止的任务；它可能已经被清理了。", task_id)
+            return
+        if task.status == TaskStatus.COMPLETED:
+            self._reply_direct(
+                job, f"任务 {task.task_id} 已经完成了，不需要停止。",
+                task.task_id)
+            return
+        if not task.is_open:
+            self._reply_direct(
+                job,
+                f"任务 {task.task_id} 当前是 {task.status}，没有在运行。",
+                task.task_id,
+            )
+            return
+
+        target = None
+        with self._lock:
+            for other in self._jobs.values():
+                if other.job_id == job.job_id:
+                    continue
+                if other.task_id != task.task_id:
+                    continue
+                if other.status in _RUNNING_JOB_STATUSES:
+                    target = other
+                    break
+
+        if target is None:
+            if self._mark_task_cancelled(
+                    task, reason=f"Human: {job.human_text}"):
+                self._reply_direct(
+                    job, f"任务 {task.task_id} 已停止。", task.task_id)
+            else:
+                self._reply_direct(
+                    job,
+                    f"任务 {task.task_id} 停止失败，请稍后重试。",
+                    task.task_id,
+                )
+            return
+
+        target.cancelled = True
+        self._set_job(target, JobStatus.CANCELLING)
+        self._mark_task_cancelled(
+            task, reason=f"Human: {job.human_text}")
+        self._reply_direct(
+            job,
+            f"正在停止任务 {task.task_id}。已经通知执行中的团队，"
+            "他们会在当前步骤结束后停下。",
+            task.task_id,
+        )
+
+    def _mark_task_cancelled(self, task: Any, *, reason: str) -> bool:
+        try:
+            if task.status in (
+                TaskStatus.CREATED,
+                TaskStatus.ACCEPTED,
+                TaskStatus.IN_PROGRESS,
+            ):
+                task.cancel(reason=reason)
+            elif task.status in (
+                TaskStatus.SUBMITTED, TaskStatus.VERIFIED,
+            ):
+                task.fail(reason=reason)
+            else:
+                return False
+            self.rt.tasks.save(task)
+            return True
+        except Exception as exc:                              # noqa: BLE001
+            self._message(
+                "system",
+                f"停止任务 {getattr(task, 'task_id', '')} 失败："
+                f"{type(exc).__name__}: {exc}",
+                task_id=getattr(task, "task_id", ""),
+            )
+            return False
+
+    def _finish_cancelled(self, job: WorkJob, task_id: str) -> None:
+        job.status = JobStatus.CANCELLED
+        job.summary = "任务已停止"
+        job.error = ""
+        self._message(
+            "system", f"任务 {task_id} 已停止。",
+            job_id=job.job_id, task_id=task_id)
         self._touch(job)
 
     @staticmethod
@@ -740,6 +853,13 @@ class AIEOSController:
                 task = self._agent_tasks.get(aid, {})
                 if task:
                     role = task.get("role", "")
+                    running_job = self._jobs.get(task.get("job_id"))
+                    if (
+                        state == "WORKING"
+                        and running_job is not None
+                        and running_job.status == JobStatus.CANCELLING
+                    ):
+                        state = "STOPPING"
                 agents.append({
                     "agent_id": aid,
                     "status": state,

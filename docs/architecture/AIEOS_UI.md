@@ -74,6 +74,11 @@ Front Agent（固定）
 | `follow_up`，Task 已中断 | 用原团队从当前状态恢复执行 |
 | `rework`，Task 已完成 | 追加本轮要求 → Reopen（iteration +1）→ 原团队重跑 |
 | `rework`，Task 未完成 | 按 `follow_up` 恢复执行 |
+| `cancel`，Task 有 Job 在跑 | 标记停止 → Task `CANCELLED`；Agent 显示 `STOPPING`，当前步骤结束后释放 |
+| `cancel`，Task 没有 Job | 直接把 Task 置为 `CANCELLED` |
+
+> `direct_reply` **不能**声称“已经停止”——停止必须由 Front 输出
+> `cancel`，控制面才真的取消 Task 并释放 Agent。
 
 Front 看到的开放 Task 状态来自两个事实：Task Core 的状态 + 是否有
 Job 正在执行。没有 Job 的开放 Task 标记为 `INTERRUPTED`，

@@ -29,7 +29,7 @@ from __future__ import annotations
 import posixpath
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from core.task import Task, TaskMode, TaskStatus
 from core.task_execution import TaskResultRef
@@ -80,6 +80,7 @@ class TeamWorkRuntime:
         max_replans: int = 3,
         cognitive_budget: int = 32768,
         event_sink: Any = None,
+        should_stop: Optional[Callable[[], bool]] = None,
     ) -> None:
         if task.mode != TaskMode.TEAM:
             raise ValueError(
@@ -100,6 +101,7 @@ class TeamWorkRuntime:
         self.max_replans = max(0, int(max_replans))
         self.cognitive_budget = max(1, int(cognitive_budget))
         self.event_sink = event_sink
+        self.should_stop = should_stop or (lambda: False)
         self.lifecycle = WorkLifecycle(runtime.tasks)
         self.drafts = drafts or TaskDraftStore(
             task_id=task.task_id, workspace_of=self._workspace_of)
@@ -128,8 +130,15 @@ class TeamWorkRuntime:
             if self.task.status == TaskStatus.COMPLETED:
                 result.summary = self.task.note or "Task 已经处于 COMPLETED"
                 return result
+            if self._stopped():
+                result.error = "任务已被停止"
+                return result
             self._start_if_needed()
             self.plan = self.initial_plan or self._plan()
+            if self._stopped():
+                result.error = "任务已被停止"
+                result.status = self.task.status
+                return result
             if self.plan is None:
                 result.error = "Leader 没有产出可执行计划"
                 result.status = self.task.status
@@ -142,7 +151,21 @@ class TeamWorkRuntime:
             self._plan_history.append(self.plan.to_dict())
 
             self._run_workers(self.plan)
+            if self._stopped():
+                result.error = "任务已被停止"
+                result.status = self.task.status
+                result.tokens = self._tokens
+                result.actions = self._actions
+                result.turns = self._turns()
+                return result
             self._run_replan_loop()
+            if self._stopped():
+                result.error = "任务已被停止"
+                result.status = self.task.status
+                result.tokens = self._tokens
+                result.actions = self._actions
+                result.turns = self._turns()
+                return result
 
             if self.plan.qa:
                 if not self._run_qa():
@@ -153,6 +176,13 @@ class TeamWorkRuntime:
                     self._run_workers(self.plan)
                     self._run_qa()
 
+            if self._stopped():
+                result.error = "任务已被停止"
+                result.status = self.task.status
+                result.tokens = self._tokens
+                result.actions = self._actions
+                result.turns = self._turns()
+                return result
             self._run_leader_finalize()
 
             result.status = self.task.status
@@ -211,6 +241,8 @@ class TeamWorkRuntime:
         participants = list(self.task.participants or [])
         last_error = ""
         for attempt in range(1, self.max_plan_turns + 1):
+            if self._stopped():
+                return None
             prompt = build_lead_plan_prompt(
                 context,
                 task_description=self.task.description,
@@ -522,6 +554,8 @@ class TeamWorkRuntime:
         只调整计划；当前轮不强行中断。改完后再开下一轮 worker。
         """
         for attempt in range(1, self.max_replans + 1):
+            if self._stopped():
+                return
             if not self._needs_replan():
                 return
             before = self.plan.revision if self.plan else 0
@@ -585,6 +619,8 @@ class TeamWorkRuntime:
         empty_streak = 0
         before = self.plan.revision
         for turn in range(1, self.max_integration_turns + 1):
+            if self._stopped():
+                return
             qa_feedback = ""
             if self._qa_verdict and not self._qa_verdict.get("passed"):
                 qa_feedback = str(self._qa_verdict.get("feedback") or "")
@@ -924,6 +960,8 @@ class TeamWorkRuntime:
         turns = 0
 
         for turn in range(1, self.max_worker_turns + 1):
+            if self._stopped():
+                break
             turns = turn
             context = self._context(agent_id, WorkRole.MEMBER)
             prompt = build_team_worker_prompt(
@@ -1044,6 +1082,8 @@ class TeamWorkRuntime:
         )
         seen_reads: set = set()
         for turn in range(1, self.max_qa_turns + 1):
+            if self._stopped():
+                return False
             context = self._context(qa, WorkRole.QA)
             prompt = build_qa_prompt(
                 context,
@@ -1113,6 +1153,8 @@ Task: {self.task.task_id}
 如果不通过，把 passed 改成 false，并在 feedback 写清楚要修什么。
 """
         for attempt in range(1, 3):
+            if self._stopped():
+                return
             try:
                 run = agent.act(
                     messages=prompt,
@@ -1193,6 +1235,8 @@ Task: {self.task.task_id}
         seen_reads: set = set()
         empty_streak = 0
         for turn in range(1, self.max_integration_turns + 1):
+            if self._stopped():
+                return
             qa_feedback = ""
             if self._qa_verdict and not self._qa_verdict.get("passed"):
                 qa_feedback = str(self._qa_verdict.get("feedback") or "")
@@ -1284,6 +1328,8 @@ Task: {self.task.task_id}
  }}}}}}
 """
         for attempt in range(1, 3):
+            if self._stopped():
+                return
             try:
                 run = agent.act(
                     messages=prompt,
@@ -1515,6 +1561,12 @@ Task: {self.task.task_id}
 
     def _turns(self) -> int:
         return int(getattr(self, "_turn_count", 0))
+
+    def _stopped(self) -> bool:
+        try:
+            return bool(self.should_stop())
+        except Exception:                                     # noqa: BLE001
+            return False
 
     def _event(self, name: str, **payload: Any) -> None:
         record = {"event": name, **payload}

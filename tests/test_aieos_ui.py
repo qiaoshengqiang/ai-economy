@@ -469,6 +469,61 @@ def test_rework_reopens_completed_task_with_new_request(monkeypatch):
     assert job.status == "COMPLETED"
 
 
+def test_cancel_running_task_marks_job_and_task():
+    from front import FrontDecision, FrontIntent
+    from work.controller import WorkJob
+
+    class _Task:
+        task_id = "task_live"
+        status = "IN_PROGRESS"
+        is_open = True
+
+        def __init__(self):
+            self.reason = ""
+
+        def cancel(self, reason=None):
+            self.status = "CANCELLED"
+            self.reason = reason or ""
+
+    task = _Task()
+    runtime = SimpleNamespace(
+        directory=_Directory(["agent_a", "agent_b"]),
+        economy=SimpleNamespace(agent=lambda aid: SimpleNamespace(
+            has_brain=True)),
+        tasks=SimpleNamespace(
+            get=lambda tid: task,
+            save=lambda _task: task,
+            list_tasks=lambda limit=50: [],
+        ),
+    )
+    controller = AIEOSController(runtime, front_agent="agent_a")
+    target = WorkJob(
+        job_id="job_live", human_text="做一个支出记录器",
+        status="RUNNING", task_id="task_live")
+    controller._jobs[target.job_id] = target
+    controller.availability.try_acquire("agent_b")
+    controller._bind_agent("agent_b", target, "LEADER")
+
+    cancel_job = WorkJob(job_id="job_cancel", human_text="停掉这个任务")
+    decision = FrontDecision(
+        intent=FrontIntent.CANCEL, task_id="task_live",
+        reply="好的，正在停止")
+    try:
+        controller._cancel_work(cancel_job, decision)
+        state = controller.state()
+    finally:
+        controller.close()
+
+    assert target.cancelled is True
+    assert target.status == "CANCELLING"
+    assert task.status == "CANCELLED"
+    assert "停掉这个任务" in task.reason
+    assert cancel_job.status == "DIRECT_REPLY"
+    agent = next(
+        item for item in state["agents"] if item["agent_id"] == "agent_b")
+    assert agent["status"] == "STOPPING"
+
+
 def test_workspace_plan_declares_parent_directories():
     plan = AIEOSController._workspace_plan(
         "agent_a",

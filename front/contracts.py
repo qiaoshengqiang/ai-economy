@@ -26,6 +26,8 @@ class FrontIntent:
     REWORK = "rework"
     #: 对进行中 Task 的追问 / 补充 → 路由给 Creator
     FOLLOW_UP = "follow_up"
+    #: Human 明确要求停止进行中的 Task
+    CANCEL = "cancel"
     #: 意图不明确，向 Human 澄清
     CLARIFY = "clarify"
 
@@ -33,7 +35,7 @@ class FrontIntent:
     def all(cls) -> List[str]:
         return [
             cls.DIRECT_REPLY, cls.HANDOFF, cls.REWORK,
-            cls.FOLLOW_UP, cls.CLARIFY,
+            cls.FOLLOW_UP, cls.CANCEL, cls.CLARIFY,
         ]
 
 
@@ -127,7 +129,9 @@ class FrontDecision:
                 f"合法值：{FrontIntent.all()}")
         if self.intent == FrontIntent.HANDOFF and self.brief is None:
             raise ValueError("handoff 必须带 FrontBrief")
-        if self.intent in (FrontIntent.REWORK, FrontIntent.FOLLOW_UP):
+        if self.intent in (
+            FrontIntent.REWORK, FrontIntent.FOLLOW_UP, FrontIntent.CANCEL,
+        ):
             if not str(self.task_id or "").strip():
                 raise ValueError(f"{self.intent} 必须带 task_id")
         if self.intent == FrontIntent.CLARIFY:

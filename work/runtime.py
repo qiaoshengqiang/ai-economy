@@ -21,7 +21,7 @@ SoloWorkRuntime —— Work 层最小执行循环
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from core.task import Task, TaskMode, TaskStatus
 from core.task_execution import TaskResultRef
@@ -47,6 +47,7 @@ class SoloWorkRuntime:
         max_turns: int = 12,
         cognitive_budget: int = 32768,
         event_sink: Any = None,
+        should_stop: Optional[Callable[[], bool]] = None,
     ) -> None:
         if task.mode != TaskMode.SOLO:
             raise ValueError(
@@ -58,6 +59,7 @@ class SoloWorkRuntime:
         self.max_turns = max(1, int(max_turns))
         self.cognitive_budget = max(1, int(cognitive_budget))
         self.event_sink = event_sink
+        self.should_stop = should_stop or (lambda: False)
         self.lifecycle = WorkLifecycle(runtime.tasks)
         self.drafts = drafts or TaskDraftStore(
             task_id=task.task_id,
@@ -77,6 +79,10 @@ class SoloWorkRuntime:
         )
 
         try:
+            if self._stopped():
+                result.error = "任务已被停止"
+                result.status = task.status
+                return result
             if task.status == TaskStatus.COMPLETED:
                 result.summary = task.note or "任务已经处于 COMPLETED"
                 return result
@@ -129,6 +135,10 @@ class SoloWorkRuntime:
         last_turn_facts: Optional[Dict[str, Any]] = None
 
         for turn in range(1, self.max_turns + 1):
+            if self._stopped():
+                result.status = task.status
+                result.error = "任务已被停止"
+                return result
             context = self._context(actor)
             prompt = build_work_prompt(
                 context,
@@ -356,6 +366,12 @@ class SoloWorkRuntime:
     def _workspace_of(self, agent_id: str) -> Any:
         agent = self._agent(agent_id)
         return getattr(agent, "workspace", None)
+
+    def _stopped(self) -> bool:
+        try:
+            return bool(self.should_stop())
+        except Exception:                                     # noqa: BLE001
+            return False
 
     def _event(self, name: str, **payload: Any) -> None:
         if self.event_sink is None:
