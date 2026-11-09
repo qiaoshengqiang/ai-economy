@@ -107,6 +107,7 @@ class AIEOSController:
         max_integration_turns: int = 8,
         cognitive_budget: int = 32768,
         settings_path: Optional[Path] = None,
+        log_dir: Optional[Path] = None,
     ) -> None:
         self.rt = runtime
         self.front_agent = str(front_agent)
@@ -116,6 +117,9 @@ class AIEOSController:
         self.max_integration_turns = max(1, int(max_integration_turns))
         self.cognitive_budget = max(1, int(cognitive_budget))
         self.settings_path = Path(settings_path) if settings_path else None
+        self.log_dir = Path(log_dir) if log_dir else None
+        if self.log_dir is not None:
+            self.log_dir.mkdir(parents=True, exist_ok=True)
 
         self.availability = AgentAvailability()
         self._agent_ids = self._load_agent_ids()
@@ -388,6 +392,7 @@ class AIEOSController:
             if admitted:
                 with self._condition:
                     self._active_jobs = max(0, self._active_jobs - 1)
+            self._write_job_log(job)
             self._notify()
 
     # ------------------------------------------------------------
@@ -801,9 +806,37 @@ class AIEOSController:
         with self._lock:
             job.status = status
             self._touch(job)
+        self._write_job_log(job)
 
     def _touch(self, job: WorkJob) -> None:
         job.updated_at = _now()
+
+    def _write_job_log(self, job: WorkJob) -> None:
+        """
+        把一次 UI Job 的可见日志写到 `log_dir/<job_id>.json`。
+
+        🔒 只保存已经发生的事实：job / messages。
+           Task 的详细执行链仍在 DB，由 Task 卡片按需读取。
+        """
+        if self.log_dir is None:
+            return
+        try:
+            with self._lock:
+                messages = [
+                    message for message in self._messages
+                    if message.get("job_id") == job.job_id
+                ]
+                payload = {
+                    "job": job.to_dict(),
+                    "messages": messages,
+                }
+            self.log_dir.mkdir(parents=True, exist_ok=True)
+            (self.log_dir / f"{job.job_id}.json").write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except OSError:
+            pass
 
     def _fail(self, job: WorkJob, message: str) -> None:
         with self._lock:
@@ -812,6 +845,7 @@ class AIEOSController:
             self._touch(job)
             self._message(
                 "system", f"任务失败：{message}", job_id=job.job_id)
+        self._write_job_log(job)
 
     def _bind_agent(self, aid: str, job: WorkJob, role: str) -> None:
         with self._lock:

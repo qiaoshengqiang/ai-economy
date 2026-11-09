@@ -179,6 +179,7 @@ def main(argv=None) -> int:
         max_integration_turns=max(1, int(args.integration_turns)),
         cognitive_budget=max(1, int(args.cognitive_budget)),
         settings_path=db_path.parent / "ui_settings.json",
+        log_dir=db_path.parent / "jobs",
     )
     Handler.controller = controller
     httpd = ThreadingHTTPServer((args.host, int(args.port)), Handler)

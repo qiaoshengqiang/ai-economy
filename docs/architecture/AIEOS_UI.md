@@ -75,6 +75,7 @@ Front Agent（固定）
 | 提交按钮 | 提交给 Front Agent |
 | 输出显示框 | Human / Front / 系统消息 |
 | Task 卡片列表 | task_id · 状态 · Leader · 成员 · 迭代 |
+| Task 卡片点击 | 在输出框打印：执行历史 / Workspace 文件 / 公共 WM / LLM 调用汇总 |
 | Agent 状态 | `IDLE` / `WORKING` · `FRONT` / `LEADER` / `MEMBER` |
 | 设置按钮 | 修改 Front Agent / 最大并行 Team |
 
@@ -91,9 +92,10 @@ work/controller.py    AIEOSController：Front / Leader / Team 编排
 ### API
 
 ```text
-GET  /api/state       前端状态（agents / tasks / jobs / messages / settings）
-POST /api/submit      {"text": "..."}
-POST /api/settings    {"front_agent": "...", "max_parallel_teams": 3}
+GET  /api/state            前端状态（agents / tasks / jobs / messages / settings）
+GET  /api/task/<task_id>   任务详情（执行历史 / 文件 / 公共 WM / LLM 汇总）
+POST /api/submit           {"text": "..."}
+POST /api/settings         {"front_agent": "...", "max_parallel_teams": 3}
 GET  /api/health
 ```
 
@@ -121,7 +123,8 @@ GET  /api/health
 - Workspace 仍然是**逻辑资源树**，不自动落成宿主机目录；
 - 绝对路径暂不暴露给 Front（按当前阶段决定）；
 - 任务结果直接来自 DB / runtime，不生成 `result.json`；
-- 详细 run 日志（prompt / response / phase）尚未落盘；
+- 每次 UI Job 的可见日志保存到 `runs/ui/jobs/<job_id>.json`（job + messages）；
+- 完整 prompt / response / phase 明细尚未落盘；
 - 「Leader 运行中重新计划」沿用 `work_plan_update`；
 - 设置中的最大并行 Team 在进程内生效；重启按启动参数。
 
