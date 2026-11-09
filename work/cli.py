@@ -68,8 +68,8 @@ def build_parser() -> argparse.ArgumentParser:
                     help="生产观测预算（AIC），默认 10")
     ap.add_argument("--max-turns", type=int, default=12,
                     help="Work 最大轮数（Solo / Team 各自使用），默认 12")
-    ap.add_argument("--cognitive-budget", type=int, default=32768,
-                    help="单次响应硬上限（tokens），默认 32768")
+    ap.add_argument("--cognitive-budget", type=int, default=65536,
+                    help="单次响应硬上限（tokens），默认 65536")
     ap.add_argument("--db", default=None,
                     help="Runtime 数据库路径；默认放在 run 目录下")
     ap.add_argument("--out", default=None,

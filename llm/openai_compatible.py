@@ -509,7 +509,7 @@ class OpenAICompatibleProvider(LLMProvider):
     #:    Agent **不能**要求低于 MIN（那几乎必然截断）或高于 MAX
     #:    （那会绕过部署侧的成本与超时控制）。Runtime 裁剪，不协商。
     MIN_COGNITIVE_BUDGET = 256
-    MAX_COGNITIVE_BUDGET = 32768
+    MAX_COGNITIVE_BUDGET = 65536
 
     @staticmethod
     def _as_budget_int(value: Any) -> Optional[int]:

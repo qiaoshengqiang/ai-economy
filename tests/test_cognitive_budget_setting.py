@@ -35,6 +35,12 @@ load_dotenv(ROOT / ".env")
 EXPECTED_DEFAULT = 16384
 
 
+def test_provider_max_cognitive_budget_is_64k():
+    from llm.openai_compatible import OpenAICompatibleProvider
+
+    assert OpenAICompatibleProvider.MAX_COGNITIVE_BUDGET == 65536
+
+
 # ============================================================
 # ① 单一来源
 # ============================================================

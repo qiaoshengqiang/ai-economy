@@ -147,6 +147,25 @@ def _render_last_turn(last: Optional[Dict[str, Any]]) -> str:
         f"- actions: {last.get('action_types') or []}",
         f"- tokens: {last.get('tokens', 0)}",
     ]
+    if last.get("thinking"):
+        lines.append(
+            "- thinking: "
+            + json.dumps(last["thinking"], ensure_ascii=False))
+    budget = last.get("cognitive_budget")
+    if isinstance(budget, dict):
+        lines.append(
+            "- cognitive_budget: "
+            f"requested={budget.get('requested')} "
+            f"actual={budget.get('effective')} "
+            f"clipped={budget.get('clipped') or '-'}")
+    rewrites = last.get("rewrites")
+    if isinstance(rewrites, dict) and rewrites:
+        detail = ", ".join(
+            f"{path} × {count}"
+            for path, count in sorted(rewrites.items()))
+        lines.append(
+            f"- 反复整文件重写：{detail}；"
+            "优先用 workspace_edit 做局部修改。")
     if last.get("truncated"):
         lines.append(
             "- 上一轮输出被截断：请拆小工作单元，或先写草稿再分批落盘。")
@@ -238,6 +257,31 @@ workspace_id: {context.workspace_id}
 {drafts}
 {_render_last_turn(last_turn)}
 {extra_instruction}
+========== 决策 / 工作 ==========
+你每次调用处在 decision 或 work 阶段：
+- decision：判断下一步做什么；
+- work：执行读取 / 工具后的下一步。
+动作集合相同；区别是你可以为不同阶段设置下面的
+thinking / cognitive_budget。
+
+========== 可选：调整下一次调用 ==========
+在同一个 JSON 的**顶层**加入（不要放进 action.parameters）：
+- "thinking": {{"enabled": true, "effort": "high"}}
+  DeepSeek 支持 effort: low / high / max；关闭写 enabled:false。
+  也可以分相：{{"decision": {{...}}, "work": {{...}}}}。
+- "cognitive_budget": 32768
+  或分相：{{"decision": 8192, "work": 65536}}
+  单位是 max_tokens（输出上限）；当前硬上限 65536，
+  实际值 = min(你的偏好, 65536, Provider 上限)。
+  不设置就保持当前默认值（config 里的 max_tokens）。
+  它只影响**下一次** LLM 调用，不影响当前这次输出。
+
+========== 工作节奏 ==========
+- 先确定模块边界和文件清单，再开始写第一个文件；
+- 入口文件先搭骨架，之后用 workspace_edit 增量修改，
+  避免整文件反复重写；
+- 每完成一个模块，尽量用 run_tool 验证一次，再继续下一个。
+
 ========== 可用动作与参数 ==========
 {ACTION_SCHEMA}
 - work_complete:
@@ -252,7 +296,10 @@ workspace_id: {context.workspace_id}
 ========== 输出格式 ==========
 只输出一个 JSON 对象，不要 markdown 围栏：
 {{"decision":"act","reasoning":"一句话说明为什么这样做",
+ "thinking":{{"enabled":true,"effort":"high"}},
+ "cognitive_budget":{{"work":32768}},
  "action":{{"type":"动作类型","parameters":{{...}}}}}}
+thinking / cognitive_budget 是可选的，省略就保持当前设置。
 如果只是普通回复，可以输出 {{"decision":"reply","content":"..."}}。
 """
 

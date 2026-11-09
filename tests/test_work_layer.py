@@ -221,6 +221,26 @@ class TestWorkActionAdapters:
         assert seen["path"] == "a.js"
 
 
+def test_work_image_resolver_reads_run_screenshot(tmp_path):
+    from types import SimpleNamespace
+    from work.images import make_image_resolver
+
+    run_root = tmp_path / "tool_runs"
+    work = run_root / "run_1" / "work"
+    work.mkdir(parents=True)
+    (work / "shot.png").write_bytes(b"png-bytes")
+
+    runtime = SimpleNamespace(
+        tool_runner=SimpleNamespace(run_root=run_root))
+    resolver = make_image_resolver(runtime)
+
+    url = resolver("run_1", "shot.png")
+    assert url is not None
+    assert url.startswith("data:image/png;base64,")
+    assert resolver("run_1", "missing.png") is None
+    assert resolver("../run_1", "shot.png") is None
+
+
 # ============================================================
 # 2. 动作集合
 # ============================================================
@@ -301,6 +321,36 @@ class TestWorkPrompt:
         assert "work_complete" in prompt
         assert "公共工作记忆" in prompt
         assert "hello.txt exists" in prompt
+
+    def test_prompt_exposes_thinking_and_cognitive_budget(self):
+        context = WorkContext(
+            task_id="T-1", agent_id="agent_a", role=WorkRole.SOLO)
+        prompt = build_work_prompt(
+            context, task_description="做一个分模块游戏", runtime=None,
+            last_turn={
+                "status_before": "IN_PROGRESS",
+                "status_after": "IN_PROGRESS",
+                "action_types": ["workspace_write"],
+                "tokens": 100,
+                "thinking": {"*": {"enabled": True, "effort": "high"}},
+                "cognitive_budget": {
+                    "requested": 65536,
+                    "effective": 32768,
+                    "clipped": "above_max",
+                },
+                "rewrites": {"index.html": 3},
+            })
+
+        assert "decision" in prompt and "work" in prompt
+        assert "thinking" in prompt
+        assert "low / high / max" in prompt
+        assert "cognitive_budget" in prompt
+        assert "65536" in prompt
+        assert "requested=65536" in prompt
+        assert "actual=32768" in prompt
+        assert "clipped=above_max" in prompt
+        assert "index.html × 3" in prompt
+        assert "workspace_edit" in prompt
 
     def test_prompt_has_work_actions(self):
         context = WorkContext(
@@ -438,8 +488,10 @@ class _FakeAgent:
     def __init__(self):
         self.has_brain = True
         self.workspace = None
+        self.last_kwargs = {}
 
     def act(self, *, messages, dispatcher, **kwargs):
+        self.last_kwargs = dict(kwargs)
         intent = ActionIntent(
             action_type="work_complete",
             parameters={
@@ -462,7 +514,8 @@ class _SoloRuntime:
     def __init__(self, db, task):
         self.tasks = TaskStore(db)
         self.tasks.save(task)
-        self.economy = SimpleNamespace(agent=lambda aid: _FakeAgent())
+        self.agent = _FakeAgent()
+        self.economy = SimpleNamespace(agent=lambda aid: self.agent)
         self.workspace_gateway = _FakeGateway()
         self.alignment = SimpleNamespace(
             current=lambda tid: SimpleNamespace(
@@ -479,6 +532,20 @@ class _SoloRuntime:
 
 
 class TestSoloWorkRuntime:
+    def test_runtime_is_decision_first_and_has_vision(self, db):
+        task = Task.create(
+            task_id="T-DECISION", creator="agent_a",
+            description="写 hello.txt", workspace_id="WS-X",
+            participants=["agent_a"], mode=TaskMode.SOLO)
+        task.claim_producer("agent_a")
+
+        runtime = _SoloRuntime(db, task)
+        result = SoloWorkRuntime(runtime, task, max_turns=1).run()
+
+        assert result.ok is True, result.error
+        assert runtime.agent.last_kwargs["initial_phase"] == "decision"
+        assert callable(runtime.agent.last_kwargs["image_resolver"])
+
     def test_runtime_completes_task(self, db):
         task = Task.create(
             task_id="T-RUNTIME", creator="agent_a",

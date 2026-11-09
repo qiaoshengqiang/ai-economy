@@ -125,7 +125,8 @@ class AIEOSController:
         max_agents_per_team: int = 5,
         max_worker_turns: int = 8,
         max_integration_turns: int = 8,
-        cognitive_budget: int = 32768,
+        max_solo_turns: int = 24,
+        cognitive_budget: int = 65536,
         solo_only: bool = True,
         settings_path: Optional[Path] = None,
         log_dir: Optional[Path] = None,
@@ -138,6 +139,7 @@ class AIEOSController:
         self.max_agents_per_team = max(2, int(max_agents_per_team))
         self.max_worker_turns = max(1, int(max_worker_turns))
         self.max_integration_turns = max(1, int(max_integration_turns))
+        self.max_solo_turns = max(1, int(max_solo_turns))
         self.cognitive_budget = max(1, int(cognitive_budget))
         self.settings_path = Path(settings_path) if settings_path else None
         self.log_dir = Path(log_dir) if log_dir else None
@@ -401,8 +403,7 @@ class AIEOSController:
                 runner = SoloWorkRuntime(
                     self.rt, task,
                     brief=decision.brief.to_dict(),
-                    max_turns=(
-                        self.max_worker_turns + self.max_integration_turns),
+                    max_turns=self.max_solo_turns,
                     cognitive_budget=self.cognitive_budget,
                     should_stop=lambda: job.cancelled,
                 )
@@ -501,8 +502,7 @@ class AIEOSController:
         runner = SoloWorkRuntime(
             self.rt, task,
             brief=decision.brief.to_dict(),
-            max_turns=(
-                self.max_worker_turns + self.max_integration_turns),
+            max_turns=self.max_solo_turns,
             cognitive_budget=self.cognitive_budget,
             should_stop=lambda: job.cancelled,
         )
@@ -787,8 +787,7 @@ class AIEOSController:
         else:
             runner = SoloWorkRuntime(
                 self.rt, task,
-                max_turns=(
-                    self.max_worker_turns + self.max_integration_turns),
+                max_turns=self.max_solo_turns,
                 cognitive_budget=self.cognitive_budget,
                 should_stop=lambda: job.cancelled,
             )

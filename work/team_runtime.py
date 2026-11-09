@@ -78,7 +78,7 @@ class TeamWorkRuntime:
         max_qa_turns: int = 3,
         max_parallel_workers: int = 4,
         max_replans: int = 3,
-        cognitive_budget: int = 32768,
+        cognitive_budget: int = 65536,
         event_sink: Any = None,
         should_stop: Optional[Callable[[], bool]] = None,
     ) -> None:

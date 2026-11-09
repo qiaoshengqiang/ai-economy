@@ -29,6 +29,7 @@ from services.artifacts import write_artifact
 
 from work.actions import build_work_dispatcher
 from work.drafts import TaskDraftStore
+from work.images import make_image_resolver
 from work.lifecycle import WorkLifecycle, WorkLifecycleError
 from work.prompt import build_work_prompt
 from work.roles import WorkContext, WorkResult, WorkRole
@@ -45,7 +46,7 @@ class SoloWorkRuntime:
         brief: Optional[Dict[str, Any]] = None,
         drafts: Any = None,
         max_turns: int = 12,
-        cognitive_budget: int = 32768,
+        cognitive_budget: int = 65536,
         event_sink: Any = None,
         should_stop: Optional[Callable[[], bool]] = None,
     ) -> None:
@@ -60,6 +61,10 @@ class SoloWorkRuntime:
         self.cognitive_budget = max(1, int(cognitive_budget))
         self.event_sink = event_sink
         self.should_stop = should_stop or (lambda: False)
+        #: Playwright 等工具产出的截图 → image_url content part。
+        self.image_resolver = make_image_resolver(runtime)
+        #: 统计整文件 replace 次数，用来提示 Agent 改用增量编辑。
+        self._write_counts: Dict[str, int] = {}
         self.lifecycle = WorkLifecycle(runtime.tasks)
         self.drafts = drafts or TaskDraftStore(
             task_id=task.task_id,
@@ -158,7 +163,10 @@ class SoloWorkRuntime:
                     follow_up_on_reads=True,
                     work_loop=True,
                     max_work_steps=2,
-                    initial_phase="work",
+                    # decision-first：先决定下一步，读取/工具返回后进入 work，
+                    # 最后回到 decision 检查是否完成。
+                    initial_phase="decision",
+                    image_resolver=self.image_resolver,
                     seen_reads=seen_reads,
                     repair_malformed=True,
                 )
@@ -180,6 +188,20 @@ class SoloWorkRuntime:
 
             action_types = [
                 str(getattr(i, "action_type", "")) for i in intents]
+            for intent in intents:
+                if getattr(intent, "action_type", "") != "workspace_write":
+                    continue
+                params = getattr(intent, "parameters", None) or {}
+                path = str(params.get("path") or "")
+                mode = str(params.get("write_mode") or "").strip().lower()
+                if path and mode == "replace":
+                    self._write_counts[path] = (
+                        self._write_counts.get(path, 0) + 1)
+            rewrites = {
+                path: count
+                for path, count in self._write_counts.items()
+                if count > 1
+            }
             status_after = task.status
             self._event(
                 "work_turn", turn=turn, agent_id=actor,
@@ -193,6 +215,11 @@ class SoloWorkRuntime:
                 "truncated": any(
                     bool(getattr(s, "is_truncated", False))
                     for s in segments),
+                "thinking": getattr(run, "thinking", None),
+                "cognitive_budget": getattr(
+                    getattr(agent, "brain", None),
+                    "last_cognitive_budget", None),
+                "rewrites": rewrites,
             }
 
             if status_after == TaskStatus.COMPLETED:

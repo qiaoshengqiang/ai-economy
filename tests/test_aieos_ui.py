@@ -397,9 +397,11 @@ def test_handoff_runs_one_agent_solo_without_leader_plan(monkeypatch):
     monkeypatch.setattr(controller, "_leader_plan", _no_plan)
 
     class _Solo:
-        def __init__(self, _rt, task_, **_kwargs):
+        def __init__(self, _rt, task_, **kwargs):
             seen["runner"] = "solo"
             seen["task_id"] = task_.task_id
+            seen["max_turns"] = kwargs.get("max_turns")
+            seen["cognitive_budget"] = kwargs.get("cognitive_budget")
 
         def run(self):
             return SimpleNamespace(ok=True, tokens=2, turns=1)
@@ -425,6 +427,8 @@ def test_handoff_runs_one_agent_solo_without_leader_plan(monkeypatch):
         "goal": "写一个 hello.py",
         "runner": "solo",
         "task_id": "task_solo",
+        "max_turns": 24,
+        "cognitive_budget": 65536,
     }
     assert job.leader == "agent_b"
     assert job.members == []

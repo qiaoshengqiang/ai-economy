@@ -31,7 +31,8 @@ DB: runs/ui/aieos.db
 --max-teams 3
 --worker-turns 8
 --integration-turns 8
---cognitive-budget 32768
+--solo-turns 24
+--cognitive-budget 65536
 ```
 
 ---
@@ -86,6 +87,20 @@ Front Agent（固定）
 Front 看到的开放 Task 状态来自两个事实：Task Core 的状态 + 是否有
 Job 正在执行。没有 Job 的开放 Task 标记为 `INTERRUPTED`，
 不会被描述成「正在处理中」。
+
+### Solo 的决策 / 工作与认知控制
+
+- 每轮先进入 `decision`，读取 / 工具返回后进入 `work`，
+  最后回到 `decision` 检查是否完成；
+- Agent 可以在 JSON 顶层设置：
+  - `thinking`: `enabled` + `effort`（DeepSeek 支持 `low` / `high` / `max`），
+    支持 `decision` / `work` 分相；
+  - `cognitive_budget`: `max_tokens`，支持分相 map；
+- `cognitive_budget` 硬上限 **65,536**，实际值取
+  `min(偏好, 65536, Provider 上限)`；
+- Playwright 产生的截图通过 `image_resolver` 以 `image_url`
+  回喂给 Solo Agent；
+- Solo 默认最多 **24** 个外层 turn。
 
 ---
 

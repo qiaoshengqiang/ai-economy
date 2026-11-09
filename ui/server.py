@@ -155,7 +155,8 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--max-teams", type=int, default=3)
     ap.add_argument("--worker-turns", type=int, default=8)
     ap.add_argument("--integration-turns", type=int, default=8)
-    ap.add_argument("--cognitive-budget", type=int, default=32768)
+    ap.add_argument("--solo-turns", type=int, default=24)
+    ap.add_argument("--cognitive-budget", type=int, default=65536)
     return ap
 
 
@@ -177,6 +178,7 @@ def main(argv=None) -> int:
         max_parallel_teams=max(1, int(args.max_teams)),
         max_worker_turns=max(1, int(args.worker_turns)),
         max_integration_turns=max(1, int(args.integration_turns)),
+        max_solo_turns=max(1, int(args.solo_turns)),
         cognitive_budget=max(1, int(args.cognitive_budget)),
         # 当前阶段只跑 Solo；Team 路径保留在代码里但不由 UI 触发。
         solo_only=True,
