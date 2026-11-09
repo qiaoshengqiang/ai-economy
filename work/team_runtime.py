@@ -26,6 +26,7 @@ TeamWorkRuntime —— Leader 计划 / 并行执行 / 汇总收尾
 
 from __future__ import annotations
 
+import posixpath
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional, Tuple
@@ -407,15 +408,36 @@ class TeamWorkRuntime:
                         created.get("message") or created.get("code")))
                 continue
 
+        try:
+            current_locks = gateway.lock_snapshot(workspace_id)
+        except Exception:                                     # noqa: BLE001
+            current_locks = {}
         for path in sorted(directories, key=lambda p: (-p.count("/"), p)):
             owner = directories[path]
             if owner == self.lead:
                 continue
+            current = current_locks.get("/" + path.strip("/"))
+            if current == owner:
+                continue
             try:
-                moved = handoff_resource(
-                    gateway, workspace_id, self.lead, path, owner,
-                    reason="Team plan directory handoff",
-                    task_id=self.task.task_id)
+                if current and current != self.lead:
+                    # 复用的 Workspace：目录可能还在上一轮 owner 手里。
+                    # Leader 以计划为权威，把它移交给本轮 owner。
+                    result = gateway.handoff(
+                        workspace_id, path,
+                        from_agent=current, to_agent=owner,
+                        actor=self.lead,
+                        reason="Team plan directory handoff",
+                        task_id=self.task.task_id)
+                    moved = {
+                        "ok": bool(result.success),
+                        "message": str(getattr(result, "error", "") or ""),
+                    }
+                else:
+                    moved = handoff_resource(
+                        gateway, workspace_id, self.lead, path, owner,
+                        reason="Team plan directory handoff",
+                        task_id=self.task.task_id)
             except Exception as exc:                          # noqa: BLE001
                 moved = {"ok": False,
                          "message": f"{type(exc).__name__}: {exc}"}
@@ -648,7 +670,11 @@ class TeamWorkRuntime:
 
         previous = self.plan.revision
         previous_qa = self.plan.qa
+        previous_plan = self.plan
         self.plan = new_plan
+        # 改派 item 时必须同时移交对应目录/文件的责任，
+        # 否则新 owner 会被父目录 Directory Lock 挡住。
+        self._handoff_reassigned_items(previous_plan, new_plan, applied)
         self._plan_history.append(new_plan.to_dict())
         self._record_plan_revision(new_plan, applied, reason)
         self._publish_plan_to_public_memory(new_plan)
@@ -665,6 +691,142 @@ class TeamWorkRuntime:
             "applied": applied,
             "summary": f"plan revision {previous} → {new_plan.revision}",
         }
+
+    def _handoff_reassigned_items(
+        self,
+        old_plan: WorkPlan,
+        new_plan: WorkPlan,
+        applied: List[Dict[str, Any]],
+    ) -> None:
+        """把改派 item 的目录/文件责任从旧 owner 移交给新 owner。"""
+        moved_ids = {
+            str(op.get("item_id") or "")
+            for op in applied
+            if str(op.get("op") or "") in ("reassign", "update", "add")
+        }
+        moved_ids.discard("")
+        if not moved_ids:
+            return
+        workspace_id = self.task.workspace_id or ""
+        gateway = getattr(self.rt, "workspace_gateway", None)
+        if not workspace_id or gateway is None:
+            return
+        try:
+            locks = gateway.lock_snapshot(workspace_id)
+        except Exception as exc:                              # noqa: BLE001
+            self._event(
+                "team_handoff_snapshot_failed",
+                error=f"{type(exc).__name__}: {exc}")
+            return
+
+        old_by_id = {item.item_id: item for item in old_plan.items}
+        for item in new_plan.items:
+            if item.item_id not in moved_ids:
+                continue
+            old = old_by_id.get(item.item_id)
+            old_agent = old.agent_id if old else ""
+            if not old_agent or old_agent == item.agent_id:
+                continue
+            target = self._handoff_target(item.paths, locks)
+            if not target:
+                continue
+            key = "/" + target.strip("/")
+            holder = locks.get(key)
+            if not holder or holder == item.agent_id:
+                continue
+            if holder != old_agent:
+                # 目录不在旧 owner 手上：不替别人做责任转移。
+                self._event(
+                    "team_handoff_skipped_holder",
+                    item_id=item.item_id, path=target,
+                    holder=holder, old_owner=old_agent)
+                continue
+            if self._dir_claimed_by_others(
+                    new_plan, target, item.agent_id, moved_ids):
+                self._event(
+                    "team_handoff_skipped_shared_dir",
+                    item_id=item.item_id, path=target,
+                    to_agent=item.agent_id)
+                continue
+            try:
+                moved = gateway.handoff(
+                    workspace_id,
+                    target,
+                    from_agent=holder,
+                    to_agent=item.agent_id,
+                    actor=self.lead,
+                    reason=f"Team plan reassign {item.item_id}",
+                    task_id=self.task.task_id,
+                )
+            except Exception as exc:                          # noqa: BLE001
+                self._event(
+                    "team_handoff_failed",
+                    item_id=item.item_id, path=target,
+                    error=f"{type(exc).__name__}: {exc}")
+                continue
+            if not getattr(moved, "success", False):
+                self._event(
+                    "team_handoff_failed",
+                    item_id=item.item_id, path=target,
+                    error=str(getattr(moved, "error", "") or moved))
+                continue
+            new_plan.directories[target] = item.agent_id
+            locks[key] = item.agent_id
+            self._event(
+                "team_handoff", item_id=item.item_id, path=target,
+                from_agent=holder, to_agent=item.agent_id)
+
+    @staticmethod
+    def _handoff_target(
+        paths: Any, locks: Dict[str, str],
+    ) -> str:
+        """从 item.paths 推导需要移交的资源（优先目录）。"""
+        cleaned: List[str] = []
+        for raw in paths or []:
+            text = str(raw or "").strip().strip("/")
+            if text and text not in cleaned:
+                cleaned.append(text)
+        if not cleaned:
+            return ""
+        if len(cleaned) == 1:
+            candidate = cleaned[0]
+        else:
+            try:
+                candidate = posixpath.commonpath(cleaned)
+            except ValueError:
+                return ""
+        if not candidate:
+            return ""
+        if "/" + candidate in locks:
+            return candidate
+        parent = posixpath.dirname(candidate)
+        if parent and "/" + parent in locks:
+            return parent
+        return ""
+
+    @staticmethod
+    def _dir_claimed_by_others(
+        plan: WorkPlan,
+        directory: str,
+        new_owner: str,
+        moved_ids: set,
+    ) -> bool:
+        prefix = directory + "/"
+        for item in plan.items:
+            if item.item_id in moved_ids or item.agent_id == new_owner:
+                continue
+            for raw in item.paths:
+                path = str(raw or "").strip().strip("/")
+                if path == directory or path.startswith(prefix):
+                    return True
+        for path, owner in (plan.directories or {}).items():
+            if not owner or owner == new_owner:
+                continue
+            if path == directory:
+                continue
+            if path.startswith(prefix):
+                return True
+        return False
 
     def _update_qa_assignment(
         self, previous_qa: Optional[str], new_qa: Optional[str],
@@ -908,9 +1070,32 @@ class TeamWorkRuntime:
                 "team_qa_turn", turn=turn,
                 action_types=[getattr(i, "action_type", "") for i in intents])
             if self._qa_verdict is not None:
-                return bool(self._qa_verdict.get("passed"))
+                return self._qa_verdict_allows_pass()
         self._force_qa_verdict(agent, dispatcher)
-        return bool(self._qa_verdict and self._qa_verdict.get("passed"))
+        return self._qa_verdict_allows_pass()
+
+    def _qa_verdict_allows_pass(self) -> bool:
+        """QA 通过不能抵消未完成的 item。"""
+        if not self._qa_verdict or not self._qa_verdict.get("passed"):
+            return False
+        if self._all_items_settled():
+            return True
+        with self._lock:
+            unsettled = sorted(
+                item_id for item_id, state in self._item_state.items()
+                if state.get("status") not in (
+                    ItemStatus.DONE, ItemStatus.CANCELLED))
+        self._event(
+            "team_qa_blocked_by_items", items=unsettled)
+        self._qa_verdict = {
+            "passed": False,
+            "feedback": (
+                "还有未完成的 item：" + ", ".join(unsettled)
+                + "。先完成或取消这些 item，再重新验收。"),
+            "by": str(
+                (self._qa_verdict or {}).get("by") or ""),
+        }
+        return False
 
     def _force_qa_verdict(self, agent: Any, dispatcher: Any) -> None:
         """QA 只回文本、没有 verdict 时，再给一次最小 schema 机会。"""

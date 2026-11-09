@@ -40,6 +40,23 @@ class _Gateway:
         return SimpleNamespace(success=True, result={"entries": []})
 
 
+class _LockGateway(_Gateway):
+    """只模拟锁快照与 handoff 的 Workspace Gateway。"""
+
+    def __init__(self, locks=None):
+        self.locks = dict(locks or {})
+        self.handoffs = []
+
+    def lock_snapshot(self, _ws_id):
+        return dict(self.locks)
+
+    def handoff(self, ws_id, path, from_agent, to_agent, actor,
+                reason="", task_id=None):
+        self.handoffs.append((path, from_agent, to_agent, actor))
+        self.locks[path] = to_agent
+        return SimpleNamespace(success=True, result={})
+
+
 class _ScriptedAgent:
     has_brain = True
     workspace = None
@@ -102,11 +119,11 @@ def _complete():
 
 
 class _TeamRuntime:
-    def __init__(self, db, task, agents):
+    def __init__(self, db, task, agents, gateway=None):
         self.tasks = TaskStore(db)
         self.tasks.save(task)
         self.economy = SimpleNamespace(agent=lambda aid: agents.get(aid))
-        self.workspace_gateway = _Gateway()
+        self.workspace_gateway = gateway or _Gateway()
         self.alignment = None
         self.private_working_memory = SimpleNamespace(
             render=lambda aid, tid: "")
@@ -117,12 +134,13 @@ class _TeamRuntime:
         self.tool_runner = None
 
 
-def _task(participants=("agent_a", "agent_b", "agent_c")):
+def _task(participants=("agent_a", "agent_b", "agent_c"),
+          workspace_id=""):
     task = Task.create(
         task_id="T-TEAM-RUN",
         creator="agent_a",
         description="做一个两模块项目",
-        workspace_id="",
+        workspace_id=workspace_id,
         participants=list(participants),
         mode=TaskMode.TEAM,
     )
@@ -287,6 +305,85 @@ class TestReplan:
                 qa="agent_a",
                 qa_provided=True,
             )
+
+
+# ============================================================
+# 2.5 Replan 的 Workspace 责任移交
+# ============================================================
+class TestReplanLockHandoff:
+    def _web_plan(self, owner):
+        plan, error = parse_work_plan(
+            json.dumps({
+                "items": [{
+                    "item_id": "item_1",
+                    "assigned_to": owner,
+                    "goal": "写网页",
+                    "paths": ["web/index.html", "web/main.js"],
+                }],
+                "qa": None,
+                "directories": {"web": owner},
+            }),
+            participants=["agent_a", "agent_b", "agent_c"],
+        )
+        assert error == ""
+        return plan
+
+    def test_reassign_moves_directory_lock(self, db):
+        task = _task(workspace_id="WS-TEST")
+        gateway = _LockGateway({"/web": "agent_b"})
+        runtime = _TeamRuntime(db, task, {}, gateway=gateway)
+        team = TeamWorkRuntime(runtime, task)
+
+        old = self._web_plan("agent_b")
+        new = self._web_plan("agent_c")
+        team.plan = old
+        team._handoff_reassigned_items(
+            old, new,
+            [{"op": "reassign", "item_id": "item_1",
+              "assigned_to": "agent_c"}],
+        )
+
+        assert gateway.handoffs == [
+            ("web", "agent_b", "agent_c", "agent_a")]
+        assert new.directories["web"] == "agent_c"
+
+    def test_shared_directory_is_not_taken_from_other_owner(self, db):
+        task = _task(workspace_id="WS-TEST")
+        gateway = _LockGateway({"/web": "agent_b"})
+        runtime = _TeamRuntime(db, task, {}, gateway=gateway)
+        team = TeamWorkRuntime(runtime, task)
+
+        old = self._web_plan("agent_b")
+        new = self._web_plan("agent_c")
+        new.items.append(
+            new.items[0].__class__(
+                item_id="item_2", agent_id="agent_b",
+                goal="继续维护", paths=["web/keep.js"]))
+        team.plan = old
+        team._handoff_reassigned_items(
+            old, new,
+            [{"op": "reassign", "item_id": "item_1",
+              "assigned_to": "agent_c"}],
+        )
+
+        assert gateway.handoffs == []
+
+    def test_qa_pass_cannot_ignore_blocked_items(self, db):
+        task = _task()
+        runtime = _TeamRuntime(db, task, {})
+        team = TeamWorkRuntime(runtime, task)
+        team._item_state = {
+            "item_1": {"status": "BLOCKED", "agent_id": "agent_b"},
+        }
+        team._qa_verdict = {"passed": True, "by": "agent_c"}
+
+        assert team._qa_verdict_allows_pass() is False
+        assert team._qa_verdict["passed"] is False
+        assert "item_1" in team._qa_verdict["feedback"]
+
+        team._item_state["item_1"]["status"] = "DONE"
+        team._qa_verdict = {"passed": True, "by": "agent_c"}
+        assert team._qa_verdict_allows_pass() is True
 
 
 # ============================================================

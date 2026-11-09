@@ -153,6 +153,28 @@ class TestWorkLifecycle:
 # 1.5 Work 动作参数适配
 # ============================================================
 class TestWorkActionAdapters:
+    def test_read_offset_zero_is_normalized_to_one(self):
+        from actions.workspace_read import WorkspaceReadExecutor
+        from work.adapters import WorkWorkspaceReadExecutor
+
+        seen = {}
+
+        def read_fn(*_args, **kwargs):
+            seen.update(kwargs)
+            return {"ok": True, "path": "a.js", "content": "x",
+                    "revision": 1}
+
+        adapter = WorkWorkspaceReadExecutor(
+            WorkspaceReadExecutor(read_fn))
+        intent = ActionIntent(
+            action_type="workspace_read",
+            parameters={"path": "a.js", "offset": 0, "limit": 10},
+            agent_id="agent_a")
+        result = adapter.execute(intent)
+
+        assert result.success is True
+        assert seen["offset"] == 1
+
     def test_missing_write_mode_defaults_to_create(self):
         from actions.workspace_write import WorkspaceWriteExecutor
         from work.adapters import WorkWorkspaceWriteExecutor

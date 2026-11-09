@@ -387,6 +387,8 @@ def build_team_worker_prompt(
 
 🔒 只做分给你的 item。完成后调用 work_item_done（带 item_id）。
 🔒 被阻塞时调用 work_item_blocked（带 item_id + reason）。
+🔒 同一个文件读一次并记录结论；需要定位其他内容时用 workspace_search，
+   不要整文件反复重读。
 🔒 公共工作记忆里已有契约时，不要再反复读 Shared Context / config。
 🔒 没有 Agent 间通信动作；不要讨论身份或经济。
 🔒 不要替别人验收，也不要调用 work_complete。
@@ -430,6 +432,12 @@ def build_qa_prompt(
 {ACTION_SCHEMA}
 - work_qa_verdict:
   {{"passed":true|false, "feedback":"..."}}
+
+========== 通过前的事实核对 ==========
+- 对照公共工作记忆里的 team.architecture.files，逐个确认声明的文件真实存在；
+- 如果入口文件引用了其他本地文件（script/link/import），确认它们也存在；
+- 成员回报是声明，不是证据；缺失文件必须 passed=false；
+- 不要因为“大部分已完成”就通过。
 
 ========== 你的职责 ==========
 检查整体交付是否满足 DoD。可以 workspace_read / workspace_search /
