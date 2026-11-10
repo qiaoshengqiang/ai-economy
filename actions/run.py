@@ -73,6 +73,24 @@ from core.logging_setup import get_logger
 logger = get_logger(__name__)
 
 
+#: 每段保存的模型隐藏推理上限（字符）。
+#:
+#: 🔒 只影响**落盘/展示**，不影响决策 —— 这段文字已经产生过了。
+#:    不设上限时，单次 reasoning_content 可能上万 token，
+#:    会让轮次日志和 UI 轮询变得很重。
+MAX_MODEL_REASONING_CHARS = 12000
+
+
+def _clip_model_reasoning(text: str) -> str:
+    value = str(text or "")
+    if len(value) <= MAX_MODEL_REASONING_CHARS:
+        return value
+    return (
+        value[:MAX_MODEL_REASONING_CHARS]
+        + f"\n…（推理过长，已截断；完整 {len(value)} 字符）"
+    )
+
+
 def run_cognition(
     agent: Any,
     messages: Any = None,
@@ -396,6 +414,9 @@ def _run_one_segment(agent: Any, agent_id: str, messages: Any,
     response = agent.generate(messages=messages, phase=phase, **call_kwargs)
     content = getattr(response, "content", None)
     total_tokens = getattr(response, "total_tokens", None)
+    #: Provider 的隐藏推理（DeepSeek `reasoning_content`）。
+    #: 🔒 与 `content` 严格分开；修补调用发生时，优先用修补后的。
+    original_reasoning = str(getattr(response, "reasoning", "") or "")
     # 🔴 修复前的真实状态。修复只能改变**可用性**，不能抹掉
     #    “这次调用曾经撞到上限”这个事实（否则压力信号会丢）。
     original_finish_reason = getattr(response, "finish_reason", None)
@@ -543,6 +564,9 @@ def _run_one_segment(agent: Any, agent_id: str, messages: Any,
         budget_clipped=getattr(response, "budget_clipped", None),
         content=str(content or ""),
         decision=decision,
+        model_reasoning=_clip_model_reasoning(
+            str(getattr(response, "reasoning", "") or "")
+            or original_reasoning),
         action_intents=list(decision.intents),
         output_status=output_status,
         cognitive_status=cognitive_status,

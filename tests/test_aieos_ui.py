@@ -21,6 +21,7 @@ from types import SimpleNamespace
 import pytest
 
 from work.controller import AIEOSController
+from front import FRONT_SYSTEM_PROMPT
 
 
 class _FakeController:
@@ -207,7 +208,7 @@ def test_leader_plan_can_assign_all_work_to_members():
     class _Agent:
         has_brain = True
 
-        def think(self, _prompt):
+        def think(self, _prompt, **_kwargs):
             return plan_json
 
     runtime = SimpleNamespace(
@@ -656,6 +657,44 @@ def test_task_description_uses_front_chosen_task_text():
     )
     assert _description_from_brief(summarized) == (
         "做一个贪吃蛇网页，分模块")
+
+
+def test_front_think_uses_minimal_system_context():
+    class _Agent:
+        has_brain = True
+
+        def __init__(self):
+            self.seen = []
+
+        def think(self, prompt, **kwargs):
+            self.seen.append(dict(kwargs))
+            return "{}"
+
+    agent = _Agent()
+    runtime = SimpleNamespace(
+        directory=_Directory(["agent_a", "agent_b"]),
+        economy=SimpleNamespace(agent=lambda aid: agent),
+        tasks=SimpleNamespace(list_tasks=lambda limit=50: []),
+    )
+    controller = AIEOSController(runtime, front_agent="agent_a")
+    try:
+        front = controller._front_runtime()
+        front.decide("hello")
+    finally:
+        controller.close()
+
+    assert agent.seen
+    assert all(item.get("cognitive") is False for item in agent.seen)
+    assert agent.seen[0].get("system") == FRONT_SYSTEM_PROMPT
+
+
+def test_task_detail_js_does_not_reuse_reply_as_thinking():
+    from pathlib import Path
+
+    js = (Path(__file__).resolve().parent.parent
+          / "ui" / "static" / "task.js").read_text(encoding="utf-8")
+    assert "seg.model_reasoning" in js
+    assert "decisionReasoning.trim() !== content.trim()" in js
 
 
 def test_controller_sets_front_thinking_to_low():

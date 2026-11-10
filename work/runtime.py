@@ -35,7 +35,9 @@ from work.actions import (
 from work.drafts import TaskDraftStore
 from work.images import make_image_resolver
 from work.lifecycle import WorkLifecycle, WorkLifecycleError
-from work.prompt import build_cognition_prompt, build_work_prompt
+from work.prompt import (
+    WORK_SYSTEM_PROMPT, build_cognition_prompt, build_work_prompt,
+)
 from work.roles import WorkContext, WorkResult, WorkRole
 
 
@@ -269,6 +271,8 @@ class SoloWorkRuntime:
                     task_id=self.task.task_id,
                     cognitive_budget_cap=self.cognitive_budget,
                     call_purpose="work",
+                    system=WORK_SYSTEM_PROMPT,
+                    cognitive=False,
                     follow_up_on_reads=False,
                     work_loop=False,
                     max_work_steps=0,
@@ -337,6 +341,8 @@ class SoloWorkRuntime:
                     task_id=self.task.task_id,
                     cognitive_budget_cap=self.cognitive_budget,
                     call_purpose="work",
+                    system=WORK_SYSTEM_PROMPT,
+                    cognitive=False,
                     follow_up_on_reads=False,
                     work_loop=False,
                     max_work_steps=0,
@@ -367,6 +373,8 @@ class SoloWorkRuntime:
                     {
                         "phase": str(getattr(seg, "phase", "") or ""),
                         "content": str(getattr(seg, "content", "") or ""),
+                        "model_reasoning": str(
+                            getattr(seg, "model_reasoning", "") or ""),
                         "decision": (
                             seg.decision.to_dict()
                             if getattr(seg, "decision", None) else None),
@@ -444,6 +452,8 @@ class SoloWorkRuntime:
                     task_id=task.task_id,
                     cognitive_budget_cap=self.cognitive_budget,
                     call_purpose="work",
+                    system=WORK_SYSTEM_PROMPT,
+                    cognitive=False,
                     experiment_run_id=getattr(self.rt, "experiment_run_id", None),
                     follow_up_on_reads=True,
                     work_loop=True,
@@ -548,6 +558,8 @@ class SoloWorkRuntime:
                     {
                         "phase": str(getattr(seg, "phase", "") or ""),
                         "content": str(getattr(seg, "content", "") or ""),
+                        "model_reasoning": str(
+                            getattr(seg, "model_reasoning", "") or ""),
                         "decision": (
                             seg.decision.to_dict()
                             if getattr(seg, "decision", None) else None),
@@ -815,6 +827,8 @@ class SoloWorkRuntime:
                 task_id=self.task.task_id,
                 cognitive_budget_cap=self.cognitive_budget,
                 call_purpose="work",
+                system=WORK_SYSTEM_PROMPT,
+                cognitive=False,
                 experiment_run_id=getattr(
                     self.rt, "experiment_run_id", None),
                 follow_up_on_reads=False,

@@ -139,14 +139,27 @@
     if (seg.truncated) head.appendChild(badge("truncated", "warn"));
     phase.appendChild(head);
 
-    const reasoning = seg.decision && seg.decision.reasoning;
-    if (reasoning) {
+    const content = String(seg.content || "");
+    const decision = seg.decision || {};
+    const modelReasoning = String(seg.model_reasoning || "");
+    const decisionReasoning = String(decision.reasoning || "");
+
+    // thinking = provider 的隐藏推理。没有就只显示 output / reasoning，
+    // 绝不再把整段回复原文同时当成 thinking 和 output。
+    if (modelReasoning.trim()) {
       phase.appendChild(el("div", "thinking-label", "thinking"));
-      phase.appendChild(pre(reasoning, "thinking"));
+      phase.appendChild(pre(modelReasoning, "thinking"));
+    } else if (
+      decisionReasoning.trim() &&
+      decisionReasoning.trim() !== content.trim() &&
+      decision.kind !== "reply"
+    ) {
+      phase.appendChild(el("div", "thinking-label", "reasoning"));
+      phase.appendChild(pre(decisionReasoning, "thinking"));
     }
-    if (seg.content) {
+    if (content) {
       phase.appendChild(el("div", "thinking-label", "output"));
-      phase.appendChild(pre(seg.content));
+      phase.appendChild(pre(content));
     }
 
     const actions = seg.actions || [];

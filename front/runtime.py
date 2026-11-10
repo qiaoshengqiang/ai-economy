@@ -25,6 +25,18 @@ from front.contracts import FrontDecision, FrontIntent, FrontResult
 from front.parser import parse_front_decision
 
 
+#: Front 调用的 system prompt —— 只描述入口职责。
+#:
+#: 🔴 不写 Agent 身份 / 经济 / Constitution：那些属于接单与议价，
+#:    不属于「把 Human 的话路由到哪里」。
+FRONT_SYSTEM_PROMPT = (
+    "You are the Human-facing entry point of an agent system. "
+    "Decide the next action from the Human input, the recent conversation, "
+    "and the task list. Reply to the Human in the language they used. "
+    "Do not discuss wallet, price, or identity."
+)
+
+
 class FrontAgentRuntime:
     """一个可测试的 Front Agent（LLM 调用通过 `think` 注入）。"""
 

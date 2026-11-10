@@ -119,6 +119,37 @@ class TestData:
         assert r.decision is None and not r.has_action
 
 
+class TestModelReasoning:
+    def test_provider_reasoning_is_kept_separate_from_content(self):
+        """
+        🔴 UI 的 thinking 必须是 provider 的隐藏推理，不是回复原文。
+        纯文本回复的 `decision.reasoning` 永远等于 content —— 那是信封
+        字段，不是推理。两者必须是不同的字段。
+        """
+        from types import SimpleNamespace
+
+        class _Agent:
+            agent_id = "agent_a"
+
+            def generate(self, messages=None, **kwargs):
+                return SimpleNamespace(
+                    content="done",
+                    reasoning="THINK-THIS",
+                    total_tokens=3,
+                    finish_reason="stop",
+                    cognitive_status="VALID_CONTENT",
+                    output_status="VALID_CONTENT",
+                )
+
+        run = run_cognition(_Agent(), "hi")
+        seg = run.segments[0]
+
+        assert seg.content == "done"
+        assert seg.model_reasoning == "THINK-THIS"
+        assert seg.decision.reasoning == "done"
+        assert seg.model_reasoning != seg.content
+
+
 # ================================================================
 # 3. Decision → ActionIntent（**不是** Runtime 猜的）
 # ================================================================

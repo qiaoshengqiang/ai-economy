@@ -34,7 +34,9 @@ from work.actions import (
 from work.availability import AgentAvailability
 from work.drafts import TaskDraftStore
 from work.lifecycle import WorkLifecycle, WorkLifecycleError
-from work.prompt import build_cognition_prompt, build_work_prompt
+from work.prompt import (
+    WORK_SYSTEM_PROMPT, build_cognition_prompt, build_work_prompt,
+)
 from work.roles import WorkContext, WorkRole
 from work.runtime import SoloWorkRuntime
 from work.team_registry import TeamRegistry
@@ -571,7 +573,8 @@ class _FakeAgent:
         )
         action_result = dispatcher.dispatch(intent)
         segment = SimpleNamespace(
-            tokens=11, content="done", is_truncated=False)
+            tokens=11, content="done", is_truncated=False,
+            model_reasoning="MODEL-THINK")
         return SimpleNamespace(
             segments=[segment],
             action_intents=[intent],
@@ -639,9 +642,11 @@ class _CognitionAgent(_FakeAgent):
         super().__init__()
         self.brain = _CognitionBrain()
         self.prompts = []
+        self.kwargs_log = []
 
     def act(self, *, messages, dispatcher, **kwargs):
         self.prompts.append(messages)
+        self.kwargs_log.append(dict(kwargs))
         if kwargs.get("initial_phase") == "cognition":
             return SimpleNamespace(
                 segments=[SimpleNamespace(
@@ -877,6 +882,31 @@ class TestSoloWorkRuntime:
         assert "SPEC-MUST-BE-*.spec.js" in work_prompt
         assert "USE process.env.BASE_URL" in work_prompt
 
+    def test_work_calls_do_not_get_agent_identity_or_economy(self, db):
+        """
+        🔴 Work 的 system 层不能有 Agent 身份 / 经济 / Constitution。
+        经济事实是 `main.build_runtime` 注入 `Brain` 的 Cognitive Context，
+        由 `cognitive=False` 关掉；system prompt 用 Work 专用文本。
+        """
+        task = Task.create(
+            task_id="T-WORK-SYSTEM", creator="agent_a",
+            description="写 hello.txt", workspace_id="WS-X",
+            participants=["agent_a"], mode=TaskMode.SOLO)
+        task.claim_producer("agent_a")
+
+        runtime = _SoloRuntime(db, task)
+        runtime.agent = _CognitionAgent()
+        result = SoloWorkRuntime(
+            runtime, task, max_turns=1).run()
+
+        assert result.ok is True, result.error
+        assert runtime.agent.kwargs_log
+        for kwargs in runtime.agent.kwargs_log:
+            assert kwargs.get("cognitive") is False
+            assert kwargs.get("system") == WORK_SYSTEM_PROMPT
+        assert "AIC" not in WORK_SYSTEM_PROMPT
+        assert "Agent B" not in WORK_SYSTEM_PROMPT
+
     def test_each_turn_starts_with_a_fresh_read_dedupe_set(self, db):
         """
         🔴 每一轮的 prompt 都是**从零重建**的：上一轮回喂过的正文不在
@@ -917,6 +947,7 @@ class TestSoloWorkRuntime:
         assert rounds[1]["round"] == 1
         assert rounds[1]["summary"] == "solo 总结"
         assert rounds[1]["segments"][0]["content"] == "done"
+        assert rounds[1]["segments"][0]["model_reasoning"] == "MODEL-THINK"
 
     def test_runtime_is_decision_first_and_has_vision(self, db):
         task = Task.create(

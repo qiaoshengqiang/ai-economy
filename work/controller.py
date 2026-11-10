@@ -42,10 +42,12 @@ from demand.task_creation import TaskCreationService
 from work.artifact_export import (
     ArtifactExportError, export_task_workspace,
 )
-from front import FrontAgentRuntime, FrontIntent, FrontResult
+from front import (
+    FRONT_SYSTEM_PROMPT, FrontAgentRuntime, FrontIntent, FrontResult,
+)
 from work.availability import AgentAvailability
 from work.plan import WorkPlan, parse_work_plan
-from work.prompt import build_lead_plan_prompt
+from work.prompt import WORK_SYSTEM_PROMPT, build_lead_plan_prompt
 from work.roles import WorkContext, WorkRole
 from work.runtime import SoloWorkRuntime
 from work.team_runtime import TeamWorkRuntime
@@ -450,7 +452,17 @@ class AIEOSController:
         agent = self._agent(self.front_agent)
         if agent is None or not getattr(agent, "has_brain", False):
             return None
-        return FrontAgentRuntime(self.front_agent, agent.think)
+
+        def _front_think(prompt: str) -> str:
+            # 🔒 Front 只做入口判断：不注入 Agent 的身份 / 经济 /
+            #    Constitution，也不看自我模型。它的判断材料已经在 prompt 里。
+            return agent.think(
+                prompt,
+                cognitive=False,
+                system=FRONT_SYSTEM_PROMPT,
+            )
+
+        return FrontAgentRuntime(self.front_agent, _front_think)
 
     def _acquire_leader(self, job: WorkJob) -> Optional[str]:
         candidates = [
@@ -603,7 +615,11 @@ class AIEOSController:
             )
             agent = self._agent(leader)
             try:
-                raw = agent.think(prompt)
+                raw = agent.think(
+                    prompt,
+                    cognitive=False,
+                    system=WORK_SYSTEM_PROMPT,
+                )
             except Exception as exc:                          # noqa: BLE001
                 self._message(
                     "system", f"Leader 规划失败：{exc}",

@@ -18,9 +18,10 @@ from front.contracts import (
     FrontBrief, FrontDecision, FrontIntent, FrontResult,
 )
 from front.parser import parse_front_decision
-from front.runtime import FrontAgentRuntime
+from front.runtime import FRONT_SYSTEM_PROMPT, FrontAgentRuntime
 
 __all__ = [
+    "FRONT_SYSTEM_PROMPT",
     "FrontBrief", "FrontDecision", "FrontIntent", "FrontResult",
     "FrontAgentRuntime", "parse_front_decision",
 ]

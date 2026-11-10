@@ -15,8 +15,13 @@ Work 层最小 prompt
 
 只给当前角色真正需要的：
 
-    目标 · DoD · 公共工作记忆 · Workspace 事实 ·
+    目标 · DoD · Workspace 事实 ·
     任务级记忆 · 草稿 · 动作 schema
+
+🔒 **system 层同样受这条边界约束**：Work 调用必须传
+   `cognitive=False` + `WORK_SYSTEM_PROMPT`。
+   `Brain` 默认会把 Agent 身份 / Constitution / 经济事实 / 自我模型
+   拼进 system —— 那是 Agent 自己的认知，不属于 Work。
 """
 
 from __future__ import annotations
@@ -25,6 +30,21 @@ import json
 from typing import Any, Dict, List, Optional
 
 from work.roles import WorkContext, WorkRole
+
+
+#: Work 调用（Solo / Team / QA / Leader）使用的 system prompt。
+#:
+#: 🔴 只描述「你在执行一个 Task」这一层。
+#:    Agent 的身份 / Constitution / 经济事实 / 自我模型 **不在这里** ——
+#:    那些属于 Agent 自身的认知（Front / 接单 / 议价），不属于 Work。
+#:    `Brain` 的 Cognitive Context 会把这些东西拼进 system；Work 调用
+#:    通过 `cognitive=False` + 本 prompt 明确关掉它。
+WORK_SYSTEM_PROMPT = (
+    "You are a work agent executing one Task. "
+    "Follow the Task, its Definition of Done, and the action schema. "
+    "Use a tool's documentation before using that tool. "
+    "Keep internal reasoning in English."
+)
 
 
 #: 动作参数 schema。

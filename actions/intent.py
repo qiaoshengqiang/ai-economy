@@ -263,6 +263,13 @@ class CognitiveSegment:
     #: 这一段模型返回的原文。🔒 保留原文 —— 信封解析失败时它是唯一证据。
     content: str = ""
 
+    #: Provider 返回的**隐藏推理**（DeepSeek `reasoning_content`）。
+    #:
+    #: 🔴 它和 `content` 是两回事：`content` 是模型给世界的输出，
+    #:    这里是模型给自己的思考。UI 的 "thinking" 只应显示这一格。
+    #:    为空 = provider 没返回 / 该模型不输出推理。
+    model_reasoning: str = ""
+
     #: 这一段解析出来的 Decision。
     decision: Optional[Decision] = None
 
@@ -315,6 +322,7 @@ class CognitiveSegment:
             "actual_max_tokens": self.actual_max_tokens,
             "budget_clipped": self.budget_clipped,
             "content_chars": len(self.content or ""),
+            "model_reasoning": self.model_reasoning,
             "decision": self.decision.to_dict() if self.decision else None,
             "action_intents": [i.to_dict() for i in self.action_intents],
             "action_results": [(r.to_dict() if r else None)
