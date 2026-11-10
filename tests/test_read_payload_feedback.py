@@ -171,6 +171,44 @@ class TestTheRenderer:
                             success=False)
         assert "不该出现" not in render_read_results(pairs)
 
+    def test_a_failed_tool_run_is_rendered_with_its_diagnostics(self):
+        """
+        🔴 `success=False` 只说明动作没成功，不说明没有环境信息。
+
+        `run_tool` 的 stdout / stderr / exit_code 是模型定位问题的唯一材料。
+        丢掉它，模型就看不到失败原因，只能再写一个脚本试一次
+        （实测里连续 4 轮都耗在这里）。
+        """
+        pairs = self._pairs(
+            "run_tool",
+            {
+                "tool": "pytest", "exit_code": 1, "ok": False,
+                "timed_out": False, "duration_ms": 2300,
+                "stdout": "E   assert 1 == 2",
+                "stderr": "No tests found",
+            },
+            success=False, params={"path": "."})
+        got = render_read_results(pairs)
+
+        assert "E   assert 1 == 2" in got
+        assert "No tests found" in got
+        assert "status: FAILED" in got
+
+    def test_a_failed_tool_run_keeps_the_error_message(self):
+        intent = type("I", (), {
+            "action_type": "run_tool", "parameters": {}})()
+        result = ActionResult(
+            success=False,
+            output={"tool": "node", "exit_code": 2, "ok": False,
+                    "stdout": "", "stderr": "MODULE_NOT_FOUND"},
+            error="tool_exit_nonzero",
+            action_id="a", action_type="run_tool", metadata={"code": None})
+
+        got = render_read_results([(intent, result)])
+
+        assert "tool_exit_nonzero" in got
+        assert "MODULE_NOT_FOUND" in got
+
     def test_write_results_are_not_echoed_back(self):
         """
         🔴 写动作的 `parameters.content` 是 Agent**自己刚给**的东西 ——

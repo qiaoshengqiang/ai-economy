@@ -317,11 +317,16 @@ class SoloWorkRuntime:
             complete_fn=self._complete_fn,
             include_public_memory=False,
         )
-        seen_reads: set = set()
         empty_streak = 0
         last_turn_facts: Optional[Dict[str, Any]] = None
 
         for turn in range(1, self.max_turns + 1):
+            # 🔴 每一轮重新建一次：下一轮的 prompt 是**从零重建**的，
+            #    上一轮回喂过的正文已经不在上下文里。如果跨轮沿用这份
+            #    指纹，模型重读同一版本的文件只会得到
+            #    「内容未重复发送」—— 它永远看不到正文，只能靠猜。
+            #    去重只在**同一轮**内有效（decision → work 的 follow-up）。
+            seen_reads: set = set()
             if self._stopped():
                 result.status = task.status
                 result.error = "任务已被停止"

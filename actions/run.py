@@ -219,8 +219,9 @@ def run_cognition(
             receipt = _round_receipt(intents, results)
             summary_prompt = (
                 "\n\n========== ROUND SUMMARY ==========\n"
-                "The work phase for this round has ended. Write a COMPLETE "
-                "round summary in English for the next round:\n"
+                "The work phase for this round has ended. Write a compact "
+                "but complete round summary in English for the next round "
+                "(facts the next round needs, not narrative):\n"
                 "1. What did you decide and what was the goal?\n"
                 "2. Which actions ran, and did they succeed?\n"
                 "3. Which files were written or changed?\n"

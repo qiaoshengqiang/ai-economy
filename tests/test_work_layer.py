@@ -21,6 +21,7 @@ from types import SimpleNamespace
 import pytest
 
 from actions import ActionIntent
+from actions.intent import ActionResult
 from core.task import Task, TaskMode, TaskStatus
 from core.task_execution import TaskResultRef
 from core.task_store import TaskStore
@@ -640,6 +641,43 @@ class _CognitionAgent(_FakeAgent):
             messages=messages, dispatcher=dispatcher, **kwargs)
 
 
+class _SeenReadsAgent(_FakeAgent):
+    """第一轮“读过”一个文件；用来确认第二轮拿到的是**新的**去重集合。"""
+
+    def __init__(self):
+        super().__init__()
+        self.seen_sets = []
+        self.work_turns = 0
+
+    def act(self, *, messages, dispatcher, **kwargs):
+        if kwargs.get("initial_phase") == "cognition":
+            return SimpleNamespace(
+                segments=[SimpleNamespace(
+                    tokens=1, content="cognition report",
+                    is_truncated=False)],
+                action_intents=[], action_results=[])
+        self.work_turns += 1
+        seen = kwargs.get("seen_reads")
+        self.seen_sets.append(seen)
+        if self.work_turns == 1:
+            seen.add(("js/app.js", 1, 1, 40))
+            intent = ActionIntent(
+                action_type="workspace_read",
+                parameters={"path": "js/app.js"}, agent_id="agent_a")
+            result = ActionResult(
+                success=True,
+                output={"path": "js/app.js", "content": "console.log(1)",
+                        "revision": 1, "chars": 13},
+                action_id=intent.intent_id,
+                action_type=intent.action_type)
+            return SimpleNamespace(
+                segments=[SimpleNamespace(
+                    tokens=1, content="read", is_truncated=False)],
+                action_intents=[intent], action_results=[result])
+        return super().act(
+            messages=messages, dispatcher=dispatcher, **kwargs)
+
+
 class TestSoloWorkRuntime:
     def test_cognition_report_is_injected_into_work_prompt(self, db):
         task = Task.create(
@@ -678,6 +716,27 @@ class TestSoloWorkRuntime:
         assert result.status == TaskStatus.COMPLETED
         assert runtime.agent.calls == 3
         assert runtime.tasks.get(task.task_id).status == TaskStatus.COMPLETED
+
+    def test_each_turn_starts_with_a_fresh_read_dedupe_set(self, db):
+        """
+        🔴 每一轮的 prompt 都是**从零重建**的：上一轮回喂过的正文不在
+        上下文里。跨轮沿用去重指纹，会让模型重读同一版本文件时只得到
+        「内容未重复发送」—— 它永远看不到正文（实测里连续 4 轮耗在这）。
+        """
+        task = Task.create(
+            task_id="T-SEEN-READS", creator="agent_a",
+            description="读 js/app.js 再完成", workspace_id="WS-X",
+            participants=["agent_a"], mode=TaskMode.SOLO)
+        task.claim_producer("agent_a")
+
+        runtime = _SoloRuntime(db, task)
+        runtime.agent = _SeenReadsAgent()
+        result = SoloWorkRuntime(runtime, task, max_turns=3).run()
+
+        assert result.ok is True, result.error
+        assert len(runtime.agent.seen_sets) == 2
+        assert runtime.agent.seen_sets[0] is not runtime.agent.seen_sets[1]
+        assert len(runtime.agent.seen_sets[1]) == 0
 
     def test_runtime_emits_round_payload_with_summary(self, db):
         task = Task.create(

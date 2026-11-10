@@ -143,6 +143,14 @@ CONFIRMATION_ACTIONS = frozenset({
     ACTION_WORKSPACE_PROMOTE_DRAFTS,
 })
 
+#: 失败时**仍然**要回喂的动作 —— 它们的失败输出本身就是诊断材料。
+#:
+#: 判据：`success=False` 只说明「动作没成功」，不说明「没有环境信息」。
+#: `run_tool` 的 stdout / stderr / exit_code 恰恰是模型定位问题的唯一材料；
+#: 丢掉它，模型就只能靠猜，下一轮再写一个脚本试一次。
+#: 读取类动作不在此列：读失败＝没有正文可给（空串会被误读成「读到了」）。
+DIAGNOSTIC_ON_FAILURE = frozenset({ACTION_RUN_TOOL})
+
 #: 只由 Demand / Work 组合根注册、但同样是真实动作的集合。
 #:
 #: `tests/action_registry_helpers.py` 的“注册动作”来源是生产实验；
@@ -197,13 +205,19 @@ def _clip(text: str, limit: int) -> Tuple[str, bool]:
 
 def _tool_output_text(output: Dict[str, Any]) -> str:
     """把 run_tool 的结构化结果渲染成 Agent 可读材料。"""
+    exit_code = output.get("exit_code")
+    ok = output.get("ok")
     lines = [
         f"tool={output.get('tool')}  "
-        f"exit_code={output.get('exit_code')}  "
-        f"ok={output.get('ok')}  "
+        f"exit_code={exit_code}  "
+        f"ok={ok}  "
         f"timed_out={output.get('timed_out')}  "
         f"duration_ms={output.get('duration_ms')}",
     ]
+    if ok is False or (exit_code not in (0, None) and ok is not True):
+        lines.append(
+            "status: FAILED — this is the real tool output "
+            "(stdout/stderr below); read it before changing approach.")
     if output.get("message"):
         lines.append(f"message: {output['message']}")
     stdout = str(output.get("stdout") or "")
@@ -372,14 +386,22 @@ def _picked(pairs: Iterable[Tuple[ActionIntent, Optional[ActionResult]]]
     """
     out: List[Tuple[str, str, str]] = []
     for intent, result in pairs:
-        if result is None or not getattr(result, "success", False):
+        if result is None:
             continue
         action_type = str(getattr(intent, "action_type", "") or "")
+        success = bool(getattr(result, "success", False))
+        if not success and action_type not in DIAGNOSTIC_ON_FAILURE:
+            continue
         if not is_observable(action_type):
             continue
         text = _payload_of(action_type, getattr(result, "output", None))
-        if text:
-            out.append((action_type, _target_of(intent), text))
+        if not text:
+            continue
+        if not success:
+            error = str(getattr(result, "error", "") or "").strip()
+            if error:
+                text = f"error: {error}\n{text}"
+        out.append((action_type, _target_of(intent), text))
     return out
 
 
