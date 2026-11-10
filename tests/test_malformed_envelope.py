@@ -106,6 +106,36 @@ class TestMalformedEnvelope:
         assert d.dropped_actions == 1
         assert d.envelope_error == "no_valid_actions"
 
+    def test_actions_without_decision_key_is_still_an_envelope(self):
+        """
+        🔴 `actions` 是合法信封键。漏掉它时，多动作 JSON 会被当成
+        reflection 数组 → `kind=reply` + `envelope_error=""`，
+        动作被静默吞掉（实测：认知阶段就撞到，报告变成一行 JSON）。
+        """
+        d = decision_from_text("agent_a", json.dumps({
+            "actions": [
+                {"type": "tool_help",
+                 "parameters": {"tool": "playwright"}},
+                {"type": "tool_help",
+                 "parameters": {"tool": "node"}},
+            ],
+        }))
+
+        assert d.kind == "act"
+        assert [i.action_type for i in d.intents] == [
+            "tool_help", "tool_help"]
+        assert d.envelope_error == ""
+
+    def test_actions_entries_without_type_are_reported(self):
+        d = decision_from_text("agent_a", json.dumps({
+            "actions": [{"action": "tool_help",
+                         "tool": "playwright"}],
+        }))
+
+        assert d.kind == "reply"
+        assert d.dropped_actions == 1
+        assert d.envelope_error == "no_valid_actions"
+
     def test_to_dict_carries_the_error(self):
         d = decision_from_text("agent_b", TRUNCATED)
         assert d.to_dict()["envelope_error"] == "unparsable_envelope"

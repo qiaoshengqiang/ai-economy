@@ -731,6 +731,35 @@ class _ToolDocAgent(_FakeAgent):
             messages=messages, dispatcher=dispatcher, **kwargs)
 
 
+class _MalformedCognitionAgent(_FakeAgent):
+    """第一次认知输出写坏的信封；第二次才给纯文本报告。"""
+
+    def __init__(self):
+        super().__init__()
+        self.prompts = []
+        self.cognition_calls = 0
+
+    def act(self, *, messages, dispatcher, **kwargs):
+        self.prompts.append(messages)
+        if kwargs.get("initial_phase") == "cognition":
+            self.cognition_calls += 1
+            if self.cognition_calls == 1:
+                content = (
+                    '```json\n{"actions":[{"action":"tool_help",'
+                    '"tool":"playwright"}]}\n```')
+                return SimpleNamespace(
+                    segments=[SimpleNamespace(
+                        tokens=1, content=content, is_truncated=False)],
+                    action_intents=[], action_results=[])
+            return SimpleNamespace(
+                segments=[SimpleNamespace(
+                    tokens=1, content="COGNITION-REPORT-TEXT",
+                    is_truncated=False)],
+                action_intents=[], action_results=[])
+        return super().act(
+            messages=messages, dispatcher=dispatcher, **kwargs)
+
+
 class TestSoloWorkRuntime:
     def test_cognition_report_is_injected_into_work_prompt(self, db):
         task = Task.create(
@@ -769,6 +798,31 @@ class TestSoloWorkRuntime:
         assert result.status == TaskStatus.COMPLETED
         assert runtime.agent.calls == 3
         assert runtime.tasks.get(task.task_id).status == TaskStatus.COMPLETED
+
+    def test_malformed_action_json_is_not_used_as_cognition_report(self, db):
+        """
+        🔴 认知阶段把 `{"actions":[...]}` 当成报告，会让这份 JSON 注入
+        后续每一轮 prompt，认知阶段等于白跑（实测发生过）。坏信封必须
+        触发一次重问，只接受纯文本报告。
+        """
+        task = Task.create(
+            task_id="T-COGNITION-REPORT", creator="agent_a",
+            description="用 playwright 验证", workspace_id="WS-X",
+            participants=["agent_a"], mode=TaskMode.SOLO)
+        task.claim_producer("agent_a")
+
+        rounds = []
+        runtime = _SoloRuntime(db, task)
+        runtime.agent = _MalformedCognitionAgent()
+        result = SoloWorkRuntime(
+            runtime, task, max_turns=1,
+            round_sink=rounds.append).run()
+
+        assert result.ok is True, result.error
+        assert runtime.agent.cognition_calls == 2
+        assert rounds[0]["summary"] == "COGNITION-REPORT-TEXT"
+        assert "not a valid action envelope" in str(
+            runtime.agent.prompts[1][-1])
 
     def test_tool_docs_read_in_cognition_survive_into_work_prompt(self, db):
         """

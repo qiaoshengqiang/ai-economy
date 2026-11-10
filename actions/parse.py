@@ -86,7 +86,7 @@ def _first_balanced_object(text: str) -> Optional[str]:
 #:    （例如决定「不动手，但要改策略」）。
 #:    第一版白名单漏了它们，导致合法的 Reflection 被静默丢弃，
 #:    进而把「parser bug」误读成「模型不遵守协议」。
-ENVELOPE_KEYS = {"decision", "action", "action_type",
+ENVELOPE_KEYS = {"decision", "action", "actions", "action_type",
                  "reflections", "reflection", "thinking",
                  "cognitive_budget"}
 

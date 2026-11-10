@@ -21,6 +21,7 @@ SoloWorkRuntime —— Work 层最小执行循环
 
 from __future__ import annotations
 
+import json
 from typing import Any, Callable, Dict, List, Optional
 
 from core.task import Task, TaskMode, TaskStatus
@@ -36,6 +37,55 @@ from work.images import make_image_resolver
 from work.lifecycle import WorkLifecycle, WorkLifecycleError
 from work.prompt import build_cognition_prompt, build_work_prompt
 from work.roles import WorkContext, WorkResult, WorkRole
+
+
+_ENVELOPE_KEYS = frozenset({
+    "decision", "action", "actions", "action_type",
+    "thinking", "cognitive_budget", "reflection", "reflections",
+})
+
+
+def _strip_code_fence(text: str) -> str:
+    body = str(text or "").strip()
+    if not body.startswith("```"):
+        return body
+    body = body[3:]
+    if body[:4].lower() == "json":
+        body = body[4:]
+    if "\n" in body:
+        body = body.split("\n", 1)[1]
+    if body.rstrip().endswith("```"):
+        body = body.rstrip()[:-3]
+    return body.strip()
+
+
+def _report_candidate(text: str) -> str:
+    """这轮输出是「报告正文」，还是「动作信封」？
+
+    🔴 认知阶段只有两种合法输出：动作信封、纯文本报告。
+       把信封（哪怕是写坏的）当成报告，会把 `{"actions":[...]}`
+       原样注入后续**每一轮** prompt。实测里发生过：报告字段变成了
+       一行 JSON，认知阶段等于白跑。
+    """
+    raw = str(text or "").strip()
+    if not raw:
+        return ""
+    body = _strip_code_fence(raw)
+    if not body.startswith("{"):
+        return raw
+    try:
+        data = json.loads(body)
+    except (ValueError, TypeError):
+        # 看起来像信封但坏了 → 让调用方要求它重发。
+        return ""
+    if not isinstance(data, dict):
+        return raw
+    if _ENVELOPE_KEYS & set(data.keys()):
+        content = data.get("content")
+        if isinstance(content, str) and content.strip():
+            return content.strip()
+        return ""
+    return raw
 
 
 class SoloWorkRuntime:
@@ -222,8 +272,28 @@ class SoloWorkRuntime:
                 results = list(getattr(run, "action_results", None) or [])
                 self._collect_tool_docs(intents, results)
                 if not intents:
-                    report = last_content
-                    break
+                    candidate = _report_candidate(last_content)
+                    if candidate:
+                        report = candidate
+                        break
+                    # 🔴 这不是报告：模型想行动，但信封写坏了。
+                    #    直接把它当成报告会污染后续每一轮的 cognition
+                    #    上下文（实测：报告变成了 {"actions":[...]}）。
+                    messages.append({
+                        "role": "assistant", "content": last_content})
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            "That output is not a valid action envelope and "
+                            "not a report.\n"
+                            "To act, use exactly this shape:\n"
+                            '{"decision":"act","actions":'
+                            '[{"type":"tool_help",'
+                            '"parameters":{"tool":"playwright"}}]}\n'
+                            "If you already have enough facts, output the "
+                            "report as plain text (no JSON)."),
+                    })
+                    continue
                 feedback = render_read_results(
                     list(zip(intents, results)),
                     image_resolver=self.image_resolver,
@@ -241,8 +311,8 @@ class SoloWorkRuntime:
                 messages.append({
                     "role": "user",
                     "content": (
-                        "现在输出完整的任务认知报告，只输出文字，"
-                        "不要输出 JSON 动作。"),
+                        "Output the complete TASK COGNITION report now as "
+                        "plain text. Do not output a JSON action."),
                 })
                 run = agent.act(
                     messages=messages,
@@ -263,8 +333,9 @@ class SoloWorkRuntime:
                 segments.extend(segs)
                 tokens += sum(
                     int(getattr(s, "tokens", 0) or 0) for s in segs)
-                report = str(
-                    getattr(segs[-1], "content", "") or "") if segs else ""
+                report = _report_candidate(
+                    str(getattr(segs[-1], "content", "") or "")
+                    if segs else "")
 
             self._cognition_tokens = tokens
             report = report.strip()
