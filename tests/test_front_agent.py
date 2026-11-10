@@ -114,6 +114,29 @@ def test_cancel_on_non_active_task_falls_back_to_clarify():
     assert decision.reason.startswith("front_parse_failed")
 
 
+def test_artifacts_require_known_task():
+    runtime = FrontAgentRuntime(
+        "front", _think_returning(
+            {"intent": "artifacts", "task_id": "task_1",
+             "reply": "好的，我把产物导出给你"}))
+    decision = runtime.decide(
+        "看看刚才的产物",
+        completed_tasks=[{"task_id": "task_1"}])
+    assert decision.intent == FrontIntent.ARTIFACTS
+    assert decision.task_id == "task_1"
+
+
+def test_artifacts_on_unknown_task_falls_back_to_clarify():
+    runtime = FrontAgentRuntime(
+        "front", _think_returning(
+            {"intent": "artifacts", "task_id": "task_missing"}))
+    decision = runtime.decide(
+        "看看这个任务的产物",
+        completed_tasks=[{"task_id": "task_1"}])
+    assert decision.intent == FrontIntent.CLARIFY
+    assert decision.reason.startswith("front_parse_failed")
+
+
 def test_clarify():
     runtime = FrontAgentRuntime(
         "front", _think_returning(
@@ -167,6 +190,7 @@ def test_front_prompt_is_human_facing_and_does_not_invent_constraints():
     assert "INTERRUPTED" in prompt
     assert "不要回答“正在处理中”" in prompt
     assert "停止必须走这个 intent" in prompt
+    assert "产物 / 代码 / 文件 / 结果" in prompt
 
 
 def test_front_cannot_create_task():

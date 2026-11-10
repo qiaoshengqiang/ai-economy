@@ -629,6 +629,58 @@ def test_controller_round_log_roundtrip():
     assert rounds == [{"round": 1, "summary": "ok"}]
 
 
+def test_artifacts_export_writes_host_directory(tmp_path):
+    from front import FrontDecision, FrontIntent
+    from work.controller import WorkJob
+
+    class _Gateway:
+        def list(self, _ws, path, _agent):
+            return SimpleNamespace(success=True, result={"entries": [
+                {"name": "hello.py", "type": "file"},
+            ] if path in ("", "/") else []})
+
+        def read(self, _ws, path, _agent):
+            return SimpleNamespace(
+                success=True,
+                result={"content": "print('hello')\n", "revision": 1})
+
+    class _Task:
+        task_id = "task_art"
+        status = "COMPLETED"
+        mode = "SOLO"
+        iteration = 1
+        creator = "agent_b"
+        participants = ["agent_b"]
+        workspace_id = "WS-ART"
+
+    runtime = SimpleNamespace(
+        directory=_Directory(["agent_a", "agent_b"]),
+        economy=SimpleNamespace(agent=lambda aid: SimpleNamespace(
+            has_brain=True)),
+        tasks=SimpleNamespace(
+            get=lambda tid: _Task(),
+            list_tasks=lambda limit=50: [],
+        ),
+        workspace_gateway=_Gateway(),
+    )
+    controller = AIEOSController(
+        runtime, front_agent="agent_a",
+        export_root=tmp_path / "exports")
+    job = WorkJob(job_id="job_art", human_text="看看产物")
+    decision = FrontDecision(
+        intent=FrontIntent.ARTIFACTS, task_id="task_art")
+    try:
+        controller._export_artifacts(job, decision)
+        messages = controller.state()["messages"]
+    finally:
+        controller.close()
+
+    target = tmp_path / "exports" / "task_art"
+    assert (target / "hello.py").read_text() == "print('hello')\n"
+    assert job.status == "DIRECT_REPLY"
+    assert any(str(target.resolve()) in item["text"] for item in messages)
+
+
 def test_cancel_running_task_marks_job_and_task():
     from front import FrontDecision, FrontIntent
     from work.controller import WorkJob

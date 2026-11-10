@@ -39,6 +39,9 @@ from typing import Any, Dict, List, Optional
 
 from core.task import TaskMode, TaskStatus
 from demand.task_creation import TaskCreationService
+from work.artifact_export import (
+    ArtifactExportError, export_task_workspace,
+)
 from front import FrontAgentRuntime, FrontIntent, FrontResult
 from work.availability import AgentAvailability
 from work.plan import WorkPlan, parse_work_plan
@@ -131,6 +134,7 @@ class AIEOSController:
         settings_path: Optional[Path] = None,
         log_dir: Optional[Path] = None,
         round_log: Any = None,
+        export_root: Optional[Path] = None,
     ) -> None:
         self.rt = runtime
         self.front_agent = str(front_agent)
@@ -145,6 +149,10 @@ class AIEOSController:
         self.settings_path = Path(settings_path) if settings_path else None
         self.log_dir = Path(log_dir) if log_dir else None
         self.round_log = round_log
+        self.export_root = (
+            Path(export_root).expanduser().resolve()
+            if export_root else Path("runs/exports").resolve()
+        )
         if self.log_dir is not None:
             self.log_dir.mkdir(parents=True, exist_ok=True)
 
@@ -322,6 +330,9 @@ class AIEOSController:
                 return
             if decision.intent == FrontIntent.CANCEL:
                 self._cancel_work(job, decision)
+                return
+            if decision.intent == FrontIntent.ARTIFACTS:
+                self._export_artifacts(job, decision)
                 return
             if decision.intent in (
                 FrontIntent.REWORK, FrontIntent.FOLLOW_UP,
@@ -898,6 +909,57 @@ class AIEOSController:
             "他们会在当前步骤结束后停下。",
             task.task_id,
         )
+
+    def _export_artifacts(self, job: WorkJob, decision: Any) -> None:
+        task_id = str(getattr(decision, "task_id", "") or "").strip()
+        try:
+            task = self.rt.tasks.get(task_id)
+        except Exception:                                     # noqa: BLE001
+            task = None
+        if task is None:
+            self._reply_direct(
+                job, "找不到这个任务，无法导出产物。", task_id)
+            return
+        actor = task.creator or (
+            task.participants[0] if task.participants else "")
+        try:
+            exported = export_task_workspace(
+                getattr(self.rt, "workspace_gateway", None),
+                workspace_id=task.workspace_id or "",
+                agent_id=actor,
+                task_id=task.task_id,
+                dest_root=self.export_root,
+                task_meta={
+                    "status": task.status,
+                    "mode": task.mode,
+                    "iteration": task.iteration,
+                    "creator": task.creator,
+                },
+            )
+        except ArtifactExportError as exc:
+            self._reply_direct(
+                job,
+                f"产物导出失败：{exc.message}",
+                task.task_id,
+            )
+            return
+        except Exception as exc:                              # noqa: BLE001
+            self._reply_direct(
+                job,
+                f"产物导出失败：{type(exc).__name__}: {exc}",
+                task.task_id,
+            )
+            return
+
+        lines = [
+            f"产物已从数据库导出到宿主机目录：\n{exported['path']}",
+            "",
+            f"共 {exported['count']} 个文件：",
+        ]
+        lines.extend(
+            f"- {item['path']}" for item in exported["files"])
+        self._reply_direct(job, "\n".join(lines), task.task_id)
+        job.summary = exported["path"]
 
     def _mark_task_cancelled(self, task: Any, *, reason: str) -> bool:
         try:

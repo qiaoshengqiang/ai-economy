@@ -151,6 +151,8 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--port", type=int, default=8000)
     ap.add_argument("--db", default=None,
                     help="Runtime 数据库；默认 runs/ui/aieos.db")
+    ap.add_argument("--export-dir", default=None,
+                    help="Front 导出产物的宿主机目录；默认 runs/exports")
     ap.add_argument("--front-agent", default="agent_a")
     ap.add_argument("--max-teams", type=int, default=3)
     ap.add_argument("--worker-turns", type=int, default=8)
@@ -186,6 +188,10 @@ def main(argv=None) -> int:
         settings_path=db_path.parent / "ui_settings.json",
         log_dir=db_path.parent / "jobs",
         round_log=TaskRoundLog(db_path.parent / "rounds"),
+        export_root=(
+            Path(args.export_dir).expanduser().resolve()
+            if args.export_dir else (ROOT / "runs" / "exports").resolve()
+        ),
     )
     Handler.controller = controller
     httpd = ThreadingHTTPServer((args.host, int(args.port)), Handler)

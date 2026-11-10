@@ -9,6 +9,8 @@ FrontAgentRuntime —— Human 意图入口
         ├─ handoff  → FrontBrief
         ├─ rework   → 原 Task 的 Creator
         ├─ follow_up→ 进行中 Task 的 Creator
+        ├─ cancel   → 停止 / 取消 Task
+        ├─ artifacts→ 导出 Task 产物到宿主机
         └─ clarify
 
 🔒 Front Agent 永不创建 Task。
@@ -224,7 +226,15 @@ status 为 INTERRUPTED 表示任务之前中断了、现在没有在执行：
    🔒 不要说“已经停了”却不输出 cancel —— direct_reply 不会终止任何工作；
       停止必须走这个 intent，系统才会真的停掉执行并释放 Agent。
 
-6. clarify
+6. artifacts
+   Human 要求查看某个 Task 的产物 / 代码 / 文件 / 结果。
+   {{"intent":"artifacts","task_id":"...","reply":"给 Human 的简短确认",
+     "reason":"..."}}
+   只能引用上面出现过的 task_id。
+   如果 Human 说的是“刚才那个”，从已完成 / 进行中的 Task 里选最匹配的；
+   有多个候选且无法确定时用 clarify，不要猜。
+
+7. clarify
    意图不明确，向 Human 追问。
    {{"intent":"clarify","question":"...","reason":"..."}}
 

@@ -9,6 +9,7 @@ Front 决策解析
     {"intent":"rework","task_id":"..."}
     {"intent":"follow_up","task_id":"..."}
     {"intent":"cancel","task_id":"..."}
+    {"intent":"artifacts","task_id":"..."}
     {"intent":"clarify","question":"..."}
 
 🔒 解析只做结构校验和任务 ID 归属校验，不创建 Task、不改 Task 状态。
@@ -152,6 +153,16 @@ def parse_front_decision(
             task_id = str(payload.get("task_id") or "").strip()
             if task_id not in active:
                 return None, "cancel_task_not_active"
+            return FrontDecision(
+                intent=raw_intent, task_id=task_id,
+                reply=str(payload.get("reply") or "").strip(),
+                confidence=confidence,
+                reason=str(payload.get("reason") or "")), ""
+
+        if raw_intent == FrontIntent.ARTIFACTS:
+            task_id = str(payload.get("task_id") or "").strip()
+            if task_id not in (active | completed):
+                return None, "artifacts_task_not_found"
             return FrontDecision(
                 intent=raw_intent, task_id=task_id,
                 reply=str(payload.get("reply") or "").strip(),
