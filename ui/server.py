@@ -84,6 +84,9 @@ class Handler(BaseHTTPRequestHandler):
         if path in ("/", "/index.html"):
             self._send_file(STATIC / "index.html")
             return
+        if path in ("/task", "/task.html"):
+            self._send_file(STATIC / "task.html")
+            return
         if path.startswith("/static/"):
             relative = path[len("/static/"):]
             target = (STATIC / relative).resolve()

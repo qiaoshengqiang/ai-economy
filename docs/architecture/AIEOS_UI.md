@@ -133,8 +133,8 @@ summary（只产文字，不执行动作）
 | 输入框 | 输入 Human Demand |
 | 提交按钮 | 提交给 Front Agent |
 | 输出显示框 | Human / Front / 系统消息 |
-| Task 卡片列表 | task_id · 状态 · 执行 Agent · 参与者 · 迭代 |
-| Task 卡片点击 | 原地展开 / 收起：每轮 decision / work / summary 原文、动作与结果、执行历史、文件、公共 WM、LLM 汇总 |
+| Task 卡片列表 | task_id · 状态 · 执行 Agent · 参与者 · 迭代 · **Front → Work 提示词前 3 行**（超出省略） |
+| Task 卡片点击 | 新开标签页 `/task.html?task_id=...`：每轮 decision / work / summary 的 thinking、输出、动作与结果，外加执行历史、文件、公共 WM、LLM 汇总 |
 | Agent 状态 | `IDLE` / `WORKING` / `STOPPING` · `FRONT` / `WORKER` |
 | 设置按钮 | 修改 Front Agent / 最大并行任务 |
 
@@ -185,6 +185,8 @@ GET  /api/health
 - 任务结果直接来自 DB / runtime，不生成 `result.json`；
 - 每次 UI Job 的可见日志保存到 `runs/ui/jobs/<job_id>.json`（job + messages）；
 - 每轮 decision / work / summary 明细保存到 `runs/ui/rounds/<task_id>.json`；
+- Task 详情页用 `/api/task/<task_id>` 每 2 秒轮询，暂不引入 SSE；
+  当前轮次数据量下，轮询不影响现有实现；
 - 每轮 phase 明细（decision / work / summary 原文与动作）已落盘；
   完整 system prompt / 原始 HTTP response 仍未保存；
 - Front 收到 `artifacts` 时把产物从 DB 导出到宿主机

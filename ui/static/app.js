@@ -27,9 +27,6 @@
   let polling = false;
   let submitting = false;
   let toastTimer = 0;
-  // 展开的 Task 卡片与已加载的执行明细（页面会话内缓存）。
-  const expandedTasks = new Set();
-  const taskDetails = new Map();
 
   function showToast(text, isError = false) {
     els.toast.textContent = String(text || "");
@@ -167,197 +164,6 @@
     });
   }
 
-  function _el(tag, className, text) {
-    const node = document.createElement(tag);
-    if (className) node.className = className;
-    if (text != null) node.textContent = String(text);
-    return node;
-  }
-
-  function _clipText(text, limit = 60000) {
-    const value = String(text || "");
-    if (value.length <= limit) return value;
-    return value.slice(0, limit) + `\n…（截断，共 ${value.length} 字符）`;
-  }
-
-  function _pre(text, className = "phase-output") {
-    const node = document.createElement("pre");
-    node.className = className;
-    node.textContent = _clipText(text);
-    return node;
-  }
-
-  function _actionLine(action, result) {
-    const type = action.type || action.action_type || "?";
-    const params = action.parameters || {};
-    const target = params.path || params.query || params.item_id || "";
-    let line = `${type}${target ? " " + target : ""}`;
-    if (!result) {
-      line += " · 未执行";
-    } else if (result.success) {
-      line += " · ok";
-    } else {
-      line += " · failed";
-      if (result.error) line += ` · ${result.error}`;
-    }
-    if (result && result.output) {
-      if (result.output.chars != null) line += ` · ${result.output.chars} chars`;
-      if (result.output.revision != null) line += ` · R${result.output.revision}`;
-      if (result.output.exit_code != null) line += ` · exit=${result.output.exit_code}`;
-    }
-    return line;
-  }
-
-  function _detailSection(parent, title) {
-    const block = _el("section", "detail-section");
-    block.appendChild(_el("div", "detail-title", title));
-    parent.appendChild(block);
-    return block;
-  }
-
-  function renderTaskDetail(container, detail) {
-    container.innerHTML = "";
-    const task = detail.task || {};
-    const job = detail.job || {};
-    const llm = detail.llm || {};
-
-    const head = _el("div", "detail-meta");
-    head.textContent =
-      `${task.status || "?"} · ${task.mode || "?"} · ` +
-      `iteration ${task.iteration || 1} · ${task.creator || "—"}`;
-    container.appendChild(head);
-    if (job.status) {
-      container.appendChild(_el(
-        "div", "detail-meta",
-        `Job: ${job.status}${job.error ? " · " + job.error : ""}`));
-    }
-
-    const rounds = Array.isArray(detail.rounds) ? detail.rounds : [];
-    const roundsBlock = _detailSection(container, `执行轮次（${rounds.length}）`);
-    if (!rounds.length) {
-      roundsBlock.appendChild(_el("div", "muted", "旧任务没有轮次记录。"));
-    }
-    rounds.forEach((round) => {
-      const block = document.createElement("details");
-      block.className = "round-block";
-      block.open = true;
-      const summary = document.createElement("summary");
-      summary.textContent =
-        `Round ${round.round || "?"} · ` +
-        `${round.status_before || "?"} → ${round.status_after || "?"} · ` +
-        `${round.tokens || 0} tokens`;
-      block.appendChild(summary);
-
-      (round.segments || []).forEach((seg) => {
-        const phase = _el(
-          "div", `phase-block ${seg.phase || ""}`);
-        const title = _el("div", "phase-title");
-        let label = seg.phase || "phase";
-        if (seg.truncated) label += " · truncated";
-        if (seg.finish_reason) label += ` · ${seg.finish_reason}`;
-        if (seg.tokens != null) label += ` · ${seg.tokens} tokens`;
-        title.textContent = label;
-        phase.appendChild(title);
-        if (seg.content) phase.appendChild(_pre(seg.content));
-
-        const actions = seg.actions || [];
-        const results = seg.results || [];
-        if (actions.length) {
-          const list = _el("div", "action-list");
-          actions.forEach((action, index) => {
-            const row = _el(
-              "div", "action-row", _actionLine(action, results[index]));
-            list.appendChild(row);
-            if (results[index] && results[index].output) {
-              const out = document.createElement("details");
-              out.className = "action-output";
-              const outSummary = document.createElement("summary");
-              outSummary.textContent = "result";
-              out.appendChild(outSummary);
-              out.appendChild(_pre(
-                JSON.stringify(results[index].output, null, 2)));
-              list.appendChild(out);
-            }
-          });
-          phase.appendChild(list);
-        }
-        block.appendChild(phase);
-      });
-
-      const hasSummarySegment = (round.segments || []).some(
-        (seg) => seg.phase === "summary");
-      if (round.summary && !hasSummarySegment) {
-        const summaryBlock = _el("div", "phase-block summary");
-        summaryBlock.appendChild(_el("div", "phase-title", "summary"));
-        summaryBlock.appendChild(_pre(round.summary));
-        block.appendChild(summaryBlock);
-      }
-      roundsBlock.appendChild(block);
-    });
-
-    const files = detail.workspace_files || [];
-    const fileBlock = _detailSection(container, `Workspace 文件（${files.length}）`);
-    files.forEach((file) => {
-      const rev = file.revision == null ? "" : ` R${file.revision}`;
-      const chars = file.chars == null ? "" : ` · ${file.chars} chars`;
-      fileBlock.appendChild(_el("div", "file-row", `${file.path}${rev}${chars}`));
-    });
-
-    if (detail.public_memory) {
-      const memoryBlock = _detailSection(container, "公共工作记忆");
-      memoryBlock.appendChild(_pre(detail.public_memory));
-    }
-
-    const execs = detail.executions || [];
-    if (execs.length) {
-      const execBlock = _detailSection(container, "执行历史");
-      execs.forEach((item) => {
-        let outcome = "";
-        if (item.verification) {
-          outcome = item.verification.passed ? " · 验收通过" : " · 验收不通过";
-        }
-        if (item.result && item.result.summary) {
-          outcome += ` · ${item.result.summary}`;
-        }
-        execBlock.appendChild(_el(
-          "div", "file-row",
-          `${item.created_at || ""} ${item.event_type || ""} by ` +
-          `${item.from_agent || "?"} → ${item.status_after || "?"}${outcome}`));
-      });
-    }
-
-    const llmBlock = _detailSection(container, "LLM");
-    llmBlock.appendChild(_el(
-      "div", "file-row",
-      `${llm.calls || 0} calls · ${llm.input_tokens || 0} in · ` +
-      `${llm.output_tokens || 0} out · ${llm.cost_ai || 0} AIC`));
-    if (job.summary) {
-      llmBlock.appendChild(_el("div", "file-row", `结果：${job.summary}`));
-    }
-  }
-
-  async function loadTaskDetail(taskId) {
-    try {
-      const detail = await api(`/api/task/${encodeURIComponent(taskId)}`);
-      taskDetails.set(taskId, detail);
-      renderTasks(state ? state.tasks : []);
-    } catch (error) {
-      showToast(`任务读取失败：${error.message}`, true);
-    }
-  }
-
-  function toggleTask(taskId) {
-    if (expandedTasks.has(taskId)) {
-      expandedTasks.delete(taskId);
-    } else {
-      expandedTasks.add(taskId);
-      if (!taskDetails.has(taskId)) {
-        loadTaskDetail(taskId);
-      }
-    }
-    renderTasks(state ? state.tasks : []);
-  }
-
   function renderTasks(tasks) {
     const list = tasks || [];
     els.tasksCount.textContent = `${list.length} 个`;
@@ -371,10 +177,15 @@
     }
     list.forEach((task) => {
       const card = document.createElement("div");
-      const expanded = expandedTasks.has(task.task_id);
-      card.className =
-        `task-card clickable ${task.status || ""}${expanded ? " expanded" : ""}`;
-      card.addEventListener("click", () => toggleTask(task.task_id));
+      card.className = `task-card clickable ${task.status || ""}`;
+      card.title = "在新标签页打开执行明细";
+      card.addEventListener("click", () => {
+        window.open(
+          `/task.html?task_id=${encodeURIComponent(task.task_id)}`,
+          "_blank",
+          "noopener",
+        );
+      });
       const top = document.createElement("div");
       top.className = "task-top";
       const id = document.createElement("span");
@@ -385,6 +196,9 @@
       status.textContent = task.status || "";
       top.appendChild(id);
       top.appendChild(status);
+      const label = document.createElement("div");
+      label.className = "task-prompt-label";
+      label.textContent = "Front → Work 提示词";
       const desc = document.createElement("div");
       desc.className = "task-desc";
       desc.textContent = task.description || "";
@@ -400,21 +214,9 @@
       meta.appendChild(members);
       meta.appendChild(iteration);
       card.appendChild(top);
+      card.appendChild(label);
       card.appendChild(desc);
       card.appendChild(meta);
-
-      if (expanded) {
-        const detail = document.createElement("div");
-        detail.className = "task-detail";
-        detail.addEventListener("click", (event) => event.stopPropagation());
-        const data = taskDetails.get(task.task_id);
-        if (data) {
-          renderTaskDetail(detail, data);
-        } else {
-          detail.textContent = "加载执行明细…";
-        }
-        card.appendChild(detail);
-      }
       els.tasks.appendChild(card);
     });
   }

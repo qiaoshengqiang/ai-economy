@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AIEOS · Task</title>
+  <link rel="stylesheet" href="/static/task.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="back" href="/">← 返回</a>
+    <div class="brand">AIEOS · Task</div>
+    <div id="status" class="status">加载中…</div>
+  </header>
+
+  <main class="page">
+    <section id="task-meta" class="card"></section>
+    <section id="task-prompt" class="card"></section>
+    <section class="card">
+      <div class="section-title">执行轮次</div>
+      <div id="timeline"></div>
+    </section>
+    <section id="workspace" class="card"></section>
+    <section id="public-memory" class="card"></section>
+    <section id="llm" class="card"></section>
+    <section id="executions" class="card"></section>
+  </main>
+
+  <script src="/static/task.js"></script>
+</body>
+</html>

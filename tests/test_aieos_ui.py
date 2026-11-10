@@ -122,6 +122,14 @@ def test_index_and_state_api(server):
     assert payload["agents"][0]["role"] == "FRONT"
 
 
+def test_task_detail_page_is_served(server):
+    _fake, base = server
+    status, body = _get(base + "/task.html?task_id=task_1")
+    assert status == 200
+    assert b"AIEOS" in body
+    assert b"/static/task.js" in body
+
+
 def test_submit_and_settings_api(server):
     fake, base = server
     status, payload = _post(base + "/api/submit", {"text": "做个游戏"})
