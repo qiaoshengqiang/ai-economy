@@ -65,7 +65,11 @@ from actions.intent import (
     ActionIntent, ActionResult, CognitiveRunResult, CognitiveSegment,
     Decision, new_decision_id,
 )
-from actions.parse import decision_from_text, looks_like_tool_call_markup
+from actions.parse import (
+    decision_from_text, decision_from_tool_calls,
+    looks_like_tool_call_markup,
+)
+from core.dsml import dsml_mode
 from actions.read_payload import (
     PER_PAYLOAD_MAX_CHARS, TOTAL_MAX_CHARS, render_read_results,
 )
@@ -170,11 +174,17 @@ def run_cognition(
     返回：CognitiveRunResult（含 decision / intent / result / segments）
     """
     agent_id = _agent_id_of(agent)
+    allowed_actions = None
+    if dispatcher is not None:
+        types = getattr(dispatcher, "action_types", None)
+        if types:
+            allowed_actions = set(types)
 
     # ---- 第 1 段 ------------------------------------------------------
     seg0 = _run_one_segment(agent, agent_id, messages, generate_kwargs,
                             phase=initial_phase,
-                            repair_malformed=repair_malformed)
+                            repair_malformed=repair_malformed,
+                            allowed_actions=allowed_actions)
     segments: List[CognitiveSegment] = [seg0]
     round_summary = ""
 
@@ -227,7 +237,8 @@ def run_cognition(
             seg = _run_one_segment(
                 agent, agent_id, work_messages, generate_kwargs,
                 index=len(segments), phase="work",
-                repair_malformed=repair_malformed)
+                repair_malformed=repair_malformed,
+                allowed_actions=allowed_actions)
             segments.append(seg)
             _apply_thinking(agent, seg.decision, current_phase="work")
             _apply_cognitive_budget(agent, seg.decision, current_phase="work")
@@ -267,7 +278,8 @@ def run_cognition(
             seg = _run_one_segment(
                 agent, agent_id, summary_messages, generate_kwargs,
                 index=len(segments), phase="summary",
-                repair_malformed=repair_malformed)
+                repair_malformed=repair_malformed,
+                allowed_actions=allowed_actions)
             segments.append(seg)
             _apply_thinking(agent, seg.decision, current_phase="summary")
             _apply_cognitive_budget(agent, seg.decision,
@@ -305,7 +317,8 @@ def run_cognition(
             seg = _run_one_segment(
                 agent, agent_id, checkpoint_messages, generate_kwargs,
                 index=len(segments), phase="decision",
-                repair_malformed=repair_malformed)
+                repair_malformed=repair_malformed,
+                allowed_actions=allowed_actions)
             segments.append(seg)
             _apply_thinking(agent, seg.decision, current_phase="decision")
             _apply_cognitive_budget(agent, seg.decision,
@@ -336,7 +349,8 @@ def run_cognition(
             ]
             seg1 = _run_one_segment(agent, agent_id, follow_up_messages,
                                    generate_kwargs, index=1, phase="work",
-                                   repair_malformed=repair_malformed)
+                                   repair_malformed=repair_malformed,
+                                   allowed_actions=allowed_actions)
             segments.append(seg1)
             _apply_thinking(agent, seg1.decision, current_phase="work")
             intents.extend(seg1.action_intents)
@@ -412,6 +426,7 @@ def _run_one_segment(agent: Any, agent_id: str, messages: Any,
                      generate_kwargs: dict, *, index: int = 0,
                      phase: str = "decision",
                      repair_malformed: bool = False,
+                     allowed_actions: Optional[Any] = None,
                      ) -> CognitiveSegment:
     """
     **一次** LLM 调用 + 解析。不含执行动作（执行由调用方做）。
@@ -440,6 +455,29 @@ def _run_one_segment(agent: Any, agent_id: str, messages: Any,
 
     # 🔒 只认显式信封。没有信封 → 普通回复，不产生 Action。
     decision = decision_from_text(agent_id, content)
+
+    # Provider 层恢复出来的结构化 tool_calls（DSML fallback）。
+    # · content 里已有合法信封 → 信封优先；
+    # · execute 模式 → 映射成 ActionIntent（整批校验）；
+    # · shadow 模式 → 只记录，不执行。
+    raw_tool_calls = list(getattr(response, "tool_calls", None) or [])
+    tool_calls_source = str(
+        getattr(response, "tool_calls_source", "none") or "none")
+    if raw_tool_calls:
+        if dsml_mode() == "execute" and not decision.intents:
+            decision = decision_from_tool_calls(
+                agent_id, raw_tool_calls,
+                content=str(content or ""),
+                allowed_actions=allowed_actions)
+            if not decision.intents:
+                logger.warning(
+                    "DSML 恢复失败（%s）：agent=%s seg=%d count=%d",
+                    decision.envelope_error, agent_id, index,
+                    len(raw_tool_calls))
+        else:
+            logger.info(
+                "DSML 已解析（shadow，不执行）：agent=%s seg=%d count=%d",
+                agent_id, index, len(raw_tool_calls))
 
     # 🔴 Provider 原生 tool-call 标记（DSML 等）不是「决定只回复」。
     #    实测：模型把动作写进 `<｜｜DSML｜｜ invoke>`，解析成 0 个动作；
@@ -589,6 +627,8 @@ def _run_one_segment(agent: Any, agent_id: str, messages: Any,
         model_reasoning=_clip_model_reasoning(
             str(getattr(response, "reasoning", "") or "")
             or original_reasoning),
+        tool_calls=raw_tool_calls,
+        tool_calls_source=tool_calls_source,
         action_intents=list(decision.intents),
         output_status=output_status,
         cognitive_status=cognitive_status,

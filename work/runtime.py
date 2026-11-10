@@ -370,6 +370,10 @@ class SoloWorkRuntime:
                         "content": str(getattr(seg, "content", "") or ""),
                         "model_reasoning": str(
                             getattr(seg, "model_reasoning", "") or ""),
+                        "tool_calls": list(
+                            getattr(seg, "tool_calls", None) or []),
+                        "tool_calls_source": str(
+                            getattr(seg, "tool_calls_source", "") or ""),
                         "decision": (
                             seg.decision.to_dict()
                             if getattr(seg, "decision", None) else None),
@@ -552,6 +556,10 @@ class SoloWorkRuntime:
                         "content": str(getattr(seg, "content", "") or ""),
                         "model_reasoning": str(
                             getattr(seg, "model_reasoning", "") or ""),
+                        "tool_calls": list(
+                            getattr(seg, "tool_calls", None) or []),
+                        "tool_calls_source": str(
+                            getattr(seg, "tool_calls_source", "") or ""),
                         "decision": (
                             seg.decision.to_dict()
                             if getattr(seg, "decision", None) else None),

@@ -381,6 +381,81 @@ def build_intent(agent_id: str, action: Dict[str, Any],
     )
 
 
+def decision_from_tool_calls(
+    agent_id: str,
+    tool_calls: Any,
+    *,
+    content: str = "",
+    allowed_actions: Optional[Any] = None,
+) -> Decision:
+    """把 Provider 恢复出来的中性 tool_calls 变成 Decision。
+
+    🔒 这是 **DSML fallback** 的映射层；不是第二套动作协议：
+        · 动作名必须在 allowed_actions 里（如果给了）；
+        · arguments 必须是 JSON 对象；
+        · 只要有一个坏，就整批不执行（避免部分副作用），
+          返回 envelope_error，让上层走一次格式修复。
+    """
+    decision_id = new_decision_id()
+    allowed = set(allowed_actions) if allowed_actions is not None else None
+    intents = []
+    calls = list(tool_calls or [])
+    for call in calls:
+        fn = call.get("function") if isinstance(call, dict) else None
+        if not isinstance(fn, dict):
+            return Decision(
+                decision_id=decision_id, agent_id=agent_id,
+                kind=DECISION_REPLY, reasoning=content or "",
+                envelope_error="dsml_invalid_call",
+                dropped_actions=len(calls),
+                created_at=utc_now_iso())
+        name = str(fn.get("name") or "").strip()
+        if not name or (allowed is not None and name not in allowed):
+            return Decision(
+                decision_id=decision_id, agent_id=agent_id,
+                kind=DECISION_REPLY, reasoning=content or "",
+                envelope_error="dsml_unknown_action",
+                dropped_actions=len(calls),
+                created_at=utc_now_iso())
+        raw_args = fn.get("arguments")
+        try:
+            params = (json.loads(raw_args) if isinstance(raw_args, str)
+                      else dict(raw_args or {}))
+        except (ValueError, TypeError):
+            return Decision(
+                decision_id=decision_id, agent_id=agent_id,
+                kind=DECISION_REPLY, reasoning=content or "",
+                envelope_error="dsml_bad_arguments",
+                dropped_actions=len(calls),
+                created_at=utc_now_iso())
+        if not isinstance(params, dict):
+            return Decision(
+                decision_id=decision_id, agent_id=agent_id,
+                kind=DECISION_REPLY, reasoning=content or "",
+                envelope_error="dsml_bad_arguments",
+                dropped_actions=len(calls),
+                created_at=utc_now_iso())
+        intents.append(build_intent(
+            agent_id,
+            {"type": name, "parameters": params},
+            reason="recovered from DSML tool call",
+            decision_id=decision_id))
+
+    if not intents:
+        return Decision(
+            decision_id=decision_id, agent_id=agent_id,
+            kind=DECISION_REPLY, reasoning=content or "",
+            envelope_error="dsml_no_calls",
+            created_at=utc_now_iso())
+
+    return Decision(
+        decision_id=decision_id, agent_id=agent_id,
+        kind=DECISION_ACT,
+        reasoning="recovered from DSML tool call",
+        intents=intents,
+        created_at=utc_now_iso())
+
+
 def decision_from_text(agent_id: str, text: Optional[str]) -> Decision:
     """
     LLM 输出 → Decision（§十三 / §十四）。

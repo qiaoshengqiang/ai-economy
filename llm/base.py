@@ -597,6 +597,14 @@ class LLMResponse:
     #:    绝不允许回填进 content —— 见上面「输出契约」的语义 2。
     reasoning: Optional[str] = None
 
+    #: 结构化的工具调用（OpenAI 形状：`{type, function:{name, arguments}}`）。
+    #:
+    #: 🔒 这是**中性结构**，不含 AIEOS 动作语义；映射成 ActionIntent
+    #:    由 `actions/` 负责。`tool_calls_source` 记录它从哪来：
+    #:    `api`（API 原生返回）/ `dsml`（从 content 里的 DSML 恢复）/ `none`。
+    tool_calls: List[Dict[str, Any]] = field(default_factory=list)
+    tool_calls_source: str = "none"
+
     # 这个 token 数是不是模拟/估算出来的。
     # 保留这个字段是为了向后兼容（Step 2 的代码和测试都在用），
     # 但它能表达的信息比 token_source 少 —— 新代码请优先看 token_source。
@@ -765,6 +773,8 @@ class LLMResponse:
             # 🔒 reasoning 单独一格，**不混进 content**。
             #    放进来是为了让实验记录能解释「为什么 content 是空的」。
             "reasoning_chars": len(self.reasoning or ""),
+            "tool_calls": list(self.tool_calls or []),
+            "tool_calls_source": self.tool_calls_source,
         }
 
     def __str__(self) -> str:

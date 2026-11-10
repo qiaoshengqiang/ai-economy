@@ -325,6 +325,39 @@ class OpenAICompatibleProvider(LLMProvider):
         self.call_count = 0
         self.error_count = 0
 
+    def _augment_response(
+        self, response: "LLMResponse", message: Mapping[str, Any]
+    ) -> "LLMResponse":
+        """把厂商返回里的结构化工具调用转成中性形状。
+
+        默认实现只读标准 OpenAI `tool_calls`；厂商特有格式由子类覆盖。
+        """
+        raw_calls = message.get("tool_calls") if isinstance(message, Mapping) else None
+        if not isinstance(raw_calls, list):
+            return response
+        calls = []
+        for item in raw_calls:
+            if not isinstance(item, Mapping):
+                continue
+            fn = item.get("function")
+            if not isinstance(fn, Mapping):
+                continue
+            name = str(fn.get("name") or "").strip()
+            args = fn.get("arguments")
+            if not name or not isinstance(args, str):
+                continue
+            call = {
+                "type": "function",
+                "function": {"name": name, "arguments": args},
+            }
+            if item.get("id"):
+                call["id"] = str(item["id"])
+            calls.append(call)
+        if calls:
+            response.tool_calls = calls
+            response.tool_calls_source = "api"
+        return response
+
     # ------------------------------------------------------------
     # 可用性
     # ------------------------------------------------------------
@@ -667,6 +700,10 @@ class OpenAICompatibleProvider(LLMProvider):
                 "usage_notes": notes,
             },
         )
+
+        # 厂商特有的后处理（例如 DeepSeek 的 DSML 恢复）。
+        # 🔒 默认 no-op；子类只能在这里**补充中性事实**，不能改业务语义。
+        response = self._augment_response(response, message)
 
         # ============================================================
         # 🔒 §七：「空 content」不许悄悄成功

@@ -1,0 +1,39 @@
+
+
+<｜｜DSML｜｜ calls>
+<｜｜DSML｜｜ invoke name="workspace_write">
+<｜｜DSML｜｜ parameter name="path" string="true">index.html</｜｜DSML｜｜ parameter>
+<｜｜DSML｜｜ parameter name="content" string="true"><!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>距 2027 年元旦倒计时</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main id="app" class="app">
+      <section class="card">
+        <h1 class="card__title">2027 年元旦倒计时</h1>
+
+        <div
+          id="countdown"
+          class="countdown"
+          data-target="2027-01-01T00:00:00"
+          role="timer"
+          aria-live="polite"
+        >
+          <p id="countdown-label" class="countdown__label">距 2027 年元旦还有</p>
+          <p id="countdown-value" class="countdown__value">-- 天 -- 时 -- 分 -- 秒</p>
+        </div>
+
+        <p class="card__hint">每秒自动刷新</p>
+      </section>
+    </main>
+
+    <script src="app.js" defer></script>
+  </body>
+</html>
+</｜｜DSML｜｜ parameter>
+</｜｜DSML｜｜ invoke>
+</｜｜DSML｜｜ calls>

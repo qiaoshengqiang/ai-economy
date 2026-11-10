@@ -270,6 +270,11 @@ class CognitiveSegment:
     #:    为空 = provider 没返回 / 该模型不输出推理。
     model_reasoning: str = ""
 
+    #: Provider 层恢复出来的结构化工具调用（OpenAI 形状）。
+    #: 🔒 只用于观测/映射；是不是执行由 Work 循环决定。
+    tool_calls: List[Dict[str, Any]] = field(default_factory=list)
+    tool_calls_source: str = "none"
+
     #: 这一段解析出来的 Decision。
     decision: Optional[Decision] = None
 
@@ -323,6 +328,8 @@ class CognitiveSegment:
             "budget_clipped": self.budget_clipped,
             "content_chars": len(self.content or ""),
             "model_reasoning": self.model_reasoning,
+            "tool_calls": list(self.tool_calls or []),
+            "tool_calls_source": self.tool_calls_source,
             "decision": self.decision.to_dict() if self.decision else None,
             "action_intents": [i.to_dict() for i in self.action_intents],
             "action_results": [(r.to_dict() if r else None)
