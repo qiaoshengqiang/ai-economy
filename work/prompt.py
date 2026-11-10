@@ -147,6 +147,11 @@ def _render_last_turn(last: Optional[Dict[str, Any]]) -> str:
         f"- actions: {last.get('action_types') or []}",
         f"- tokens: {last.get('tokens', 0)}",
     ]
+    if last.get("decision_kind"):
+        line = f"- decision: {last['decision_kind']}"
+        if last.get("envelope_error"):
+            line += f" (envelope_error={last['envelope_error']})"
+        lines.append(line)
     if last.get("thinking"):
         lines.append(
             "- thinking: "

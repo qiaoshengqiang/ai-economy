@@ -547,7 +547,48 @@ class _SoloRuntime:
         self.experiment_run_id = "test"
 
 
+class _NoActionThenCompleteAgent(_FakeAgent):
+    def __init__(self):
+        super().__init__()
+        self.calls = 0
+
+    def act(self, *, messages, dispatcher, **kwargs):
+        self.calls += 1
+        if self.calls < 3:
+            return SimpleNamespace(
+                segments=[SimpleNamespace(
+                    tokens=3, content="我先总结一下",
+                    is_truncated=False)],
+                action_intents=[], action_results=[])
+        intent = ActionIntent(
+            action_type="work_complete",
+            parameters={"result_ref": "recovered-v1",
+                        "summary": "恢复后完成"},
+            agent_id="agent_a")
+        action_result = dispatcher.dispatch(intent)
+        return SimpleNamespace(
+            segments=[SimpleNamespace(
+                tokens=3, content="done", is_truncated=False)],
+            action_intents=[intent], action_results=[action_result])
+
+
 class TestSoloWorkRuntime:
+    def test_runtime_recovers_from_two_no_action_turns(self, db):
+        task = Task.create(
+            task_id="T-RECOVER", creator="agent_a",
+            description="写 hello.txt", workspace_id="WS-X",
+            participants=["agent_a"], mode=TaskMode.SOLO)
+        task.claim_producer("agent_a")
+
+        runtime = _SoloRuntime(db, task)
+        runtime.agent = _NoActionThenCompleteAgent()
+        result = SoloWorkRuntime(runtime, task, max_turns=4).run()
+
+        assert result.ok is True, result.error
+        assert result.status == TaskStatus.COMPLETED
+        assert runtime.agent.calls == 3
+        assert runtime.tasks.get(task.task_id).status == TaskStatus.COMPLETED
+
     def test_runtime_is_decision_first_and_has_vision(self, db):
         task = Task.create(
             task_id="T-DECISION", creator="agent_a",

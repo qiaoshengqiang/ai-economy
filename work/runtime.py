@@ -225,10 +225,16 @@ class SoloWorkRuntime:
                 "work_turn", turn=turn, agent_id=actor,
                 tokens=tokens, action_types=action_types,
                 status_before=result.status, status_after=status_after)
+            last_seg = segments[-1] if segments else None
+            last_decision = getattr(last_seg, "decision", None)
             last_turn_facts = {
                 "status_before": result.status,
                 "status_after": status_after,
                 "action_types": action_types,
+                "decision_kind": str(
+                    getattr(last_decision, "kind", "") or ""),
+                "envelope_error": str(
+                    getattr(last_decision, "envelope_error", "") or ""),
                 "tokens": tokens,
                 "truncated": any(
                     bool(getattr(s, "is_truncated", False))
@@ -250,8 +256,21 @@ class SoloWorkRuntime:
             if not intents:
                 empty_streak += 1
                 if empty_streak >= 2:
+                    last_content = str(
+                        getattr(last_seg, "content", "") or "")
+                    recovered = self._force_action(
+                        actor, agent, dispatcher, result,
+                        last_content=last_content, turn=turn)
+                    if recovered and task.status == TaskStatus.COMPLETED:
+                        result.status = task.status
+                        result.summary = (
+                            result.summary or task.note or "任务完成")
+                        return result
+                    if recovered:
+                        empty_streak = 0
+                        continue
                     result.status = status_after
-                    result.error = "连续两轮没有动作"
+                    result.error = "连续两轮没有动作（恢复提示也未产生动作）"
                     break
             else:
                 empty_streak = 0
@@ -412,6 +431,73 @@ class SoloWorkRuntime:
     def _workspace_of(self, agent_id: str) -> Any:
         agent = self._agent(agent_id)
         return getattr(agent, "workspace", None)
+
+    def _force_action(
+        self,
+        actor: str,
+        agent: Any,
+        dispatcher: Any,
+        result: WorkResult,
+        *,
+        last_content: str,
+        turn: int,
+    ) -> bool:
+        """连续两轮没动作时，用最小恢复提示再要一次明确动作。"""
+        if self._stopped():
+            return False
+        context = self._context(actor)
+        prompt = build_work_prompt(
+            context,
+            task_description=self.task.description,
+            runtime=self.rt,
+            extra_instruction=(
+                "\n========== 恢复提示 ==========\n"
+                "你连续两轮没有输出任何动作（只回了文字或格式不可解析）。\n"
+                "不要再只回复文字。\n"
+                "- 如果工作已经完成，必须调用 work_complete；\n"
+                "- 如果还没完成，给出一个具体动作继续。\n\n"
+                "你上一轮的文字（截断）：\n"
+                f"{last_content[:1200]}\n"
+            ),
+        )
+        try:
+            run = agent.act(
+                messages=prompt,
+                dispatcher=dispatcher,
+                execute=True,
+                task_id=self.task.task_id,
+                cognitive_budget_cap=self.cognitive_budget,
+                call_purpose="work",
+                experiment_run_id=getattr(
+                    self.rt, "experiment_run_id", None),
+                follow_up_on_reads=False,
+                work_loop=False,
+                max_work_steps=0,
+                initial_phase="decision",
+                image_resolver=self.image_resolver,
+                seen_reads=set(),
+                repair_malformed=True,
+            )
+        except Exception as exc:                              # noqa: BLE001
+            self._event(
+                "work_recovery_error",
+                turn=turn, error=f"{type(exc).__name__}: {exc}")
+            return False
+
+        segments = list(getattr(run, "segments", None) or [])
+        intents = list(getattr(run, "action_intents", None) or [])
+        results = list(getattr(run, "action_results", None) or [])
+        result.tokens += sum(
+            int(getattr(s, "tokens", 0) or 0) for s in segments)
+        result.actions += len(intents)
+        self._event(
+            "work_recovery_turn", turn=turn,
+            action_types=[
+                str(getattr(i, "action_type", "")) for i in intents])
+        if self.task.status == TaskStatus.COMPLETED:
+            result.summary = self._summary_from(
+                results, segments) or self.task.note or "任务完成"
+        return bool(intents) or self.task.status == TaskStatus.COMPLETED
 
     def _stopped(self) -> bool:
         try:
