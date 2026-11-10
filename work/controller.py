@@ -184,6 +184,7 @@ class AIEOSController:
         if self.front_agent not in self._agent_ids:
             raise ValueError(
                 f"Front Agent {self.front_agent!r} 不在 Agent Directory 里")
+        self._configure_front_brain()
 
     # ------------------------------------------------------------
     # 设置 / 状态
@@ -238,6 +239,7 @@ class AIEOSController:
                     raise ValueError("max_parallel_teams 必须在 1..8")
                 self.max_parallel_teams = value
             self._persist_settings()
+            self._configure_front_brain()
             self._notify()
             return self.settings_dict()
 
@@ -546,11 +548,11 @@ class AIEOSController:
         )
         creation = TaskCreationService(
             self.rt, run, max_agents=self.max_agents_per_team)
-        criteria = (
-            decision.brief.acceptance_expectations
-            or decision.brief.deliverables
-            or [decision.brief.goal]
-        )
+        # 不再由 Front 生成验收标准；DoD 就是 Human 原文。
+        criteria = [
+            str(decision.brief.human_text
+                or decision.brief.goal).strip()
+        ]
         return creation.create(
             creator=worker,
             description=_description_from_brief(decision.brief),
@@ -1374,6 +1376,18 @@ class AIEOSController:
         with self._lock:
             self._agent_tasks.pop(aid, None)
 
+    def _configure_front_brain(self) -> None:
+        """Front 只做意图识别与沟通，不需要高强度思考。"""
+        agent = self._agent(self.front_agent)
+        brain = getattr(agent, "brain", None)
+        setter = getattr(brain, "set_thinking", None)
+        if not callable(setter):
+            return
+        try:
+            setter(True, "low", phase="decision")
+        except Exception:                                     # noqa: BLE001
+            return
+
     def _agent(self, aid: str) -> Any:
         try:
             return self.rt.economy.agent(aid)
@@ -1396,17 +1410,11 @@ class AIEOSController:
 
 
 def _description_from_brief(brief: Any) -> str:
-    lines = [brief.goal]
-    if brief.deliverables:
-        lines.append("交付物：\n" + "\n".join(
-            f"- {item}" for item in brief.deliverables))
-    if brief.constraints:
-        lines.append("约束：\n" + "\n".join(
-            f"- {item}" for item in brief.constraints))
-    if brief.non_goals:
-        lines.append("非目标：\n" + "\n".join(
-            f"- {item}" for item in brief.non_goals))
-    return "\n\n".join(lines)
+    """Task 原文 = Human 原文；Front 不在这里做二次加工。"""
+    return str(
+        getattr(brief, "human_text", "")
+        or getattr(brief, "goal", "")
+    ).strip()
 
 
 def _now() -> str:

@@ -59,6 +59,8 @@ class FrontBrief:
     ambiguities: List[str] = field(default_factory=list)
     non_goals: List[str] = field(default_factory=list)
     context_refs: List[str] = field(default_factory=list)
+    #: Front 给 Work Agent 的最终回复格式要求（不是任务需求）。
+    reply_style: str = ""
     created_at: str = ""
     fallback: bool = False
 
@@ -86,6 +88,7 @@ class FrontBrief:
             "ambiguities": list(self.ambiguities),
             "non_goals": list(self.non_goals),
             "context_refs": list(self.context_refs),
+            "reply_style": self.reply_style,
             "created_at": self.created_at,
             "fallback": self.fallback,
         }
@@ -103,6 +106,7 @@ class FrontBrief:
             ambiguities=data.get("ambiguities") or [],
             non_goals=data.get("non_goals") or [],
             context_refs=data.get("context_refs") or [],
+            reply_style=str(data.get("reply_style") or ""),
             created_at=str(data.get("created_at") or ""),
             fallback=bool(data.get("fallback")),
         )
@@ -121,6 +125,8 @@ class FrontDecision:
     task_id: str = ""
     #: clarify
     question: str = ""
+    #: handoff：给 Work Agent / 最终回复的格式要求（不是任务需求）
+    reply_style: str = ""
     confidence: float = 1.0
     reason: str = ""
 
@@ -148,6 +154,7 @@ class FrontDecision:
             "brief": self.brief.to_dict() if self.brief else None,
             "task_id": self.task_id,
             "question": self.question,
+            "reply_style": self.reply_style,
             "confidence": self.confidence,
             "reason": self.reason,
         }

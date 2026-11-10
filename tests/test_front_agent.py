@@ -42,9 +42,12 @@ def test_direct_reply():
     assert decision.reply == "你好，我在。"
 
 
-def test_handoff_produces_brief():
+def test_handoff_uses_human_text_without_processing():
     think = _think_returning({
         "intent": "handoff",
+        "reply": "好，我开始做。",
+        "reply_style": "友好、简洁，先结论后产物",
+        # 🔒 即使模型仍然输出 brief，也不能覆盖 Human 原文。
         "brief": {
             "goal": "写一个 hello.txt",
             "deliverables": ["hello.txt"],
@@ -57,9 +60,14 @@ def test_handoff_produces_brief():
 
     assert decision.intent == FrontIntent.HANDOFF
     assert isinstance(decision.brief, FrontBrief)
-    assert decision.brief.goal == "写一个 hello.txt"
-    assert decision.brief.deliverables == ["hello.txt"]
+    assert decision.brief.goal == "帮我写个 hello.txt"
     assert decision.brief.human_text == "帮我写个 hello.txt"
+    assert decision.brief.deliverables == []
+    assert decision.brief.constraints == []
+    assert decision.brief.acceptance_expectations == []
+    assert decision.brief.reply_style == "友好、简洁，先结论后产物"
+    assert decision.reply_style == "友好、简洁，先结论后产物"
+    assert decision.reply == "好，我开始做。"
 
 
 def test_rework_requires_completed_task():
@@ -183,7 +191,10 @@ def test_front_prompt_is_human_facing_and_does_not_invent_constraints():
     runtime.decide("继续做", active_tasks=[{"task_id": "task_1"}])
     prompt = captured["prompt"]
     assert "不要向 Human 暴露" in prompt
-    assert "不要把常见默认" in prompt
+    assert "只识别意图，不重写/拆解任务需求" in prompt
+    assert "原样" in prompt
+    assert "不要把 Human 的话改写成更泛的词" in prompt
+    assert "reply_style 只描述" in prompt
     assert "不要写「按现有 Brief 交付」" in prompt
     assert "措辞可以不同" in prompt
     assert "与已完成的 Task 实质相同 → direct_reply" in prompt

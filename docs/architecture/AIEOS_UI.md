@@ -47,8 +47,10 @@ Human
   ↓ 输入框 / 提交按钮
 Front Agent（固定）
   ├─ direct_reply / clarify → 直接显示在输出框
-  ├─ follow_up / rework / cancel → 已有 Task
-  └─ handoff → Brief
+  ├─ follow_up / rework / cancel / artifacts → 已有 Task
+  └─ handoff → 只识别意图
+                  ↓
+            Human 原文原样成为 Task description
                   ↓
             选择一个 IDLE Agent
                   ↓
@@ -58,6 +60,11 @@ Front Agent（固定）
                   ↓
             FrontResult → 输出框
 ```
+
+> Front **不再加工任务需求**：不产出 goal / deliverables /
+> constraints / acceptance；只输出意图、给 Human 的确认、以及
+> `reply_style`（最终回复格式要求）。Front 的 thinking 固定为
+> `low`，因为它的工作只是识别意图和沟通。
 
 ### 角色约束
 

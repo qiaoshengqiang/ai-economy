@@ -192,17 +192,18 @@ status 为 INTERRUPTED 表示任务之前中断了、现在没有在执行：
    {{"intent":"direct_reply","reply":"...","reason":"..."}}
 
 2. handoff
-   这是一个新的工作请求。只产出 Brief；Task 由承接的 Agent 创建。
-   {{"intent":"handoff","brief":{{"goal":"一句话目标",
-     "deliverables":["..."],"constraints":["..."],
-     "acceptance_expectations":["..."],"ambiguities":["..."],
-     "non_goals":["..."]}},"reason":"..."}}
+   这是一个新的工作请求。你**只识别意图，不重写/拆解任务需求**。
+   Human 原文会由系统**原样**交给 Work Agent；不要输出
+   goal / deliverables / constraints / acceptance / ambiguities。
 
-   🔒 Brief 只记录 Human **明确表达**的内容：
-   - constraints 只写 Human 明确说过的限制（例如「只要一个文件」）；
-   - 不要把常见默认、推测或“为了安全”的限制写成负向约束；
-   - non_goals 只有 Human 明确排除时才写，否则保持 []；
-   - 不要为了看起来完整而编造“不需要 X / 不得 Y”。
+   {{"intent":"handoff",
+     "reply":"给 Human 的简短确认",
+     "reply_style":"最终回复格式要求，例如：友好、简洁、先结论后产物",
+     "reason":"..."}}
+
+   🔒 不要把 Human 的话改写成更泛的词（例如把“滚动”改成“运动”）；
+      不要替 Human 补充需求，也不要编造约束或非目标。
+   🔒 reply_style 只描述**怎么回复 Human**，不是任务需求。
 
 3. rework
    Human 要求对**已完成的 Task**返工。只能引用上面已完成的 task_id。

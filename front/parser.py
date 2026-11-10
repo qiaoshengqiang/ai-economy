@@ -121,11 +121,28 @@ def parse_front_decision(
                 reason=str(payload.get("reason") or "")), ""
 
         if raw_intent == FrontIntent.HANDOFF:
-            brief = _brief_from(payload, human_text)
-            if brief is None:
-                return None, "handoff_missing_goal"
+            # 🔒 Front 不加工任务需求：
+            #    能拿到 Human 原文时，Task 原文就是 Human 原文。
+            #    模型给的 goal/deliverables/constraints 一律不采用。
+            task_text = str(human_text or "").strip()
+            if not task_text:
+                raw_brief = payload.get("brief")
+                if isinstance(raw_brief, dict):
+                    task_text = str(raw_brief.get("goal") or "").strip()
+                if not task_text:
+                    task_text = str(payload.get("goal") or "").strip()
+            if not task_text:
+                return None, "handoff_missing_task_text"
+            reply_style = str(payload.get("reply_style") or "").strip()
+            brief = FrontBrief(
+                goal=task_text,
+                human_text=task_text,
+                reply_style=reply_style,
+            )
             return FrontDecision(
                 intent=raw_intent, brief=brief,
+                reply=str(payload.get("reply") or "").strip(),
+                reply_style=reply_style,
                 confidence=confidence,
                 reason=str(payload.get("reason") or "")), ""
 

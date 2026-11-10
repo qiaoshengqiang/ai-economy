@@ -588,6 +588,44 @@ def test_rework_reopens_completed_task_with_new_request(monkeypatch):
     assert job.status == "COMPLETED"
 
 
+def test_task_description_is_raw_human_text():
+    from front import FrontBrief
+    from work.controller import _description_from_brief
+
+    brief = FrontBrief(
+        goal="做一个网页",
+        human_text="我今天好无聊，请做一个贪吃蛇小游戏网页给我玩玩",
+        deliverables=["snake.html"],
+        constraints=["分模块"],
+    )
+
+    assert _description_from_brief(brief) == (
+        "我今天好无聊，请做一个贪吃蛇小游戏网页给我玩玩")
+
+
+def test_controller_sets_front_thinking_to_low():
+    class _Brain:
+        def __init__(self):
+            self.calls = []
+
+        def set_thinking(self, enabled, effort=None, *, phase="work"):
+            self.calls.append((enabled, effort, phase))
+
+    agent = SimpleNamespace(has_brain=True, brain=_Brain())
+    runtime = SimpleNamespace(
+        directory=_Directory(["agent_a", "agent_b"]),
+        economy=SimpleNamespace(agent=lambda aid: agent),
+        tasks=SimpleNamespace(list_tasks=lambda limit=50: []),
+    )
+    controller = AIEOSController(runtime, front_agent="agent_a")
+    try:
+        calls = list(agent.brain.calls)
+    finally:
+        controller.close()
+
+    assert calls == [(True, "low", "decision")]
+
+
 def test_task_round_log_appends_and_reads(tmp_path):
     from ui.rounds import TaskRoundLog
 

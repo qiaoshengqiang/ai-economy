@@ -247,6 +247,8 @@ def build_work_prompt(
     criteria = "\n".join(
         f"- {item}" for item in context.acceptance_criteria
     ) or "（Task 没有显式 DoD；以 description 为准）"
+    reply_style = str(
+        (context.brief or {}).get("reply_style") or "").strip()
     workspace = context.workspace_facts or _render_workspace(
         runtime, context.workspace_id, context.agent_id)
     memory = context.memory_facts or "（没有任务级记忆）"
@@ -276,6 +278,9 @@ def build_work_prompt(
 
 ========== 完成标准（Definition of Done） ==========
 {criteria}
+
+========== 回复格式要求（来自 Front） ==========
+{reply_style or "（无特别要求；简洁、友好、先结论后产物）"}
 
 ========== 公共工作记忆（团队共享契约 / 计划 / 进度） ==========
 {_render_public_memory(context)}
