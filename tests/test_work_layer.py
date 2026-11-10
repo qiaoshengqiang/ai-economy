@@ -1075,3 +1075,55 @@ def test_replace_missing_file_suggests_create():
     assert result.success is False
     assert result.metadata["code"] == "not_found"
     assert "write_mode='create'" in result.error
+
+
+class _SummaryActionAgent(_FakeAgent):
+    """第一轮 summary 段输出动作（会被忽略），第二轮完成。"""
+
+    def __init__(self):
+        super().__init__()
+        self.turn = 0
+        self.prompts = []
+
+    def act(self, *, messages, dispatcher, **kwargs):
+        self.prompts.append(messages)
+        if kwargs.get("initial_phase") == "cognition":
+            return SimpleNamespace(
+                segments=[SimpleNamespace(
+                    phase="cognition", tokens=1, content="report",
+                    is_truncated=False, decision=None,
+                    action_intents=[], action_results=[])],
+                action_intents=[], action_results=[], summary="report")
+        self.turn += 1
+        if self.turn == 1:
+            intent = ActionIntent(
+                action_type="workspace_write",
+                parameters={"path": "x.md", "content": "x"},
+                agent_id="agent_a")
+            segment = SimpleNamespace(
+                phase="summary", tokens=2, content="summary text",
+                is_truncated=False, decision=None,
+                action_intents=[intent], action_results=[],
+                tool_calls=[], tool_calls_source="none")
+            return SimpleNamespace(
+                segments=[segment], action_intents=[], action_results=[],
+                summary="summary text")
+        return super().act(
+            messages=messages, dispatcher=dispatcher, **kwargs)
+
+
+def test_summary_actions_are_reported_to_next_turn(db):
+    task = Task.create(
+        task_id="T-SUMMARY-IGNORED", creator="agent_a",
+        description="写 hello.txt", workspace_id="WS-X",
+        participants=["agent_a"], mode=TaskMode.SOLO)
+    task.claim_producer("agent_a")
+
+    runtime = _SoloRuntime(db, task)
+    runtime.agent = _SummaryActionAgent()
+    result = SoloWorkRuntime(runtime, task, max_turns=2).run()
+
+    assert result.ok is True, result.error
+    next_prompt = str(runtime.agent.prompts[-1])
+    assert "summary-phase actions were IGNORED" in next_prompt
+    assert "workspace_write" in next_prompt
