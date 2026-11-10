@@ -29,11 +29,13 @@ from __future__ import annotations
 import functools
 import http.server
 import os
+import shutil
 import signal
 import subprocess
 import threading
 import time
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -205,6 +207,50 @@ class ToolRunner:
     # ================================================================
     def catalog(self) -> List[Dict[str, Any]]:
         return self.library.public_catalog()
+
+    def cleanup_runs_once_per_day(
+        self, *, today: Optional[str] = None) -> Dict[str, Any]:
+        """清理一次性 run 目录；同一天最多一次。
+
+        启动时调用（AIEOS 客户端）。`run_*` 是每次执行的沙箱副本，
+        不承载权威数据；Workspace 与 DB 才是。清理失败不影响启动。
+
+        🔒 先写标记、再删除：
+           即使删除中途崩溃，当天也不会反复重试；
+           剩下的目录下一天再清。
+        """
+        stamp = str(today or date.today().isoformat())
+        marker = self.run_root / ".last_cleanup"
+        try:
+            if (marker.is_file()
+                    and marker.read_text(encoding="utf-8").strip() == stamp):
+                return {"cleaned": False, "reason": "already_cleaned_today",
+                        "date": stamp}
+        except OSError:
+            pass
+
+        try:
+            self.run_root.mkdir(parents=True, exist_ok=True)
+            tmp = marker.with_name(marker.name + ".tmp")
+            tmp.write_text(stamp, encoding="utf-8")
+            os.replace(tmp, marker)
+        except OSError as exc:                                # noqa: BLE001
+            return {"cleaned": False, "reason": f"marker_failed: {exc}",
+                    "date": stamp}
+
+        removed = 0
+        failed = 0
+        for child in self.run_root.iterdir():
+            if not child.is_dir() or not child.name.startswith("run_"):
+                continue
+            try:
+                shutil.rmtree(child)
+                removed += 1
+            except OSError:
+                failed += 1
+        return {"cleaned": True, "date": stamp,
+                "removed": removed, "failed": failed}
+
 
     def guide(self, tool: str = "") -> Dict[str, Any]:
         """返回工具清单 / 某个工具的完整用法文档。

@@ -101,6 +101,34 @@ def test_tool_guidance_is_readable_by_agents(runner):
     assert "不在公共工具库" in missing["message"]
 
 
+def test_daily_cleanup_removes_run_dirs_once_per_day(runner):
+    root = runner.run_root
+    (root / "run_aaa" / "work").mkdir(parents=True)
+    (root / "run_bbb").mkdir()
+    (root / "keep.txt").write_text("x", encoding="utf-8")
+
+    first = runner.cleanup_runs_once_per_day(today="2026-11-11")
+    assert first["cleaned"] is True
+    assert first["removed"] == 2
+    assert not (root / "run_aaa").exists()
+    assert not (root / "run_bbb").exists()
+    assert (root / "keep.txt").exists()
+    assert (root / ".last_cleanup").read_text(encoding="utf-8") == "2026-11-11"
+
+    # 同一天再启动：不清理
+    (root / "run_ccc").mkdir()
+    second = runner.cleanup_runs_once_per_day(today="2026-11-11")
+    assert second["cleaned"] is False
+    assert second["reason"] == "already_cleaned_today"
+    assert (root / "run_ccc").exists()
+
+    # 第二天：重新清理
+    third = runner.cleanup_runs_once_per_day(today="2026-11-12")
+    assert third["cleaned"] is True
+    assert third["removed"] == 1
+    assert not (root / "run_ccc").exists()
+
+
 def test_python_tool_runs_in_isolated_run(runner):
     gw = _Gateway({"main.py": "print('tool-ok')\n"})
     result = runner.run_from_task(

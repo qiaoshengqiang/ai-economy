@@ -178,6 +178,15 @@ def main(argv=None) -> int:
     db_path.parent.mkdir(parents=True, exist_ok=True)
 
     runtime = build_runtime(db_path=str(db_path))
+
+    # 每天的首次启动清理 `data/tool_runs/run_*`（一次性沙箱副本）。
+    # 🔒 同一天最多一次；失败不阻止启动。
+    try:
+        cleanup = runtime.tool_runner.cleanup_runs_once_per_day()
+        print(f"Tool run 清理：{cleanup}", flush=True)
+    except Exception as exc:                                  # noqa: BLE001
+        print(f"Tool run 清理失败（已忽略）：{exc}", flush=True)
+
     controller = AIEOSController(
         runtime,
         front_agent=str(args.front_agent),

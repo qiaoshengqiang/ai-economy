@@ -180,8 +180,14 @@ class Economy:
         # --- 幂等：已经存在就直接返回，不重复铸币 ---
         existing = self._load_agent(agent_id)
         if existing is not None:
-            logger.debug("Agent %s 已存在，跳过创建", agent_id)
+            logger.debug(
+                "恢复已有经济主体：%s（余额 %.4f %s），不重复初始化",
+                agent_id, existing.balance, self.currency)
             return existing
+
+        # 🔴 身份行可能缺失，但账本/钱包是持久化事实。
+        #    只要这个 Agent 在账本里有过任何交易，就**不重新铸币**。
+        had_history = self.ledger.has_history(agent_id)
 
         # --- 1. 加载配置 ---
         cfg = agent_config or load_agent_config(agent_id, self.config)
@@ -232,23 +238,61 @@ class Economy:
         logger.info("已创建经济主体：%s (%s)", identity.name, identity.agent_id)
 
         # --- 6. 发初始资金（创世铸币）---
+        # 🔒 只有**账本里没有任何记录**的新 Agent 才铸币。
+        #    身份行丢失但账本还在时，恢复身份，不重新发钱。
         if mint:
-            amount = (
-                float(initial_balance)
-                if initial_balance is not None
-                else cfg.initial_balance
-            )
-            if amount > 0:
-                wallet.mint(amount, reason="genesis_mint")
-                logger.info(
-                    "  创世铸币 %.4g %s -> %s",
-                    amount,
-                    self.currency,
-                    identity.agent_id,
+            if had_history:
+                logger.warning(
+                    "Agent %s 的身份行缺失，但账本已有记录："
+                    "恢复身份，不重新铸币（余额 %.4f %s）",
+                    agent_id, wallet.balance, self.currency)
+            else:
+                amount = (
+                    float(initial_balance)
+                    if initial_balance is not None
+                    else cfg.initial_balance
                 )
+                if amount > 0:
+                    wallet.mint(amount, reason="genesis_mint")
+                    logger.info(
+                        "  创世铸币 %.4g %s -> %s",
+                        amount,
+                        self.currency,
+                        identity.agent_id,
+                    )
 
         agent.update_status()
         return agent
+
+    # ------------------------------------------------------------
+    # 启动恢复
+    # ------------------------------------------------------------
+    def restore_or_create_agent(
+        self,
+        agent_id: str,
+        agent_config: Optional[AgentConfig] = None,
+        initial_balance: Optional[float] = None,
+    ) -> BaseAgent:
+        """启动路径：**先恢复，只有真正的新 Agent 才初始化经济数据**。
+
+        · 已有身份 → 从 agents/wallets/ledger 恢复，不铸币；
+        · 身份缺失但账本有记录 → 恢复身份，不铸币；
+        · 完全新 Agent → 创建身份 + 钱包 + 创世铸币。
+
+        🔒 余额的唯一权威是 Ledger，不是启动参数。
+        """
+        existing = self._load_agent(agent_id)
+        if existing is not None:
+            logger.debug(
+                "恢复经济主体：%s（余额 %.4f %s）",
+                agent_id, existing.balance, self.currency)
+            return existing
+        return self.create_agent(
+            agent_id,
+            agent_config=agent_config,
+            initial_balance=initial_balance,
+            mint=True,
+        )
 
     # ------------------------------------------------------------
     # 查询 Agent

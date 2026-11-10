@@ -407,6 +407,24 @@ class Ledger:
         row = self.db.fetchone(f"SELECT COUNT(*) AS n FROM {TABLE_LEDGER}")
         return int(row["n"]) if row else 0
 
+    def has_history(self, agent_id: str,
+                    asset: Optional[str] = None) -> bool:
+        """这个 Agent 在账本里有没有任何交易（收入或支出）。
+
+        🔒 只读事实。用于启动恢复：**账本里已经有记录，就不再铸币**。
+        """
+        asset = asset or self.currency
+        row = self.db.fetchone(
+            f"""
+            SELECT 1 AS hit
+            FROM {TABLE_LEDGER}
+            WHERE asset = ? AND (from_agent = ? OR to_agent = ?)
+            LIMIT 1
+            """,
+            (asset, agent_id, agent_id),
+        )
+        return row is not None
+
     def __repr__(self) -> str:
         return (
             f"Ledger(currency={self.currency!r}, "

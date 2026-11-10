@@ -242,6 +242,24 @@ class TestEndToEnd:
         brain, prov = _brain_for(content)
         return StubAgent("agent_a", brain), prov
 
+    def test_action_result_is_attached_to_its_segment(self):
+        """
+        🔴 轮次日志/UI 按 segment 读结果。只放在 run.action_results 上，
+        详情页会把所有动作显示成「未执行」。
+        """
+        agent, _ = self._agent(_envelope(
+            type="fake_action", parameters={"k": "v"}))
+        ex = FakeExecutor()
+
+        run = agent.act(messages="do something",
+                        dispatcher=ActionDispatcher([ex]))
+
+        seg = run.segments[0]
+        assert seg.action_results, "结果没有挂回产生它的那一段"
+        assert seg.action_results[0].success is True
+        assert seg.action_results[0].output == "did:fake_action"
+        assert seg.to_dict()["action_results"][0]["output"] == "did:fake_action"
+
     def test_full_chain_llm_to_action_result(self):
         """§十二：整条链真的跑通，不是只创建了几个数据类。"""
         agent, prov = self._agent(_envelope(

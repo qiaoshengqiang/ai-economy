@@ -1076,7 +1076,8 @@ def build_runtime(
     default_context_query = dict(ctx_cfg.get("default_query", {}) or {})
 
     for agent_id in (agent_ids if agent_ids is not None else DEFAULT_AGENTS):
-        agent = economy.create_agent(agent_id)
+        # 🔒 启动语义：先恢复持久化经济数据；只有真正的新 Agent 才初始化。
+        agent = economy.restore_or_create_agent(agent_id)
 
         # 每个 Agent 的大脑配置来自 **ResolvedConfig** ——
         # 所以 A 和 B 可以用不同的 provider / model / credential，

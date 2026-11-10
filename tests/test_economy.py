@@ -549,3 +549,57 @@ class TestRequiredConfig:
 
         assert value is not None, "config/config.yaml 缺少 tokens_per_ai_coin"
         assert int(value) > 0
+
+
+# ============================================================
+# 启动恢复：持久化账本是权威，不是启动参数
+# ============================================================
+def test_restart_restores_balance_without_reminting(tmp_path, config):
+    from storage.database import create_database
+
+    path = tmp_path / "economy.db"
+
+    eco = Economy(db=create_database(path), config=config)
+    agent = eco.create_agent("agent_a", initial_balance=100)
+    agent.wallet.withdraw(10, reason="test_spend")
+    assert agent.balance == 90
+    eco.close()
+
+    eco2 = Economy(db=create_database(path), config=config)
+    restored = eco2.restore_or_create_agent("agent_a", initial_balance=100)
+
+    assert restored.balance == 90
+    assert eco2.ledger.count() == 2  # genesis + withdraw，没有第二次铸币
+    eco2.close()
+
+
+def test_partial_identity_is_restored_without_reminting(tmp_path, config):
+    import sqlite3
+
+    from storage.database import create_database
+
+    path = tmp_path / "economy.db"
+
+    eco = Economy(db=create_database(path), config=config)
+    agent = eco.create_agent("agent_a", initial_balance=100)
+    agent.wallet.withdraw(10, reason="test_spend")
+    assert agent.balance == 90
+    eco.close()
+
+    # 模拟身份行丢失，但钱包/账本仍在（raw 连接默认不启用外键）
+    conn = sqlite3.connect(path)
+    conn.execute("DELETE FROM agents WHERE agent_id = 'agent_a'")
+    conn.commit()
+    conn.close()
+
+    db = create_database(path)
+    assert db.fetchone(
+        "SELECT 1 FROM agents WHERE agent_id = 'agent_a'") is None
+    db.close()
+
+    eco2 = Economy(db=create_database(path), config=config)
+    restored = eco2.restore_or_create_agent("agent_a", initial_balance=100)
+
+    assert restored.balance == 90
+    assert eco2.ledger.count() == 2, "账本已有记录，不能再铸一次"
+    eco2.close()

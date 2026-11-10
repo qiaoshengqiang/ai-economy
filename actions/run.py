@@ -186,9 +186,15 @@ def run_cognition(
 
     # ---- 执行第 1 段的动作 --------------------------------------------
     intents: List[ActionIntent] = list(seg0.action_intents)
-    results: List[Optional[ActionResult]] = _dispatch_all(
+    seg0_results: List[Optional[ActionResult]] = _dispatch_all(
         agent_id, seg0.action_intents, dispatcher=dispatcher,
         execute=execute, truncated=seg0.is_truncated)
+    # 🔴 结果必须挂回**产生它的那一段**：轮次日志/UI 是按 segment 读的。
+    #    只放在 CognitiveRunResult.action_results 上，详情页就会全部
+    #    显示「未执行」。CognitiveSegment 是 frozen，所以换一个新对象。
+    seg0 = replace(seg0, action_results=list(seg0_results))
+    segments[0] = seg0
+    results: List[Optional[ActionResult]] = list(seg0_results)
 
     # ---- 可选：工作循环 / 读取回喂 ------------------------------------
     #
@@ -228,6 +234,8 @@ def run_cognition(
             seg_results = _dispatch_all(
                 agent_id, seg.action_intents, dispatcher=dispatcher,
                 execute=execute, truncated=seg.is_truncated)
+            seg = replace(seg, action_results=list(seg_results))
+            segments[-1] = seg
             intents.extend(seg.action_intents)
             results.extend(seg_results)
             last_seg, last_results, last_prompt = seg, seg_results, prompt
@@ -303,9 +311,12 @@ def run_cognition(
             _apply_cognitive_budget(agent, seg.decision,
                                     current_phase="decision")
             intents.extend(seg.action_intents)
-            results.extend(_dispatch_all(
+            checkpoint_results = _dispatch_all(
                 agent_id, seg.action_intents, dispatcher=dispatcher,
-                execute=execute, truncated=seg.is_truncated))
+                execute=execute, truncated=seg.is_truncated)
+            seg = replace(seg, action_results=list(checkpoint_results))
+            segments[-1] = seg
+            results.extend(checkpoint_results)
 
     elif follow_up_on_reads:
         prompt2 = render_read_results(
@@ -329,9 +340,12 @@ def run_cognition(
             segments.append(seg1)
             _apply_thinking(agent, seg1.decision, current_phase="work")
             intents.extend(seg1.action_intents)
-            results.extend(_dispatch_all(
+            seg1_results = _dispatch_all(
                 agent_id, seg1.action_intents, dispatcher=dispatcher,
-                execute=execute, truncated=seg1.is_truncated))
+                execute=execute, truncated=seg1.is_truncated)
+            seg1 = replace(seg1, action_results=list(seg1_results))
+            segments[-1] = seg1
+            results.extend(seg1_results)
         elif prompt2:
             logger.warning(
                 "有几个读取结果可以回喂，但 messages 的形状认不出来"

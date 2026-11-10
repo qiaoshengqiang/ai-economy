@@ -574,7 +574,8 @@ class _FakeAgent:
         action_result = dispatcher.dispatch(intent)
         segment = SimpleNamespace(
             tokens=11, content="done", is_truncated=False,
-            model_reasoning="MODEL-THINK")
+            model_reasoning="MODEL-THINK",
+            action_results=[action_result])
         return SimpleNamespace(
             segments=[segment],
             action_intents=[intent],
@@ -948,6 +949,10 @@ class TestSoloWorkRuntime:
         assert rounds[1]["summary"] == "solo 总结"
         assert rounds[1]["segments"][0]["content"] == "done"
         assert rounds[1]["segments"][0]["model_reasoning"] == "MODEL-THINK"
+        # 动作结果必须进轮次日志，否则详情页全部显示「未执行」
+        results = rounds[1]["segments"][0]["results"]
+        assert results and results[0]["success"] is True
+        assert results[0]["action_type"] == "work_complete"
 
     def test_runtime_is_decision_first_and_has_vision(self, db):
         task = Task.create(
