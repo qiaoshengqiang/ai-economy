@@ -108,6 +108,7 @@ def run_cognition(
     follow_up_total_max: int = TOTAL_MAX_CHARS,
     image_resolver: Optional[Callable[[str, str], Optional[str]]] = None,
     repair_malformed: bool = False,
+    apply_cognitive_budget: bool = True,
     work_loop: bool = False,
     max_work_steps: int = 2,
     initial_phase: str = "decision",
@@ -192,7 +193,9 @@ def run_cognition(
     #    这样紧接着的读取回喂（seg1）就会用新的思考模式；
     #    不写 `thinking` 就保持当前状态。
     _apply_thinking(agent, seg0.decision, current_phase=initial_phase)
-    _apply_cognitive_budget(agent, seg0.decision, current_phase=initial_phase)
+    if apply_cognitive_budget:
+        _apply_cognitive_budget(
+            agent, seg0.decision, current_phase=initial_phase)
 
     # ---- 执行第 1 段的动作 --------------------------------------------
     intents: List[ActionIntent] = list(seg0.action_intents)
@@ -241,7 +244,9 @@ def run_cognition(
                 allowed_actions=allowed_actions)
             segments.append(seg)
             _apply_thinking(agent, seg.decision, current_phase="work")
-            _apply_cognitive_budget(agent, seg.decision, current_phase="work")
+            if apply_cognitive_budget:
+                _apply_cognitive_budget(
+                    agent, seg.decision, current_phase="work")
             seg_results = _dispatch_all(
                 agent_id, seg.action_intents, dispatcher=dispatcher,
                 execute=execute, truncated=seg.is_truncated)
@@ -282,8 +287,9 @@ def run_cognition(
                 allowed_actions=allowed_actions)
             segments.append(seg)
             _apply_thinking(agent, seg.decision, current_phase="summary")
-            _apply_cognitive_budget(agent, seg.decision,
-                                    current_phase="summary")
+            if apply_cognitive_budget:
+                _apply_cognitive_budget(
+                    agent, seg.decision, current_phase="summary")
             round_summary = str(getattr(seg, "content", "") or "")
             if seg.action_intents:
                 logger.warning(
@@ -321,8 +327,9 @@ def run_cognition(
                 allowed_actions=allowed_actions)
             segments.append(seg)
             _apply_thinking(agent, seg.decision, current_phase="decision")
-            _apply_cognitive_budget(agent, seg.decision,
-                                    current_phase="decision")
+            if apply_cognitive_budget:
+                _apply_cognitive_budget(
+                    agent, seg.decision, current_phase="decision")
             intents.extend(seg.action_intents)
             checkpoint_results = _dispatch_all(
                 agent_id, seg.action_intents, dispatcher=dispatcher,

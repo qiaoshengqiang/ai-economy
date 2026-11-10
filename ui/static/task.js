@@ -16,7 +16,7 @@
   let timer = 0;
   let lastSignature = "";
 
-  const TERMINAL = new Set(["COMPLETED", "CANCELLED", "FAILED"]);
+  const TERMINAL = new Set(["COMPLETED", "CANCELLED", "FAILED", "INTERRUPTED"]);
 
   function el(tag, className, text) {
     const node = document.createElement(tag);
@@ -311,7 +311,8 @@
       const jobStatus = data.job && data.job.status;
       const jobRunning = jobStatus && !TERMINAL.has(jobStatus) &&
         !["DIRECT_REPLY", "CLARIFY"].includes(jobStatus);
-      if (TERMINAL.has(status) && !jobRunning) {
+      const jobEnded = jobStatus && TERMINAL.has(jobStatus);
+      if (jobEnded || (TERMINAL.has(status) && !jobRunning)) {
         els.status.textContent += " · 已结束";
         clearInterval(timer);
         timer = 0;

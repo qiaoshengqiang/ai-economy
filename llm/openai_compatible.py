@@ -300,6 +300,10 @@ class OpenAICompatibleProvider(LLMProvider):
         # 改配置就行，不用改代码。
         self.chat_path = str(cfg.get("chat_path") or self.DEFAULT_CHAT_PATH)
         self.timeout = float(cfg.get("timeout_seconds") or self.DEFAULT_TIMEOUT)
+        #: 超时重试次数（默认 1 次）。超时是少数**可重试**的错误；
+        #: 第二次仍超时则交给上层标记 INTERRUPTED。
+        self.timeout_retries = max(
+            0, int(cfg.get("timeout_retries", 1) if cfg.get("timeout_retries") is not None else 1))
         #: 最近一次调用的认知预算状态（供 parse_response 回填到 LLMResponse）
         self._last_requested_budget: Optional[int] = None
         self._last_max_tokens: Optional[int] = None
@@ -929,7 +933,17 @@ class OpenAICompatibleProvider(LLMProvider):
 
         started = time.perf_counter()
         try:
-            result = self._http_post(self.endpoint, payload, headers, self.timeout)
+            try:
+                result = self._http_post(
+                    self.endpoint, payload, headers, self.timeout)
+            except LLMTimeoutError:
+                if self.timeout_retries < 1:
+                    raise
+                logger.warning(
+                    "LLM 请求超时，重试一次：provider=%s timeout=%ss",
+                    self.name, self.timeout)
+                result = self._http_post(
+                    self.endpoint, payload, headers, self.timeout)
         except LLMRequestError as exc:
             # ⚠️ **实测抓到的泄露点**：
             #    以前这里直接 `raise` —— 如果 HTTP 层把 key 拼进了消息

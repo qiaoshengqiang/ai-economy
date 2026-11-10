@@ -1138,3 +1138,40 @@ class TestMockStillWorks:
         settings = BrainSettings.from_agent_config(agent.config)
 
         assert settings.provider == "mock"
+
+
+def test_timeout_is_retried_once():
+    calls = []
+
+    def http_post(url, payload, headers, timeout):
+        calls.append(1)
+        if len(calls) == 1:
+            raise LLMTimeoutError("请求超时（300.0 秒）")
+        return HTTPResult(200, deepseek_success_body())
+
+    provider = DeepSeekProvider(
+        {}, api_key_override=FAKE_KEY, http_post=http_post)
+    response = provider.generate(
+        messages=[{"role": "user", "content": "hi"}],
+        model="deepseek-chat")
+
+    assert response.content
+    assert len(calls) == 2, "超时应该重试一次"
+
+
+def test_double_timeout_eventually_raises():
+    calls = []
+
+    def http_post(url, payload, headers, timeout):
+        calls.append(1)
+        raise LLMTimeoutError("请求超时（300.0 秒）")
+
+    provider = DeepSeekProvider(
+        {}, api_key_override=FAKE_KEY, http_post=http_post)
+
+    with pytest.raises(LLMTimeoutError):
+        provider.generate(
+            messages=[{"role": "user", "content": "hi"}],
+            model="deepseek-chat")
+
+    assert len(calls) == 2

@@ -416,7 +416,7 @@ class TestWorkPrompt:
         assert "SPEC-MUST-BE-*.spec.js" in prompt
         assert "Tool docs are the authoritative source" in prompt
 
-    def test_prompt_exposes_thinking_and_cognitive_budget(self):
+    def test_prompt_exposes_thinking_but_not_budget_control(self):
         context = WorkContext(
             task_id="T-1", agent_id="agent_a", role=WorkRole.SOLO)
         prompt = build_work_prompt(
@@ -434,6 +434,7 @@ class TestWorkPrompt:
                     "clipped": "above_max",
                 },
                 "rewrites": {"index.html": 3},
+                "summary_actions_ignored": ["workspace_write"],
                 "round_summary": "ROUND-1 完整总结：已写 config.js。",
                 "action_feedback": [
                     {"action": "workspace_edit",
@@ -449,16 +450,16 @@ class TestWorkPrompt:
         assert "decision" in prompt and "work" in prompt
         assert "thinking" in prompt
         assert "low / high / max" in prompt
-        assert "cognitive_budget" in prompt
-        assert "65536" in prompt
-        assert "requested=65536" in prompt
-        assert "actual=32768" in prompt
-        assert "clipped=above_max" in prompt
+        assert "cognitive_budget" not in prompt
+        assert "65536" not in prompt
+        assert "output budget: effective=32768 tokens (fixed for Work)" in prompt
         assert "index.html x 3" in prompt
         assert "workspace_edit" in prompt
         assert "no actions from that output were executed" in prompt
         assert '"actions"' in prompt
         assert "Actions run in order" in prompt
+        assert "summary-phase actions were IGNORED" in prompt
+        assert "workspace_write" in prompt
         assert "PREVIOUS ROUND SUMMARY (FULL)" in prompt
         assert "ROUND-1 完整总结：已写 config.js。" in prompt
         assert "previous action results" in prompt
@@ -951,6 +952,8 @@ class TestSoloWorkRuntime:
         for kwargs in runtime.agent.kwargs_log:
             assert kwargs.get("cognitive") is False
             assert kwargs.get("system") == WORK_SYSTEM_PROMPT
+            assert kwargs.get("requested_cognitive_budget") == 65536
+            assert kwargs.get("apply_cognitive_budget") is False
         assert "AIC" not in WORK_SYSTEM_PROMPT
         assert "Agent B" not in WORK_SYSTEM_PROMPT
 
@@ -1052,3 +1055,23 @@ class TestSoloWorkRuntime:
         runtime = _SoloRuntime(db, task)
         with pytest.raises(ValueError, match="SOLO"):
             SoloWorkRuntime(runtime, task)
+
+
+def test_replace_missing_file_suggests_create():
+    from actions.workspace_write import WorkspaceWriteExecutor
+    from work.adapters import WorkWorkspaceWriteExecutor
+
+    executor = WorkWorkspaceWriteExecutor(WorkspaceWriteExecutor(
+        lambda *_args, **_kwargs: {
+            "ok": False, "code": "not_found",
+            "message": "路径不存在：/x.md",
+        }))
+    result = executor.execute(ActionIntent(
+        action_type="workspace_write",
+        parameters={"path": "x.md", "content": "x",
+                    "write_mode": "replace"},
+        agent_id="agent_a"))
+
+    assert result.success is False
+    assert result.metadata["code"] == "not_found"
+    assert "write_mode='create'" in result.error

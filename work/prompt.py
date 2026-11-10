@@ -138,10 +138,8 @@ def _render_last_turn(last: Optional[Dict[str, Any]]) -> str:
     budget = last.get("cognitive_budget")
     if isinstance(budget, dict):
         lines.append(
-            "- cognitive_budget: "
-            f"requested={budget.get('requested')} "
-            f"actual={budget.get('effective')} "
-            f"clipped={budget.get('clipped') or '-'}")
+            "- output budget: "
+            f"effective={budget.get('effective')} tokens (fixed for Work)")
     rewrites = last.get("rewrites")
     if isinstance(rewrites, dict) and rewrites:
         detail = ", ".join(
@@ -153,6 +151,14 @@ def _render_last_turn(last: Optional[Dict[str, Any]]) -> str:
         lines.append(
             "\n========== PREVIOUS ROUND SUMMARY (FULL) ==========\n"
             + summary)
+    ignored = last.get("summary_actions_ignored")
+    if isinstance(ignored, list) and ignored:
+        lines.append(
+            "- summary-phase actions were IGNORED and NOT executed: "
+            + ", ".join(str(x) for x in ignored))
+        lines.append(
+            "  The previous summary may imply they happened; verify before "
+            "relying on them.")
     feedback = last.get("action_feedback")
     if isinstance(feedback, list) and feedback:
         lines.append("- previous action results:")
@@ -379,19 +385,13 @@ workspace_id: {context.workspace_id}
 Each call is in the decision or work phase:
 - decision: decide the next step;
 - work: continue after reads/tool results.
-The action set is the same; you may set thinking / cognitive_budget per phase.
+The action set is the same; you may set thinking per phase.
 
 ========== OPTIONAL: TUNE THE NEXT CALL ==========
 Put these at the TOP LEVEL of the JSON (not inside action.parameters):
 - "thinking": {{"enabled": true, "effort": "high"}}
   Applies to the current phase; DeepSeek supports low / high / max.
   Use enabled:false to disable. You may pass a per-phase map.
-- "cognitive_budget": 32768
-  Applies to the current phase, or pass a per-phase map.
-  Unit: max_tokens. Hard cap is 65536.
-  Effective = min(your preference, 65536, provider cap).
-  If omitted, the configured default is used.
-  It affects the NEXT call, not the current output.
 
 ========== ENVIRONMENT CONSTRAINTS ==========
 - `workspace_write` / `workspace_edit` persist to the Workspace.
@@ -422,9 +422,8 @@ text language), because Front shows it to the Human.
 Return one JSON object, no markdown fences:
 {{"decision":"act","reasoning":"one sentence",
  "thinking":{{"enabled":true,"effort":"high"}},
- "cognitive_budget":{{"work":32768}},
  "action":{{"type":"action_type","parameters":{{...}}}}}}
-thinking / cognitive_budget are optional; omit them to keep current settings.
+thinking is optional; omit it to keep the current setting.
 For a plain reply: {{"decision":"reply","content":"..."}}.
 
 To do several things at once (e.g. write several small files), use an action list:

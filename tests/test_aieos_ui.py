@@ -982,3 +982,53 @@ def test_agent_facts_include_status_and_can_work():
     assert facts["agent_a"]["can_work"] is False
     assert facts["agent_b"]["role"] == "WORKER"
     assert facts["agent_b"]["status"] == "IDLE"
+
+
+def test_timeout_marks_job_interrupted():
+    from work.controller import WorkJob
+
+    class _Front:
+        def result_from_work(self, _result):
+            return SimpleNamespace(summary="", status="IN_PROGRESS")
+
+        def format_result(self, _result):
+            return "interrupted"
+
+    runtime = SimpleNamespace(
+        directory=_Directory(["agent_a", "agent_b"]),
+        economy=SimpleNamespace(agent=lambda aid: SimpleNamespace(
+            has_brain=True)),
+        tasks=SimpleNamespace(list_tasks=lambda limit=50: []),
+    )
+    controller = AIEOSController(runtime, front_agent="agent_a")
+    job = WorkJob(job_id="job_timeout", human_text="x")
+    result = SimpleNamespace(
+        ok=False, error="LLMTimeoutError: 请求超时（300.0 秒）",
+        tokens=0, turns=0, status="IN_PROGRESS", summary="")
+    try:
+        controller._finish_work(job, _Front(), "task_x", result)
+    finally:
+        controller.close()
+
+    assert job.status == "INTERRUPTED"
+    assert "请求超时" in job.error
+
+
+def test_task_cards_mark_open_task_interrupted():
+    task = SimpleNamespace(
+        task_id="task_open", status="IN_PROGRESS", mode="SOLO",
+        iteration=1, description="d", creator="agent_b",
+        participants=["agent_b"], updated_at="", is_open=True)
+    runtime = SimpleNamespace(
+        directory=_Directory(["agent_a", "agent_b"]),
+        economy=SimpleNamespace(agent=lambda aid: SimpleNamespace(
+            has_brain=True)),
+        tasks=SimpleNamespace(list_tasks=lambda limit=50: [task]),
+    )
+    controller = AIEOSController(runtime, front_agent="agent_a")
+    try:
+        card = controller._task_cards()[0]
+    finally:
+        controller.close()
+
+    assert card["status"] == "INTERRUPTED"

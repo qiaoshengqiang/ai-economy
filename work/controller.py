@@ -66,6 +66,8 @@ class JobStatus:
     CANCELLED = "CANCELLED"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
+    #: LLM 超时/中断：Task 仍是 IN_PROGRESS，后续可以 follow_up 续跑。
+    INTERRUPTED = "INTERRUPTED"
     DIRECT_REPLY = "DIRECT_REPLY"
     CLARIFY = "CLARIFY"
 
@@ -936,9 +938,15 @@ class AIEOSController:
             front.format_result(front_result),
             job_id=job.job_id, task_id=task_id)
         job.summary = front_result.summary or front_result.status
-        job.status = (
-            JobStatus.COMPLETED if result.ok else JobStatus.FAILED)
-        if not result.ok:
+        if result.ok:
+            job.status = JobStatus.COMPLETED
+        elif _is_interruption(result.error):
+            # 🔒 中断不是失败：Task 保持 IN_PROGRESS，
+            #    Human 可以 follow_up 续跑。
+            job.status = JobStatus.INTERRUPTED
+            job.error = result.error or "任务被中断"
+        else:
+            job.status = JobStatus.FAILED
             job.error = result.error or f"Task {task_id} 未完成"
         self._touch(job)
 
@@ -1346,10 +1354,14 @@ class AIEOSController:
         # 最近更新的在前
         tasks = sorted(
             tasks, key=lambda t: getattr(t, "updated_at", ""), reverse=True)
+        live = self._live_task_ids()
         for task in tasks:
+            status = task.status
+            if task.is_open and task.task_id not in live:
+                status = "INTERRUPTED"
             cards.append({
                 "task_id": task.task_id,
-                "status": task.status,
+                "status": status,
                 "mode": task.mode,
                 "iteration": task.iteration,
                 "description": (task.description or "")[:300],
@@ -1532,6 +1544,16 @@ def _description_from_brief(brief: Any) -> str:
         or getattr(brief, "human_text", "")
         or getattr(brief, "goal", "")
     ).strip()
+
+
+def _is_interruption(error: Any) -> bool:
+    """LLM 超时/中断 ≠ 业务失败；Task 可以续跑。"""
+    text = str(error or "").lower()
+    return (
+        "llmtimeouterror" in text
+        or "请求超时" in text
+        or "timeout" in text
+    )
 
 
 def _now() -> str:

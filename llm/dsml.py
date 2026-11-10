@@ -195,6 +195,58 @@ def _unwrap_arguments(params: Dict[str, Any]) -> Dict[str, Any]:
     return params
 
 
+def _unwrap_decision_calls(calls: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """兼容 `<invoke name="decision">` 包住整个 JSON 信封的变体。
+
+    真实日志里出现过：模型把整个 decision 信封写成一个 DSML invoke，
+    而不是直接调用某个工具。这里把其中的 `action` / `actions` 展平；
+    没有 action 时明确报「这是信封，不是工具调用」。
+    """
+    out: List[Dict[str, Any]] = []
+    for call in calls:
+        fn = call.get("function") if isinstance(call, dict) else None
+        name = str((fn or {}).get("name") or "").strip()
+        if name not in ("decision", "envelope"):
+            out.append(call)
+            continue
+        raw_args = (fn or {}).get("arguments")
+        try:
+            payload = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
+        except (ValueError, TypeError) as exc:
+            raise ValueError(
+                f"DSML decision wrapper has invalid JSON: {exc}") from exc
+        if not isinstance(payload, dict):
+            raise ValueError(
+                "DSML decision wrapper is an envelope, not a tool call")
+        actions = payload.get("actions")
+        if actions is None:
+            single = payload.get("action")
+            actions = [] if single is None else [single]
+        elif isinstance(actions, dict):
+            actions = [actions]
+        if not isinstance(actions, list) or not actions:
+            raise ValueError(
+                "DSML decision wrapper is an envelope, not a tool call")
+        for action in actions:
+            if not isinstance(action, dict):
+                raise ValueError(
+                    "DSML decision wrapper contains a non-object action")
+            action_type = str(
+                action.get("type") or action.get("action_type") or "").strip()
+            params = action.get("parameters")
+            if not action_type or not isinstance(params, dict):
+                raise ValueError(
+                    "DSML decision wrapper has an action without type/parameters")
+            out.append({
+                "type": "function",
+                "function": {
+                    "name": action_type,
+                    "arguments": json.dumps(params, ensure_ascii=False),
+                },
+            })
+    return out
+
+
 def _validate_calls(
     calls: Iterable[Dict[str, Any]],
     *,
@@ -274,6 +326,7 @@ def parse_dsml_tool_calls(
 
     try:
         openai_calls = dsml_encoding.tool_calls_to_openai_format(calls)
+        openai_calls = _unwrap_decision_calls(openai_calls)
         validated = _validate_calls(
             openai_calls, allowed_actions=allowed_actions)
     except Exception as exc:                                  # noqa: BLE001

@@ -220,12 +220,6 @@ class SoloWorkRuntime:
                 setter(True, "max", phase="cognition")
             except Exception:                                 # noqa: BLE001
                 pass
-        budget_setter = getattr(brain, "set_cognitive_budget", None)
-        if callable(budget_setter):
-            try:
-                budget_setter(32768, phase="cognition")
-            except Exception:                                 # noqa: BLE001
-                pass
 
         try:
             dispatcher = build_cognition_dispatcher(
@@ -265,6 +259,8 @@ class SoloWorkRuntime:
                     execute=True,
                     task_id=self.task.task_id,
                     cognitive_budget_cap=self.cognitive_budget,
+                    requested_cognitive_budget=self.cognitive_budget,
+                    apply_cognitive_budget=False,
                     call_purpose="work",
                     system=WORK_SYSTEM_PROMPT,
                     cognitive=False,
@@ -335,6 +331,8 @@ class SoloWorkRuntime:
                     execute=False,
                     task_id=self.task.task_id,
                     cognitive_budget_cap=self.cognitive_budget,
+                    requested_cognitive_budget=self.cognitive_budget,
+                    apply_cognitive_budget=False,
                     call_purpose="work",
                     system=WORK_SYSTEM_PROMPT,
                     cognitive=False,
@@ -447,6 +445,8 @@ class SoloWorkRuntime:
                     execute=True,
                     task_id=task.task_id,
                     cognitive_budget_cap=self.cognitive_budget,
+                    requested_cognitive_budget=self.cognitive_budget,
+                    apply_cognitive_budget=False,
                     call_purpose="work",
                     system=WORK_SYSTEM_PROMPT,
                     cognitive=False,
@@ -519,6 +519,12 @@ class SoloWorkRuntime:
                 status_before=result.status, status_after=status_after)
             last_seg = segments[-1] if segments else None
             last_decision = getattr(last_seg, "decision", None)
+            summary_actions_ignored = [
+                str(getattr(intent, "action_type", "") or "")
+                for seg in segments
+                if str(getattr(seg, "phase", "") or "") == "summary"
+                for intent in (getattr(seg, "action_intents", None) or [])
+            ]
             last_turn_facts = {
                 "status_before": result.status,
                 "status_after": status_after,
@@ -537,6 +543,7 @@ class SoloWorkRuntime:
                     "last_cognitive_budget", None),
                 "rewrites": rewrites,
                 "action_feedback": action_feedback,
+                "summary_actions_ignored": summary_actions_ignored,
                 "round_summary": str(getattr(run, "summary", "") or ""),
             }
             self._emit_round({
@@ -837,6 +844,8 @@ class SoloWorkRuntime:
                 execute=True,
                 task_id=self.task.task_id,
                 cognitive_budget_cap=self.cognitive_budget,
+                requested_cognitive_budget=self.cognitive_budget,
+                apply_cognitive_budget=False,
                 call_purpose="work",
                 system=WORK_SYSTEM_PROMPT,
                 cognitive=False,

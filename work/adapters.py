@@ -70,4 +70,12 @@ class WorkWorkspaceWriteExecutor:
         mode = str(params.get("write_mode") or "").strip().lower()
         if mode == "overwrite":
             params["write_mode"] = "replace"
-        return self.inner.execute(replace(intent, parameters=params))
+        result = self.inner.execute(replace(intent, parameters=params))
+        if (not result.success
+                and (result.metadata or {}).get("code") == "not_found"
+                and mode == "replace"):
+            message = str(result.error or "")
+            if "create" not in message:
+                message += "；新文件请使用 write_mode='create'"
+            return replace(result, error=message)
+        return result

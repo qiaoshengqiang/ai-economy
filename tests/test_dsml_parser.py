@@ -147,3 +147,42 @@ def test_normalize_preserves_prose_around_block():
     assert result.error == ""
     assert "先说一句" in result.content
     assert "DSML" not in result.content
+
+
+def test_decision_wrapped_dsml_is_unwrapped():
+    text = (
+        "<｜DSML｜ calls>\n"
+        '<｜DSML｜ invoke name="decision">\n'
+        '<｜DSML｜ parameter name="reasoning" string="true">read main</'
+        "｜DSML｜ parameter>\n"
+        '<｜DSML｜ parameter name="action" string="false">'
+        '{"type":"workspace_read","parameters":{"path":"src/main.js"}}'
+        "</｜DSML｜ parameter>\n"
+        "</｜DSML｜ invoke>\n"
+        "</｜DSML｜ calls>"
+    )
+
+    result = parse_dsml_tool_calls(
+        text, allowed_actions={"workspace_read"})
+
+    assert result.error == ""
+    assert _calls(result) == ["workspace_read"]
+    args = json.loads(result.tool_calls[0]["function"]["arguments"])
+    assert args == {"path": "src/main.js"}
+
+
+def test_decision_wrapper_without_action_is_explicit():
+    text = (
+        "<｜DSML｜ calls>\n"
+        '<｜DSML｜ invoke name="decision">\n'
+        '<｜DSML｜ parameter name="reasoning" string="true">just thinking</'
+        "｜DSML｜ parameter>\n"
+        "</｜DSML｜ invoke>\n"
+        "</｜DSML｜ calls>"
+    )
+
+    result = parse_dsml_tool_calls(text)
+
+    assert result.found is True
+    assert result.tool_calls == []
+    assert "envelope, not a tool call" in result.error
