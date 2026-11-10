@@ -27,8 +27,9 @@ Work 层最小 prompt
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
+from work.capabilities import describe_actions
 from work.roles import WorkContext, WorkRole
 
 
@@ -41,8 +42,8 @@ from work.roles import WorkContext, WorkRole
 #:    通过 `cognitive=False` + 本 prompt 明确关掉它。
 WORK_SYSTEM_PROMPT = (
     "You are a work agent executing one Task. "
-    "Follow the Task, its Definition of Done, and the action schema. "
-    "Use a tool's documentation before using that tool. "
+    "The Task and its Definition of Done define what to deliver. "
+    "The action schema defines how actions are expressed. "
     "Keep internal reasoning in English."
 )
 
@@ -182,9 +183,7 @@ def _render_last_turn(last: Optional[Dict[str, Any]]) -> str:
         detail = ", ".join(
             f"{path} x {count}"
             for path, count in sorted(rewrites.items()))
-        lines.append(
-            f"- repeated full-file rewrites: {detail}; "
-            "prefer workspace_edit for small changes.")
+        lines.append(f"- repeated full-file rewrites: {detail}")
     summary = str(last.get("round_summary") or "")
     if summary:
         lines.append(
@@ -211,8 +210,8 @@ def _render_last_turn(last: Optional[Dict[str, Any]]) -> str:
             lines.append(line)
     if last.get("truncated"):
         lines.append(
-            "- previous output was truncated: raise cognitive_budget to "
-            "65536 next time, or split the work / use create + append.")
+            "- previous output was truncated; no actions from that "
+            "output were executed.")
     if last.get("error"):
         lines.append(f"- error: {last['error']}")
     return "\n".join(lines)
@@ -263,20 +262,21 @@ def build_cognition_prompt(
     tool_catalog: Any = (),
     max_steps: int = 2,
     tool_docs: Optional[Dict[str, str]] = None,
+    available_actions: Iterable[str] = (),
+    next_actions: Iterable[str] = (),
 ) -> str:
-    """Task cognition: understand environment, requirements, design, risks."""
+    """Task cognition: environment facts + a report from the Agent."""
     workspace = _render_workspace(
         runtime, context.workspace_id, context.agent_id)
     criteria = "\n".join(
         f"- {item}" for item in context.acceptance_criteria
     ) or "(no explicit DoD; use the Human task text)"
     return f"""You are {context.agent_id}. This is the TASK COGNITION phase.
-Do not start production yet.
 
-Goal: before acting, understand the Human request, the current environment,
-available tools, existing code/dependencies, technical approach, architecture,
-risks, and unknowns. Produce a complete cognition report. The report will be
-injected into EVERY later decision and action as fixed context.
+This phase is read-only. The Work phase will follow it.
+
+Produce a cognition report describing what you understand and how you
+intend to proceed. The report is injected into every later decision.
 
 Use English for this report and for all internal reasoning.
 
@@ -293,26 +293,21 @@ Use English for this report and for all internal reasoning.
 workspace_id: {context.workspace_id}
 {workspace}
 
+========== ACTIONS IN THIS PHASE (READ-ONLY) ==========
+{describe_actions(available_actions)}
+
+========== ACTIONS IN THE WORK PHASE (NOT EXECUTABLE YET) ==========
+{describe_actions(next_actions)}
+
 ========== AVAILABLE TOOLS ==========
 {_render_tool_catalog(tool_catalog)}
 {_render_tool_docs(tool_docs)}
-========== EVIDENCE BEFORE THE REPORT ==========
-The catalog above only gives tool names. Tool docs carry hard constraints
-(spec-file naming, BASE_URL, smoke gate, timeouts, output limits) that a
-plan built from general knowledge will get wrong.
-- Call `tool_help` for every tool you plan to use in this task.
-- You may put several tool_help calls in one `actions` list.
-- If a tool's docs are already listed above, do not call it again.
-- Do not write the report from general knowledge alone when a tool is
-  involved in the plan.
+========== TOOL DOCS ==========
+The catalog lists names only. `tool_help` returns a tool's authoritative
+documentation.
 
-========== READ-ONLY ACTIONS AVAILABLE ==========
-- workspace_read: {{"path":"...","offset":1,"limit":200}}
-- workspace_search: {{"query":"...","path":"","glob":"","max_results":20}}
-- tool_help: {{"tool":"python|pytest|node|playwright"}}
-- private_read / private_list / private_working_memory_read / draft_read / draft_list
-
-This phase is read-only: do not write files and do not call work_complete.
+========== PROTOCOL ==========
+This phase cannot write files or complete the Task.
 You get at most {max_steps} steps. Each step is exactly ONE of these two:
 
 (A) ACT — one JSON object, no markdown fences, no tool-call markup:
@@ -324,15 +319,8 @@ You get at most {max_steps} steps. Each step is exactly ONE of these two:
 Never emit provider tool-call syntax (for example `<|DSML|>`, `invoke name=`).
 Only the JSON shape above produces actions.
 
-Suggested report sections:
-## 1. Requirements (including implicit requirements)
-## 2. Environment facts (project structure / existing resources / dependencies / tools)
-## 3. Technical approach and architecture (alternatives, trade-offs)
-## 4. Risks, unknowns, assumptions to verify
-## 5. Execution plan (modules / files / order)
-## 6. Verification strategy
-
-Be concrete and actionable. Later decisions use this report directly.
+The report should cover what matters for this Task: requirements,
+environment, approach, risks, plan, and how you will know it is done.
 """
 
 
@@ -344,6 +332,7 @@ def build_work_prompt(
     last_turn: Optional[Dict[str, Any]] = None,
     extra_instruction: str = "",
     tool_docs: Optional[Dict[str, str]] = None,
+    available_actions: Iterable[str] = (),
 ) -> str:
     """Build one Work turn prompt. Internal reasoning should be English."""
     role = context.role
@@ -438,23 +427,18 @@ Put these at the TOP LEVEL of the JSON (not inside action.parameters):
   Effective = min(your preference, 65536, provider cap).
   If omitted, the configured default is used.
   It affects the NEXT call, not the current output.
-  Before writing a very large file, first emit a small reply with
-  {{"decision":"reply","content":"preparing a large write",
-    "cognitive_budget":65536}}, then write in the next turn.
 
-========== WORKING RHYTHM ==========
-- Decide the module boundaries and file list before the first write.
-- Build the entry file as a skeleton, then use workspace_edit for changes;
-  avoid rewriting the whole entry file repeatedly.
-- Small files may go in one actions list. For large files, raise
-  cognitive_budget first or use create + append.
-- Verify with run_tool after each module when useful, then move on.
-- Before the first use of any tool, call tool_help. If its docs are already
-  in TOOL DOCS above, follow them exactly instead of reconstructing its CLI
-  or constraints from memory.
-- Verification should cover the DoD with the smallest sufficient evidence.
-  If the same verification path fails twice, change approach or report the
-  limitation instead of creating endless new test scripts.
+========== ENVIRONMENT CONSTRAINTS ==========
+- `workspace_write` / `workspace_edit` persist to the Workspace.
+- `run_tool` executes in a throwaway copy of the Workspace; files written
+  inside that copy do not return to the Workspace.
+- Tool output returned here is capped (~12,000 chars); the tool timeout is
+  1..300 seconds.
+- The Workspace is the delivered artifact channel.
+- `workspace_edit` needs an exact unique `old_string`; stale content fails.
+
+========== REGISTERED ACTIONS IN THIS PHASE ==========
+{describe_actions(available_actions)}
 
 ========== ACTIONS AND PARAMETERS ==========
 {ACTION_SCHEMA}
@@ -462,9 +446,9 @@ Put these at the TOP LEVEL of the JSON (not inside action.parameters):
   {{"result_ref":"<logical name, not a path>", "summary":"..."}}
 
 This is the Work layer: no inter-Agent messages and no identity/economy.
-Use tool_help before guessing tool usage; docs are the single source.
-Read before editing; confirm path and locks before writing.
-Do not claim completion without actual artifacts.
+Tool docs are the authoritative source: `tool_help`.
+`work_complete` records your claim; the delivered result is what the
+Workspace contains.
 
 Write internal reasoning and round summaries in English.
 Write the final `work_complete.summary` in the Human's language (the task

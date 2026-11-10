@@ -302,6 +302,14 @@ class TestWorkActions:
         assert "workspace_promote_drafts" in registered
         assert "tool_help" in registered
 
+    def test_every_registered_action_has_a_capability_summary(self):
+        """动作清单从 dispatcher 读取；每个动作都必须有一句中性摘要。"""
+        from work.capabilities import ACTION_SUMMARIES
+
+        registered = set(_dispatcher().action_types)
+        missing = registered - set(ACTION_SUMMARIES)
+        assert not missing, f"缺少能力摘要：{sorted(missing)}"
+
     def test_solo_dispatcher_excludes_public_working_memory(self):
         registered = set(_dispatcher(
             include_public_memory=False).action_types)
@@ -348,18 +356,33 @@ class TestWorkPrompt:
                 "description": "浏览器测试",
             }],
             max_steps=2,
+            available_actions={"workspace_read", "tool_help"},
+            next_actions={"workspace_write", "workspace_edit", "run_tool"},
         )
 
         assert "TASK COGNITION" in prompt
         assert "做一个鹈鹕骑自行车网页" in prompt
         assert "playwright" in prompt
         assert "workspace_read" in prompt
-        assert "read-only" in prompt
-        assert "## 3. Technical approach" in prompt
-        assert "EVIDENCE BEFORE THE REPORT" in prompt
-        assert "`tool_help` for every tool you plan to use" in prompt
+        assert "READ-ONLY" in prompt
+        assert "ACTIONS IN THE WORK PHASE" in prompt
+        assert "workspace_write" in prompt
+        assert "TOOL DOCS" in prompt
+        assert "## 3. Technical approach" not in prompt
         assert '"actions":[{"type":"tool_help"' in prompt
         assert "Never emit provider tool-call syntax" in prompt
+
+    def test_all_registered_solo_actions_are_visible(self):
+        """能力清单来自 dispatcher：注册了什么，prompt 里就必须有什么。"""
+        context = WorkContext(
+            task_id="T-1", agent_id="agent_a", role=WorkRole.SOLO)
+        actions = _dispatcher(include_public_memory=False).action_types
+        prompt = build_work_prompt(
+            context, task_description="d", runtime=None,
+            available_actions=actions)
+
+        for name in actions:
+            assert name in prompt, f"prompt 缺少已注册动作：{name}"
 
     def test_work_prompt_reinjects_tool_docs(self):
         context = WorkContext(
@@ -370,7 +393,7 @@ class TestWorkPrompt:
 
         assert "TOOL DOCS ALREADY READ" in prompt
         assert "SPEC-MUST-BE-*.spec.js" in prompt
-        assert "call tool_help" in prompt
+        assert "Tool docs are the authoritative source" in prompt
 
     def test_prompt_exposes_thinking_and_cognitive_budget(self):
         context = WorkContext(
@@ -412,7 +435,7 @@ class TestWorkPrompt:
         assert "clipped=above_max" in prompt
         assert "index.html x 3" in prompt
         assert "workspace_edit" in prompt
-        assert "raise cognitive_budget to 65536" in prompt
+        assert "no actions from that output were executed" in prompt
         assert '"actions"' in prompt
         assert "Actions run in order" in prompt
         assert "PREVIOUS ROUND SUMMARY (FULL)" in prompt
@@ -431,7 +454,7 @@ class TestWorkPrompt:
                        "private_working_memory_update"):
             assert action in prompt
         assert "public_working_memory_update" not in prompt
-        assert "Use tool_help" in prompt
+        assert "Tool docs are the authoritative source" in prompt
 
     def test_worker_prompt_includes_item_notes_and_public_memory(self):
         from work.plan import WorkItem

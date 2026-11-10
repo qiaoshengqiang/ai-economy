@@ -137,6 +137,8 @@ class SoloWorkRuntime:
         #:    「我记得读过」（实测里 Playwright 的 BASE_URL / smoke gate
         #:    就是这样丢的）。
         self._tool_docs: Dict[str, str] = {}
+        #: Work 阶段真实注册的动作集合；认知阶段用它展示「下一阶段有什么」。
+        self._work_dispatcher: Any = None
         self.lifecycle = WorkLifecycle(runtime.tasks)
         self.drafts = drafts or TaskDraftStore(
             task_id=task.task_id,
@@ -176,6 +178,9 @@ class SoloWorkRuntime:
                 return result
 
             result.status = task.status
+            # 先把 Work 阶段真实注册的动作建好：认知阶段要展示同一份事实。
+            if self._work_dispatcher is None:
+                self._work_dispatcher = self._build_work_dispatcher()
             # 先做任务认知：环境 / 需求 / 方案 / 风险。
             if not self._cognition_report:
                 self._cognition_report = self._run_cognition_phase(actor)
@@ -240,6 +245,9 @@ class SoloWorkRuntime:
                     tool_catalog=catalog,
                     max_steps=self.max_cognition_steps,
                     tool_docs=self._tool_docs,
+                    available_actions=dispatcher.action_types,
+                    next_actions=getattr(
+                        self._work_dispatcher, "action_types", ()),
                 ),
             }]
             seen_reads: set = set()
@@ -401,14 +409,10 @@ class SoloWorkRuntime:
             result.status = task.status
             return result
 
-        dispatcher = build_work_dispatcher(
-            self.rt,
-            task=task,
-            drafts=self.drafts,
-            promote_drafts=self._promote_drafts,
-            complete_fn=self._complete_fn,
-            include_public_memory=False,
-        )
+        dispatcher = self._work_dispatcher
+        if dispatcher is None:
+            dispatcher = self._build_work_dispatcher()
+            self._work_dispatcher = dispatcher
         empty_streak = 0
         last_turn_facts: Optional[Dict[str, Any]] = None
 
@@ -430,6 +434,7 @@ class SoloWorkRuntime:
                 runtime=self.rt,
                 last_turn=last_turn_facts,
                 tool_docs=self._tool_docs,
+                available_actions=dispatcher.action_types,
             )
             try:
                 run = agent.act(
@@ -602,6 +607,16 @@ class SoloWorkRuntime:
         if not result.error and task.status != TaskStatus.COMPLETED:
             result.error = f"达到 max_turns={self.max_turns}，任务尚未完成"
         return result
+
+    def _build_work_dispatcher(self) -> Any:
+        return build_work_dispatcher(
+            self.rt,
+            task=self.task,
+            drafts=self.drafts,
+            promote_drafts=self._promote_drafts,
+            complete_fn=self._complete_fn,
+            include_public_memory=False,
+        )
 
     # ------------------------------------------------------------
     # 工具文档（跨轮保留）
@@ -796,6 +811,7 @@ class SoloWorkRuntime:
             task_description=self.task.description,
             runtime=self.rt,
             tool_docs=self._tool_docs,
+            available_actions=dispatcher.action_types,
             extra_instruction=(
                 "\n========== 恢复提示 ==========\n"
                 "你连续两轮没有输出任何动作（只回了文字或格式不可解析）。\n"
