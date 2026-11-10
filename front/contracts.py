@@ -2,7 +2,8 @@
 Front 层数据契约
 =================
 
-Brief 是 Front 交给 Team Lead 的**结构化意图**，不是 Task。
+Brief 现在只承载 **Human 原文 + reply_style**，不再由 Front
+拆解成 goal / deliverables / constraints / acceptance。
 Result 是 Work 回到 Front 的**可读结果**，不是 Task 状态。
 """
 
@@ -46,8 +47,8 @@ class FrontBrief:
     """
     Front → Team Lead 的工作 Brief。
 
-    🔒 它只描述 Human 要什么，不描述团队怎么组、Task 怎么建。
-       创建 Task / 选择参与者是 Team Lead 的职责。
+    🔒 `human_text` / `goal` 是 Human 原文，不是 Front 的改写。
+       Front 只识别意图与回复格式；不拆需求、不编约束。
     """
 
     goal: str
