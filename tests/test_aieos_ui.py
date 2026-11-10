@@ -236,7 +236,7 @@ def test_job_without_members_degrades_to_solo(monkeypatch):
     from work.plan import parse_work_plan
 
     class _Front:
-        def decide(self, _text, active_tasks=(), completed_tasks=(), conversation=()):
+        def decide(self, _text, active_tasks=(), completed_tasks=(), conversation=(), **kwargs):
             return FrontDecision(
                 intent=FrontIntent.HANDOFF,
                 brief=FrontBrief(goal="写一个 hello.py"))
@@ -361,7 +361,7 @@ def test_handoff_runs_one_agent_solo_without_leader_plan(monkeypatch):
     from work.controller import WorkJob
 
     class _Front:
-        def decide(self, _text, active_tasks=(), completed_tasks=(), conversation=()):
+        def decide(self, _text, active_tasks=(), completed_tasks=(), conversation=(), **kwargs):
             return FrontDecision(
                 intent=FrontIntent.HANDOFF,
                 brief=FrontBrief(
@@ -474,7 +474,7 @@ def test_followup_resumes_interrupted_task(monkeypatch):
     from work.controller import WorkJob
 
     class _Front:
-        def decide(self, _text, active_tasks=(), completed_tasks=(), conversation=()):
+        def decide(self, _text, active_tasks=(), completed_tasks=(), conversation=(), **kwargs):
             return FrontDecision(
                 intent=FrontIntent.FOLLOW_UP,
                 task_id="task_old",
@@ -539,7 +539,7 @@ def test_rework_reopens_completed_task_with_new_request(monkeypatch):
     seen = {}
 
     class _Front:
-        def decide(self, _text, active_tasks=(), completed_tasks=(), conversation=()):
+        def decide(self, _text, active_tasks=(), completed_tasks=(), conversation=(), **kwargs):
             return FrontDecision(
                 intent=FrontIntent.REWORK,
                 task_id="task_done",
@@ -605,7 +605,7 @@ def test_controller_passes_recent_conversation_to_front(monkeypatch):
 
     class _Front:
         def decide(self, _text, active_tasks=(), completed_tasks=(),
-                   conversation=()):
+                   conversation=(), **kwargs):
             captured["conversation"] = list(conversation)
             return FrontDecision(
                 intent=FrontIntent.DIRECT_REPLY, reply="好")
@@ -880,3 +880,105 @@ def test_workspace_plan_declares_parent_directories():
     assert dirs["game"] == "agent_a"
     assert dirs["game/src"] == "agent_a"
     assert plan["root_owner"] == "agent_a"
+
+
+def test_preferred_agent_idle_is_acquired():
+    from work.controller import WorkJob
+
+    runtime = SimpleNamespace(
+        directory=_Directory(["agent_a", "agent_b", "agent_e"]),
+        economy=SimpleNamespace(agent=lambda aid: SimpleNamespace(
+            has_brain=True)),
+        tasks=SimpleNamespace(list_tasks=lambda limit=50: []),
+    )
+    controller = AIEOSController(runtime, front_agent="agent_a")
+    job = WorkJob(job_id="job_pref", human_text="让 agent_e 做")
+    try:
+        worker = controller._acquire_preferred_worker(job, "agent_e")
+    finally:
+        controller.close()
+
+    assert worker == "agent_e"
+
+
+def test_preferred_agent_busy_rejects_handoff():
+    from work.controller import WorkJob
+
+    runtime = SimpleNamespace(
+        directory=_Directory(["agent_a", "agent_b", "agent_e"]),
+        economy=SimpleNamespace(agent=lambda aid: SimpleNamespace(
+            has_brain=True)),
+        tasks=SimpleNamespace(list_tasks=lambda limit=50: []),
+    )
+    controller = AIEOSController(runtime, front_agent="agent_a")
+    job = WorkJob(job_id="job_busy", human_text="让 agent_e 做")
+    try:
+        controller.availability.try_acquire("agent_e")
+        worker = controller._acquire_preferred_worker(job, "agent_e")
+    finally:
+        controller.close()
+
+    assert worker is None
+    assert job.status == "FAILED"
+    assert "preferred_agent_busy" in job.error
+
+
+def test_preferred_agent_unknown_rejects_handoff():
+    from work.controller import WorkJob
+
+    runtime = SimpleNamespace(
+        directory=_Directory(["agent_a", "agent_b"]),
+        economy=SimpleNamespace(agent=lambda aid: SimpleNamespace(
+            has_brain=True)),
+        tasks=SimpleNamespace(list_tasks=lambda limit=50: []),
+    )
+    controller = AIEOSController(runtime, front_agent="agent_a")
+    job = WorkJob(job_id="job_unknown", human_text="让 agent_x 做")
+    try:
+        worker = controller._acquire_preferred_worker(job, "agent_x")
+    finally:
+        controller.close()
+
+    assert worker is None
+    assert job.status == "FAILED"
+    assert "preferred_agent_unavailable" in job.error
+
+
+def test_preferred_agent_cannot_be_front_agent():
+    from work.controller import WorkJob
+
+    runtime = SimpleNamespace(
+        directory=_Directory(["agent_a", "agent_b"]),
+        economy=SimpleNamespace(agent=lambda aid: SimpleNamespace(
+            has_brain=True)),
+        tasks=SimpleNamespace(list_tasks=lambda limit=50: []),
+    )
+    controller = AIEOSController(runtime, front_agent="agent_a")
+    job = WorkJob(job_id="job_front", human_text="让 agent_a 做")
+    try:
+        worker = controller._acquire_preferred_worker(job, "agent_a")
+    finally:
+        controller.close()
+
+    assert worker is None
+    assert job.status == "FAILED"
+    assert "preferred_agent_is_front" in job.error
+
+
+def test_agent_facts_include_status_and_can_work():
+    runtime = SimpleNamespace(
+        directory=_Directory(["agent_a", "agent_b"]),
+        economy=SimpleNamespace(agent=lambda aid: SimpleNamespace(
+            has_brain=True)),
+        tasks=SimpleNamespace(list_tasks=lambda limit=50: []),
+    )
+    controller = AIEOSController(runtime, front_agent="agent_a")
+    try:
+        facts = {item["agent_id"]: item for item in controller._agent_facts()}
+    finally:
+        controller.close()
+
+    assert facts["agent_a"]["role"] == "FRONT"
+    assert facts["agent_a"]["can_work"] is False
+    assert facts["agent_b"]["role"] == "WORKER"
+    assert facts["agent_b"]["status"] == "IDLE"

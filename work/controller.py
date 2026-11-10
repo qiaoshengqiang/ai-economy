@@ -317,6 +317,7 @@ class AIEOSController:
                     active_tasks=active,
                     completed_tasks=completed,
                     conversation=self._conversation(job),
+                    agents=self._agent_facts(),
                 )
             job.front_intent = decision.intent
             self._set_job(job, job.status)
@@ -462,7 +463,9 @@ class AIEOSController:
                 system=FRONT_SYSTEM_PROMPT,
             )
 
-        return FrontAgentRuntime(self.front_agent, _front_think)
+        return FrontAgentRuntime(
+            self.front_agent, _front_think,
+            inspect_fn=self._front_inspect_facts)
 
     def _acquire_leader(self, job: WorkJob) -> Optional[str]:
         candidates = [
@@ -495,6 +498,78 @@ class AIEOSController:
                 self._condition.wait(timeout=1.0)
         return None
 
+    def _acquire_preferred_worker(
+        self, job: WorkJob, agent_id: str) -> Optional[str]:
+        """Human 显式指定执行者：只能用它，忙/不存在就拒绝 handoff。"""
+        if agent_id == self.front_agent:
+            self._fail(
+                job, f"preferred_agent_is_front: {agent_id}")
+            return None
+        if (agent_id not in self._agent_ids
+                or not self._agent_has_brain(agent_id)):
+            self._fail(
+                job, f"preferred_agent_unavailable: {agent_id}")
+            return None
+        if not self.availability.try_acquire(agent_id):
+            self._fail(
+                job, f"preferred_agent_busy: {agent_id}")
+            return None
+        return agent_id
+
+    def _agent_facts(self) -> List[Dict[str, Any]]:
+        """给 Front 的只读 Agent 事实；不替它做选择。"""
+        facts = []
+        for aid in self._agent_ids:
+            facts.append({
+                "agent_id": aid,
+                "status": self.availability.state(aid),
+                "role": (
+                    "FRONT" if aid == self.front_agent else "WORKER"),
+                "can_work": (
+                    aid != self.front_agent
+                    and self._agent_has_brain(aid)),
+            })
+        return facts
+
+    def _front_inspect_facts(self, task_id: str) -> Dict[str, Any]:
+        """只读 Task 事实（紧凑版），供 Front 的 inspect 使用。"""
+        try:
+            detail = self.task_detail(task_id)
+        except Exception as exc:                              # noqa: BLE001
+            return {"error": f"{type(exc).__name__}: {exc}"}
+
+        task = dict(detail.get("task") or {})
+        job = dict(detail.get("job") or {})
+        rounds = []
+        for item in (detail.get("rounds") or [])[-5:]:
+            rounds.append({
+                "round": item.get("round"),
+                "status_before": item.get("status_before"),
+                "status_after": item.get("status_after"),
+                "tokens": item.get("tokens"),
+                "summary": str(item.get("summary") or "")[:800],
+            })
+        files = []
+        for item in (detail.get("workspace_files") or [])[:30]:
+            files.append({
+                "path": item.get("path"),
+                "type": item.get("type"),
+                "chars": item.get("chars"),
+            })
+        return {
+            "task": task,
+            "job": {
+                "status": job.get("status"),
+                "error": job.get("error"),
+                "turns": job.get("turns"),
+                "tokens": job.get("tokens"),
+                "front_intent": job.get("front_intent"),
+            },
+            "rounds": rounds,
+            "files": files,
+            "llm": detail.get("llm") or {},
+        }
+
     def _run_handoff_solo(
         self,
         job: WorkJob,
@@ -502,9 +577,13 @@ class AIEOSController:
         front: Any,
     ) -> tuple[str, List[str]]:
         """Front handoff → 一个 Agent → SOLO Task → SoloWorkRuntime。"""
-        worker = self._acquire_worker(job)
+        preferred = str(
+            getattr(decision, "preferred_agent", "") or "").strip()
+        if preferred:
+            worker = self._acquire_preferred_worker(job, preferred)
+        else:
+            worker = self._acquire_worker(job)
         if not worker:
-            self._fail(job, "没有空闲 Agent 可以承接任务")
             return "", []
 
         job.leader = worker

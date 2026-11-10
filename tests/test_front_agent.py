@@ -302,3 +302,108 @@ def test_decision_validates_required_fields():
         FrontDecision(intent=FrontIntent.HANDOFF)
     with pytest.raises(ValueError):
         FrontDecision(intent=FrontIntent.REWORK)
+
+
+# ============================================================
+# Agent 事实 / preferred_agent / inspect
+# ============================================================
+def test_handoff_parses_preferred_agent():
+    runtime = FrontAgentRuntime(
+        "front", _think_returning({
+            "intent": "handoff",
+            "task_text": "写一个笑话",
+            "preferred_agent": "agent_e",
+            "reply": "好",
+        }))
+    decision = runtime.decide("让 agent_e 写一个笑话")
+
+    assert decision.preferred_agent == "agent_e"
+    assert decision.brief.task_text == "写一个笑话"
+
+
+def test_prompt_exposes_agent_facts_and_routing_rules():
+    think = _think_returning({"intent": "direct_reply", "reply": "好"})
+    runtime = FrontAgentRuntime("front", think)
+    runtime.decide("你好", agents=[
+        {"agent_id": "agent_b", "status": "WORKING",
+         "role": "WORKER", "can_work": True},
+        {"agent_id": "agent_e", "status": "IDLE",
+         "role": "WORKER", "can_work": True},
+    ])
+
+    prompt = think.prompt
+    assert "agent_b: status=WORKING" in prompt
+    assert "agent_e: status=IDLE" in prompt
+    assert "preferred_agent that is WORKING" in prompt
+    assert "handoff is rejected" in prompt
+    assert "inspect_task(task_id)" in prompt
+
+
+def test_inspect_loop_fetches_facts_then_decides():
+    responses = [
+        {"intent": "inspect", "task_id": "task_1", "reason": "看看进度"},
+        {"intent": "direct_reply", "reply": "它还在跑。"},
+    ]
+    prompts = []
+
+    def think(prompt):
+        prompts.append(prompt)
+        return json.dumps(responses.pop(0), ensure_ascii=False)
+
+    calls = []
+
+    def inspect_fn(task_id):
+        calls.append(task_id)
+        return {"task": {"task_id": task_id, "status": "IN_PROGRESS"}}
+
+    runtime = FrontAgentRuntime("front", think, inspect_fn=inspect_fn)
+    decision = runtime.decide(
+        "那个任务怎么样了",
+        active_tasks=[{"task_id": "task_1", "status": "IN_PROGRESS",
+                       "summary": "写页面"}],
+    )
+
+    assert decision.intent == FrontIntent.DIRECT_REPLY
+    assert calls == ["task_1"]
+    assert len(prompts) == 2
+    assert "IN_PROGRESS" in prompts[1]
+    assert "inspect_task(task_id)" in prompts[0]
+
+
+def test_inspect_is_bounded():
+    responses = [
+        {"intent": "inspect", "task_id": "task_1"},
+        {"intent": "inspect", "task_id": "task_1"},
+        {"intent": "inspect", "task_id": "task_1"},
+        {"intent": "direct_reply", "reply": "好"},
+    ]
+
+    def think(prompt):
+        return json.dumps(responses.pop(0), ensure_ascii=False)
+
+    calls = []
+    runtime = FrontAgentRuntime(
+        "front", think, inspect_fn=lambda tid: calls.append(tid) or {"x": 1})
+
+    decision = runtime.decide(
+        "看看",
+        active_tasks=[{"task_id": "task_1", "status": "IN_PROGRESS"}],
+    )
+
+    assert len(calls) == 2, "最多 inspect 2 次"
+    assert decision.intent == FrontIntent.CLARIFY
+    assert "inspect_limit" in decision.reason
+
+
+def test_inspect_without_capability_falls_back_to_clarify():
+    runtime = FrontAgentRuntime(
+        "front",
+        _think_returning({"intent": "inspect", "task_id": "task_1"}),
+    )
+    decision = runtime.decide(
+        "看看",
+        active_tasks=[{"task_id": "task_1", "status": "IN_PROGRESS"}],
+    )
+
+    assert decision.intent == FrontIntent.CLARIFY
+    assert "inspect_unavailable" in decision.reason

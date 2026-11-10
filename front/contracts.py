@@ -34,12 +34,15 @@ class FrontIntent:
     ARTIFACTS = "artifacts"
     #: 意图不明确，向 Human 澄清
     CLARIFY = "clarify"
+    #: 只读查看 Task 事实（不是最终决定；Front 可以在决定前调用）
+    INSPECT = "inspect"
 
     @classmethod
     def all(cls) -> List[str]:
         return [
             cls.DIRECT_REPLY, cls.HANDOFF, cls.REWORK,
             cls.FOLLOW_UP, cls.CANCEL, cls.ARTIFACTS, cls.CLARIFY,
+            cls.INSPECT,
         ]
 
 
@@ -137,6 +140,9 @@ class FrontDecision:
     question: str = ""
     #: handoff：给 Work Agent / 最终回复的格式要求（不是任务需求）
     reply_style: str = ""
+    #: handoff：Human 显式指定的执行者（路由约束，不是任务内容）。
+    #: 空字符串 = 没有指定，由系统选空闲 Agent。
+    preferred_agent: str = ""
     confidence: float = 1.0
     reason: str = ""
 
@@ -150,6 +156,7 @@ class FrontDecision:
         if self.intent in (
             FrontIntent.REWORK, FrontIntent.FOLLOW_UP,
             FrontIntent.CANCEL, FrontIntent.ARTIFACTS,
+            FrontIntent.INSPECT,
         ):
             if not str(self.task_id or "").strip():
                 raise ValueError(f"{self.intent} 必须带 task_id")
@@ -165,6 +172,7 @@ class FrontDecision:
             "task_id": self.task_id,
             "question": self.question,
             "reply_style": self.reply_style,
+            "preferred_agent": self.preferred_agent,
             "confidence": self.confidence,
             "reason": self.reason,
         }

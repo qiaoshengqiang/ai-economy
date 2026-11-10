@@ -147,6 +147,8 @@ def parse_front_decision(
                 intent=raw_intent, brief=brief,
                 reply=str(payload.get("reply") or "").strip(),
                 reply_style=reply_style,
+                preferred_agent=str(
+                    payload.get("preferred_agent") or "").strip(),
                 confidence=confidence,
                 reason=str(payload.get("reason") or "")), ""
 
@@ -187,6 +189,15 @@ def parse_front_decision(
             return FrontDecision(
                 intent=raw_intent, task_id=task_id,
                 reply=str(payload.get("reply") or "").strip(),
+                confidence=confidence,
+                reason=str(payload.get("reason") or "")), ""
+
+        if raw_intent == FrontIntent.INSPECT:
+            task_id = str(payload.get("task_id") or "").strip()
+            if task_id not in (active | completed):
+                return None, "inspect_task_not_found"
+            return FrontDecision(
+                intent=raw_intent, task_id=task_id,
                 confidence=confidence,
                 reason=str(payload.get("reason") or "")), ""
 

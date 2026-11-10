@@ -19,6 +19,7 @@ FrontAgentRuntime —— Human 意图入口
 
 from __future__ import annotations
 
+import json
 from typing import Any, Callable, Dict, Iterable, List, Optional
 
 from front.contracts import FrontDecision, FrontIntent, FrontResult
@@ -44,11 +45,15 @@ class FrontAgentRuntime:
         self,
         agent_id: str,
         think: Callable[[str], str],
+        *,
+        inspect_fn: Optional[Callable[[str], Any]] = None,
     ) -> None:
         if not callable(think):
             raise ValueError("FrontAgentRuntime 需要可调用的 think(prompt)")
         self.agent_id = str(agent_id)
         self._think = think
+        #: 只读 inspect 能力：task_id → 事实（dict/str）。None = 不可用。
+        self._inspect_fn = inspect_fn
 
     # ------------------------------------------------------------
     # 决策
@@ -60,7 +65,9 @@ class FrontAgentRuntime:
         active_tasks: Iterable[Dict[str, Any]] = (),
         completed_tasks: Iterable[Dict[str, Any]] = (),
         conversation: Iterable[Dict[str, Any]] = (),
+        agents: Iterable[Dict[str, Any]] = (),
         context: str = "",
+        max_inspect: int = 2,
     ) -> FrontDecision:
         """
         识别 Human 意图。
@@ -68,9 +75,12 @@ class FrontAgentRuntime:
         `active_tasks` / `completed_tasks` 是 **只读引用**：
         `{"task_id", "summary", "status"}`。Front 不修改它们。
 
-        `conversation` 是最近 Human / Front 消息的只读快照：
-        `{"role", "text"}`。它只用于判断「再做一个」这类上下文，
-        不是任务需求。
+        `conversation` 是最近 Human / Front 消息的只读快照。
+
+        `agents` 是系统里的 Agent 事实：`{agent_id, status, role, can_work}`。
+        Front 可以据此决定是否指定 `preferred_agent`；系统不规定它怎么做。
+
+        `inspect` 是只读能力，不是最终决定；最多 `max_inspect` 次。
         """
         active = [
             _task_ref(item) for item in active_tasks
@@ -83,16 +93,25 @@ class FrontAgentRuntime:
         active_ids = {item["task_id"] for item in active}
         completed_ids = {item["task_id"] for item in completed}
         history = _conversation_refs(conversation)
+        agent_facts = _agent_refs(agents)
 
+        inspection: List[Dict[str, Any]] = []
         last_error = ""
-        for attempt in range(1, 3):
+        parse_failures = 0
+        inspect_count = 0
+        # 硬上限：2 次 inspect + 2 次格式修复；防止无限空转。
+        for _step in range(max_inspect + 4):
             prompt = self._prompt(
                 human_text, active, completed, conversation=history,
+                agents=agent_facts, inspection=inspection,
                 context=context, previous_error=last_error)
             try:
                 raw = self._think(prompt)
             except Exception as exc:                          # noqa: BLE001
                 last_error = f"{type(exc).__name__}: {exc}"
+                parse_failures += 1
+                if parse_failures >= 2:
+                    break
                 continue
 
             decision, error = parse_front_decision(
@@ -101,9 +120,32 @@ class FrontAgentRuntime:
                 active_task_ids=active_ids,
                 completed_task_ids=completed_ids,
             )
-            if decision is not None:
-                return decision
-            last_error = error
+            if decision is None:
+                last_error = error
+                parse_failures += 1
+                if parse_failures >= 2:
+                    break
+                continue
+
+            if decision.intent == FrontIntent.INSPECT:
+                if self._inspect_fn is None:
+                    last_error = "inspect_unavailable"
+                    break
+                if inspect_count >= max_inspect:
+                    last_error = "inspect_limit"
+                    break
+                try:
+                    facts = self._inspect_fn(decision.task_id)
+                except Exception as exc:                      # noqa: BLE001
+                    facts = f"inspect_error: {type(exc).__name__}: {exc}"
+                inspection.append({
+                    "task_id": decision.task_id,
+                    "facts": facts,
+                })
+                inspect_count += 1
+                continue
+
+            return decision
 
         return FrontDecision(
             intent=FrontIntent.CLARIFY,
@@ -166,6 +208,8 @@ class FrontAgentRuntime:
         completed: List[Dict[str, str]],
         *,
         conversation: List[Dict[str, str]] = (),
+        agents: List[Dict[str, Any]] = (),
+        inspection: List[Dict[str, Any]] = (),
         context: str = "",
         previous_error: str = "",
     ) -> str:
@@ -187,11 +231,17 @@ Human explicitly asks how the system works.
 ========== CURRENT HUMAN INPUT ==========
 {human_text}
 
+========== AGENTS (READ-ONLY FACTS) ==========
+{_render_agents(agents)}
+
 ========== ACTIVE TASKS (READ-ONLY) ==========
 {_render_tasks(active)}
 
 ========== COMPLETED TASKS (READ-ONLY) ==========
 {_render_tasks(completed)}
+
+========== INSPECTION RESULTS (READ-ONLY) ==========
+{_render_inspection(inspection)}
 
 ========== OTHER CONTEXT ==========
 {context or "(none)"}
@@ -209,6 +259,19 @@ Boundaries:
 - You may decide the reply_style (format), but not the technical solution.
 - Do not replace the Work Agent in design, decomposition, or acceptance.
 - If information is insufficient and the choice matters, use clarify.
+- `preferred_agent` is routing metadata, not task content. It is optional.
+
+========== ROUTING RULES (ENVIRONMENT FACTS) ==========
+- preferred_agent that is IDLE and can_work → assigned to it.
+- preferred_agent that is WORKING → the handoff is rejected with a reason;
+  there is no automatic substitution.
+- unknown / FRONT / cannot-work preferred_agent → handoff is rejected.
+- no preferred_agent → the system picks an idle worker.
+
+========== INSPECT (READ-ONLY CAPABILITY) ==========
+inspect_task(task_id) returns task facts (status, creator/contractor, rounds,
+errors, files, artifacts, LLM usage). It does not change Task state.
+You may use it before deciding; at most 2 inspects per Human input.
 
 Consider:
 - Is this a new work request, or talk about / modification / continuation of
@@ -243,6 +306,7 @@ Available intents:
 
    {{"intent":"handoff",
      "task_text":"text handed to the Work Agent",
+     "preferred_agent":"optional agent_id; empty or omitted = system picks",
      "brief":{{"goal":"...","deliverables":["..."],
               "constraints":["..."],"acceptance_expectations":["..."]}},
      "reply":"short confirmation for the Human",
@@ -285,6 +349,10 @@ Available intents:
    The intent is unclear; ask the Human.
    {{"intent":"clarify","question":"...","reason":"..."}}
 
+8. inspect
+   Read-only task facts; not a final decision. At most 2 per input.
+   {{"intent":"inspect","task_id":"...","reason":"..."}}
+
 No wallet / price / identity discussion; those are not Front decisions.
 The Human has no "accept task" action. Completed Tasks are only reopened through
 later Human input; do not emit an accept intent.
@@ -318,6 +386,52 @@ def _render_conversation(items: List[Dict[str, str]]) -> str:
         return "（没有更早的对话）"
     return "\n".join(
         f"{item['role']}: {item['text']}" for item in items)
+
+
+def _agent_refs(items: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    for item in items or ():
+        if not isinstance(item, dict):
+            continue
+        agent_id = str(item.get("agent_id") or "").strip()
+        if not agent_id:
+            continue
+        out.append({
+            "agent_id": agent_id,
+            "status": str(item.get("status") or ""),
+            "role": str(item.get("role") or ""),
+            "can_work": bool(item.get("can_work", True)),
+        })
+    return out
+
+
+def _render_agents(agents: List[Dict[str, Any]]) -> str:
+    if not agents:
+        return "(none)"
+    return "\n".join(
+        f"- {item['agent_id']}: status={item['status'] or '?'} "
+        f"role={item['role'] or 'WORKER'} can_work={item['can_work']}"
+        for item in agents
+    )
+
+
+def _render_inspection(items: List[Dict[str, Any]]) -> str:
+    if not items:
+        return "(none)"
+    lines: List[str] = []
+    for item in items:
+        task_id = str(item.get("task_id") or "")
+        facts = item.get("facts")
+        if not isinstance(facts, (dict, list)):
+            facts = str(facts or "")
+        try:
+            text = json.dumps(facts, ensure_ascii=False, indent=2)
+        except (TypeError, ValueError):
+            text = str(facts)
+        if len(text) > 6000:
+            text = text[:6000] + "\n… (inspection facts truncated)"
+        lines.append(f"[{task_id}]\n{text}")
+    return "\n\n".join(lines)
 
 
 def _task_ref(item: Dict[str, Any]) -> Optional[Dict[str, str]]:
