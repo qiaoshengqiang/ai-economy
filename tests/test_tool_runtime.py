@@ -83,6 +83,24 @@ def test_public_tool_library_has_expected_tools(library):
     assert library.available("pytest")
 
 
+def test_tool_guidance_is_readable_by_agents(runner):
+    catalog = runner.guide("")
+    assert catalog["ok"] is True
+    assert "Public Tool Library" in catalog["content"]
+    assert {item["name"] for item in catalog["tools"]} >= {
+        "python", "pytest", "node", "playwright"}
+
+    doc = runner.guide("playwright")
+    assert doc["ok"] is True
+    assert "*.spec.js" in doc["content"]
+    assert "No tests found" in doc["content"]
+    assert "require('@playwright/test')" in doc["content"]
+
+    missing = runner.guide("ghost-tool")
+    assert missing["ok"] is False
+    assert "不在公共工具库" in missing["message"]
+
+
 def test_python_tool_runs_in_isolated_run(runner):
     gw = _Gateway({"main.py": "print('tool-ok')\n"})
     result = runner.run_from_task(

@@ -66,6 +66,7 @@ from actions.workspace_write import ACTION_WORKSPACE_WRITE
 from actions.workspace_edit import ACTION_WORKSPACE_EDIT
 from actions.workspace_search import ACTION_WORKSPACE_SEARCH
 from actions.run_tool import ACTION_RUN_TOOL
+from actions.tool_help import ACTION_TOOL_HELP
 from actions.public_working_memory import (
     ACTION_PUBLIC_WORKING_MEMORY_READ,
     ACTION_PUBLIC_WORKING_MEMORY_UPDATE,
@@ -103,6 +104,7 @@ OBSERVABLE_ACTIONS = frozenset({
     ACTION_PUBLIC_QUERY,
     ACTION_SHARED_CONTEXT_READ,
     ACTION_RUN_TOOL,
+    ACTION_TOOL_HELP,
     ACTION_PUBLIC_WORKING_MEMORY_READ,
     ACTION_PRIVATE_WORKING_MEMORY_READ,
     ACTION_SHORT_TERM_MEMORY_READ,
@@ -141,10 +143,11 @@ CONFIRMATION_ACTIONS = frozenset({
     ACTION_WORKSPACE_PROMOTE_DRAFTS,
 })
 
-#: 只由 Demand 组合根注册、但同样是真实动作的集合。
+#: 只由 Demand / Work 组合根注册、但同样是真实动作的集合。
 #:
 #: `tests/action_registry_helpers.py` 的“注册动作”来源是生产实验；
-#: 草稿动作只在 Demand 注册，所以守卫需要显式知道它们的存在。
+#: 草稿动作只在 Demand 注册，`tool_help` 只在 Work 注册，
+#: 所以守卫需要显式知道它们的存在。
 DEMAND_ONLY_ACTIONS = frozenset({
     ACTION_DRAFT_WRITE,
     ACTION_DRAFT_APPEND,
@@ -152,6 +155,7 @@ DEMAND_ONLY_ACTIONS = frozenset({
     ACTION_DRAFT_LIST,
     ACTION_DRAFT_DELETE,
     ACTION_WORKSPACE_PROMOTE_DRAFTS,
+    ACTION_TOOL_HELP,
 })
 
 #: 单条读取结果最多回喂多少字符。
@@ -171,7 +175,7 @@ VisualResolver = Callable[[str, str], Optional[str]]
 #: 带 `content` 字段的动作 —— 直接就是那段文本。
 _CONTENT_ACTIONS = frozenset({
     ACTION_WORKSPACE_READ, ACTION_PRIVATE_READ, ACTION_PUBLIC_QUERY,
-    ACTION_DRAFT_READ,
+    ACTION_DRAFT_READ, ACTION_TOOL_HELP,
 })
 
 #: 结构化载荷 —— 渲染成可读 JSON（保真，不做摘要）。
@@ -327,7 +331,7 @@ def _payload_of(action_type: str, output: Any) -> Optional[str]:
 def _target_of(intent: ActionIntent) -> str:
     """这一条读取读的是**什么** —— 只从真实字段取，不推断。"""
     params = dict(getattr(intent, "parameters", None) or {})
-    for key in ("path", "name"):
+    for key in ("path", "name", "tool"):
         value = params.get(key)
         if isinstance(value, str) and value.strip():
             return value.strip()

@@ -296,6 +296,7 @@ class TestWorkActions:
         assert WORK_ACTION_TYPES <= registered
         assert "work_complete" in registered
         assert "workspace_promote_drafts" in registered
+        assert "tool_help" in registered
 
 
 # ============================================================
@@ -377,9 +378,11 @@ class TestWorkPrompt:
         prompt = build_work_prompt(
             context, task_description="d", runtime=None)
         for action in ("workspace_read", "workspace_edit", "run_tool",
-                       "draft_write", "private_working_memory_update",
+                       "tool_help", "draft_write",
+                       "private_working_memory_update",
                        "public_working_memory_update"):
             assert action in prompt
+        assert "工具用法不要猜" in prompt
 
     def test_worker_prompt_includes_item_notes_and_public_memory(self):
         from work.plan import WorkItem

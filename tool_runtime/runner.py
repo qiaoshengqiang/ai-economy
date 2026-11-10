@@ -206,6 +206,50 @@ class ToolRunner:
     def catalog(self) -> List[Dict[str, Any]]:
         return self.library.public_catalog()
 
+    def guide(self, tool: str = "") -> Dict[str, Any]:
+        """返回工具清单 / 某个工具的完整用法文档。
+
+        文档来源固定为 `resources/public/tools/<tool>.md`；
+        工具名先经过 ToolLibrary 校验，避免把任意路径当文档读。
+        """
+        docs_dir = (
+            Path(self.library.project_root)
+            / "resources" / "public" / "tools"
+        )
+        name = str(tool or "").strip()
+        if not name:
+            path = docs_dir / "README.md"
+            try:
+                content = path.read_text(encoding="utf-8")
+            except OSError:
+                content = ""
+            return {
+                "ok": True,
+                "tool": "",
+                "content": content,
+                "tools": self.library.public_catalog(),
+            }
+        try:
+            spec = self.library.get(name)
+        except Exception as exc:                              # noqa: BLE001
+            return {
+                "ok": False,
+                "code": "unknown_tool",
+                "message": str(exc),
+                "tools": self.library.public_catalog(),
+            }
+        path = docs_dir / f"{spec.name}.md"
+        try:
+            content = path.read_text(encoding="utf-8")
+        except OSError:
+            content = f"# {spec.name}\n\n{spec.description}\n"
+        return {
+            "ok": True,
+            "tool": spec.name,
+            "content": content,
+            "tools": self.library.public_catalog(),
+        }
+
     def run_from_task(self, gateway: Any, workspace_id: str, agent_id: str,
                       *, tool: str, args: Optional[List[str]] = None,
                       source_path: str = "",
@@ -363,11 +407,21 @@ class ToolRunner:
             ok = (not timed_out) and exit_code == 0
             code = "" if ok else ("timeout" if timed_out
                                   else "tool_exit_nonzero")
+            message = ""
+            if (spec.name == "playwright" and not ok
+                    and "No tests found" in stdout):
+                code = "no_tests"
+                message = (
+                    "Playwright 没有找到测试文件。当前 testMatch 是 "
+                    "`**/*.spec.js`；测试必须使用 `@playwright/test` 的 "
+                    "`test(...)`。可调用 tool_help(tool='playwright') "
+                    "查看完整写法。")
             return ToolRunResult(
                 ran=True, ok=ok, tool=spec.name, run_id=run.run_id,
                 exit_code=exit_code, stdout=stdout, stderr=stderr,
                 timed_out=timed_out, duration_ms=duration_ms,
-                code=code, materialized_files=int(materialized),
+                code=code, message=message,
+                materialized_files=int(materialized),
                 output_truncated=cut_out or cut_err,
                 config_used=config_used, smoke=smoke,
                 images=self._new_images(run.work, images_before))

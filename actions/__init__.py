@@ -85,6 +85,9 @@ from actions.shared_context_read import (
 from actions.run_tool import (
     ACTION_RUN_TOOL, RunToolExecutor,
 )
+from actions.tool_help import (
+    ACTION_TOOL_HELP, ToolHelpExecutor,
+)
 from actions.task_create import (
     ACTION_TASK_CREATE, TaskCreateExecutor,
 )
@@ -163,6 +166,7 @@ __all__ = [
     "ACTION_ASSIGN_ACCEPTANCE", "AssignAcceptanceExecutor",
     "ACTION_SHARED_CONTEXT_READ", "SharedContextReadExecutor",
     "ACTION_RUN_TOOL", "RunToolExecutor",
+    "ACTION_TOOL_HELP", "ToolHelpExecutor",
     "ACTION_TASK_CREATE", "TaskCreateExecutor",
     "ACTION_WORK_COMPLETE", "WorkCompleteExecutor",
     "ACTION_WORK_ITEM_DONE", "ACTION_WORK_ITEM_BLOCKED",

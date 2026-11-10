@@ -52,6 +52,7 @@ from actions import (
     ResourceHandoffExecutor,
     ResourceReleaseExecutor,
     RunToolExecutor,
+    ToolHelpExecutor,
     ShortTermMemoryReadExecutor,
     ShortTermMemoryReinforceExecutor,
     ShortTermMemoryUpdateExecutor,
@@ -82,7 +83,8 @@ WORK_ACTION_TYPES = frozenset({
     "workspace_read", "workspace_search", "workspace_write",
     "workspace_edit", "draft_write", "draft_append", "draft_read",
     "draft_list", "draft_delete", "workspace_promote_drafts",
-    "run_tool", "resource_create", "resource_handoff", "resource_release",
+    "run_tool", "tool_help",
+    "resource_create", "resource_handoff", "resource_release",
     "public_working_memory_read", "public_working_memory_update",
     "private_working_memory_read",
     "private_working_memory_update", "short_term_memory_read",
@@ -167,6 +169,17 @@ def build_work_dispatcher(
                 timeout_seconds=timeout_seconds)
         return result.to_agent_dict()
 
+    def _tool_help(agent_id: str, tool: str) -> Any:
+        runner = getattr(runtime, "tool_runner", None)
+        guide = getattr(runner, "guide", None)
+        if not callable(guide):
+            return {
+                "ok": False,
+                "code": "no_tool_runtime",
+                "message": "当前 Runtime 没有 Tool Runtime，无法查询工具用法",
+            }
+        return guide(tool)
+
     def _ws_of(agent_id: str) -> Any:
         try:
             return runtime.economy.agent(str(agent_id)).workspace
@@ -246,6 +259,7 @@ def build_work_dispatcher(
         DraftDeleteExecutor(drafts.delete),
         WorkspacePromoteDraftsExecutor(promote_drafts),
         RunToolExecutor(_run_tool),
+        ToolHelpExecutor(_tool_help),
         ResourceCreateExecutor(_resource_create),
         ResourceHandoffExecutor(_resource_handoff),
         ResourceReleaseExecutor(_resource_release),

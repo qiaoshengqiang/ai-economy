@@ -48,9 +48,15 @@ ACTION_SCHEMA = """
    "new_string":"<新片段>", "replace_all":false}
 - run_tool:
   {"tool":"python|pytest|node|playwright", "args":[...],
-   "source":"task|private", "path":"<入口文件>", "timeout_seconds":60}
+   "source":"task|private",
+   "path":"<可选：只复制该路径；省略=整个 Workspace>",
+   "timeout_seconds":60}
   ⚠️ 不要用 command 字段。
   ⚠️ args 每项 ≤ 2000 字符；长脚本先 private_write 落文件，再运行文件。
+- tool_help:
+  {"tool":"python|pytest|node|playwright"}
+  🔎 不确定工具用法、参数、限制、测试文件命名时先查它；
+     省略 tool 返回工具清单。文档是单一来源，不要把猜测写进代码。
 - public_working_memory_read:
   {}
 - public_working_memory_update:
@@ -323,6 +329,7 @@ thinking / cognitive_budget。
   {{"result_ref":"<逻辑名，不是路径>", "summary":"..."}}
 
 🔒 这是 Work 层：没有 Agent 间通信动作，也不讨论身份或经济。
+🔒 工具用法不要猜：先调用 tool_help 查清单 / 查具体工具文档。
 🔒 先读再改；写入前确认路径与锁；大文件可以一次写入，避免无意义拆分。
 🔒 不要声称完成而没有实际产物。
 

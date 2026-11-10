@@ -47,7 +47,7 @@ if str(ROOT) not in sys.path:
 
 from actions import run as run_mod                                  # noqa: E402
 from actions.executor import ActionDispatcher                        # noqa: E402
-from actions.intent import ActionResult                              # noqa: E402
+from actions.intent import ActionResult, ActionIntent                # noqa: E402
 from actions.read_payload import (                                   # noqa: E402
     CONFIRMATION_ACTIONS, DEMAND_ONLY_ACTIONS, OBSERVABLE_ACTIONS,
     render_read_results,
@@ -123,6 +123,24 @@ _READ_ONE = _act({"type": "workspace_read",
 # 一、渲染器
 # ============================================================
 class TestTheRenderer:
+    def test_tool_help_docs_are_fed_back_in_the_same_cognition(self):
+        intent = ActionIntent(
+            action_type="tool_help",
+            parameters={"tool": "playwright"},
+            agent_id="agent_a")
+        result = ActionResult(
+            success=True,
+            output={
+                "tool": "playwright",
+                "content": "必须使用 *.spec.js 和 @playwright/test",
+            },
+            action_id=intent.intent_id,
+            action_type=intent.action_type)
+
+        got = render_read_results([(intent, result)])
+
+        assert "*.spec.js" in got
+        assert "@playwright/test" in got
     def _pairs(self, action_type, output, *, success=True, params=None):
         intent = type("I", (), {"action_type": action_type,
                                 "parameters": params or {}})()

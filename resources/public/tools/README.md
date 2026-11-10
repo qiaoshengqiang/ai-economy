@@ -24,7 +24,16 @@
 3. **验收人无法复跑时，应发 `VERIFY(passed=false)` 并写明缺口**，
    不要用重复 `workspace_read` / `run_tool` 代替验收结论。
 
-用 `public_query(name="tools/playwright.md")` 等读取对应文档。
+在 Work / Solo 模式用 `tool_help` 读取文档：
+
+```json
+{"type":"tool_help","parameters":{"tool":"playwright"}}
+```
+
+- 不传 `tool`：返回工具清单；
+- 传 `tool`：返回 `resources/public/tools/<tool>.md` 的完整内容。
+
+`tool_help` 是工具用法的单一来源；prompt 只写常用形状，不重复维护全部细节。
 
 ## 安装（只做一次，不是 Agent 动作）
 
