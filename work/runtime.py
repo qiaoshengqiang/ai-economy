@@ -27,11 +27,14 @@ from core.task import Task, TaskMode, TaskStatus
 from core.task_execution import TaskResultRef
 from services.artifacts import write_artifact
 
-from work.actions import build_work_dispatcher
+from actions.read_payload import render_read_results
+from work.actions import (
+    build_cognition_dispatcher, build_work_dispatcher,
+)
 from work.drafts import TaskDraftStore
 from work.images import make_image_resolver
 from work.lifecycle import WorkLifecycle, WorkLifecycleError
-from work.prompt import build_work_prompt
+from work.prompt import build_cognition_prompt, build_work_prompt
 from work.roles import WorkContext, WorkResult, WorkRole
 
 
@@ -46,6 +49,7 @@ class SoloWorkRuntime:
         brief: Optional[Dict[str, Any]] = None,
         drafts: Any = None,
         max_turns: int = 12,
+        max_cognition_steps: int = 2,
         cognitive_budget: int = 65536,
         event_sink: Any = None,
         should_stop: Optional[Callable[[], bool]] = None,
@@ -59,6 +63,7 @@ class SoloWorkRuntime:
         self.task = task
         self.brief = brief
         self.max_turns = max(1, int(max_turns))
+        self.max_cognition_steps = max(1, int(max_cognition_steps))
         self.cognitive_budget = max(1, int(cognitive_budget))
         self.event_sink = event_sink
         self.should_stop = should_stop or (lambda: False)
@@ -67,6 +72,9 @@ class SoloWorkRuntime:
         self.image_resolver = make_image_resolver(runtime)
         #: 统计整文件 replace 次数，用来提示 Agent 改用增量编辑。
         self._write_counts: Dict[str, int] = {}
+        #: 启动时生成的任务认知报告；注入后续所有 Work prompt。
+        self._cognition_report = ""
+        self._cognition_tokens = 0
         self.lifecycle = WorkLifecycle(runtime.tasks)
         self.drafts = drafts or TaskDraftStore(
             task_id=task.task_id,
@@ -106,6 +114,14 @@ class SoloWorkRuntime:
                 return result
 
             result.status = task.status
+            # 先做任务认知：环境 / 需求 / 方案 / 风险。
+            if not self._cognition_report:
+                self._cognition_report = self._run_cognition_phase(actor)
+                result.tokens += self._cognition_tokens
+            if self._stopped():
+                result.error = "任务已被停止"
+                result.status = task.status
+                return result
             result = self._loop(actor, result)
         except Exception as exc:                              # noqa: BLE001
             result.error = f"{type(exc).__name__}: {exc}"
@@ -117,11 +133,174 @@ class SoloWorkRuntime:
     def reopen_and_run(self, *, reason: str = "") -> WorkResult:
         """Human 通过 Front 要求返工后，由 Task Creator 重新打开。"""
         actor = self.task.creator
+        # 返工后的环境可能已经变化，重新做一次任务认知。
+        self._cognition_report = ""
+        self._cognition_tokens = 0
         self.lifecycle.reopen(self.task, actor=actor, reason=reason)
         self._event("work_reopened", agent_id=actor, reason=reason)
         return self.run()
 
     # ------------------------------------------------------------
+    def _run_cognition_phase(self, actor: str) -> str:
+        """启动前的任务认知：读环境、想方案、输出完整报告。"""
+        agent = self._agent(actor)
+        if agent is None or not getattr(agent, "has_brain", False):
+            return ""
+        brain = getattr(agent, "brain", None)
+        setter = getattr(brain, "set_thinking", None)
+        if callable(setter):
+            try:
+                setter(True, "max", phase="cognition")
+            except Exception:                                 # noqa: BLE001
+                pass
+        budget_setter = getattr(brain, "set_cognitive_budget", None)
+        if callable(budget_setter):
+            try:
+                budget_setter(32768, phase="cognition")
+            except Exception:                                 # noqa: BLE001
+                pass
+
+        try:
+            dispatcher = build_cognition_dispatcher(
+                self.rt, task=self.task, drafts=self.drafts)
+            catalog = []
+            runner = getattr(self.rt, "tool_runner", None)
+            catalog_fn = getattr(runner, "catalog", None)
+            if callable(catalog_fn):
+                catalog = catalog_fn()
+            context = self._context(actor)
+            messages = [{
+                "role": "user",
+                "content": build_cognition_prompt(
+                    context,
+                    task_description=self.task.description,
+                    runtime=self.rt,
+                    tool_catalog=catalog,
+                    max_steps=self.max_cognition_steps,
+                ),
+            }]
+            seen_reads: set = set()
+            segments: List[Any] = []
+            tokens = 0
+            report = ""
+            last_content = ""
+
+            for _step in range(1, self.max_cognition_steps + 1):
+                if self._stopped():
+                    break
+                run = agent.act(
+                    messages=messages,
+                    dispatcher=dispatcher,
+                    execute=True,
+                    task_id=self.task.task_id,
+                    cognitive_budget_cap=self.cognitive_budget,
+                    call_purpose="work",
+                    follow_up_on_reads=False,
+                    work_loop=False,
+                    max_work_steps=0,
+                    initial_phase="cognition",
+                    image_resolver=self.image_resolver,
+                    seen_reads=seen_reads,
+                    repair_malformed=True,
+                )
+                segs = list(getattr(run, "segments", None) or [])
+                segments.extend(segs)
+                tokens += sum(
+                    int(getattr(s, "tokens", 0) or 0) for s in segs)
+                last_content = str(
+                    getattr(segs[-1], "content", "") or "") if segs else ""
+                intents = list(getattr(run, "action_intents", None) or [])
+                results = list(getattr(run, "action_results", None) or [])
+                if not intents:
+                    report = last_content
+                    break
+                feedback = render_read_results(
+                    list(zip(intents, results)),
+                    image_resolver=self.image_resolver,
+                    seen_reads=seen_reads,
+                )
+                if not feedback:
+                    break
+                messages.append({
+                    "role": "assistant", "content": last_content})
+                messages.append({"role": "user", "content": feedback})
+
+            if not report:
+                messages.append({
+                    "role": "assistant", "content": last_content})
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        "现在输出完整的任务认知报告，只输出文字，"
+                        "不要输出 JSON 动作。"),
+                })
+                run = agent.act(
+                    messages=messages,
+                    dispatcher=dispatcher,
+                    execute=False,
+                    task_id=self.task.task_id,
+                    cognitive_budget_cap=self.cognitive_budget,
+                    call_purpose="work",
+                    follow_up_on_reads=False,
+                    work_loop=False,
+                    max_work_steps=0,
+                    initial_phase="cognition",
+                    image_resolver=self.image_resolver,
+                    seen_reads=seen_reads,
+                    repair_malformed=True,
+                )
+                segs = list(getattr(run, "segments", None) or [])
+                segments.extend(segs)
+                tokens += sum(
+                    int(getattr(s, "tokens", 0) or 0) for s in segs)
+                report = str(
+                    getattr(segs[-1], "content", "") or "") if segs else ""
+
+            self._cognition_tokens = tokens
+            report = report.strip()
+            self._emit_round({
+                "task_id": self.task.task_id,
+                "round": 0,
+                "cognition": True,
+                "status_before": self.task.status,
+                "status_after": self.task.status,
+                "summary": report,
+                "tokens": tokens,
+                "segments": [
+                    {
+                        "phase": str(getattr(seg, "phase", "") or ""),
+                        "content": str(getattr(seg, "content", "") or ""),
+                        "decision": (
+                            seg.decision.to_dict()
+                            if getattr(seg, "decision", None) else None),
+                        "actions": [
+                            intent.to_dict()
+                            for intent in (
+                                getattr(seg, "action_intents", None) or [])
+                        ],
+                        "results": [
+                            result_.to_dict() if result_ else None
+                            for result_ in (
+                                getattr(seg, "action_results", None) or [])
+                        ],
+                        "tokens": getattr(seg, "tokens", None),
+                        "finish_reason": getattr(seg, "finish_reason", None),
+                        "truncated": bool(
+                            getattr(seg, "is_truncated", False)),
+                    }
+                    for seg in segments
+                ],
+            })
+            self._event(
+                "work_cognition", agent_id=actor,
+                tokens=tokens, report_chars=len(report))
+            return report
+        except Exception as exc:                              # noqa: BLE001
+            self._event(
+                "work_cognition_error", agent_id=actor,
+                error=f"{type(exc).__name__}: {exc}")
+            return ""
+
     def _loop(self, actor: str, result: WorkResult) -> WorkResult:
         task = self.task
         agent = self._agent(actor)
@@ -337,6 +516,7 @@ class SoloWorkRuntime:
             memory_facts=self._memory_facts(actor),
             public_memory_facts=self._public_memory_facts(actor),
             draft_facts=self._draft_facts(actor),
+            cognition_report=self._cognition_report,
         )
 
     def _public_memory_facts(self, actor: str) -> str:

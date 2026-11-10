@@ -295,3 +295,63 @@ def build_work_dispatcher(
     if extra_executors:
         executors.extend(extra_executors)
     return ActionDispatcher(executors)
+
+
+def build_cognition_dispatcher(
+    runtime: Any,
+    *,
+    task: Any,
+    drafts: Any,
+) -> ActionDispatcher:
+    """任务认知阶段：只读动作，不写 Workspace。"""
+    workspace_id = task.workspace.workspace_id if task.workspace else ""
+    current_task_id = task.task_id
+
+    def _search(agent_id: str, query: str, **kwargs: Any) -> Any:
+        return search_artifacts(
+            runtime.workspace_gateway, workspace_id, agent_id, query,
+            path=kwargs.get("path", ""),
+            glob=kwargs.get("glob", ""),
+            max_results=kwargs.get("max_results", 20),
+            case_sensitive=kwargs.get("case_sensitive", True),
+            context_lines=kwargs.get("context_lines", 0),
+        )
+
+    def _tool_help(_agent_id: str, tool: str) -> Any:
+        runner = getattr(runtime, "tool_runner", None)
+        guide = getattr(runner, "guide", None)
+        if not callable(guide):
+            return {
+                "ok": False,
+                "code": "no_tool_runtime",
+                "message": "当前 Runtime 没有 Tool Runtime，无法查询工具用法",
+            }
+        return guide(tool)
+
+    def _ws_of(agent_id: str) -> Any:
+        try:
+            return runtime.economy.agent(str(agent_id)).workspace
+        except Exception:                                     # noqa: BLE001
+            return None
+
+    def _wm_read(agent_id: str) -> Any:
+        return runtime.public_working_memory.read(
+            current_task_id, agent_id)
+
+    def _pwm_read(agent_id: str) -> Any:
+        return runtime.private_working_memory.read(
+            agent_id, current_task_id)
+
+    return ActionDispatcher([
+        WorkWorkspaceReadExecutor(WorkspaceReadExecutor(
+            read_artifact, gateway=runtime.workspace_gateway,
+            workspace_id=workspace_id, stat_fn=stat_artifact)),
+        WorkspaceSearchExecutor(_search),
+        ToolHelpExecutor(_tool_help),
+        PrivateReadExecutor(read_private, workspace_of=_ws_of),
+        PrivateListExecutor(list_private, workspace_of=_ws_of),
+        PublicWorkingMemoryReadExecutor(_wm_read),
+        PrivateWorkingMemoryReadExecutor(_pwm_read),
+        DraftReadExecutor(drafts.read),
+        DraftListExecutor(drafts.list),
+    ])

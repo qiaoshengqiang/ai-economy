@@ -177,6 +177,7 @@ class Brain:
         #:        · Agent 可以在信封里覆盖**任一相** —— Runtime 不 clamp。
         self.thinking_policy: Dict[str, Optional[Dict[str, Any]]] = {
             "intake": None,
+            "cognition": None,
             "decision": None,
             "work": None,
             "summary": None,
@@ -191,6 +192,7 @@ class Brain:
         #:       调用方显式传 temperature= 时优先。
         self.temperature_policy: Dict[str, Optional[float]] = {
             "intake": None,
+            "cognition": None,
             "decision": None,
             "work": None,
             "summary": None,
@@ -208,6 +210,7 @@ class Brain:
         #:       仍然优先。实际值 = min(偏好, cap)，Provider 还会做结构裁剪。
         self.cognitive_budget_policy: Dict[str, Optional[int]] = {
             "intake": None,
+            "cognition": None,
             "decision": None,
             "work": None,
             "summary": None,

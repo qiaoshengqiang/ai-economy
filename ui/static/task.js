@@ -172,13 +172,14 @@
     }
     rounds.forEach((round) => {
       const block = document.createElement("details");
-      block.className = "round";
+      block.className = `round${round.cognition ? " cognition" : ""}`;
       block.open = true;
       const summary = document.createElement("summary");
-      summary.textContent =
-        `Round ${round.round || "?"} · ` +
-        `${round.status_before || "?"} → ${round.status_after || "?"} · ` +
-        `${round.tokens || 0} tokens`;
+      summary.textContent = round.cognition
+        ? `任务认知 · ${round.tokens || 0} tokens`
+        : `Round ${round.round || "?"} · ` +
+          `${round.status_before || "?"} → ${round.status_after || "?"} · ` +
+          `${round.tokens || 0} tokens`;
       block.appendChild(summary);
 
       const body = el("div", "round-body");

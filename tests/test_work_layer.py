@@ -33,7 +33,7 @@ from work.actions import (
 from work.availability import AgentAvailability
 from work.drafts import TaskDraftStore
 from work.lifecycle import WorkLifecycle, WorkLifecycleError
-from work.prompt import build_work_prompt
+from work.prompt import build_cognition_prompt, build_work_prompt
 from work.roles import WorkContext, WorkRole
 from work.runtime import SoloWorkRuntime
 from work.team_registry import TeamRegistry
@@ -323,6 +323,29 @@ class TestWorkPrompt:
         assert "公共工作记忆" in prompt
         assert "hello.txt exists" in prompt
 
+    def test_cognition_prompt_includes_environment_and_tools(self):
+        context = WorkContext(
+            task_id="T-1", agent_id="agent_a", role=WorkRole.SOLO,
+            workspace_id="WS-X",
+            acceptance_criteria=["页面可打开"])
+        prompt = build_cognition_prompt(
+            context,
+            task_description="做一个鹈鹕骑自行车网页",
+            runtime=None,
+            tool_catalog=[{
+                "name": "playwright",
+                "description": "浏览器测试",
+            }],
+            max_steps=2,
+        )
+
+        assert "任务认知" in prompt
+        assert "做一个鹈鹕骑自行车网页" in prompt
+        assert "playwright: 浏览器测试" in prompt
+        assert "workspace_read" in prompt
+        assert "不要写文件" in prompt
+        assert "## 3. 技术方案与架构" in prompt
+
     def test_prompt_exposes_thinking_and_cognitive_budget(self):
         context = WorkContext(
             task_id="T-1", agent_id="agent_a", role=WorkRole.SOLO)
@@ -579,7 +602,59 @@ class _NoActionThenCompleteAgent(_FakeAgent):
             action_intents=[intent], action_results=[action_result])
 
 
+class _CognitionBrain:
+    def __init__(self):
+        self.thinking_calls = []
+
+    def set_thinking(self, enabled, effort=None, *, phase="work"):
+        self.thinking_calls.append((enabled, effort, phase))
+
+
+class _CognitionAgent(_FakeAgent):
+    def __init__(self):
+        super().__init__()
+        self.brain = _CognitionBrain()
+        self.prompts = []
+
+    def act(self, *, messages, dispatcher, **kwargs):
+        self.prompts.append(messages)
+        if kwargs.get("initial_phase") == "cognition":
+            return SimpleNamespace(
+                segments=[SimpleNamespace(
+                    tokens=5,
+                    content="TASK-COGNITION-MARKER\n## 任务认知\n环境与方案",
+                    is_truncated=False,
+                )],
+                action_intents=[],
+                action_results=[],
+            )
+        return super().act(
+            messages=messages, dispatcher=dispatcher, **kwargs)
+
+
 class TestSoloWorkRuntime:
+    def test_cognition_report_is_injected_into_work_prompt(self, db):
+        task = Task.create(
+            task_id="T-COGNITION", creator="agent_a",
+            description="写 hello.txt", workspace_id="WS-X",
+            participants=["agent_a"], mode=TaskMode.SOLO)
+        task.claim_producer("agent_a")
+
+        rounds = []
+        runtime = _SoloRuntime(db, task)
+        runtime.agent = _CognitionAgent()
+        result = SoloWorkRuntime(
+            runtime, task, max_turns=1,
+            round_sink=rounds.append).run()
+
+        assert result.ok is True, result.error
+        assert runtime.agent.brain.thinking_calls == [
+            (True, "max", "cognition")]
+        assert rounds[0]["cognition"] is True
+        assert "TASK-COGNITION-MARKER" in rounds[0]["summary"]
+        work_prompt = str(runtime.agent.prompts[-1])
+        assert "TASK-COGNITION-MARKER" in work_prompt
+
     def test_runtime_recovers_from_two_no_action_turns(self, db):
         task = Task.create(
             task_id="T-RECOVER", creator="agent_a",
@@ -610,10 +685,11 @@ class TestSoloWorkRuntime:
             round_sink=rounds.append).run()
 
         assert result.ok is True, result.error
-        assert len(rounds) == 1
-        assert rounds[0]["round"] == 1
-        assert rounds[0]["summary"] == "solo 总结"
-        assert rounds[0]["segments"][0]["content"] == "done"
+        assert len(rounds) == 2
+        assert rounds[0]["cognition"] is True
+        assert rounds[1]["round"] == 1
+        assert rounds[1]["summary"] == "solo 总结"
+        assert rounds[1]["segments"][0]["content"] == "done"
 
     def test_runtime_is_decision_first_and_has_vision(self, db):
         task = Task.create(

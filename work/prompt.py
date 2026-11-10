@@ -208,6 +208,79 @@ def _render_last_turn(last: Optional[Dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def _render_tool_catalog(tools: Any) -> str:
+    lines = []
+    for tool in tools or []:
+        if not isinstance(tool, dict):
+            continue
+        name = str(tool.get("name") or "").strip()
+        if not name:
+            continue
+        desc = str(tool.get("description") or "").strip()
+        lines.append(f"- {name}: {desc}")
+    return "\n".join(lines) or "（没有工具目录）"
+
+
+def build_cognition_prompt(
+    context: WorkContext,
+    *,
+    task_description: str,
+    runtime: Any,
+    tool_catalog: Any = (),
+    max_steps: int = 2,
+) -> str:
+    """任务认知阶段：先理解环境、需求、方案、风险，再开始生产。"""
+    workspace = _render_workspace(
+        runtime, context.workspace_id, context.agent_id)
+    criteria = "\n".join(
+        f"- {item}" for item in context.acceptance_criteria
+    ) or "（Task 没有显式 DoD；以 Human 原文为准）"
+    return f"""你是 {context.agent_id}。现在先做**任务认知**，还没有开始生产。
+
+你的目标：在动手之前，理解 Human 的需求、当前环境、可用工具、
+已有代码/依赖、技术方案与架构、风险与未知，并输出一份完整的
+任务认知报告。报告会作为**后续所有决策与动作的固定上下文**。
+
+========== Task 原文 ==========
+{task_description}
+
+========== 完成标准 ==========
+{criteria}
+
+========== Brief ==========
+{_render_brief(context.brief)}
+
+========== 环境事实 ==========
+workspace_id: {context.workspace_id}
+{workspace}
+
+========== 可用工具 ==========
+{_render_tool_catalog(tool_catalog)}
+需要工具的完整用法时，调用 tool_help（只读）。
+
+========== 你可以使用的只读动作 ==========
+- workspace_read: {{"path":"...","offset":1,"limit":200}}
+- workspace_search: {{"query":"...","path":"","glob":"","max_results":20}}
+- tool_help: {{"tool":"python|pytest|node|playwright"}}
+- private_read / private_list / public_working_memory_read /
+  private_working_memory_read / draft_read / draft_list
+
+🔒 这个阶段只读：不要写文件，不要 work_complete。
+🔒 如果需要更多信息，先输出一个动作 JSON；最多 {max_steps} 步。
+🔒 如果认知已经足够，直接输出**完整报告**，不要输出 JSON 动作。
+
+报告建议包含：
+## 1. 需求理解（含隐含要求）
+## 2. 环境事实（项目结构 / 已有资源 / 依赖 / 工具）
+## 3. 技术方案与架构（备选方案、取舍）
+## 4. 风险、未知、需要验证的假设
+## 5. 执行计划（模块 / 文件 / 顺序）
+## 6. 验收策略
+
+报告要具体、可执行；后续决策会直接使用它。
+"""
+
+
 def build_work_prompt(
     context: WorkContext,
     *,
@@ -281,6 +354,13 @@ def build_work_prompt(
 
 ========== 回复格式要求（来自 Front） ==========
 {reply_style or "（无特别要求；简洁、友好、先结论后产物）"}
+
+========== 任务认知（启动时快照） ==========
+{str(context.cognition_report or "").strip()
+ or "（没有生成任务认知；以 Task 原文和当前环境为准）"}
+
+> 这是启动时的认知快照；环境可能已经变化。必要时重新 read / search，
+> 不要假设快照永远最新。
 
 ========== 公共工作记忆（团队共享契约 / 计划 / 进度） ==========
 {_render_public_memory(context)}

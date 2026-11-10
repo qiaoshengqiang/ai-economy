@@ -56,6 +56,8 @@ class WorkContext:
     #: 任务级公共工作记忆（所有参与者共享的契约 / 计划 / 进度）。
     #: 它是 Work prompt 的一等输入，不再依赖反复 shared_context_read。
     public_memory_facts: str = ""
+    #: 任务认知阶段的完整报告；后续所有决策都注入它。
+    cognition_report: str = ""
     #: 当前 Agent 在这个 Task 下的草稿元数据。
     draft_facts: str = ""
 
@@ -68,6 +70,7 @@ class WorkContext:
             "brief": dict(self.brief) if self.brief else None,
             "workspace_id": self.workspace_id,
             "acceptance_criteria": list(self.acceptance_criteria),
+            "cognition_report": self.cognition_report,
         }
 
 

@@ -96,19 +96,29 @@ Front 看到的开放 Task 状态来自两个事实：Task Core 的状态 + 是�
 Job 正在执行。没有 Job 的开放 Task 标记为 `INTERRUPTED`，
 不会被描述成「正在处理中」。
 
-### Solo 的决策 / 工作 / 总结
+### Solo 的任务认知 + 决策 / 工作 / 总结
 
-一轮固定为：
+启动时先做一次**任务认知**（只读）：
 
 ```
+cognition（thinking=max）
+  ├─ 读环境：workspace 结构 / 已有代码 / 依赖
+  ├─ 查工具：tool_help
+  └─ 输出完整任务认知报告
+        ↓
+  报告原文注入后续所有 Work prompt
+        ↓
 decision（决定下一步）
   ↓ 读取 / 工具返回 → 同轮原始回喂
 work（最多 2 步）
   ↓
 summary（只产文字，不执行动作）
   ↓
-下一轮 prompt 注入上一轮完整 summary
+下一轮 prompt 注入上一轮完整 summary + 任务认知快照
 ```
+
+任务认知是**启动时快照**；执行中环境可能变化，Agent 仍需按当前
+Workspace 事实重新 read / search。
 
 - `summary` 是独立 phase，可以使用自己的 thinking / cognitive_budget；
 - summary 输出完整保留，下一轮以「上一轮总结（完整）」注入；
@@ -134,7 +144,7 @@ summary（只产文字，不执行动作）
 | 提交按钮 | 提交给 Front Agent |
 | 输出显示框 | Human / Front / 系统消息 |
 | Task 卡片列表 | task_id · 状态 · 执行 Agent · 参与者 · 迭代 · **Front → Work 提示词前 3 行**（超出省略） |
-| Task 卡片点击 | 新开标签页 `/task.html?task_id=...`：每轮 decision / work / summary 的 thinking、输出、动作与结果，外加执行历史、文件、公共 WM、LLM 汇总 |
+| Task 卡片点击 | 新开标签页 `/task.html?task_id=...`：任务认知 + 每轮 decision / work / summary 的 thinking、输出、动作与结果，外加执行历史、文件、公共 WM、LLM 汇总 |
 | Agent 状态 | `IDLE` / `WORKING` / `STOPPING` · `FRONT` / `WORKER` |
 | 设置按钮 | 修改 Front Agent / 最大并行任务 |
 
@@ -187,7 +197,7 @@ GET  /api/health
 - 每轮 decision / work / summary 明细保存到 `runs/ui/rounds/<task_id>.json`；
 - Task 详情页用 `/api/task/<task_id>` 每 2 秒轮询，暂不引入 SSE；
   当前轮次数据量下，轮询不影响现有实现；
-- 每轮 phase 明细（decision / work / summary 原文与动作）已落盘；
+- 任务认知 + 每轮 phase 明细（decision / work / summary 原文与动作）已落盘；
   完整 system prompt / 原始 HTTP response 仍未保存；
 - Front 收到 `artifacts` 时把产物从 DB 导出到宿主机
   `runs/exports/<task_id>/`，并回复绝对路径；

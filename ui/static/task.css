@@ -130,6 +130,12 @@ pre {
   color: #cfe0ef;
   background: rgba(15, 29, 44, .7);
 }
+.round.cognition {
+  border-color: rgba(255, 209, 102, .28);
+}
+.round.cognition > summary {
+  color: var(--warn);
+}
 .round-body {
   padding: 12px 13px 4px;
 }
