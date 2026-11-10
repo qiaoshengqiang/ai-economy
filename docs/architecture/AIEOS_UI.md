@@ -179,6 +179,8 @@ GET  /api/health
 - 每轮 decision / work / summary 明细保存到 `runs/ui/rounds/<task_id>.json`；
 - 每轮 phase 明细（decision / work / summary 原文与动作）已落盘；
   完整 system prompt / 原始 HTTP response 仍未保存；
+- 工具用法通过 `tool_help` 自查，文档源在
+  `resources/public/tools/<tool>.md`，不在 prompt 里重复维护；
 - Team 路径的「运行中重新计划」仍沿用 `work_plan_update`（当前 UI 不触发）；
 - 设置中的最大并行任务数在进程内生效；重启按启动参数。
 
