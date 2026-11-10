@@ -22,6 +22,10 @@ Work 层最小 prompt
    `cognitive=False` + `WORK_SYSTEM_PROMPT`。
    `Brain` 默认会把 Agent 身份 / Constitution / 经济事实 / 自我模型
    拼进 system —— 那是 Agent 自己的认知，不属于 Work。
+
+🔒 **prompt 只陈述环境事实，不规定工作流**：
+   动作清单从真实 dispatcher 派生（`work/capabilities.py`），
+   不写「先做 A 再做 B」；怎么做由 Agent 自己决定。
 """
 
 from __future__ import annotations
