@@ -10,11 +10,11 @@ from __future__ import annotations
 import os
 
 DSML_MODE_ENV = "AIEOS_DSML_MODE"
-DEFAULT_DSML_MODE = "shadow"
+DEFAULT_DSML_MODE = "execute"
 
 
 def dsml_mode() -> str:
-    """`shadow`（默认，只解析不执行）或 `execute`。"""
+    """`execute`（默认，校验后执行）或 `shadow`（只解析不执行）。"""
     value = os.environ.get(DSML_MODE_ENV, DEFAULT_DSML_MODE)
     value = str(value or "").strip().lower()
     return "execute" if value == "execute" else "shadow"

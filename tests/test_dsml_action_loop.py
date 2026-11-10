@@ -136,8 +136,15 @@ def test_content_envelope_wins_over_tool_calls(monkeypatch):
     assert ex.calls[0].parameters == {"from": "envelope"}
 
 
-def test_default_mode_is_shadow(monkeypatch):
+def test_default_mode_is_execute(monkeypatch):
     from core.dsml import dsml_mode
 
     monkeypatch.delenv("AIEOS_DSML_MODE", raising=False)
+    assert dsml_mode() == "execute"
+
+
+def test_shadow_mode_can_be_selected(monkeypatch):
+    from core.dsml import dsml_mode
+
+    monkeypatch.setenv("AIEOS_DSML_MODE", "shadow")
     assert dsml_mode() == "shadow"

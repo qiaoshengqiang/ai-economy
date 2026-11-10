@@ -42,3 +42,13 @@
 2. 校验 SHA256、更新本文件；
 3. 跑 `tests/test_dsml_parser.py` 的全部真实样本；
 4. 若官方 parser 的严格规则变化，只调整 `llm/dsml.py` 的归一化。
+
+## 运行时开关
+
+```text
+AIEOS_DSML_MODE=execute   默认：解析 + 校验 + 执行
+AIEOS_DSML_MODE=shadow    回滚：只解析并记录，不执行
+```
+
+shadow 用于观察真实泄漏率；execute 只在 DSML 完整、动作名已注册、
+arguments 是合法 JSON 对象时才执行。
