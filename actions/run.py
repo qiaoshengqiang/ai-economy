@@ -57,6 +57,7 @@ Action Seam —— 一次 Cognitive Run 的完整通道
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any, Callable, List, Optional
 
 from actions.executor import ActionDispatcher
@@ -64,7 +65,7 @@ from actions.intent import (
     ActionIntent, ActionResult, CognitiveRunResult, CognitiveSegment,
     Decision, new_decision_id,
 )
-from actions.parse import decision_from_text
+from actions.parse import decision_from_text, looks_like_tool_call_markup
 from actions.read_payload import (
     PER_PAYLOAD_MAX_CHARS, TOTAL_MAX_CHARS, render_read_results,
 )
@@ -425,6 +426,13 @@ def _run_one_segment(agent: Any, agent_id: str, messages: Any,
 
     # 🔒 只认显式信封。没有信封 → 普通回复，不产生 Action。
     decision = decision_from_text(agent_id, content)
+
+    # 🔴 Provider 原生 tool-call 标记（DSML 等）不是「决定只回复」。
+    #    实测：模型把动作写进 `<｜｜DSML｜｜ invoke>`，解析成 0 个动作；
+    #    如果不报 malformed，这些动作会被静默丢掉，白烧一轮。
+    if (not decision.intents and not decision.envelope_error
+            and looks_like_tool_call_markup(content)):
+        decision = replace(decision, envelope_error="unparsable_envelope")
 
     # 🔴 信封坏了 ≠ Agent 决定只回复。
     #    必须显式报警，否则「模型想行动但输出不可用」会被

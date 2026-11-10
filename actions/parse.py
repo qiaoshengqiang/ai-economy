@@ -343,6 +343,22 @@ def looks_like_envelope(text: Optional[str]) -> bool:
                                     '"action_type"'))
 
 
+#: Provider 原生 tool-call 标记。
+#:
+#: 实测：DeepSeek 有时把 `<｜｜DSML｜｜ invoke name="decision">` 直接写进
+#: content。它既不是 JSON 信封，也不是「Agent 决定只回复」；必须触发
+#: 一次格式修复，否则动作会被静默丢掉。
+TOOL_CALL_MARKERS = (
+    "<｜｜DSML｜｜", "<|DSML|>", "<function_calls>", "<tool_call>",
+    "invoke name=",
+)
+
+
+def looks_like_tool_call_markup(text: Optional[str]) -> bool:
+    value = str(text or "")
+    return any(marker in value for marker in TOOL_CALL_MARKERS)
+
+
 def build_intent(agent_id: str, action: Dict[str, Any],
                  *, reason: str = "", decision_id: str = "") -> ActionIntent:
     """从信封的 `action` 块构造 ActionIntent。"""

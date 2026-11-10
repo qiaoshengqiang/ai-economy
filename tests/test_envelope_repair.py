@@ -77,6 +77,28 @@ def _valid_envelope() -> str:
 
 
 class TestRepair:
+    def test_provider_tool_call_markup_is_retried_once(self):
+        """
+        🔴 DSML 标记里的动作不是「Agent 决定只回复」。
+        旧行为：解析成 0 个动作、不报错 → 动作静默丢失。
+        """
+        dsml = (
+            '<｜｜DSML｜｜ calls>\n'
+            '<｜｜DSML｜｜ invoke name="actions" string="true">'
+            '[{"type":"workspace_write",'
+            '"parameters":{"path":"a.py","content":"x"}}]'
+            '</｜｜DSML｜｜ parameter>\n')
+        a = _Agent(script=[dsml, _valid_envelope()])
+        run = run_cognition(
+            a, [{"role": "user", "content": "go"}],
+            repair_malformed=True)
+
+        assert len(a.calls) == 2, "DSML 用户想行动 → 必须触发一次修复"
+        assert run.segments[0].repair_attempted is True
+        assert run.segments[0].repair_succeeded is True
+        assert [i.action_type for i in run.action_intents] == [
+            "message_send"]
+
     def test_broken_envelope_is_retried_once(self):
         a = _Agent(script=[TRUNCATED, _valid_envelope()])
         run = run_cognition(
