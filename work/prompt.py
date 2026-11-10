@@ -211,6 +211,30 @@ def _render_tool_catalog(tools: Any) -> str:
     return "\n".join(lines) or "（没有工具目录）"
 
 
+def _render_tool_docs(tool_docs: Optional[Dict[str, str]]) -> str:
+    """把本轮之前查到的工具文档原样注入。
+
+    🔒 注入的是**文档原文**，不是摘要：工具约束（spec 命名、BASE_URL、
+       smoke gate、超时、输出上限）一旦被转述就会失真。
+    """
+    if not tool_docs:
+        return ""
+    blocks = ["========== TOOL DOCS ALREADY READ (AUTHORITATIVE) =========="]
+    for name in sorted(tool_docs):
+        content = str(tool_docs.get(name) or "").strip()
+        if not content:
+            continue
+        blocks.extend(["", f"### {name}", content])
+    if len(blocks) == 1:
+        return ""
+    blocks.extend([
+        "",
+        "These are the real constraints from the tool docs. Follow them "
+        "exactly; do not rely on a paraphrase or on memory.",
+    ])
+    return "\n".join(blocks)
+
+
 def build_cognition_prompt(
     context: WorkContext,
     *,
@@ -218,6 +242,7 @@ def build_cognition_prompt(
     runtime: Any,
     tool_catalog: Any = (),
     max_steps: int = 2,
+    tool_docs: Optional[Dict[str, str]] = None,
 ) -> str:
     """Task cognition: understand environment, requirements, design, risks."""
     workspace = _render_workspace(
@@ -250,7 +275,16 @@ workspace_id: {context.workspace_id}
 
 ========== AVAILABLE TOOLS ==========
 {_render_tool_catalog(tool_catalog)}
-Call tool_help for full tool usage and constraints (read-only).
+{_render_tool_docs(tool_docs)}
+========== EVIDENCE BEFORE THE REPORT ==========
+The catalog above only gives tool names. Tool docs carry hard constraints
+(spec-file naming, BASE_URL, smoke gate, timeouts, output limits) that a
+plan built from general knowledge will get wrong.
+- Call `tool_help` for every tool you plan to use in this task.
+- You may put several tool_help calls in one `actions` list.
+- If a tool's docs are already listed above, do not call it again.
+- Do not write the report from general knowledge alone when a tool is
+  involved in the plan.
 
 ========== READ-ONLY ACTIONS AVAILABLE ==========
 - workspace_read: {{"path":"...","offset":1,"limit":200}}
@@ -259,7 +293,8 @@ Call tool_help for full tool usage and constraints (read-only).
 - private_read / private_list / private_working_memory_read / draft_read / draft_list
 
 This phase is read-only: do not write files and do not call work_complete.
-If you need more facts, emit one action JSON; at most {max_steps} steps.
+If you need more facts, emit one or more actions in one JSON (use the
+`actions` list), at most {max_steps} steps.
 When you have enough facts, output the COMPLETE REPORT as plain text,
 not a JSON action.
 
@@ -282,6 +317,7 @@ def build_work_prompt(
     runtime: Any = None,
     last_turn: Optional[Dict[str, Any]] = None,
     extra_instruction: str = "",
+    tool_docs: Optional[Dict[str, str]] = None,
 ) -> str:
     """Build one Work turn prompt. Internal reasoning should be English."""
     role = context.role
@@ -358,6 +394,7 @@ workspace_id: {context.workspace_id}
 {drafts}
 {_render_last_turn(last_turn)}
 {extra_instruction}
+{_render_tool_docs(tool_docs)}
 ========== DECISION / WORK ==========
 Each call is in the decision or work phase:
 - decision: decide the next step;
@@ -386,6 +423,9 @@ Put these at the TOP LEVEL of the JSON (not inside action.parameters):
 - Small files may go in one actions list. For large files, raise
   cognitive_budget first or use create + append.
 - Verify with run_tool after each module when useful, then move on.
+- Before the first use of any tool, call tool_help. If its docs are already
+  in TOOL DOCS above, follow them exactly instead of reconstructing its CLI
+  or constraints from memory.
 - Verification should cover the DoD with the smallest sufficient evidence.
   If the same verification path fails twice, change approach or report the
   limitation instead of creating endless new test scripts.

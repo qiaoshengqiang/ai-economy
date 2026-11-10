@@ -354,6 +354,19 @@ class TestWorkPrompt:
         assert "workspace_read" in prompt
         assert "read-only" in prompt
         assert "## 3. Technical approach" in prompt
+        assert "EVIDENCE BEFORE THE REPORT" in prompt
+        assert "`tool_help` for every tool you plan to use" in prompt
+
+    def test_work_prompt_reinjects_tool_docs(self):
+        context = WorkContext(
+            task_id="T-1", agent_id="agent_a", role=WorkRole.SOLO)
+        prompt = build_work_prompt(
+            context, task_description="用 playwright 测试", runtime=None,
+            tool_docs={"playwright": "SPEC-MUST-BE-*.spec.js"})
+
+        assert "TOOL DOCS ALREADY READ" in prompt
+        assert "SPEC-MUST-BE-*.spec.js" in prompt
+        assert "call tool_help" in prompt
 
     def test_prompt_exposes_thinking_and_cognitive_budget(self):
         context = WorkContext(
@@ -678,6 +691,46 @@ class _SeenReadsAgent(_FakeAgent):
             messages=messages, dispatcher=dispatcher, **kwargs)
 
 
+class _ToolDocAgent(_FakeAgent):
+    """认知阶段查一次工具文档；后续 Work 轮必须还能看到这份文档原文。"""
+
+    def __init__(self):
+        super().__init__()
+        self.prompts = []
+        self.cognition_calls = 0
+
+    def act(self, *, messages, dispatcher, **kwargs):
+        self.prompts.append(messages)
+        if kwargs.get("initial_phase") == "cognition":
+            self.cognition_calls += 1
+            if self.cognition_calls == 1:
+                intent = ActionIntent(
+                    action_type="tool_help",
+                    parameters={"tool": "playwright"},
+                    agent_id="agent_a")
+                result = ActionResult(
+                    success=True,
+                    output={
+                        "tool": "playwright",
+                        "content": "SPEC-MUST-BE-*.spec.js\n"
+                                   "USE process.env.BASE_URL",
+                    },
+                    action_id=intent.intent_id,
+                    action_type="tool_help")
+                return SimpleNamespace(
+                    segments=[SimpleNamespace(
+                        tokens=2, content='{"decision":"act"}',
+                        is_truncated=False)],
+                    action_intents=[intent], action_results=[result])
+            return SimpleNamespace(
+                segments=[SimpleNamespace(
+                    tokens=1, content="COGNITION-REPORT",
+                    is_truncated=False)],
+                action_intents=[], action_results=[])
+        return super().act(
+            messages=messages, dispatcher=dispatcher, **kwargs)
+
+
 class TestSoloWorkRuntime:
     def test_cognition_report_is_injected_into_work_prompt(self, db):
         task = Task.create(
@@ -716,6 +769,27 @@ class TestSoloWorkRuntime:
         assert result.status == TaskStatus.COMPLETED
         assert runtime.agent.calls == 3
         assert runtime.tasks.get(task.task_id).status == TaskStatus.COMPLETED
+
+    def test_tool_docs_read_in_cognition_survive_into_work_prompt(self, db):
+        """
+        🔴 每轮 prompt 从零重建：认知里查到的工具文档如果只留在那一轮，
+        下一轮就只剩「我记得读过」。文档原文必须每轮重新注入。
+        """
+        task = Task.create(
+            task_id="T-TOOL-DOCS", creator="agent_a",
+            description="用 playwright 验证页面", workspace_id="WS-X",
+            participants=["agent_a"], mode=TaskMode.SOLO)
+        task.claim_producer("agent_a")
+
+        runtime = _SoloRuntime(db, task)
+        runtime.agent = _ToolDocAgent()
+        result = SoloWorkRuntime(runtime, task, max_turns=1).run()
+
+        assert result.ok is True, result.error
+        work_prompt = str(runtime.agent.prompts[-1])
+        assert "TOOL DOCS ALREADY READ" in work_prompt
+        assert "SPEC-MUST-BE-*.spec.js" in work_prompt
+        assert "USE process.env.BASE_URL" in work_prompt
 
     def test_each_turn_starts_with_a_fresh_read_dedupe_set(self, db):
         """

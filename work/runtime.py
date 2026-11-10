@@ -75,6 +75,14 @@ class SoloWorkRuntime:
         #: 启动时生成的任务认知报告；注入后续所有 Work prompt。
         self._cognition_report = ""
         self._cognition_tokens = 0
+        #: 本任务已经查过的工具文档（tool → 全文）。
+        #:
+        #: 🔴 每轮 Work prompt 都是**从零重建**的：模型上一轮读到的文档
+        #:    在下一轮已经不在上下文里，只剩它自己写的总结。把文档按
+        #:    工具名留在内存里、每轮重新注入，工具约束才不会逐轮衰减成
+        #:    「我记得读过」（实测里 Playwright 的 BASE_URL / smoke gate
+        #:    就是这样丢的）。
+        self._tool_docs: Dict[str, str] = {}
         self.lifecycle = WorkLifecycle(runtime.tasks)
         self.drafts = drafts or TaskDraftStore(
             task_id=task.task_id,
@@ -177,6 +185,7 @@ class SoloWorkRuntime:
                     runtime=self.rt,
                     tool_catalog=catalog,
                     max_steps=self.max_cognition_steps,
+                    tool_docs=self._tool_docs,
                 ),
             }]
             seen_reads: set = set()
@@ -211,6 +220,7 @@ class SoloWorkRuntime:
                     getattr(segs[-1], "content", "") or "") if segs else ""
                 intents = list(getattr(run, "action_intents", None) or [])
                 results = list(getattr(run, "action_results", None) or [])
+                self._collect_tool_docs(intents, results)
                 if not intents:
                     report = last_content
                     break
@@ -337,6 +347,7 @@ class SoloWorkRuntime:
                 task_description=task.description,
                 runtime=self.rt,
                 last_turn=last_turn_facts,
+                tool_docs=self._tool_docs,
             )
             try:
                 run = agent.act(
@@ -367,6 +378,7 @@ class SoloWorkRuntime:
             segments = list(getattr(run, "segments", None) or [])
             intents = list(getattr(run, "action_intents", None) or [])
             results = list(getattr(run, "action_results", None) or [])
+            self._collect_tool_docs(intents, results)
             tokens = sum(
                 int(getattr(s, "tokens", 0) or 0) for s in segments)
             result.turns = turn
@@ -504,6 +516,27 @@ class SoloWorkRuntime:
         if not result.error and task.status != TaskStatus.COMPLETED:
             result.error = f"达到 max_turns={self.max_turns}，任务尚未完成"
         return result
+
+    # ------------------------------------------------------------
+    # 工具文档（跨轮保留）
+    # ------------------------------------------------------------
+    def _collect_tool_docs(
+            self, intents: List[Any], results: List[Any]) -> None:
+        """把本轮 `tool_help` 成功返回的文档按工具名存下来。"""
+        for intent, action_result in zip(intents, results):
+            if str(getattr(intent, "action_type", "")) != "tool_help":
+                continue
+            if action_result is None:
+                continue
+            if not getattr(action_result, "success", False):
+                continue
+            output = getattr(action_result, "output", None)
+            if not isinstance(output, dict):
+                continue
+            tool = str(output.get("tool") or "").strip()
+            content = str(output.get("content") or "").strip()
+            if tool and content:
+                self._tool_docs[tool] = content
 
     # ------------------------------------------------------------
     # 上下文
@@ -676,6 +709,7 @@ class SoloWorkRuntime:
             context,
             task_description=self.task.description,
             runtime=self.rt,
+            tool_docs=self._tool_docs,
             extra_instruction=(
                 "\n========== 恢复提示 ==========\n"
                 "你连续两轮没有输出任何动作（只回了文字或格式不可解析）。\n"
