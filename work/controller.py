@@ -920,6 +920,7 @@ class AIEOSController:
             self._reply_direct(
                 job, "找不到这个任务，无法导出产物。", task_id)
             return
+        job.task_id = task.task_id
         actor = task.creator or (
             task.participants[0] if task.participants else "")
         try:

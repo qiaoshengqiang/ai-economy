@@ -678,6 +678,7 @@ def test_artifacts_export_writes_host_directory(tmp_path):
     target = tmp_path / "exports" / "task_art"
     assert (target / "hello.py").read_text() == "print('hello')\n"
     assert job.status == "DIRECT_REPLY"
+    assert job.task_id == "task_art"
     assert any(str(target.resolve()) in item["text"] for item in messages)
 
 

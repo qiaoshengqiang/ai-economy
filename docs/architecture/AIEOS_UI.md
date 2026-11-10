@@ -77,6 +77,7 @@ Front Agent（固定）
 | `rework`，Task 未完成 | 按 `follow_up` 恢复执行 |
 | `cancel`，Task 有 Job 在跑 | 标记停止 → Task `CANCELLED`；Agent 显示 `STOPPING`，当前步骤结束后释放 |
 | `cancel`，Task 没有 Job | 直接把 Task 置为 `CANCELLED` |
+| `artifacts` | 从 DB 读取 Task Workspace → 导出到 `runs/exports/<task_id>/`，回复绝对路径 |
 
 > `direct_reply` **不能**声称“已经停止”——停止必须由 Front 输出
 > `cancel`，控制面才真的取消 Task 并释放 Agent。
@@ -179,6 +180,8 @@ GET  /api/health
 - 每轮 decision / work / summary 明细保存到 `runs/ui/rounds/<task_id>.json`；
 - 每轮 phase 明细（decision / work / summary 原文与动作）已落盘；
   完整 system prompt / 原始 HTTP response 仍未保存；
+- Front 收到 `artifacts` 时把产物从 DB 导出到宿主机
+  `runs/exports/<task_id>/`，并回复绝对路径；
 - 工具用法通过 `tool_help` 自查，文档源在
   `resources/public/tools/<tool>.md`，不在 prompt 里重复维护；
 - Team 路径的「运行中重新计划」仍沿用 `work_plan_update`（当前 UI 不触发）；
