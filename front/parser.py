@@ -121,24 +121,28 @@ def parse_front_decision(
                 reason=str(payload.get("reason") or "")), ""
 
         if raw_intent == FrontIntent.HANDOFF:
-            # 🔒 Front 不加工任务需求：
-            #    能拿到 Human 原文时，Task 原文就是 Human 原文。
-            #    模型给的 goal/deliverables/constraints 一律不采用。
-            task_text = str(human_text or "").strip()
+            # Front 自己决定：逐字转交原文，或给一个忠实的重述。
+            # 两种都允许；`task_text` 就是 Work Agent 看到的任务文本。
+            reply_style = str(payload.get("reply_style") or "").strip()
+            brief = _brief_from(payload, human_text)
+            task_text = str(payload.get("task_text") or "").strip()
+            if not task_text and brief is not None:
+                task_text = brief.goal
             if not task_text:
-                raw_brief = payload.get("brief")
-                if isinstance(raw_brief, dict):
-                    task_text = str(raw_brief.get("goal") or "").strip()
-                if not task_text:
-                    task_text = str(payload.get("goal") or "").strip()
+                task_text = str(human_text or "").strip()
             if not task_text:
                 return None, "handoff_missing_task_text"
-            reply_style = str(payload.get("reply_style") or "").strip()
-            brief = FrontBrief(
-                goal=task_text,
-                human_text=task_text,
-                reply_style=reply_style,
-            )
+            if brief is None:
+                brief = FrontBrief(
+                    goal=task_text,
+                    human_text=human_text,
+                    task_text=task_text,
+                    reply_style=reply_style,
+                )
+            else:
+                brief.human_text = str(human_text or brief.human_text)
+                brief.task_text = task_text
+                brief.reply_style = reply_style or brief.reply_style
             return FrontDecision(
                 intent=raw_intent, brief=brief,
                 reply=str(payload.get("reply") or "").strip(),

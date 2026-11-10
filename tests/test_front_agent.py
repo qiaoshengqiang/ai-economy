@@ -42,12 +42,26 @@ def test_direct_reply():
     assert decision.reply == "你好，我在。"
 
 
-def test_handoff_uses_human_text_without_processing():
+def test_handoff_can_pass_raw_text():
+    runtime = FrontAgentRuntime(
+        "front", _think_returning({
+            "intent": "handoff",
+            "reply": "好，我开始做。",
+            "reply_style": "友好、简洁",
+        }))
+    decision = runtime.decide("帮我写个 hello.txt")
+
+    assert decision.intent == FrontIntent.HANDOFF
+    assert decision.brief.human_text == "帮我写个 hello.txt"
+    assert decision.brief.task_text == "帮我写个 hello.txt"
+    assert decision.brief.goal == "帮我写个 hello.txt"
+
+
+def test_handoff_can_pass_faithful_brief():
     think = _think_returning({
         "intent": "handoff",
         "reply": "好，我开始做。",
         "reply_style": "友好、简洁，先结论后产物",
-        # 🔒 即使模型仍然输出 brief，也不能覆盖 Human 原文。
         "brief": {
             "goal": "写一个 hello.txt",
             "deliverables": ["hello.txt"],
@@ -60,14 +74,28 @@ def test_handoff_uses_human_text_without_processing():
 
     assert decision.intent == FrontIntent.HANDOFF
     assert isinstance(decision.brief, FrontBrief)
-    assert decision.brief.goal == "帮我写个 hello.txt"
+    # task_text 是 Front 选择交给 Work 的版本
+    assert decision.brief.task_text == "写一个 hello.txt"
+    # 原文永远保留，供 Work / 审计对照
     assert decision.brief.human_text == "帮我写个 hello.txt"
-    assert decision.brief.deliverables == []
-    assert decision.brief.constraints == []
-    assert decision.brief.acceptance_expectations == []
+    assert decision.brief.deliverables == ["hello.txt"]
+    assert decision.brief.constraints == ["不要用 shell"]
+    assert decision.brief.acceptance_expectations == ["文件存在且非空"]
     assert decision.brief.reply_style == "友好、简洁，先结论后产物"
-    assert decision.reply_style == "友好、简洁，先结论后产物"
-    assert decision.reply == "好，我开始做。"
+
+
+def test_handoff_task_text_can_override_brief_goal():
+    runtime = FrontAgentRuntime(
+        "front", _think_returning({
+            "intent": "handoff",
+            "task_text": "做一个打印 hello world 的 Python 程序",
+            "brief": {"goal": "写个程序"},
+            "reply": "好",
+        }))
+    decision = runtime.decide("随便写个程序吧")
+
+    assert decision.brief.task_text == "做一个打印 hello world 的 Python 程序"
+    assert decision.brief.human_text == "随便写个程序吧"
 
 
 def test_rework_requires_completed_task():
@@ -191,16 +219,15 @@ def test_front_prompt_is_human_facing_and_does_not_invent_constraints():
     runtime.decide("继续做", active_tasks=[{"task_id": "task_1"}])
     prompt = captured["prompt"]
     assert "不要向 Human 暴露" in prompt
-    assert "只识别意图，不重写/拆解任务需求" in prompt
-    assert "原样" in prompt
-    assert "不要把 Human 的话改写成更泛的词" in prompt
+    assert "你自己决定怎么转交" in prompt
+    assert "task_text" in prompt
+    assert "保持 Human 想要完成的任务的原意" in prompt
     assert "reply_style 只描述" in prompt
     assert "不要写「按现有 Brief 交付」" in prompt
     assert "最近对话" in prompt
     assert "你是 Human 的入口" in prompt
     assert "Task 列表是已知事实，不是匹配表" in prompt
-    assert "不要按关键词做机械映射" in prompt
-    assert "拿不准就 clarify" in prompt
+    assert "不要按关键词做机械映射" not in prompt
     assert "动作词" not in prompt
     assert "INTERRUPTED" in prompt
     assert "不要回答“正在处理中”" in prompt

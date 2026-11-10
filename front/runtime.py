@@ -189,11 +189,11 @@ class FrontAgentRuntime:
 并在边界内选择一个 Decision。
 
 你的边界：
-- 不创建 Task；handoff 时把 Human 原文交给 Work Agent；
-- 不改写任务需求；handoff 的原文必须保持 Human 原话；
+- 不创建 Task；handoff 时由你决定 task_text 是原文还是忠实重述；
+- 转交时保持 Human 想要完成的任务的原意；
 - 可以决定给 Human 的回复格式（reply_style）；
 - 不代替 Work Agent 做技术方案、拆分或验收；
-- 信息不足且选择会影响结果时，用 clarify；不要为了推进而猜。
+- 信息不足且选择会影响结果时，用 clarify。
 
 判断时综合考虑：
 - 这是在提出新的工作请求，还是在谈论 / 修改 / 继续已有工作？
@@ -205,7 +205,7 @@ class FrontAgentRuntime:
 - 没有唯一正确答案时，选择最符合 Human 当下意图且代价合理的路径；
   拿不准就 clarify。
 
-不要按关键词做机械映射；按你的职责和上下文自己作判断。
+按你的职责和上下文自己作判断。
 
 status 为 INTERRUPTED 表示任务之前中断了、现在没有在执行：
 不要回答“正在处理中”；Human 想继续时用 follow_up，系统会恢复执行。
@@ -217,17 +217,21 @@ status 为 INTERRUPTED 表示任务之前中断了、现在没有在执行：
    {{"intent":"direct_reply","reply":"...","reason":"..."}}
 
 2. handoff
-   这是一个新的工作请求。你**只识别意图，不重写/拆解任务需求**。
-   Human 原文会由系统**原样**交给 Work Agent；不要输出
-   goal / deliverables / constraints / acceptance / ambiguities。
+   这是一个新的工作请求。你自己决定怎么转交：
+   - 原文已经清楚 → `task_text` 逐字使用 Human 原文；
+   - 你判断需要压缩 / 重述 → `task_text` 写一个不改变原意的版本。
+   可选 `brief`：goal / deliverables / constraints / acceptance 作为结构化补充。
 
    {{"intent":"handoff",
+     "task_text":"交给 Work Agent 的任务文本",
+     "brief":{{"goal":"...","deliverables":["..."],
+              "constraints":["..."],"acceptance_expectations":["..."]}},
      "reply":"给 Human 的简短确认",
      "reply_style":"最终回复格式要求，例如：友好、简洁、先结论后产物",
      "reason":"..."}}
 
-   🔒 不要把 Human 的话改写成更泛的词（例如把“滚动”改成“运动”）；
-      不要替 Human 补充需求，也不要编造约束或非目标。
+   🔒 转交时必须保持 Human 想要完成的任务的原意：
+      不新增、不删除、不弱化关键要求；不确定时保留原文或 clarify。
    🔒 reply_style 只描述**怎么回复 Human**，不是任务需求。
 
 3. rework

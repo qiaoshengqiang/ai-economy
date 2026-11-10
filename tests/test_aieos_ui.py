@@ -627,19 +627,27 @@ def test_controller_passes_recent_conversation_to_front(monkeypatch):
     ]
 
 
-def test_task_description_is_raw_human_text():
+def test_task_description_uses_front_chosen_task_text():
     from front import FrontBrief
     from work.controller import _description_from_brief
 
+    raw = "我今天好无聊，请做一个贪吃蛇小游戏网页给我玩玩"
     brief = FrontBrief(
-        goal="做一个网页",
-        human_text="我今天好无聊，请做一个贪吃蛇小游戏网页给我玩玩",
+        goal="做一个贪吃蛇网页",
+        human_text=raw,
+        task_text=raw,
         deliverables=["snake.html"],
         constraints=["分模块"],
     )
+    assert _description_from_brief(brief) == raw
 
-    assert _description_from_brief(brief) == (
-        "我今天好无聊，请做一个贪吃蛇小游戏网页给我玩玩")
+    summarized = FrontBrief(
+        goal="做一个贪吃蛇网页",
+        human_text=raw,
+        task_text="做一个贪吃蛇网页，分模块",
+    )
+    assert _description_from_brief(summarized) == (
+        "做一个贪吃蛇网页，分模块")
 
 
 def test_controller_sets_front_thinking_to_low():

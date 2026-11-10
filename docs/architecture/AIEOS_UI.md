@@ -50,7 +50,7 @@ Front Agent（固定）
   ├─ follow_up / rework / cancel / artifacts → 已有 Task
   └─ handoff → 只识别意图
                   ↓
-            Human 原文原样成为 Task description
+            Front 选择 task_text（原文或忠实重述）→ Task description
                   ↓
             选择一个 IDLE Agent
                   ↓
@@ -61,10 +61,10 @@ Front Agent（固定）
             FrontResult → 输出框
 ```
 
-> Front **不再加工任务需求**：不产出 goal / deliverables /
-> constraints / acceptance；只输出意图、给 Human 的确认、以及
-> `reply_style`（最终回复格式要求）。Front 的 thinking 固定为
-> `low`，因为它的工作只是识别意图和沟通。
+> Front 自己决定转交方式：可以逐字使用 Human 原文，也可以写一个
+> **不改变原意**的 `task_text`；可选的 goal / deliverables /
+> constraints / acceptance 作为结构化补充。`human_text` 永远保留原文。
+> Front 的 thinking 固定为 `low`，因为它的工作主要是识别意图与沟通。
 
 ### 角色约束
 

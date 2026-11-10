@@ -549,11 +549,13 @@ class AIEOSController:
         )
         creation = TaskCreationService(
             self.rt, run, max_agents=self.max_agents_per_team)
-        # 不再由 Front 生成验收标准；DoD 就是 Human 原文。
-        criteria = [
-            str(decision.brief.human_text
-                or decision.brief.goal).strip()
-        ]
+        criteria = (
+            decision.brief.acceptance_expectations
+            or decision.brief.deliverables
+            or [str(decision.brief.task_text
+                    or decision.brief.human_text
+                    or decision.brief.goal).strip()]
+        )
         return creation.create(
             creator=worker,
             description=_description_from_brief(decision.brief),
@@ -666,7 +668,9 @@ class AIEOSController:
         criteria = (
             decision.brief.acceptance_expectations
             or decision.brief.deliverables
-            or [decision.brief.goal]
+            or [str(decision.brief.task_text
+                    or decision.brief.human_text
+                    or decision.brief.goal).strip()]
         )
         # SOLO 没有其他成员，Leader 计划里的成员目录不适用；
         # 交给默认的 workspace 供给。
@@ -1427,9 +1431,10 @@ class AIEOSController:
 
 
 def _description_from_brief(brief: Any) -> str:
-    """Task 原文 = Human 原文；Front 不在这里做二次加工。"""
+    """Work 看到 Front 选择的 `task_text`；它可以是原文或忠实重述。"""
     return str(
-        getattr(brief, "human_text", "")
+        getattr(brief, "task_text", "")
+        or getattr(brief, "human_text", "")
         or getattr(brief, "goal", "")
     ).strip()
 

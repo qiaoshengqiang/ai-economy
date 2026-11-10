@@ -2,8 +2,9 @@
 Front 层数据契约
 =================
 
-Brief 现在只承载 **Human 原文 + reply_style**，不再由 Front
-拆解成 goal / deliverables / constraints / acceptance。
+Brief 承载 Human 原文 + Front 选择的 `task_text`（原文或忠实重述）
++ 可选的 goal / deliverables / constraints / acceptance + reply_style。
+Front 负责保持原意，不把任务改写成另一种需求。
 Result 是 Work 回到 Front 的**可读结果**，不是 Task 状态。
 """
 
@@ -47,13 +48,16 @@ class FrontBrief:
     """
     Front → Team Lead 的工作 Brief。
 
-    🔒 `human_text` / `goal` 是 Human 原文，不是 Front 的改写。
-       Front 只识别意图与回复格式；不拆需求、不编约束。
+    🔒 `human_text` 永远是 Human 原文；`task_text` 是 Front 选择交给
+       Work 的版本（可以是原文或忠实重述）。结构化字段是可选补充。
     """
 
     goal: str
     brief_id: str = ""
     human_text: str = ""
+    #: 交给 Work Agent 的任务文本。可以是 Human 原文，也可以是 Front
+    #: 判断后做的忠实重述；必须保持原意。
+    task_text: str = ""
     deliverables: List[str] = field(default_factory=list)
     constraints: List[str] = field(default_factory=list)
     acceptance_expectations: List[str] = field(default_factory=list)
@@ -69,6 +73,9 @@ class FrontBrief:
         self.goal = str(self.goal or "").strip()
         if not self.goal:
             raise ValueError("FrontBrief 需要 goal")
+        self.human_text = str(self.human_text or "").strip()
+        self.task_text = str(
+            self.task_text or self.goal or self.human_text).strip()
         self.brief_id = str(self.brief_id or f"brief_{uuid.uuid4().hex[:12]}")
         self.created_at = str(self.created_at or utc_now_iso())
         self.deliverables = _strings(self.deliverables)
@@ -83,6 +90,7 @@ class FrontBrief:
             "brief_id": self.brief_id,
             "goal": self.goal,
             "human_text": self.human_text,
+            "task_text": self.task_text,
             "deliverables": list(self.deliverables),
             "constraints": list(self.constraints),
             "acceptance_expectations": list(self.acceptance_expectations),
@@ -100,6 +108,7 @@ class FrontBrief:
             goal=str(data.get("goal") or ""),
             brief_id=str(data.get("brief_id") or ""),
             human_text=str(data.get("human_text") or ""),
+            task_text=str(data.get("task_text") or ""),
             deliverables=data.get("deliverables") or [],
             constraints=data.get("constraints") or [],
             acceptance_expectations=(
