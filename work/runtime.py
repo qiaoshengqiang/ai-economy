@@ -44,6 +44,19 @@ _ENVELOPE_KEYS = frozenset({
     "thinking", "cognitive_budget", "reflection", "reflections",
 })
 
+#: provider 原生 tool-call 标记。它们不是报告，也不是合法信封。
+#:
+#: 实测：DeepSeek 有时把 `<｜｜DSML｜｜ invoke name="tool_help">` 直接写进
+#: content。当成报告会污染后续每一轮；也不该猜它想调什么。
+_TOOL_CALL_MARKERS = (
+    "<｜｜DSML｜｜", "<|DSML|>", "<function_calls>", "<tool_call>",
+    "invoke name=",
+)
+
+
+def _looks_like_tool_call_markup(text: str) -> bool:
+    return any(marker in text for marker in _TOOL_CALL_MARKERS)
+
 
 def _strip_code_fence(text: str) -> str:
     body = str(text or "").strip()
@@ -69,6 +82,8 @@ def _report_candidate(text: str) -> str:
     """
     raw = str(text or "").strip()
     if not raw:
+        return ""
+    if _looks_like_tool_call_markup(raw):
         return ""
     body = _strip_code_fence(raw)
     if not body.startswith("{"):
@@ -286,7 +301,8 @@ class SoloWorkRuntime:
                         "content": (
                             "That output is not a valid action envelope and "
                             "not a report.\n"
-                            "To act, use exactly this shape:\n"
+                            "To act, use exactly this JSON shape (no "
+                            "tool-call markup, no markdown):\n"
                             '{"decision":"act","actions":'
                             '[{"type":"tool_help",'
                             '"parameters":{"tool":"playwright"}}]}\n'

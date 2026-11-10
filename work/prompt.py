@@ -293,10 +293,16 @@ plan built from general knowledge will get wrong.
 - private_read / private_list / private_working_memory_read / draft_read / draft_list
 
 This phase is read-only: do not write files and do not call work_complete.
-If you need more facts, emit one or more actions in one JSON (use the
-`actions` list), at most {max_steps} steps.
-When you have enough facts, output the COMPLETE REPORT as plain text,
-not a JSON action.
+You get at most {max_steps} steps. Each step is exactly ONE of these two:
+
+(A) ACT — one JSON object, no markdown fences, no tool-call markup:
+{{"decision":"act","reasoning":"one sentence",
+ "actions":[{{"type":"tool_help","parameters":{{"tool":"playwright"}}}}]}}
+
+(B) REPORT — plain text, no JSON. Use this when you have enough facts.
+
+Never emit provider tool-call syntax (for example `<|DSML|>`, `invoke name=`).
+Only the JSON shape above produces actions.
 
 Suggested report sections:
 ## 1. Requirements (including implicit requirements)

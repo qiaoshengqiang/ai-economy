@@ -356,6 +356,8 @@ class TestWorkPrompt:
         assert "## 3. Technical approach" in prompt
         assert "EVIDENCE BEFORE THE REPORT" in prompt
         assert "`tool_help` for every tool you plan to use" in prompt
+        assert '"actions":[{"type":"tool_help"' in prompt
+        assert "Never emit provider tool-call syntax" in prompt
 
     def test_work_prompt_reinjects_tool_docs(self):
         context = WorkContext(
@@ -734,22 +736,23 @@ class _ToolDocAgent(_FakeAgent):
 class _MalformedCognitionAgent(_FakeAgent):
     """第一次认知输出写坏的信封；第二次才给纯文本报告。"""
 
-    def __init__(self):
+    def __init__(self, first_content=None):
         super().__init__()
         self.prompts = []
         self.cognition_calls = 0
+        self.first_content = first_content or (
+            '```json\n{"actions":[{"action":"tool_help",'
+            '"tool":"playwright"}]}\n```')
 
     def act(self, *, messages, dispatcher, **kwargs):
         self.prompts.append(messages)
         if kwargs.get("initial_phase") == "cognition":
             self.cognition_calls += 1
             if self.cognition_calls == 1:
-                content = (
-                    '```json\n{"actions":[{"action":"tool_help",'
-                    '"tool":"playwright"}]}\n```')
                 return SimpleNamespace(
                     segments=[SimpleNamespace(
-                        tokens=1, content=content, is_truncated=False)],
+                        tokens=1, content=self.first_content,
+                        is_truncated=False)],
                     action_intents=[], action_results=[])
             return SimpleNamespace(
                 segments=[SimpleNamespace(
@@ -823,6 +826,35 @@ class TestSoloWorkRuntime:
         assert rounds[0]["summary"] == "COGNITION-REPORT-TEXT"
         assert "not a valid action envelope" in str(
             runtime.agent.prompts[1][-1])
+
+    def test_provider_tool_call_markup_is_not_used_as_report(self, db):
+        """
+        🔴 DeepSeek 有时把原生 tool-call 标记写进 content
+        （`<｜｜DSML｜｜ invoke name=...>`）。它不是报告，也不是合法信封；
+        当成报告会让认知阶段白跑。
+        """
+        task = Task.create(
+            task_id="T-COGNITION-DSML", creator="agent_a",
+            description="用 playwright 验证", workspace_id="WS-X",
+            participants=["agent_a"], mode=TaskMode.SOLO)
+        task.claim_producer("agent_a")
+
+        rounds = []
+        runtime = _SoloRuntime(db, task)
+        runtime.agent = _MalformedCognitionAgent(
+            first_content=(
+                '<｜｜DSML｜｜ calls>\n'
+                '<｜｜DSML｜｜ invoke name="tool_help">\n'
+                '<｜｜DSML｜｜ parameter name="tool" string="true">'
+                'playwright</｜｜DSML｜｜ parameter>\n'))
+        result = SoloWorkRuntime(
+            runtime, task, max_turns=1,
+            round_sink=rounds.append).run()
+
+        assert result.ok is True, result.error
+        assert runtime.agent.cognition_calls == 2
+        assert rounds[0]["summary"] == "COGNITION-REPORT-TEXT"
+        assert "tool-call markup" in str(runtime.agent.prompts[1][-1])
 
     def test_tool_docs_read_in_cognition_survive_into_work_prompt(self, db):
         """
