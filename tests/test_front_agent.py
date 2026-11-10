@@ -421,3 +421,15 @@ def test_prompt_separates_task_text_from_routing_metadata():
     assert "task_text is the work content" in prompt
     assert "preferred_agent is routing metadata" in prompt
     assert "use it verbatim" not in prompt
+
+
+def test_prompt_says_assignee_is_routing_not_task_text():
+    think = _think_returning({"intent": "direct_reply", "reply": "好"})
+    runtime = FrontAgentRuntime("front", think)
+    runtime.decide("让 agent_e 写一个笑话")
+
+    prompt = think.prompt
+    assert "Routing (who does it)" in prompt
+    assert "name belongs to preferred_agent" in prompt
+    assert "work, not the addressee" in prompt or "need not repeat it" in prompt
+    assert "keep the original text" not in prompt
