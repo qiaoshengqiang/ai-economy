@@ -218,21 +218,19 @@ def test_front_prompt_is_human_facing_and_does_not_invent_constraints():
     runtime = FrontAgentRuntime("front", think)
     runtime.decide("继续做", active_tasks=[{"task_id": "task_1"}])
     prompt = captured["prompt"]
-    assert "不要向 Human 暴露" in prompt
-    assert "你自己决定怎么转交" in prompt
+    assert "Do not expose Brief" in prompt
+    assert "You decide how to hand it off" in prompt
     assert "task_text" in prompt
-    assert "保持 Human 想要完成的任务的原意" in prompt
-    assert "reply_style 只描述" in prompt
-    assert "不要写「按现有 Brief 交付」" in prompt
-    assert "最近对话" in prompt
-    assert "你是 Human 的入口" in prompt
-    assert "Task 列表是已知事实，不是匹配表" in prompt
-    assert "不要按关键词做机械映射" not in prompt
-    assert "动作词" not in prompt
+    assert "Preserve the Human's intended task" in prompt
+    assert "reply_style only describes" in prompt
+    assert "RECENT CONVERSATION" in prompt
+    assert "You are the Human's entry point" in prompt
+    assert "Task list is known facts, not a matching table" in prompt
+    assert "Do not use keyword lists" not in prompt
     assert "INTERRUPTED" in prompt
-    assert "不要回答“正在处理中”" in prompt
-    assert "停止必须走这个 intent" in prompt
-    assert "产物 / 代码 / 文件 / 结果" in prompt
+    assert "still processing" in prompt
+    assert "stopping must go through this intent" in prompt
+    assert "artifacts / code / files / result" in prompt
 
 
 def test_front_prompt_includes_recent_conversation():

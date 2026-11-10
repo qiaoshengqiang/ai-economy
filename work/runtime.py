@@ -315,6 +315,7 @@ class SoloWorkRuntime:
             drafts=self.drafts,
             promote_drafts=self._promote_drafts,
             complete_fn=self._complete_fn,
+            include_public_memory=False,
         )
         seen_reads: set = set()
         empty_streak = 0
@@ -514,7 +515,7 @@ class SoloWorkRuntime:
             workspace_id=workspace_id,
             acceptance_criteria=self._acceptance_criteria(),
             memory_facts=self._memory_facts(actor),
-            public_memory_facts=self._public_memory_facts(actor),
+            public_memory_facts="",
             draft_facts=self._draft_facts(actor),
             cognition_report=self._cognition_report,
         )

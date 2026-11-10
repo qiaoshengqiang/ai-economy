@@ -260,7 +260,7 @@ class _FakeRuntime:
         self.private_long_term_memory = None
 
 
-def _dispatcher():
+def _dispatcher(*, include_public_memory=True):
     task = Task.create(
         task_id="T-DISPATCH", creator="agent_a",
         participants=["agent_a"], mode=TaskMode.SOLO,
@@ -280,6 +280,7 @@ def _dispatcher():
         item_blocked_fn=lambda **k: {"ok": False},
         qa_verdict_fn=lambda **k: {"ok": False},
         plan_update_fn=lambda **k: {"ok": False},
+        include_public_memory=include_public_memory,
     )
 
 
@@ -297,6 +298,13 @@ class TestWorkActions:
         assert "work_complete" in registered
         assert "workspace_promote_drafts" in registered
         assert "tool_help" in registered
+
+    def test_solo_dispatcher_excludes_public_working_memory(self):
+        registered = set(_dispatcher(
+            include_public_memory=False).action_types)
+        assert "public_working_memory_read" not in registered
+        assert "public_working_memory_update" not in registered
+        assert "workspace_read" in registered
 
 
 # ============================================================
@@ -320,7 +328,7 @@ class TestWorkPrompt:
         ):
             assert banned not in prompt, banned
         assert "work_complete" in prompt
-        assert "公共工作记忆" in prompt
+        assert "PUBLIC WORKING MEMORY" not in prompt
         assert "hello.txt exists" in prompt
 
     def test_cognition_prompt_includes_environment_and_tools(self):
@@ -339,12 +347,12 @@ class TestWorkPrompt:
             max_steps=2,
         )
 
-        assert "任务认知" in prompt
+        assert "TASK COGNITION" in prompt
         assert "做一个鹈鹕骑自行车网页" in prompt
-        assert "playwright: 浏览器测试" in prompt
+        assert "playwright" in prompt
         assert "workspace_read" in prompt
-        assert "不要写文件" in prompt
-        assert "## 3. 技术方案与架构" in prompt
+        assert "read-only" in prompt
+        assert "## 3. Technical approach" in prompt
 
     def test_prompt_exposes_thinking_and_cognitive_budget(self):
         context = WorkContext(
@@ -384,15 +392,15 @@ class TestWorkPrompt:
         assert "requested=65536" in prompt
         assert "actual=32768" in prompt
         assert "clipped=above_max" in prompt
-        assert "index.html × 3" in prompt
+        assert "index.html x 3" in prompt
         assert "workspace_edit" in prompt
-        assert "把 cognitive_budget 提到 65536" in prompt
+        assert "raise cognitive_budget to 65536" in prompt
         assert '"actions"' in prompt
-        assert "动作按声明顺序执行" in prompt
-        assert "上一轮总结（完整）" in prompt
+        assert "Actions run in order" in prompt
+        assert "PREVIOUS ROUND SUMMARY (FULL)" in prompt
         assert "ROUND-1 完整总结：已写 config.js。" in prompt
-        assert "上一轮动作结果" in prompt
-        assert "workspace_edit app/service.py: 失败" in prompt
+        assert "previous action results" in prompt
+        assert "workspace_edit app/service.py: failed" in prompt
         assert "old_string_not_found" in prompt
 
     def test_prompt_has_work_actions(self):
@@ -402,10 +410,10 @@ class TestWorkPrompt:
             context, task_description="d", runtime=None)
         for action in ("workspace_read", "workspace_edit", "run_tool",
                        "tool_help", "draft_write",
-                       "private_working_memory_update",
-                       "public_working_memory_update"):
+                       "private_working_memory_update"):
             assert action in prompt
-        assert "工具用法不要猜" in prompt
+        assert "public_working_memory_update" not in prompt
+        assert "Use tool_help" in prompt
 
     def test_worker_prompt_includes_item_notes_and_public_memory(self):
         from work.plan import WorkItem

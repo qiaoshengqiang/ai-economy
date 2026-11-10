@@ -114,6 +114,7 @@ def build_work_dispatcher(
     qa_verdict_fn: Any = None,
     plan_update_fn: Any = None,
     include_complete: bool = True,
+    include_public_memory: bool = True,
     extra_executors: Optional[List[Any]] = None,
 ) -> ActionDispatcher:
     """
@@ -279,6 +280,16 @@ def build_work_dispatcher(
         PrivateListExecutor(list_private, workspace_of=_ws_of),
         PrivateDeleteExecutor(delete_private, workspace_of=_ws_of),
     ]
+    if not include_public_memory:
+        public_types = {
+            "public_working_memory_read",
+            "public_working_memory_update",
+        }
+        executors = [
+            executor for executor in executors
+            if not (set(getattr(executor, "action_types", ()) or ())
+                    & public_types)
+        ]
     if item_done_fn is not None:
         executors.append(WorkItemDoneExecutor(item_done_fn))
     if item_blocked_fn is not None:
@@ -350,7 +361,6 @@ def build_cognition_dispatcher(
         ToolHelpExecutor(_tool_help),
         PrivateReadExecutor(read_private, workspace_of=_ws_of),
         PrivateListExecutor(list_private, workspace_of=_ws_of),
-        PublicWorkingMemoryReadExecutor(_wm_read),
         PrivateWorkingMemoryReadExecutor(_pwm_read),
         DraftReadExecutor(drafts.read),
         DraftListExecutor(drafts.list),

@@ -218,16 +218,17 @@ def run_cognition(
         if summary_phase:
             receipt = _round_receipt(intents, results)
             summary_prompt = (
-                "\n\n========== 本轮工作总结 ==========\n"
-                "本轮工作阶段结束。请输出一份**完整总结**，供下一轮使用：\n"
-                "1. 本轮决策了什么、目标是什么；\n"
-                "2. 实际执行了哪些动作，成功还是失败；\n"
-                "3. 写入 / 修改了哪些文件；\n"
-                "4. 读到了哪些关键事实、发现了什么问题；\n"
-                "5. 还有哪些没完成；\n"
-                "6. 下一轮建议。\n"
-                "只输出文字总结，不要输出 JSON 动作。\n"
-                "========== 动作回执 ==========\n"
+                "\n\n========== ROUND SUMMARY ==========\n"
+                "The work phase for this round has ended. Write a COMPLETE "
+                "round summary in English for the next round:\n"
+                "1. What did you decide and what was the goal?\n"
+                "2. Which actions ran, and did they succeed?\n"
+                "3. Which files were written or changed?\n"
+                "4. What key facts did you learn, and what problems appeared?\n"
+                "5. What remains unfinished?\n"
+                "6. What should the next round do?\n"
+                "Output plain text only; do not output a JSON action.\n"
+                "========== ACTION RECEIPT ==========\n"
                 f"{receipt}"
             )
             summary_messages = base + [
