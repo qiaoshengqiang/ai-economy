@@ -227,7 +227,7 @@ def test_job_without_members_degrades_to_solo(monkeypatch):
     from work.plan import parse_work_plan
 
     class _Front:
-        def decide(self, _text, active_tasks=(), completed_tasks=()):
+        def decide(self, _text, active_tasks=(), completed_tasks=(), conversation=()):
             return FrontDecision(
                 intent=FrontIntent.HANDOFF,
                 brief=FrontBrief(goal="写一个 hello.py"))
@@ -352,7 +352,7 @@ def test_handoff_runs_one_agent_solo_without_leader_plan(monkeypatch):
     from work.controller import WorkJob
 
     class _Front:
-        def decide(self, _text, active_tasks=(), completed_tasks=()):
+        def decide(self, _text, active_tasks=(), completed_tasks=(), conversation=()):
             return FrontDecision(
                 intent=FrontIntent.HANDOFF,
                 brief=FrontBrief(
@@ -465,7 +465,7 @@ def test_followup_resumes_interrupted_task(monkeypatch):
     from work.controller import WorkJob
 
     class _Front:
-        def decide(self, _text, active_tasks=(), completed_tasks=()):
+        def decide(self, _text, active_tasks=(), completed_tasks=(), conversation=()):
             return FrontDecision(
                 intent=FrontIntent.FOLLOW_UP,
                 task_id="task_old",
@@ -530,7 +530,7 @@ def test_rework_reopens_completed_task_with_new_request(monkeypatch):
     seen = {}
 
     class _Front:
-        def decide(self, _text, active_tasks=(), completed_tasks=()):
+        def decide(self, _text, active_tasks=(), completed_tasks=(), conversation=()):
             return FrontDecision(
                 intent=FrontIntent.REWORK,
                 task_id="task_done",
@@ -586,6 +586,45 @@ def test_rework_reopens_completed_task_with_new_request(monkeypatch):
     assert "返工要求（第 2 轮）" in task.description
     assert "BLG加油！" in task.description
     assert job.status == "COMPLETED"
+
+
+def test_controller_passes_recent_conversation_to_front(monkeypatch):
+    from front import FrontDecision, FrontIntent
+    from work.controller import WorkJob
+
+    captured = {}
+
+    class _Front:
+        def decide(self, _text, active_tasks=(), completed_tasks=(),
+                   conversation=()):
+            captured["conversation"] = list(conversation)
+            return FrontDecision(
+                intent=FrontIntent.DIRECT_REPLY, reply="好")
+
+    runtime = SimpleNamespace(
+        directory=_Directory(["agent_a"]),
+        economy=SimpleNamespace(agent=lambda aid: SimpleNamespace(
+            has_brain=True)),
+        tasks=SimpleNamespace(list_tasks=lambda limit=50: []),
+    )
+    controller = AIEOSController(runtime, front_agent="agent_a")
+    controller._messages = [
+        {"role": "human", "text": "之前那个台球网页做好了吗",
+         "job_id": "job_old"},
+        {"role": "front", "text": "已经做好了", "job_id": "job_old"},
+        {"role": "human", "text": "再做一个", "job_id": "job_new"},
+    ]
+    monkeypatch.setattr(controller, "_front_runtime", lambda: _Front())
+    job = WorkJob(job_id="job_new", human_text="再做一个")
+    try:
+        controller._run_job(job)
+    finally:
+        controller.close()
+
+    assert captured["conversation"] == [
+        {"role": "human", "text": "之前那个台球网页做好了吗"},
+        {"role": "front", "text": "已经做好了"},
+    ]
 
 
 def test_task_description_is_raw_human_text():

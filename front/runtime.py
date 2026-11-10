@@ -47,6 +47,7 @@ class FrontAgentRuntime:
         *,
         active_tasks: Iterable[Dict[str, Any]] = (),
         completed_tasks: Iterable[Dict[str, Any]] = (),
+        conversation: Iterable[Dict[str, Any]] = (),
         context: str = "",
     ) -> FrontDecision:
         """
@@ -54,6 +55,10 @@ class FrontAgentRuntime:
 
         `active_tasks` / `completed_tasks` 是 **只读引用**：
         `{"task_id", "summary", "status"}`。Front 不修改它们。
+
+        `conversation` 是最近 Human / Front 消息的只读快照：
+        `{"role", "text"}`。它只用于判断「再做一个」这类上下文，
+        不是任务需求。
         """
         active = [
             _task_ref(item) for item in active_tasks
@@ -65,12 +70,13 @@ class FrontAgentRuntime:
         ]
         active_ids = {item["task_id"] for item in active}
         completed_ids = {item["task_id"] for item in completed}
+        history = _conversation_refs(conversation)
 
         last_error = ""
         for attempt in range(1, 3):
             prompt = self._prompt(
-                human_text, active, completed, context=context,
-                previous_error=last_error)
+                human_text, active, completed, conversation=history,
+                context=context, previous_error=last_error)
             try:
                 raw = self._think(prompt)
             except Exception as exc:                          # noqa: BLE001
@@ -147,6 +153,7 @@ class FrontAgentRuntime:
         active: List[Dict[str, str]],
         completed: List[Dict[str, str]],
         *,
+        conversation: List[Dict[str, str]] = (),
         context: str = "",
         previous_error: str = "",
     ) -> str:
@@ -161,7 +168,10 @@ class FrontAgentRuntime:
 不要向 Human 暴露 Brief、Creator、Task、验收链、路由、范围等内部术语，
 除非 Human 明确在问系统怎么工作。
 
-========== Human 输入 ==========
+========== 最近对话（只读） ==========
+{_render_conversation(conversation)}
+
+========== 当前 Human 输入 ==========
 {human_text}
 
 ========== 进行中的 Task（只读） ==========
@@ -176,11 +186,15 @@ class FrontAgentRuntime:
 ========== 你的职责 ==========
 只判断 Human 想要什么，并输出一个 Decision。你不生产、不验收、不创建 Task。
 
-先对照上面的 Task 列表，判断这是不是同一件事（措辞可以不同，看交付物和核心要求）：
-- 与进行中的 Task 实质相同 → follow_up，不要重复创建；
-- 与已完成的 Task 实质相同 → direct_reply，告诉 Human 已经完成并指出产物；
-  Human 明确要求修改时才用 rework；
-- 只有交付物或核心要求确实不同，才 handoff。
+先看 Human 的**动作词**，它比内容相似更重要：
+- 「再做一个 / 再做一版 / 再来一个 / 新开一个 / 重新做一个新的 /
+   再做一遍」→ handoff，**即使内容与某个已完成 Task 相同**。
+  新实例不是返工，不要因为“已经做过”就拒绝创建新 Task。
+- 「改一下 / 调整 / 修一下 / 改成」→ rework，引用已完成的 task_id。
+- 「继续 / 到哪了 / 做好了吗」→ follow_up / direct_reply。
+然后才看内容是否相同：
+- 如果 Human 只是在确认 / 询问某个已有结果 → direct_reply；
+- 如果 Human 明确要一个新实例 → handoff，哪怕描述几乎一样。
 
 status 为 INTERRUPTED 表示任务之前中断了、现在没有在执行：
 不要回答“正在处理中”；Human 想继续时用 follow_up，系统会恢复执行。
@@ -245,6 +259,33 @@ status 为 INTERRUPTED 表示任务之前中断了、现在没有在执行：
 
 只输出 JSON，不要 markdown 围栏。
 """
+
+
+def _conversation_refs(
+    items: Iterable[Dict[str, Any]],
+    *,
+    limit: int = 12,
+) -> List[Dict[str, str]]:
+    out: List[Dict[str, str]] = []
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role") or "").strip().lower()
+        text = str(item.get("text") or "").strip()
+        if role not in ("human", "front") or not text:
+            continue
+        out.append({
+            "role": "Human" if role == "human" else "Front",
+            "text": text[:1200],
+        })
+    return out[-max(0, int(limit)):]
+
+
+def _render_conversation(items: List[Dict[str, str]]) -> str:
+    if not items:
+        return "（没有更早的对话）"
+    return "\n".join(
+        f"{item['role']}: {item['text']}" for item in items)
 
 
 def _task_ref(item: Dict[str, Any]) -> Optional[Dict[str, str]]:

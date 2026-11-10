@@ -314,6 +314,7 @@ class AIEOSController:
                     job.human_text,
                     active_tasks=active,
                     completed_tasks=completed,
+                    conversation=self._conversation(job),
                 )
             job.front_intent = decision.intent
             self._set_job(job, job.status)
@@ -1295,6 +1296,22 @@ class AIEOSController:
                     ref["status"] = "INTERRUPTED"
                 active.append(ref)
         return active, completed
+
+    def _conversation(self, job: WorkJob) -> List[Dict[str, str]]:
+        """最近 Human / Front 对话；不包含当前这条 Human 输入。"""
+        with self._lock:
+            items = list(self._messages)
+        out: List[Dict[str, str]] = []
+        for item in items:
+            role = str(item.get("role") or "")
+            if role not in ("human", "front"):
+                continue
+            if role == "human" and item.get("job_id") == job.job_id:
+                continue
+            text = str(item.get("text") or "").strip()
+            if text:
+                out.append({"role": role, "text": text})
+        return out[-12:]
 
     def _message(
         self,

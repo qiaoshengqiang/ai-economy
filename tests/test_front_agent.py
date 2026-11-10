@@ -196,12 +196,39 @@ def test_front_prompt_is_human_facing_and_does_not_invent_constraints():
     assert "不要把 Human 的话改写成更泛的词" in prompt
     assert "reply_style 只描述" in prompt
     assert "不要写「按现有 Brief 交付」" in prompt
-    assert "措辞可以不同" in prompt
-    assert "与已完成的 Task 实质相同 → direct_reply" in prompt
+    assert "最近对话" in prompt
+    assert "再做一个" in prompt
+    assert "即使内容与某个已完成 Task 相同" in prompt
     assert "INTERRUPTED" in prompt
     assert "不要回答“正在处理中”" in prompt
     assert "停止必须走这个 intent" in prompt
     assert "产物 / 代码 / 文件 / 结果" in prompt
+
+
+def test_front_prompt_includes_recent_conversation():
+    captured = {}
+
+    def think(prompt):
+        captured["prompt"] = prompt
+        return json.dumps({
+            "intent": "handoff",
+            "reply": "好，我再做一个新的。",
+        })
+
+    runtime = FrontAgentRuntime("front", think)
+    runtime.decide(
+        "再做一个网页，点击开始后出现不断滚动的台球",
+        completed_tasks=[{"task_id": "task_1",
+                          "status": "COMPLETED",
+                          "summary": "滚动台球网页"}],
+        conversation=[
+            {"role": "human", "text": "之前那个台球网页做好了吗"},
+            {"role": "front", "text": "已经做好了，可以直接打开看"},
+        ],
+    )
+    prompt = captured["prompt"]
+    assert "Human: 之前那个台球网页做好了吗" in prompt
+    assert "Front: 已经做好了，可以直接打开看" in prompt
 
 
 def test_front_cannot_create_task():
