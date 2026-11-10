@@ -49,6 +49,7 @@ class SoloWorkRuntime:
         cognitive_budget: int = 65536,
         event_sink: Any = None,
         should_stop: Optional[Callable[[], bool]] = None,
+        round_sink: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> None:
         if task.mode != TaskMode.SOLO:
             raise ValueError(
@@ -61,6 +62,7 @@ class SoloWorkRuntime:
         self.cognitive_budget = max(1, int(cognitive_budget))
         self.event_sink = event_sink
         self.should_stop = should_stop or (lambda: False)
+        self.round_sink = round_sink
         #: Playwright 等工具产出的截图 → image_url content part。
         self.image_resolver = make_image_resolver(runtime)
         #: 统计整文件 replace 次数，用来提示 Agent 改用增量编辑。
@@ -163,9 +165,9 @@ class SoloWorkRuntime:
                     follow_up_on_reads=True,
                     work_loop=True,
                     max_work_steps=2,
-                    # decision-first：先决定下一步，读取/工具返回后进入 work，
-                    # 最后回到 decision 检查是否完成。
+                    # 一轮 = decision → work（原始回喂）→ summary。
                     initial_phase="decision",
+                    summary_phase=True,
                     image_resolver=self.image_resolver,
                     seen_reads=seen_reads,
                     repair_malformed=True,
@@ -245,7 +247,45 @@ class SoloWorkRuntime:
                     "last_cognitive_budget", None),
                 "rewrites": rewrites,
                 "action_feedback": action_feedback,
+                "round_summary": str(getattr(run, "summary", "") or ""),
             }
+            self._emit_round({
+                "task_id": task.task_id,
+                "round": turn,
+                "status_before": result.status,
+                "status_after": status_after,
+                "summary": str(getattr(run, "summary", "") or ""),
+                "tokens": tokens,
+                "thinking": getattr(run, "thinking", None),
+                "cognitive_budget": getattr(
+                    getattr(agent, "brain", None),
+                    "last_cognitive_budget", None),
+                "segments": [
+                    {
+                        "phase": str(getattr(seg, "phase", "") or ""),
+                        "content": str(getattr(seg, "content", "") or ""),
+                        "decision": (
+                            seg.decision.to_dict()
+                            if getattr(seg, "decision", None) else None),
+                        "actions": [
+                            intent.to_dict()
+                            for intent in (
+                                getattr(seg, "action_intents", None) or [])
+                        ],
+                        "results": [
+                            result_.to_dict() if result_ else None
+                            for result_ in (
+                                getattr(seg, "action_results", None) or [])
+                        ],
+                        "tokens": getattr(seg, "tokens", None),
+                        "finish_reason": getattr(
+                            seg, "finish_reason", None),
+                        "truncated": bool(
+                            getattr(seg, "is_truncated", False)),
+                    }
+                    for seg in segments
+                ],
+            })
 
             if status_after == TaskStatus.COMPLETED:
                 result.status = status_after
@@ -498,6 +538,15 @@ class SoloWorkRuntime:
             result.summary = self._summary_from(
                 results, segments) or self.task.note or "任务完成"
         return bool(intents) or self.task.status == TaskStatus.COMPLETED
+
+    def _emit_round(self, payload: Dict[str, Any]) -> None:
+        if self.round_sink is None:
+            return
+        try:
+            self.round_sink(payload)
+        except Exception:                                     # noqa: BLE001
+            # UI 日志失败不能破坏实际工作。
+            pass
 
     def _stopped(self) -> bool:
         try:

@@ -179,6 +179,7 @@ class Brain:
             "intake": None,
             "decision": None,
             "work": None,
+            "summary": None,
         }
 
         #: 🔴 分相 temperature 策略（None = 用 config 里的 temperature）。
@@ -192,6 +193,7 @@ class Brain:
             "intake": None,
             "decision": None,
             "work": None,
+            "summary": None,
         }
         #: 最近一次实际使用的 temperature（观测用）。
         self.last_temperature: Optional[float] = None
@@ -208,6 +210,7 @@ class Brain:
             "intake": None,
             "decision": None,
             "work": None,
+            "summary": None,
         }
         #: 最近一次预算解析结果（观测 / prompt 反馈用）。
         #: 形状：phase / requested / effective / cap / clipped。

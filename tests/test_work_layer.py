@@ -340,6 +340,7 @@ class TestWorkPrompt:
                     "clipped": "above_max",
                 },
                 "rewrites": {"index.html": 3},
+                "round_summary": "ROUND-1 完整总结：已写 config.js。",
                 "action_feedback": [
                     {"action": "workspace_edit",
                      "target": "app/service.py", "ok": False,
@@ -364,6 +365,8 @@ class TestWorkPrompt:
         assert "把 cognitive_budget 提到 65536" in prompt
         assert '"actions"' in prompt
         assert "动作按声明顺序执行" in prompt
+        assert "上一轮总结（完整）" in prompt
+        assert "ROUND-1 完整总结：已写 config.js。" in prompt
         assert "上一轮动作结果" in prompt
         assert "workspace_edit app/service.py: 失败" in prompt
         assert "old_string_not_found" in prompt
@@ -523,6 +526,7 @@ class _FakeAgent:
             segments=[segment],
             action_intents=[intent],
             action_results=[action_result],
+            summary="solo 总结",
         )
 
 
@@ -588,6 +592,25 @@ class TestSoloWorkRuntime:
         assert result.status == TaskStatus.COMPLETED
         assert runtime.agent.calls == 3
         assert runtime.tasks.get(task.task_id).status == TaskStatus.COMPLETED
+
+    def test_runtime_emits_round_payload_with_summary(self, db):
+        task = Task.create(
+            task_id="T-ROUND", creator="agent_a",
+            description="写 hello.txt", workspace_id="WS-X",
+            participants=["agent_a"], mode=TaskMode.SOLO)
+        task.claim_producer("agent_a")
+
+        rounds = []
+        runtime = _SoloRuntime(db, task)
+        result = SoloWorkRuntime(
+            runtime, task, max_turns=1,
+            round_sink=rounds.append).run()
+
+        assert result.ok is True, result.error
+        assert len(rounds) == 1
+        assert rounds[0]["round"] == 1
+        assert rounds[0]["summary"] == "solo 总结"
+        assert rounds[0]["segments"][0]["content"] == "done"
 
     def test_runtime_is_decision_first_and_has_vision(self, db):
         task = Task.create(

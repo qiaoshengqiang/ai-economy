@@ -415,6 +415,9 @@ class CognitiveRunResult:
     #: 最后一次**明确表态**的认知预算指令（phase → 偏好；None = 没表态）。
     cognitive_budget: Optional[Dict[str, int]] = None
 
+    #: 本轮 `summary` 阶段产出的完整文字总结（没有 summary 阶段时为空）。
+    summary: str = ""
+
     @property
     def action_intent(self) -> Optional[ActionIntent]:
         """向后兼容：**第一个**动作。"""
@@ -481,4 +484,5 @@ class CognitiveRunResult:
             "thinking": dict(self.thinking) if self.thinking else None,
             "cognitive_budget": (dict(self.cognitive_budget)
                                  if self.cognitive_budget else None),
+            "summary": self.summary,
         }

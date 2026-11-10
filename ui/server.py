@@ -163,6 +163,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     from main import build_runtime
+    from ui.rounds import TaskRoundLog
     from work.controller import AIEOSController
 
     if args.db:
@@ -184,6 +185,7 @@ def main(argv=None) -> int:
         solo_only=True,
         settings_path=db_path.parent / "ui_settings.json",
         log_dir=db_path.parent / "jobs",
+        round_log=TaskRoundLog(db_path.parent / "rounds"),
     )
     Handler.controller = controller
     httpd = ThreadingHTTPServer((args.host, int(args.port)), Handler)

@@ -88,6 +88,7 @@ def run_cognition(
     work_loop: bool = False,
     max_work_steps: int = 2,
     initial_phase: str = "decision",
+    summary_phase: bool = False,
     seen_reads: Optional[set] = None,
     **generate_kwargs: Any,
 ) -> CognitiveRunResult:
@@ -138,6 +139,10 @@ def run_cognition(
                       工作阶段最多几次 LLM 调用（硬上限，防止失控 loop）。
         initial_phase 第一段（seg0）的 phase：默认 `decision`；
                       接收人类命令的首次理解可以传 `intake`。
+        summary_phase True 时，工作循环最后进入 `summary`：
+                      只产出一段完整文字总结，不执行 summary 段里的动作。
+                      该总结通过 `CognitiveRunResult.summary` 返回，
+                      供下一轮 prompt 作为完整上下文投喂。
         seen_reads    🔴 可选的跨 turn 读取指纹集合。相同
                       `workspace_read`（path + revision + 范围）不再
                       重复回喂全文，只说明“内容未重复发送”。
@@ -152,6 +157,7 @@ def run_cognition(
                             phase=initial_phase,
                             repair_malformed=repair_malformed)
     segments: List[CognitiveSegment] = [seg0]
+    round_summary = ""
 
     # 🔴 Agent 对**下一步**思考模式的决定：立刻应用到同一个 Agent 的 Brain。
     #    这样紧接着的读取回喂（seg1）就会用新的思考模式；
@@ -209,7 +215,40 @@ def run_cognition(
             work_steps += 1
             follow_up_used = True
 
-        if work_steps:
+        if summary_phase:
+            receipt = _round_receipt(intents, results)
+            summary_prompt = (
+                "\n\n========== 本轮工作总结 ==========\n"
+                "本轮工作阶段结束。请输出一份**完整总结**，供下一轮使用：\n"
+                "1. 本轮决策了什么、目标是什么；\n"
+                "2. 实际执行了哪些动作，成功还是失败；\n"
+                "3. 写入 / 修改了哪些文件；\n"
+                "4. 读到了哪些关键事实、发现了什么问题；\n"
+                "5. 还有哪些没完成；\n"
+                "6. 下一轮建议。\n"
+                "只输出文字总结，不要输出 JSON 动作。\n"
+                "========== 动作回执 ==========\n"
+                f"{receipt}"
+            )
+            summary_messages = base + [
+                {"role": "assistant",
+                 "content": str(getattr(last_seg, "content", "") or "")},
+                {"role": "user", "content": summary_prompt},
+            ]
+            seg = _run_one_segment(
+                agent, agent_id, summary_messages, generate_kwargs,
+                index=len(segments), phase="summary",
+                repair_malformed=repair_malformed)
+            segments.append(seg)
+            _apply_thinking(agent, seg.decision, current_phase="summary")
+            _apply_cognitive_budget(agent, seg.decision,
+                                    current_phase="summary")
+            round_summary = str(getattr(seg, "content", "") or "")
+            if seg.action_intents:
+                logger.warning(
+                    "summary 阶段输出了动作，已忽略：agent=%s count=%d",
+                    agent_id, len(seg.action_intents))
+        elif work_steps:
             # 回到 decision：让 Agent 决定继续工作还是结束。
             checkpoint_text = (
                 "\n\n========== 工作阶段结束 ==========\n"
@@ -312,6 +351,7 @@ def run_cognition(
         follow_up_used=follow_up_used,
         thinking=_last_thinking(segments),
         cognitive_budget=_last_cognitive_budget(segments),
+        summary=round_summary,
     )
 
 
@@ -515,6 +555,43 @@ def _run_one_segment(agent: Any, agent_id: str, messages: Any,
         original_finish_reason=original_finish_reason,
         original_budget_clipped=original_budget_clipped,
     )
+
+
+def _round_receipt(
+    intents: List[ActionIntent],
+    results: List[Optional[ActionResult]],
+) -> str:
+    """把本轮动作压成摘要阶段可读的回执（不含读取正文）。"""
+    lines: List[str] = []
+    for intent, result in zip(intents, results):
+        params = dict(getattr(intent, "parameters", None) or {})
+        target = (
+            params.get("path") or params.get("query")
+            or params.get("item_id") or "")
+        if result is None:
+            status = "未执行"
+        elif getattr(result, "success", False):
+            status = "成功"
+        else:
+            status = "失败"
+        line = f"- {getattr(intent, 'action_type', '?')}"
+        if target:
+            line += f" {target}"
+        line += f": {status}"
+        output = getattr(result, "output", None) if result is not None else None
+        if isinstance(output, dict):
+            for key in ("revision", "chars", "exit_code", "ok",
+                        "tool", "duration_ms"):
+                if key in output and output[key] is not None:
+                    line += f" {key}={output[key]}"
+        metadata = getattr(result, "metadata", None) if result is not None else None
+        if isinstance(metadata, dict) and metadata.get("code"):
+            line += f" code={metadata['code']}"
+        error = getattr(result, "error", None) if result is not None else None
+        if error:
+            line += f" error={str(error)[:300]}"
+        lines.append(line)
+    return "\n".join(lines) or "（本轮没有动作）"
 
 
 def _dispatch_all(agent_id: str, intents: List[ActionIntent], *,

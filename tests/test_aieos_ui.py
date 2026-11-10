@@ -588,6 +588,47 @@ def test_rework_reopens_completed_task_with_new_request(monkeypatch):
     assert job.status == "COMPLETED"
 
 
+def test_task_round_log_appends_and_reads(tmp_path):
+    from ui.rounds import TaskRoundLog
+
+    log = TaskRoundLog(tmp_path / "rounds")
+    log.append("task_1", {"round": 1})
+    log.append("task_1", {"round": 2})
+
+    assert log.read("task_1") == [
+        {"round": 1}, {"round": 2}]
+    assert log.read("task_missing") == []
+
+
+def test_controller_round_log_roundtrip():
+    class _Log:
+        def __init__(self):
+            self.items = []
+
+        def append(self, _task_id, payload):
+            self.items.append(payload)
+
+        def read(self, _task_id):
+            return list(self.items)
+
+    log = _Log()
+    runtime = SimpleNamespace(
+        directory=_Directory(["agent_a"]),
+        economy=SimpleNamespace(agent=lambda aid: SimpleNamespace(
+            has_brain=True)),
+        tasks=SimpleNamespace(list_tasks=lambda limit=50: []),
+    )
+    controller = AIEOSController(
+        runtime, front_agent="agent_a", round_log=log)
+    try:
+        controller._record_round("task_1", {"round": 1, "summary": "ok"})
+        rounds = controller._rounds("task_1")
+    finally:
+        controller.close()
+
+    assert rounds == [{"round": 1, "summary": "ok"}]
+
+
 def test_cancel_running_task_marks_job_and_task():
     from front import FrontDecision, FrontIntent
     from work.controller import WorkJob

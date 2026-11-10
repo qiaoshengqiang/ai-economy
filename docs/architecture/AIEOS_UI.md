@@ -88,10 +88,24 @@ Front 看到的开放 Task 状态来自两个事实：Task Core 的状态 + 是�
 Job 正在执行。没有 Job 的开放 Task 标记为 `INTERRUPTED`，
 不会被描述成「正在处理中」。
 
-### Solo 的决策 / 工作与认知控制
+### Solo 的决策 / 工作 / 总结
 
-- 每轮先进入 `decision`，读取 / 工具返回后进入 `work`，
-  最后回到 `decision` 检查是否完成；
+一轮固定为：
+
+```
+decision（决定下一步）
+  ↓ 读取 / 工具返回 → 同轮原始回喂
+work（最多 2 步）
+  ↓
+summary（只产文字，不执行动作）
+  ↓
+下一轮 prompt 注入上一轮完整 summary
+```
+
+- `summary` 是独立 phase，可以使用自己的 thinking / cognitive_budget；
+- summary 输出完整保留，下一轮以「上一轮总结（完整）」注入；
+- 读取 / 工具结果在同一轮直接回喂；写 / 改结果在下一轮
+  `action_feedback` 中确定性回显；
 - Agent 可以在 JSON 顶层设置：
   - `thinking`: `enabled` + `effort`（DeepSeek 支持 `low` / `high` / `max`），
     支持 `decision` / `work` 分相；
@@ -112,7 +126,7 @@ Job 正在执行。没有 Job 的开放 Task 标记为 `INTERRUPTED`，
 | 提交按钮 | 提交给 Front Agent |
 | 输出显示框 | Human / Front / 系统消息 |
 | Task 卡片列表 | task_id · 状态 · 执行 Agent · 参与者 · 迭代 |
-| Task 卡片点击 | 在输出框打印：执行历史 / Workspace 文件 / 公共 WM / LLM 调用汇总 |
+| Task 卡片点击 | 原地展开 / 收起：每轮 decision / work / summary 原文、动作与结果、执行历史、文件、公共 WM、LLM 汇总 |
 | Agent 状态 | `IDLE` / `WORKING` / `STOPPING` · `FRONT` / `WORKER` |
 | 设置按钮 | 修改 Front Agent / 最大并行任务 |
 
@@ -162,7 +176,9 @@ GET  /api/health
 - 绝对路径暂不暴露给 Front（按当前阶段决定）；
 - 任务结果直接来自 DB / runtime，不生成 `result.json`；
 - 每次 UI Job 的可见日志保存到 `runs/ui/jobs/<job_id>.json`（job + messages）；
-- 完整 prompt / response / phase 明细尚未落盘；
+- 每轮 decision / work / summary 明细保存到 `runs/ui/rounds/<task_id>.json`；
+- 每轮 phase 明细（decision / work / summary 原文与动作）已落盘；
+  完整 system prompt / 原始 HTTP response 仍未保存；
 - Team 路径的「运行中重新计划」仍沿用 `work_plan_update`（当前 UI 不触发）；
 - 设置中的最大并行任务数在进程内生效；重启按启动参数。
 

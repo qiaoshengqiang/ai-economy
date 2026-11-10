@@ -358,6 +358,44 @@ class TestRunCognitionPhases:
         assert [i.action_type for i in run.action_intents] == [
             "workspace_read", "workspace_read", "message_send"]
 
+    def test_work_loop_can_end_with_summary(self):
+        work = json.dumps({
+            "decision": "act",
+            "action": {"type": "workspace_read",
+                       "parameters": {"path": "y"}},
+        })
+        a = _Agent(script=[FIRST, work, "本轮总结：读完了 x 和 y。"])
+        run = run_cognition(
+            a, [{"role": "user", "content": "go"}],
+            dispatcher=_ReadDispatcher(),
+            work_loop=True,
+            max_work_steps=1,
+            summary_phase=True)
+
+        assert [g[0] for g in a.generates] == [
+            "decision", "work", "summary"]
+        assert run.summary == "本轮总结：读完了 x 和 y。"
+        assert [s.phase for s in run.segments] == [
+            "decision", "work", "summary"]
+
+    def test_summary_runs_even_without_work_steps(self):
+        write = json.dumps({
+            "decision": "act",
+            "action": {"type": "workspace_write",
+                       "parameters": {"path": "x", "write_mode": "create",
+                                      "content": "hi"}},
+        })
+        a = _Agent(script=[write, "本轮总结：写完了 x。"])
+        run = run_cognition(
+            a, [{"role": "user", "content": "go"}],
+            dispatcher=_ReadDispatcher(),
+            work_loop=True,
+            max_work_steps=2,
+            summary_phase=True)
+
+        assert [g[0] for g in a.generates] == ["decision", "summary"]
+        assert run.summary == "本轮总结：写完了 x。"
+
     def test_work_loop_does_not_run_without_observable_results(self):
         a = _Agent(script=[json.dumps({
             "decision": "act",

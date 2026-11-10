@@ -171,6 +171,10 @@ def _render_last_turn(last: Optional[Dict[str, Any]]) -> str:
         lines.append(
             f"- 反复整文件重写：{detail}；"
             "优先用 workspace_edit 做局部修改。")
+    summary = str(last.get("round_summary") or "")
+    if summary:
+        lines.append(
+            "\n========== 上一轮总结（完整） ==========\n" + summary)
     feedback = last.get("action_feedback")
     if isinstance(feedback, list) and feedback:
         lines.append("- 上一轮动作结果：")

@@ -130,6 +130,7 @@ class AIEOSController:
         solo_only: bool = True,
         settings_path: Optional[Path] = None,
         log_dir: Optional[Path] = None,
+        round_log: Any = None,
     ) -> None:
         self.rt = runtime
         self.front_agent = str(front_agent)
@@ -143,6 +144,7 @@ class AIEOSController:
         self.cognitive_budget = max(1, int(cognitive_budget))
         self.settings_path = Path(settings_path) if settings_path else None
         self.log_dir = Path(log_dir) if log_dir else None
+        self.round_log = round_log
         if self.log_dir is not None:
             self.log_dir.mkdir(parents=True, exist_ok=True)
 
@@ -406,6 +408,8 @@ class AIEOSController:
                     max_turns=self.max_solo_turns,
                     cognitive_budget=self.cognitive_budget,
                     should_stop=lambda: job.cancelled,
+                    round_sink=lambda payload: self._record_round(
+                        task_id, payload),
                 )
             result = runner.run()
             if job.cancelled:
@@ -505,6 +509,8 @@ class AIEOSController:
             max_turns=self.max_solo_turns,
             cognitive_budget=self.cognitive_budget,
             should_stop=lambda: job.cancelled,
+            round_sink=lambda payload: self._record_round(
+                task_id, payload),
         )
         result = runner.run()
         if job.cancelled:
@@ -790,6 +796,8 @@ class AIEOSController:
                 max_turns=self.max_solo_turns,
                 cognitive_budget=self.cognitive_budget,
                 should_stop=lambda: job.cancelled,
+                round_sink=lambda payload: self._record_round(
+                    task.task_id, payload),
             )
         result = (
             runner.reopen_and_run(reason=reason)
@@ -1063,11 +1071,29 @@ class AIEOSController:
             "workspace_files": self._workspace_files(task),
             "public_memory": self._public_memory_text(task),
             "llm": calls,
+            "rounds": self._rounds(task_id),
             "messages": [
                 message for message in self._messages
                 if message.get("task_id") == task_id
             ],
         }
+
+    def _record_round(self, task_id: str, payload: Dict[str, Any]) -> None:
+        if self.round_log is None:
+            return
+        try:
+            self.round_log.append(task_id, payload)
+        except Exception:                                     # noqa: BLE001
+            pass
+
+    def _rounds(self, task_id: str) -> List[Dict[str, Any]]:
+        if self.round_log is None:
+            return []
+        try:
+            data = self.round_log.read(task_id)
+        except Exception:                                     # noqa: BLE001
+            return []
+        return data if isinstance(data, list) else []
 
     def _llm_summary(self, task_id: str) -> Dict[str, Any]:
         try:

@@ -100,7 +100,7 @@ THINKING_EFFORTS = frozenset({
 })
 
 
-THINKING_PHASES = ("intake", "decision", "work")
+THINKING_PHASES = ("intake", "decision", "work", "summary")
 
 
 def _normalize_single_thinking(raw: Any) -> Optional[Dict[str, Any]]:
