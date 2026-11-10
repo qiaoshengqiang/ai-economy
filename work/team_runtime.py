@@ -1017,6 +1017,7 @@ class TeamWorkRuntime:
                 items=items,
                 item_state=self._item_snapshot_for(agent_id),
                 runtime=self.rt,
+                available_actions=dispatcher.action_types,
             )
             run = agent.act(
                 messages=prompt,
@@ -1139,6 +1140,7 @@ class TeamWorkRuntime:
                 task_description=self.task.description,
                 item_state=self._item_snapshot(),
                 runtime=self.rt,
+                available_actions=dispatcher.action_types,
             )
             run = agent.act(
                 messages=prompt,
@@ -1301,6 +1303,7 @@ Task: {self.task.task_id}
                 qa_feedback=qa_feedback,
                 runtime=self.rt,
                 include_plan_update=include_plan_update,
+                available_actions=dispatcher.action_types,
             )
             run = agent.act(
                 messages=prompt,

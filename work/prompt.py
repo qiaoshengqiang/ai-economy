@@ -33,7 +33,7 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, Iterable, List, Optional
 
-from work.capabilities import describe_actions
+from work.capabilities import describe_action_params, describe_actions
 from work.roles import WorkContext, WorkRole
 
 
@@ -55,45 +55,6 @@ WORK_SYSTEM_PROMPT = (
 #:
 #: 🔒 之前只列动作名，模型会猜 `target` / `pattern` / `command`，
 #:    导致大量“动作被拒绝 → 重来”的浪费。这里把字段名写死。
-ACTION_SCHEMA = """
-- workspace_read:
-  {"path":"<relative path>", "offset":1, "limit":12000}
-  Path field is `path` (never `target`).
-- workspace_search:
-  {"query":"<text>", "path":"", "glob":"", "max_results":20}
-  Query field is `query`; `glob` is the file pattern.
-- workspace_write:
-  {"path":"<relative path>", "content":"<full content>",
-   "write_mode":"create|replace|append"}
-  write_mode defaults to create. Use create for new files, replace for
-  existing files, append for additions. Large files may be written in one go.
-- workspace_edit:
-  {"path":"<relative path>", "old_string":"<unique old fragment>",
-   "new_string":"<new fragment>", "replace_all":false}
-- run_tool:
-  {"tool":"python|pytest|node|playwright", "args":[...],
-   "source":"task|private",
-   "path":"<optional: only copy this path; omit = whole Workspace>",
-   "timeout_seconds":60}
-  There is no `command` field. Each arg is <= 2000 chars; write long
-  scripts to a file first, then run the file.
-- tool_help:
-  {"tool":"python|pytest|node|playwright"}
-  Use this before guessing a tool's usage, args, limits, or test-file
-  naming. Omit `tool` to list the catalog. Docs are the single source.
-- private_working_memory_read / private_working_memory_update:
-  Same shape as working memory, but scoped to this Agent + Task.
-- short_term_memory_read / short_term_memory_update / short_term_memory_reinforce
-- long_term_memory_search / long_term_memory_read / long_term_memory_mark_used
-- private_write / private_read / private_list / private_delete:
-  Private space of the current Agent only.
-- resource_create / resource_handoff / resource_release:
-  {"path":"<relative path>", "to":"<agent_id>", "reason":"..."}
-- draft_write / draft_append / draft_read / draft_list / draft_delete
-- workspace_promote_drafts:
-  {"items":[{"draft_id":"...", "path":"...",
-             "write_mode":"create|replace|append"}]}
-"""
 
 
 def _render_workspace(runtime: Any, workspace_id: str,
@@ -267,7 +228,6 @@ def build_cognition_prompt(
     tool_docs: Optional[Dict[str, str]] = None,
     available_actions: Iterable[str] = (),
     next_actions: Iterable[str] = (),
-    action_schema: str = "",
 ) -> str:
     """Task cognition: environment facts + a report from the Agent."""
     workspace = _render_workspace(
@@ -302,11 +262,7 @@ workspace_id: {context.workspace_id}
 {describe_actions(next_actions)}
 
 ========== WORK ACTION PARAMETERS ==========
-{action_schema or "(none)"}
-- work_complete:
-  {{"result_ref":"<logical name, not a path>", "summary":"..."}}
-
-`tool_help` covers the public tool library only; action parameters are above.
+{describe_action_params(next_actions)}
 
 ========== AVAILABLE TOOLS ==========
 {_render_tool_catalog(tool_catalog)}
@@ -450,9 +406,7 @@ Put these at the TOP LEVEL of the JSON (not inside action.parameters):
 {describe_actions(available_actions)}
 
 ========== ACTIONS AND PARAMETERS ==========
-{ACTION_SCHEMA}
-- work_complete:
-  {{"result_ref":"<logical name, not a path>", "summary":"..."}}
+{describe_action_params(available_actions)}
 
 This is the Work layer: no inter-Agent messages and no identity/economy.
 Tool docs are the authoritative source: `tool_help`.
@@ -578,6 +532,7 @@ def build_team_worker_prompt(
     item_state: Dict[str, Any],
     runtime: Any = None,
     last_turn: Optional[Dict[str, Any]] = None,
+    available_actions: Iterable[str] = (),
 ) -> str:
     """成员 prompt：只看到自己的 item，不看到其他成员的完整上下文。"""
     workspace = context.workspace_facts or _render_workspace(
@@ -604,7 +559,7 @@ def build_team_worker_prompt(
 {workspace}
 {_render_last_turn(last_turn)}
 ========== 可用动作与参数 ==========
-{ACTION_SCHEMA}
+{describe_action_params(available_actions)}
 - work_item_done:
   {{"item_id":"...", "summary":"...", "paths":["..."]}}
   （不要用 note 字段；说明写 summary）
@@ -633,6 +588,7 @@ def build_qa_prompt(
     item_state: Dict[str, Any],
     runtime: Any = None,
     last_turn: Optional[Dict[str, Any]] = None,
+    available_actions: Iterable[str] = (),
 ) -> str:
     workspace = context.workspace_facts or _render_workspace(
         runtime, context.workspace_id, context.agent_id)
@@ -655,7 +611,7 @@ def build_qa_prompt(
 {workspace}
 {_render_last_turn(last_turn)}
 ========== 可用动作与参数 ==========
-{ACTION_SCHEMA}
+{describe_action_params(available_actions)}
 - work_qa_verdict:
   {{"passed":true|false, "feedback":"..."}}
 
@@ -684,6 +640,7 @@ def build_lead_integration_prompt(
     runtime: Any = None,
     last_turn: Optional[Dict[str, Any]] = None,
     include_plan_update: bool = False,
+    available_actions: Iterable[str] = (),
 ) -> str:
     workspace = context.workspace_facts or _render_workspace(
         runtime, context.workspace_id, context.agent_id)
@@ -713,7 +670,7 @@ def build_lead_integration_prompt(
 4. 满足 DoD 后调用 work_complete。
 
 ========== 可用动作与参数 ==========
-{ACTION_SCHEMA}
+{describe_action_params(available_actions)}
 - work_complete:
   {{"result_ref":"<逻辑名，不是路径>", "summary":"..."}}
 - work_plan_update（重新计划时）:

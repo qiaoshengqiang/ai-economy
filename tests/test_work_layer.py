@@ -35,8 +35,7 @@ from work.availability import AgentAvailability
 from work.drafts import TaskDraftStore
 from work.lifecycle import WorkLifecycle, WorkLifecycleError
 from work.prompt import (
-    ACTION_SCHEMA, WORK_SYSTEM_PROMPT, build_cognition_prompt,
-    build_work_prompt,
+    WORK_SYSTEM_PROMPT, build_cognition_prompt, build_work_prompt,
 )
 from work.roles import WorkContext, WorkRole
 from work.runtime import SoloWorkRuntime
@@ -311,6 +310,23 @@ class TestWorkActions:
         missing = registered - set(ACTION_SUMMARIES)
         assert not missing, f"缺少能力摘要：{sorted(missing)}"
 
+    def test_every_registered_action_has_parameter_schema(self):
+        from work.capabilities import ACTION_PARAMS
+
+        registered = set(_dispatcher().action_types)
+        missing = registered - set(ACTION_PARAMS)
+        assert not missing, f"缺少参数说明：{sorted(missing)}"
+
+    def test_action_params_render_only_requested_actions(self):
+        from work.capabilities import describe_action_params
+
+        solo = describe_action_params(
+            {"workspace_write", "run_tool", "work_complete"})
+        assert "workspace_write" in solo
+        assert "work_complete" in solo
+        assert "work_item_done" not in solo
+        assert "public_working_memory_update" not in solo
+
     def test_solo_dispatcher_excludes_public_working_memory(self):
         registered = set(_dispatcher(
             include_public_memory=False).action_types)
@@ -358,8 +374,8 @@ class TestWorkPrompt:
             }],
             max_steps=2,
             available_actions={"workspace_read", "tool_help"},
-            next_actions={"workspace_write", "workspace_edit", "run_tool"},
-            action_schema=ACTION_SCHEMA,
+            next_actions={"workspace_write", "workspace_edit", "run_tool",
+                          "tool_help"},
         )
 
         assert "TASK COGNITION" in prompt
@@ -371,7 +387,7 @@ class TestWorkPrompt:
         assert "workspace_write" in prompt
         assert "WORK ACTION PARAMETERS" in prompt
         assert '"write_mode"' in prompt
-        assert "tool_help` covers the public tool library only" in prompt
+        assert "Public tool library only" in prompt
         assert "TOOL DOCS" in prompt
         assert "## 3. Technical approach" not in prompt
         assert '"actions":[{"type":"tool_help"' in prompt
@@ -453,7 +469,9 @@ class TestWorkPrompt:
         context = WorkContext(
             task_id="T-1", agent_id="agent_a", role=WorkRole.SOLO)
         prompt = build_work_prompt(
-            context, task_description="d", runtime=None)
+            context, task_description="d", runtime=None,
+            available_actions=_dispatcher(
+                include_public_memory=False).action_types)
         for action in ("workspace_read", "workspace_edit", "run_tool",
                        "tool_help", "draft_write",
                        "private_working_memory_update"):
