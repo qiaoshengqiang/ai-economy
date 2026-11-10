@@ -197,8 +197,11 @@ def test_front_prompt_is_human_facing_and_does_not_invent_constraints():
     assert "reply_style 只描述" in prompt
     assert "不要写「按现有 Brief 交付」" in prompt
     assert "最近对话" in prompt
-    assert "再做一个" in prompt
-    assert "即使内容与某个已完成 Task 相同" in prompt
+    assert "你是 Human 的入口" in prompt
+    assert "Task 列表是已知事实，不是匹配表" in prompt
+    assert "不要按关键词做机械映射" in prompt
+    assert "拿不准就 clarify" in prompt
+    assert "动作词" not in prompt
     assert "INTERRUPTED" in prompt
     assert "不要回答“正在处理中”" in prompt
     assert "停止必须走这个 intent" in prompt
