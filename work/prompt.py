@@ -47,8 +47,7 @@ from work.roles import WorkContext, WorkRole
 WORK_SYSTEM_PROMPT = (
     "You are a work agent executing one Task. "
     "The Task and its Definition of Done define what to deliver. "
-    "The action schema defines how actions are expressed. "
-    "Keep internal reasoning in English."
+    "The action schema defines how actions are expressed."
 )
 
 
@@ -282,8 +281,6 @@ This phase is read-only. The Work phase will follow it.
 Produce a cognition report describing what you understand and how you
 intend to proceed. The report is injected into every later decision.
 
-Use English for this report and for all internal reasoning.
-
 ========== HUMAN TASK TEXT ==========
 {task_description}
 
@@ -338,7 +335,7 @@ def build_work_prompt(
     tool_docs: Optional[Dict[str, str]] = None,
     available_actions: Iterable[str] = (),
 ) -> str:
-    """Build one Work turn prompt. Internal reasoning should be English."""
+    """Build one Work turn prompt."""
     role = context.role
     if role == WorkRole.SOLO:
         role_text = (
@@ -454,7 +451,6 @@ Tool docs are the authoritative source: `tool_help`.
 `work_complete` records your claim; the delivered result is what the
 Workspace contains.
 
-Write internal reasoning and round summaries in English.
 Write the final `work_complete.summary` in the Human's language (the task
 text language), because Front shows it to the Human.
 
