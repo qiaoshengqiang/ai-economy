@@ -407,3 +407,17 @@ def test_inspect_without_capability_falls_back_to_clarify():
 
     assert decision.intent == FrontIntent.CLARIFY
     assert "inspect_unavailable" in decision.reason
+
+
+def test_prompt_separates_task_text_from_routing_metadata():
+    think = _think_returning({"intent": "direct_reply", "reply": "好"})
+    runtime = FrontAgentRuntime("front", think)
+    runtime.decide("让 agent_e 写一个笑话", agents=[
+        {"agent_id": "agent_e", "status": "IDLE",
+         "role": "WORKER", "can_work": True},
+    ])
+
+    prompt = think.prompt
+    assert "task_text is the work content" in prompt
+    assert "preferred_agent is routing metadata" in prompt
+    assert "use it verbatim" not in prompt

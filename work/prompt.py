@@ -267,6 +267,7 @@ def build_cognition_prompt(
     tool_docs: Optional[Dict[str, str]] = None,
     available_actions: Iterable[str] = (),
     next_actions: Iterable[str] = (),
+    action_schema: str = "",
 ) -> str:
     """Task cognition: environment facts + a report from the Agent."""
     workspace = _render_workspace(
@@ -299,6 +300,13 @@ workspace_id: {context.workspace_id}
 
 ========== ACTIONS IN THE WORK PHASE (NOT EXECUTABLE YET) ==========
 {describe_actions(next_actions)}
+
+========== WORK ACTION PARAMETERS ==========
+{action_schema or "(none)"}
+- work_complete:
+  {{"result_ref":"<logical name, not a path>", "summary":"..."}}
+
+`tool_help` covers the public tool library only; action parameters are above.
 
 ========== AVAILABLE TOOLS ==========
 {_render_tool_catalog(tool_catalog)}

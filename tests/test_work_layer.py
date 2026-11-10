@@ -35,7 +35,8 @@ from work.availability import AgentAvailability
 from work.drafts import TaskDraftStore
 from work.lifecycle import WorkLifecycle, WorkLifecycleError
 from work.prompt import (
-    WORK_SYSTEM_PROMPT, build_cognition_prompt, build_work_prompt,
+    ACTION_SCHEMA, WORK_SYSTEM_PROMPT, build_cognition_prompt,
+    build_work_prompt,
 )
 from work.roles import WorkContext, WorkRole
 from work.runtime import SoloWorkRuntime
@@ -358,6 +359,7 @@ class TestWorkPrompt:
             max_steps=2,
             available_actions={"workspace_read", "tool_help"},
             next_actions={"workspace_write", "workspace_edit", "run_tool"},
+            action_schema=ACTION_SCHEMA,
         )
 
         assert "TASK COGNITION" in prompt
@@ -367,6 +369,9 @@ class TestWorkPrompt:
         assert "READ-ONLY" in prompt
         assert "ACTIONS IN THE WORK PHASE" in prompt
         assert "workspace_write" in prompt
+        assert "WORK ACTION PARAMETERS" in prompt
+        assert '"write_mode"' in prompt
+        assert "tool_help` covers the public tool library only" in prompt
         assert "TOOL DOCS" in prompt
         assert "## 3. Technical approach" not in prompt
         assert '"actions":[{"type":"tool_help"' in prompt

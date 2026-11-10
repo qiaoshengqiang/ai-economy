@@ -299,9 +299,10 @@ Available intents:
 
 2. handoff
    This is a new work request. You decide how to hand it off:
-   - if the original text is already clear, use it verbatim as task_text;
-   - if you judge a compression/restatement is needed, write a task_text that
-     preserves the original intent.
+   - task_text is the work content the Work Agent sees. It may be the Human's
+     text or a faithful restatement; human_text is always preserved separately.
+   - preferred_agent is routing metadata, not part of task_text. The Work Agent
+     does not see preferred_agent.
    An optional brief may carry goal / deliverables / constraints / acceptance.
 
    {{"intent":"handoff",
@@ -316,6 +317,7 @@ Available intents:
    Critical: preserve what the Human wants to accomplish. Do not add, remove,
    or weaken key requirements. If unsure, keep the original text or clarify.
    reply_style only describes how to reply to the Human, not the task.
+   task_text contains the work; preferred_agent contains routing.
 
 3. rework
    The Human wants changes to a COMPLETED Task. Reference its task_id.

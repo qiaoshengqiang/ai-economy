@@ -37,7 +37,8 @@ from work.drafts import TaskDraftStore
 from work.images import make_image_resolver
 from work.lifecycle import WorkLifecycle, WorkLifecycleError
 from work.prompt import (
-    WORK_SYSTEM_PROMPT, build_cognition_prompt, build_work_prompt,
+    ACTION_SCHEMA, WORK_SYSTEM_PROMPT, build_cognition_prompt,
+    build_work_prompt,
 )
 from work.roles import WorkContext, WorkResult, WorkRole
 
@@ -248,6 +249,7 @@ class SoloWorkRuntime:
                     available_actions=dispatcher.action_types,
                     next_actions=getattr(
                         self._work_dispatcher, "action_types", ()),
+                    action_schema=ACTION_SCHEMA,
                 ),
             }]
             seen_reads: set = set()
