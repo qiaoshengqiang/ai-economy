@@ -32,6 +32,17 @@
     return `${minutes}m ${seconds}s`;
   }
 
+  function formatThinking(thinking) {
+    // null = 新日志里明确的「没有设置，用 provider 默认」；
+    // 旧日志没有这个键，调用方不会调用本函数。
+    if (!thinking || typeof thinking !== "object") return "thinking default";
+    if (thinking.enabled === false) return "thinking off";
+    if (thinking.enabled === true) {
+      return `thinking ${thinking.effort || "on"}`;
+    }
+    return "thinking default";
+  }
+
   function el(tag, className, text) {
     const node = document.createElement(tag);
     if (className) node.className = className;
@@ -98,6 +109,9 @@
       if (jobDuration) metaItem(grid, "job 耗时", jobDuration);
       const frontDuration = formatDuration(job.front_ms);
       if (frontDuration) metaItem(grid, "Front 决策", frontDuration);
+      if (job.front_thinking && typeof job.front_thinking === "object") {
+        metaItem(grid, "Front 思考", formatThinking(job.front_thinking));
+      }
     }
     els.meta.appendChild(grid);
   }
@@ -155,6 +169,9 @@
     const phase = el("div", `phase ${seg.phase || ""}`.trim());
     const head = el("div", "phase-head");
     head.appendChild(el("span", "phase-name", seg.phase || "phase"));
+    if (seg.thinking !== undefined) {
+      head.appendChild(badge(formatThinking(seg.thinking)));
+    }
     if (seg.tokens != null) head.appendChild(badge(`${seg.tokens} tokens`));
     const latency = formatDuration(seg.latency_ms);
     if (latency) head.appendChild(badge(latency));

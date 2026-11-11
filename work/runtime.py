@@ -416,6 +416,7 @@ class SoloWorkRuntime:
                         ],
                         "tokens": getattr(seg, "tokens", None),
                         "latency_ms": getattr(seg, "latency_ms", None),
+                        "thinking": getattr(seg, "thinking", None),
                         "finish_reason": getattr(seg, "finish_reason", None),
                         "truncated": bool(
                             getattr(seg, "is_truncated", False)),
@@ -635,6 +636,7 @@ class SoloWorkRuntime:
                         ],
                         "tokens": getattr(seg, "tokens", None),
                         "latency_ms": getattr(seg, "latency_ms", None),
+                        "thinking": getattr(seg, "thinking", None),
                         "finish_reason": getattr(
                             seg, "finish_reason", None),
                         "truncated": bool(

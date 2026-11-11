@@ -142,9 +142,9 @@ Workspace 事实重新 read / search。
 |---|---|
 | 输入框 | 输入 Human Demand |
 | 提交按钮 | 提交给 Front Agent |
-| 输出显示框 | Human / Front / 系统消息；Front 回复下方显示本次 **耗时**（Front 决策耗时或整次 Job 耗时） |
+| 输出显示框 | Human / Front / 系统消息；Front 回复下方显示本次 **thinking 强度 + 耗时**（Front 决策耗时或整次 Job 耗时） |
 | Task 卡片列表 | task_id · 状态 · 执行 Agent · 参与者 · 迭代 · **Front → Work 提示词前 3 行**（超出省略） |
-| Task 卡片点击 | 新开标签页 `/task.html?task_id=...`：任务认知 + 每轮 decision / work / summary 的 thinking、输出、动作与结果；每个 phase 显示 **LLM 调用耗时**，round 标题显示本轮总耗时，动作显示**工具执行耗时**；外加执行历史、文件、公共 WM、LLM 汇总（calls / tokens / 总耗时 / 平均耗时 / AIC） |
+| Task 卡片点击 | **同一标签页**打开 `/task.html?task_id=...`：任务认知 + 每轮 decision / work / summary 的 thinking、输出、动作与结果；每个 phase 显示 **thinking 强度 + LLM 调用耗时**，round 标题显示本轮总耗时，动作显示**工具执行耗时**；外加执行历史、文件、公共 WM、LLM 汇总（calls / tokens / 总耗时 / 平均耗时 / AIC） |
 | Agent 状态 | `IDLE` / `WORKING` / `STOPPING` · `FRONT` / `WORKER` |
 | 设置按钮 | 修改 Front Agent / 最大并行任务 |
 

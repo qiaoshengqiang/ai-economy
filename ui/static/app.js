@@ -42,6 +42,15 @@
     return `${minutes}m ${seconds}s`;
   }
 
+  function formatThinking(thinking) {
+    if (!thinking || typeof thinking !== "object") return "";
+    if (thinking.enabled === false) return "thinking off";
+    if (thinking.enabled === true) {
+      return `thinking ${thinking.effort || "on"}`;
+    }
+    return "thinking default";
+  }
+
   function showToast(text, isError = false) {
     els.toast.textContent = String(text || "");
     els.toast.classList.toggle("error", !!isError);
@@ -141,11 +150,15 @@
       actions.appendChild(copy);
       item.appendChild(meta);
       item.appendChild(text);
+      const footerParts = [];
+      const thinking = formatThinking(message.thinking);
+      if (thinking) footerParts.push(thinking);
       const duration = formatDuration(message.duration_ms);
-      if (duration) {
+      if (duration) footerParts.push(`耗时 ${duration}`);
+      if (footerParts.length) {
         const footer = document.createElement("div");
         footer.className = "msg-duration";
-        footer.textContent = `耗时 ${duration}`;
+        footer.textContent = footerParts.join(" · ");
         item.appendChild(footer);
       }
       item.appendChild(actions);
@@ -201,10 +214,9 @@
       card.className = `task-card clickable ${task.status || ""}`;
       card.title = "在新标签页打开执行明细";
       card.addEventListener("click", () => {
-        window.open(
+        // 同一标签页打开：避免多个 AIEOS 页面并存，返回按钮也回到同一个入口。
+        window.location.assign(
           `/task.html?task_id=${encodeURIComponent(task.task_id)}`,
-          "_blank",
-          "noopener",
         );
       });
       const top = document.createElement("div");

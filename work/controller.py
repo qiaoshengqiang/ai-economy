@@ -114,6 +114,8 @@ class WorkJob:
     turns: int = 0
     #: Front 决策这次 Job 实际花的时间（毫秒）。
     front_ms: int = 0
+    #: Front 决策这次调用实际请求的思考强度。
+    front_thinking: Optional[Dict[str, Any]] = None
     cancelled: bool = False
     created_at: str = ""
     updated_at: str = ""
@@ -132,6 +134,9 @@ class WorkJob:
             "tokens": self.tokens,
             "turns": self.turns,
             "front_ms": int(self.front_ms or 0),
+            "front_thinking": (
+                dict(self.front_thinking)
+                if isinstance(self.front_thinking, dict) else None),
             "duration_ms": _duration_ms(
                 self.created_at,
                 self.updated_at
@@ -346,13 +351,16 @@ class AIEOSController:
                 )
                 job.front_ms = max(0, int(
                     (time.perf_counter() - front_started) * 1000))
+                job.front_thinking = self._thinking_for(
+                    self.front_agent, "decision")
             job.front_intent = decision.intent
             self._set_job(job, job.status)
 
             if decision.intent == FrontIntent.DIRECT_REPLY:
                 self._message(
                     "front", decision.reply, job_id=job.job_id,
-                    duration_ms=job.front_ms)
+                    duration_ms=job.front_ms,
+                    thinking=job.front_thinking)
                 job.status = JobStatus.DIRECT_REPLY
                 job.summary = decision.reply
                 self._touch(job)
@@ -360,7 +368,8 @@ class AIEOSController:
             if decision.intent == FrontIntent.CLARIFY:
                 self._message(
                     "front", decision.question, job_id=job.job_id,
-                    duration_ms=job.front_ms)
+                    duration_ms=job.front_ms,
+                    thinking=job.front_thinking)
                 job.status = JobStatus.CLARIFY
                 job.summary = decision.question
                 self._touch(job)
@@ -909,7 +918,8 @@ class AIEOSController:
                 self._message(
                     "front", decision.reply,
                     job_id=job.job_id, task_id=task.task_id,
-                    duration_ms=self._job_duration_ms(job))
+                    duration_ms=self._job_duration_ms(job),
+                    thinking=job.front_thinking)
             # Reopen 不覆盖旧历史；把本轮要求追加到 Task 描述，
             # 让 Leader / 成员都能看到 Human 这次改了什么。
             task.description = (
@@ -1001,7 +1011,8 @@ class AIEOSController:
     ) -> None:
         self._message(
             "front", text, job_id=job.job_id, task_id=task_id,
-            duration_ms=self._job_duration_ms(job))
+            duration_ms=self._job_duration_ms(job),
+            thinking=job.front_thinking)
         job.status = JobStatus.DIRECT_REPLY
         job.summary = text
         self._touch(job)
@@ -1535,6 +1546,7 @@ class AIEOSController:
         job_id: str = "",
         task_id: str = "",
         duration_ms: Optional[int] = None,
+        thinking: Optional[Dict[str, Any]] = None,
     ) -> None:
         with self._lock:
             self._messages.append({
@@ -1545,6 +1557,8 @@ class AIEOSController:
                 "duration_ms": (
                     max(0, int(duration_ms))
                     if duration_ms is not None else None),
+                "thinking": (
+                    dict(thinking) if isinstance(thinking, dict) else None),
                 "at": _now(),
             })
 
@@ -1627,6 +1641,26 @@ class AIEOSController:
             setter(True, "low", phase="decision")
         except Exception:                                     # noqa: BLE001
             return
+
+    def _thinking_for(
+        self, aid: str, phase: str = "decision",
+    ) -> Optional[Dict[str, Any]]:
+        """读取某个 Agent 某一相当前请求的思考强度（观测用）。"""
+        agent = self._agent(aid)
+        brain = getattr(agent, "brain", None)
+        getter = getattr(brain, "thinking_for", None)
+        if not callable(getter):
+            return {"enabled": None, "effort": None}
+        try:
+            policy = getter(phase)
+        except Exception:                                     # noqa: BLE001
+            policy = None
+        if isinstance(policy, dict):
+            return {
+                "enabled": policy.get("enabled"),
+                "effort": policy.get("effort"),
+            }
+        return {"enabled": None, "effort": None}
 
     def _agent(self, aid: str) -> Any:
         try:

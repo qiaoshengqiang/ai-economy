@@ -1138,14 +1138,18 @@ def test_message_duration_is_serialized():
     controller = AIEOSController(runtime, front_agent="agent_a")
     try:
         controller._message(
-            "front", "耗时回复", job_id="job_1", duration_ms=1234)
+            "front", "耗时回复", job_id="job_1", duration_ms=1234,
+            thinking={"enabled": True, "effort": "high"})
         controller._message("human", "没有耗时", job_id="job_1")
         messages = controller.state()["messages"]
     finally:
         controller.close()
 
     assert messages[0]["duration_ms"] == 1234
+    assert messages[0]["thinking"] == {
+        "enabled": True, "effort": "high"}
     assert messages[1]["duration_ms"] is None
+    assert messages[1]["thinking"] is None
 
 
 def test_job_duration_and_front_ms_are_exposed():
@@ -1198,7 +1202,10 @@ def test_chat_js_renders_message_duration():
     js = (Path(__file__).resolve().parent.parent
           / "ui" / "static" / "app.js").read_text(encoding="utf-8")
     assert "message.duration_ms" in js
+    assert "message.thinking" in js
     assert "msg-duration" in js
+    assert "window.location.assign" in js
+    assert "window.open(" not in js
 
 
 def test_task_detail_js_renders_call_latency():
@@ -1207,6 +1214,7 @@ def test_task_detail_js_renders_call_latency():
     js = (Path(__file__).resolve().parent.parent
           / "ui" / "static" / "task.js").read_text(encoding="utf-8")
     assert "seg.latency_ms" in js
+    assert "seg.thinking" in js
     assert "round.latency_ms" in js
     assert "result.output.duration_ms" in js
     assert "avg_latency_ms" in js

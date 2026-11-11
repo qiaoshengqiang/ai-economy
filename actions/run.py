@@ -448,6 +448,21 @@ def _run_one_segment(agent: Any, agent_id: str, messages: Any,
     """
     call_kwargs = dict(generate_kwargs)
     call_kwargs.pop("phase", None)
+    #: 调用时的 thinking 策略快照（不是事后读 Brain 的当前值）。
+    #: None 统一表示「没有设置」，由 provider 使用默认行为。
+    call_thinking: Optional[dict] = {"enabled": None, "effort": None}
+    brain = getattr(agent, "brain", None)
+    thinking_for = getattr(brain, "thinking_for", None)
+    if callable(thinking_for):
+        try:
+            policy = thinking_for(phase)
+        except Exception:                                  # noqa: BLE001
+            policy = None
+        if isinstance(policy, dict):
+            call_thinking = {
+                "enabled": policy.get("enabled"),
+                "effort": policy.get("effort"),
+            }
     response = agent.generate(messages=messages, phase=phase, **call_kwargs)
     content = getattr(response, "content", None)
     total_tokens = getattr(response, "total_tokens", None)
@@ -649,6 +664,7 @@ def _run_one_segment(agent: Any, agent_id: str, messages: Any,
         #    修复调用发生时，这里记**两次调用之和**。
         tokens=total_tokens,
         latency_ms=total_latency_ms,
+        thinking=call_thinking,
         repair_attempted=repair_attempted,
         repair_succeeded=repair_succeeded,
         repair_truncated=repair_truncated,

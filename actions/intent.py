@@ -302,6 +302,14 @@ class CognitiveSegment:
     #:    不影响调度或预算。
     latency_ms: float = 0.0
 
+    #: 这一段实际请求的思考强度：
+    #:   {"enabled": true, "effort": "high"} / {"enabled": false} /
+    #:   {"enabled": None} = 没有设置，使用 provider 默认行为。
+    #:
+    #: 🔒 这是**调用时**的策略快照；Agent 在本段之后修改策略，
+    #:    不会反向改写这里。
+    thinking: Optional[Dict[str, Any]] = None
+
     #: 这一段是否因为信封解析失败而**重试过一次**（修复调用）。
     repair_attempted: bool = False
     #: 修复调用是否成功解析出可用动作。
@@ -344,6 +352,7 @@ class CognitiveSegment:
             "cognitive_status": self.cognitive_status,
             "finish_reason": self.finish_reason,
             "latency_ms": float(self.latency_ms or 0.0),
+            "thinking": dict(self.thinking) if self.thinking else None,
             "is_truncated": self.is_truncated,
             "repair_attempted": self.repair_attempted,
             "repair_succeeded": self.repair_succeeded,

@@ -423,11 +423,17 @@ class TestRealAgentHasAct:
         assert "def act" not in src, "act() 被误插进了 generate() 内部"
 
 
-def test_segment_records_llm_latency():
+def test_segment_records_llm_latency_and_thinking():
     from types import SimpleNamespace
+
+    class _Brain:
+        def thinking_for(self, phase):
+            assert phase == "decision"
+            return {"enabled": True, "effort": "high"}
 
     class _Agent:
         agent_id = "agent_a"
+        brain = _Brain()
 
         def generate(self, messages=None, **kwargs):
             return SimpleNamespace(
@@ -444,4 +450,7 @@ def test_segment_records_llm_latency():
     segment = run.segments[0]
 
     assert segment.latency_ms == 123.4
+    assert segment.thinking == {"enabled": True, "effort": "high"}
     assert segment.to_dict()["latency_ms"] == 123.4
+    assert segment.to_dict()["thinking"] == {
+        "enabled": True, "effort": "high"}
