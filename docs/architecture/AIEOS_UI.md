@@ -110,7 +110,7 @@ cognition（thinking=max）
         ↓
 decision（决定下一步）
   ↓ 读取 / 工具返回 → 同轮原始回喂
-work（最多 2 步）
+work（最多 4 步）
   ↓
 summary（只产文字，不执行动作）
   ↓
@@ -120,16 +120,16 @@ summary（只产文字，不执行动作）
 任务认知是**启动时快照**；执行中环境可能变化，Agent 仍需按当前
 Workspace 事实重新 read / search。
 
-- `summary` 是独立 phase，可以使用自己的 thinking / cognitive_budget；
+- `summary` 是独立 phase，可以使用自己的 thinking；
 - summary 输出完整保留，下一轮以「上一轮总结（完整）」注入；
 - 读取 / 工具结果在同一轮直接回喂；写 / 改结果在下一轮
   `action_feedback` 中确定性回显；
 - Agent 可以在 JSON 顶层设置：
   - `thinking`: `enabled` + `effort`（DeepSeek 支持 `low` / `high` / `max`），
     支持 `decision` / `work` 分相；
-  - `cognitive_budget`: `max_tokens`，支持分相 map；
-- `cognitive_budget` 硬上限 **65,536**，实际值取
-  `min(偏好, 65536, Provider 上限)`；
+- `cognitive_budget` **不由 Agent 设置**：Work 每次调用使用运行时
+  `--cognitive-budget`（UI 默认 **65,536**）作为实际输出预算；
+  prompt 只把 effective budget 作为事实展示，不提供调参说明；
 - Playwright 产生的截图通过 `image_resolver` 以 `image_url`
   回喂给 Solo Agent；
 - Solo 默认最多 **24** 个外层 turn。
@@ -142,9 +142,9 @@ Workspace 事实重新 read / search。
 |---|---|
 | 输入框 | 输入 Human Demand |
 | 提交按钮 | 提交给 Front Agent |
-| 输出显示框 | Human / Front / 系统消息 |
+| 输出显示框 | Human / Front / 系统消息；Front 回复下方显示本次 **耗时**（Front 决策耗时或整次 Job 耗时） |
 | Task 卡片列表 | task_id · 状态 · 执行 Agent · 参与者 · 迭代 · **Front → Work 提示词前 3 行**（超出省略） |
-| Task 卡片点击 | 新开标签页 `/task.html?task_id=...`：任务认知 + 每轮 decision / work / summary 的 thinking、输出、动作与结果，外加执行历史、文件、公共 WM、LLM 汇总 |
+| Task 卡片点击 | 新开标签页 `/task.html?task_id=...`：任务认知 + 每轮 decision / work / summary 的 thinking、输出、动作与结果；每个 phase 显示 **LLM 调用耗时**，round 标题显示本轮总耗时，动作显示**工具执行耗时**；外加执行历史、文件、公共 WM、LLM 汇总（calls / tokens / 总耗时 / 平均耗时 / AIC） |
 | Agent 状态 | `IDLE` / `WORKING` / `STOPPING` · `FRONT` / `WORKER` |
 | 设置按钮 | 修改 Front Agent / 最大并行任务 |
 
