@@ -160,6 +160,12 @@ button { cursor: pointer; }
   color: var(--muted);
   margin-bottom: 4px;
 }
+.msg-duration {
+  margin-top: 7px;
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: .02em;
+}
 .msg.human {
   align-self: flex-end;
   background: linear-gradient(135deg, rgba(94, 224, 255, .18), rgba(94, 224, 255, .08));

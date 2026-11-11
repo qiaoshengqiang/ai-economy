@@ -421,3 +421,27 @@ class TestRealAgentHasAct:
         src = inspect.getsource(BaseAgent.generate)
         assert src.rstrip().endswith("return response")
         assert "def act" not in src, "act() 被误插进了 generate() 内部"
+
+
+def test_segment_records_llm_latency():
+    from types import SimpleNamespace
+
+    class _Agent:
+        agent_id = "agent_a"
+
+        def generate(self, messages=None, **kwargs):
+            return SimpleNamespace(
+                content="done",
+                reasoning="",
+                total_tokens=1,
+                finish_reason="stop",
+                cognitive_status="VALID_CONTENT",
+                output_status="VALID_CONTENT",
+                latency_ms=123.4,
+            )
+
+    run = run_cognition(_Agent(), "hi")
+    segment = run.segments[0]
+
+    assert segment.latency_ms == 123.4
+    assert segment.to_dict()["latency_ms"] == 123.4

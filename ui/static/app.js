@@ -28,6 +28,20 @@
   let submitting = false;
   let toastTimer = 0;
 
+  // 与 task.js 保持同一套显示规则：<1s 用 ms，<60s 用秒，再长用分秒。
+  function formatDuration(ms) {
+    const value = Number(ms);
+    if (!Number.isFinite(value) || value <= 0) return "";
+    if (value < 1000) return `${Math.round(value)}ms`;
+    if (value < 60000) {
+      const seconds = value / 1000;
+      return `${seconds < 10 ? seconds.toFixed(1) : Math.round(seconds)}s`;
+    }
+    const minutes = Math.floor(value / 60000);
+    const seconds = Math.round((value % 60000) / 1000);
+    return `${minutes}m ${seconds}s`;
+  }
+
   function showToast(text, isError = false) {
     els.toast.textContent = String(text || "");
     els.toast.classList.toggle("error", !!isError);
@@ -127,6 +141,13 @@
       actions.appendChild(copy);
       item.appendChild(meta);
       item.appendChild(text);
+      const duration = formatDuration(message.duration_ms);
+      if (duration) {
+        const footer = document.createElement("div");
+        footer.className = "msg-duration";
+        footer.textContent = `耗时 ${duration}`;
+        item.appendChild(footer);
+      }
       item.appendChild(actions);
       box.appendChild(item);
     });

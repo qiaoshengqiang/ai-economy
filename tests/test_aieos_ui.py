@@ -1126,3 +1126,86 @@ def test_task_detail_js_separates_resumed_runs():
           / "ui" / "static" / "task.js").read_text(encoding="utf-8")
     assert "round.run_id" in js
     assert "run-divider" in js
+
+
+def test_message_duration_is_serialized():
+    runtime = SimpleNamespace(
+        directory=_Directory(["agent_a"]),
+        economy=SimpleNamespace(agent=lambda aid: SimpleNamespace(
+            has_brain=True)),
+        tasks=SimpleNamespace(list_tasks=lambda limit=50: []),
+    )
+    controller = AIEOSController(runtime, front_agent="agent_a")
+    try:
+        controller._message(
+            "front", "耗时回复", job_id="job_1", duration_ms=1234)
+        controller._message("human", "没有耗时", job_id="job_1")
+        messages = controller.state()["messages"]
+    finally:
+        controller.close()
+
+    assert messages[0]["duration_ms"] == 1234
+    assert messages[1]["duration_ms"] is None
+
+
+def test_job_duration_and_front_ms_are_exposed():
+    from work.controller import WorkJob
+
+    job = WorkJob(
+        job_id="job_duration",
+        human_text="x",
+        status="COMPLETED",
+        front_ms=850,
+        created_at="2026-01-01T00:00:00+00:00",
+        updated_at="2026-01-01T00:00:02.500000+00:00",
+    )
+
+    data = job.to_dict()
+
+    assert data["front_ms"] == 850
+    assert data["duration_ms"] == 2500
+
+
+def test_llm_summary_includes_latency():
+    calls = {
+        "calls": 3,
+        "input_tokens": 100,
+        "output_tokens": 50,
+        "latency_ms": 30000.0,
+        "cost_ai": 0.5,
+    }
+    runtime = SimpleNamespace(
+        directory=_Directory(["agent_a"]),
+        economy=SimpleNamespace(agent=lambda aid: SimpleNamespace(
+            has_brain=True)),
+        tasks=SimpleNamespace(list_tasks=lambda limit=50: []),
+        recorder=SimpleNamespace(
+            db=SimpleNamespace(fetchone=lambda *a, **k: calls)),
+    )
+    controller = AIEOSController(runtime, front_agent="agent_a")
+    try:
+        summary = controller._llm_summary("task_x")
+    finally:
+        controller.close()
+
+    assert summary["latency_ms"] == 30000.0
+    assert summary["avg_latency_ms"] == 10000.0
+
+
+def test_chat_js_renders_message_duration():
+    from pathlib import Path
+
+    js = (Path(__file__).resolve().parent.parent
+          / "ui" / "static" / "app.js").read_text(encoding="utf-8")
+    assert "message.duration_ms" in js
+    assert "msg-duration" in js
+
+
+def test_task_detail_js_renders_call_latency():
+    from pathlib import Path
+
+    js = (Path(__file__).resolve().parent.parent
+          / "ui" / "static" / "task.js").read_text(encoding="utf-8")
+    assert "seg.latency_ms" in js
+    assert "round.latency_ms" in js
+    assert "avg_latency_ms" in js

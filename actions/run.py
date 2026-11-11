@@ -451,6 +451,8 @@ def _run_one_segment(agent: Any, agent_id: str, messages: Any,
     response = agent.generate(messages=messages, phase=phase, **call_kwargs)
     content = getattr(response, "content", None)
     total_tokens = getattr(response, "total_tokens", None)
+    #: 这一段真实耗时；修复调用发生时累加，别把第一次调用抹掉。
+    total_latency_ms = float(getattr(response, "latency_ms", 0.0) or 0.0)
     #: Provider 的隐藏推理（DeepSeek `reasoning_content`）。
     #: 🔒 与 `content` 严格分开；修补调用发生时，优先用修补后的。
     original_reasoning = str(getattr(response, "reasoning", "") or "")
@@ -527,6 +529,8 @@ def _run_one_segment(agent: Any, agent_id: str, messages: Any,
             repaired_decision = decision_from_text(agent_id,
                                                    repaired_content)
             repaired_tokens = getattr(repaired, "total_tokens", None)
+            total_latency_ms += float(
+                getattr(repaired, "latency_ms", 0.0) or 0.0)
             if total_tokens is None and repaired_tokens is None:
                 total_tokens = None
             else:
@@ -644,6 +648,7 @@ def _run_one_segment(agent: Any, agent_id: str, messages: Any,
         #    只看它会把 follow-up 那轮的成本算成**只有第二段**。
         #    修复调用发生时，这里记**两次调用之和**。
         tokens=total_tokens,
+        latency_ms=total_latency_ms,
         repair_attempted=repair_attempted,
         repair_succeeded=repair_succeeded,
         repair_truncated=repair_truncated,

@@ -622,6 +622,7 @@ class _FakeAgent:
         segment = SimpleNamespace(
             tokens=11, content="done", is_truncated=False,
             model_reasoning="MODEL-THINK",
+            latency_ms=42.5,
             action_results=[action_result])
         return SimpleNamespace(
             segments=[segment],
@@ -1024,6 +1025,8 @@ class TestSoloWorkRuntime:
         assert rounds[1]["summary"] == "solo 总结"
         assert rounds[1]["segments"][0]["content"] == "done"
         assert rounds[1]["segments"][0]["model_reasoning"] == "MODEL-THINK"
+        assert rounds[1]["segments"][0]["latency_ms"] == 42.5
+        assert rounds[1]["latency_ms"] == 42.5
         # 动作结果必须进轮次日志，否则详情页全部显示「未执行」
         results = rounds[1]["segments"][0]["results"]
         assert results and results[0]["success"] is True

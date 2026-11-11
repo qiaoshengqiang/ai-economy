@@ -30,9 +30,11 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
@@ -86,6 +88,16 @@ _RUNNING_JOB_STATUSES = frozenset({
     JobStatus.CANCELLING,
 })
 
+#: Job 已经结束的状态；其余状态下的 duration_ms 继续按当前时间增长。
+_ENDED_JOB_STATUSES = frozenset({
+    JobStatus.COMPLETED,
+    JobStatus.FAILED,
+    JobStatus.CANCELLED,
+    JobStatus.INTERRUPTED,
+    JobStatus.DIRECT_REPLY,
+    JobStatus.CLARIFY,
+})
+
 
 @dataclass
 class WorkJob:
@@ -100,6 +112,8 @@ class WorkJob:
     error: str = ""
     tokens: int = 0
     turns: int = 0
+    #: Front 决策这次 Job 实际花的时间（毫秒）。
+    front_ms: int = 0
     cancelled: bool = False
     created_at: str = ""
     updated_at: str = ""
@@ -117,6 +131,11 @@ class WorkJob:
             "error": self.error,
             "tokens": self.tokens,
             "turns": self.turns,
+            "front_ms": int(self.front_ms or 0),
+            "duration_ms": _duration_ms(
+                self.created_at,
+                self.updated_at
+                if self.status in _ENDED_JOB_STATUSES else _now()),
             "cancelled": self.cancelled,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
@@ -317,6 +336,7 @@ class AIEOSController:
 
             active, completed = self._task_refs()
             with self._front_lock:
+                front_started = time.perf_counter()
                 decision = front.decide(
                     job.human_text,
                     active_tasks=active,
@@ -324,17 +344,23 @@ class AIEOSController:
                     conversation=self._conversation(job),
                     agents=self._agent_facts(),
                 )
+                job.front_ms = max(0, int(
+                    (time.perf_counter() - front_started) * 1000))
             job.front_intent = decision.intent
             self._set_job(job, job.status)
 
             if decision.intent == FrontIntent.DIRECT_REPLY:
-                self._message("front", decision.reply, job_id=job.job_id)
+                self._message(
+                    "front", decision.reply, job_id=job.job_id,
+                    duration_ms=job.front_ms)
                 job.status = JobStatus.DIRECT_REPLY
                 job.summary = decision.reply
                 self._touch(job)
                 return
             if decision.intent == FrontIntent.CLARIFY:
-                self._message("front", decision.question, job_id=job.job_id)
+                self._message(
+                    "front", decision.question, job_id=job.job_id,
+                    duration_ms=job.front_ms)
                 job.status = JobStatus.CLARIFY
                 job.summary = decision.question
                 self._touch(job)
@@ -882,7 +908,8 @@ class AIEOSController:
             if decision.reply:
                 self._message(
                     "front", decision.reply,
-                    job_id=job.job_id, task_id=task.task_id)
+                    job_id=job.job_id, task_id=task.task_id,
+                    duration_ms=self._job_duration_ms(job))
             # Reopen 不覆盖旧历史；把本轮要求追加到 Task 描述，
             # 让 Leader / 成员都能看到 Human 这次改了什么。
             task.description = (
@@ -953,7 +980,8 @@ class AIEOSController:
         self._message(
             "front",
             front.format_result(front_result),
-            job_id=job.job_id, task_id=task_id)
+            job_id=job.job_id, task_id=task_id,
+            duration_ms=self._job_duration_ms(job))
         job.summary = front_result.summary or front_result.status
         if result.ok:
             job.status = JobStatus.COMPLETED
@@ -972,7 +1000,8 @@ class AIEOSController:
         self, job: WorkJob, text: str, task_id: str = "",
     ) -> None:
         self._message(
-            "front", text, job_id=job.job_id, task_id=task_id)
+            "front", text, job_id=job.job_id, task_id=task_id,
+            duration_ms=self._job_duration_ms(job))
         job.status = JobStatus.DIRECT_REPLY
         job.summary = text
         self._touch(job)
@@ -1341,6 +1370,7 @@ class AIEOSController:
                 SELECT COUNT(*) AS calls,
                        COALESCE(SUM(input_tokens), 0) AS input_tokens,
                        COALESCE(SUM(output_tokens), 0) AS output_tokens,
+                       COALESCE(SUM(latency_ms), 0) AS latency_ms,
                        COALESCE(SUM(cost_ai), 0) AS cost_ai
                   FROM llm_calls
                  WHERE task_id = ?
@@ -1349,14 +1379,21 @@ class AIEOSController:
             )
         except Exception:                                     # noqa: BLE001
             return {"calls": 0, "input_tokens": 0,
-                    "output_tokens": 0, "cost_ai": 0.0}
+                    "output_tokens": 0, "latency_ms": 0.0,
+                    "avg_latency_ms": 0.0, "cost_ai": 0.0}
         if row is None:
             return {"calls": 0, "input_tokens": 0,
-                    "output_tokens": 0, "cost_ai": 0.0}
+                    "output_tokens": 0, "latency_ms": 0.0,
+                    "avg_latency_ms": 0.0, "cost_ai": 0.0}
+        calls = int(row["calls"] or 0)
+        latency_ms = round(float(row["latency_ms"] or 0), 1)
         return {
-            "calls": int(row["calls"] or 0),
+            "calls": calls,
             "input_tokens": int(row["input_tokens"] or 0),
             "output_tokens": int(row["output_tokens"] or 0),
+            "latency_ms": latency_ms,
+            "avg_latency_ms": (
+                round(latency_ms / calls, 1) if calls else 0.0),
             "cost_ai": round(float(row["cost_ai"] or 0), 4),
         }
 
@@ -1497,6 +1534,7 @@ class AIEOSController:
         *,
         job_id: str = "",
         task_id: str = "",
+        duration_ms: Optional[int] = None,
     ) -> None:
         with self._lock:
             self._messages.append({
@@ -1504,8 +1542,16 @@ class AIEOSController:
                 "text": str(text),
                 "job_id": job_id,
                 "task_id": task_id,
+                "duration_ms": (
+                    max(0, int(duration_ms))
+                    if duration_ms is not None else None),
                 "at": _now(),
             })
+
+    @staticmethod
+    def _job_duration_ms(job: WorkJob) -> int:
+        """从 Human 提交到 Front 回复的真实耗时。"""
+        return _duration_ms(job.created_at, _now())
 
     def _set_job(self, job: WorkJob, status: str) -> None:
         with self._lock:
@@ -1610,6 +1656,22 @@ def _description_from_brief(brief: Any) -> str:
         or getattr(brief, "human_text", "")
         or getattr(brief, "goal", "")
     ).strip()
+
+
+def _duration_ms(start: Any, end: Any = "") -> int:
+    """两个 ISO 时间点之间的毫秒数；解析失败返回 0（不猜）。"""
+    try:
+        start_dt = datetime.fromisoformat(str(start))
+        end_dt = (
+            datetime.fromisoformat(str(end)) if end
+            else datetime.now(timezone.utc))
+        if start_dt.tzinfo is None:
+            start_dt = start_dt.replace(tzinfo=timezone.utc)
+        if end_dt.tzinfo is None:
+            end_dt = end_dt.replace(tzinfo=timezone.utc)
+        return max(0, int((end_dt - start_dt).total_seconds() * 1000))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _is_interruption(error: Any) -> bool:

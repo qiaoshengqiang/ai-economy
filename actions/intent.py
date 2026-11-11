@@ -296,6 +296,12 @@ class CognitiveSegment:
     #:        这个字段是给**逐轮显示**用的汇总依据。
     tokens: Optional[int] = None
 
+    #: 这一段实际调用模型消耗的时间（毫秒）。
+    #:
+    #: 🔒 修复调用发生时记为**两次调用之和**；它是观测事实，
+    #:    不影响调度或预算。
+    latency_ms: float = 0.0
+
     #: 这一段是否因为信封解析失败而**重试过一次**（修复调用）。
     repair_attempted: bool = False
     #: 修复调用是否成功解析出可用动作。
@@ -337,6 +343,7 @@ class CognitiveSegment:
             "output_status": self.output_status,
             "cognitive_status": self.cognitive_status,
             "finish_reason": self.finish_reason,
+            "latency_ms": float(self.latency_ms or 0.0),
             "is_truncated": self.is_truncated,
             "repair_attempted": self.repair_attempted,
             "repair_succeeded": self.repair_succeeded,

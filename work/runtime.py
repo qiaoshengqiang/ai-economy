@@ -415,12 +415,16 @@ class SoloWorkRuntime:
                                 getattr(seg, "action_results", None) or [])
                         ],
                         "tokens": getattr(seg, "tokens", None),
+                        "latency_ms": getattr(seg, "latency_ms", None),
                         "finish_reason": getattr(seg, "finish_reason", None),
                         "truncated": bool(
                             getattr(seg, "is_truncated", False)),
                     }
                     for seg in segments
                 ],
+                "latency_ms": round(sum(
+                    float(getattr(seg, "latency_ms", 0) or 0)
+                    for seg in segments), 1),
             })
             self._event(
                 "work_cognition", agent_id=actor,
@@ -599,6 +603,9 @@ class SoloWorkRuntime:
                 "status_after": status_after,
                 "summary": str(getattr(run, "summary", "") or ""),
                 "tokens": tokens,
+                "latency_ms": round(sum(
+                    float(getattr(seg, "latency_ms", 0) or 0)
+                    for seg in segments), 1),
                 "thinking": getattr(run, "thinking", None),
                 "cognitive_budget": getattr(
                     getattr(agent, "brain", None),
@@ -627,6 +634,7 @@ class SoloWorkRuntime:
                                 getattr(seg, "action_results", None) or [])
                         ],
                         "tokens": getattr(seg, "tokens", None),
+                        "latency_ms": getattr(seg, "latency_ms", None),
                         "finish_reason": getattr(
                             seg, "finish_reason", None),
                         "truncated": bool(

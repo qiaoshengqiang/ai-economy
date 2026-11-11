@@ -18,6 +18,20 @@
 
   const TERMINAL = new Set(["COMPLETED", "CANCELLED", "FAILED", "INTERRUPTED"]);
 
+  // 与 app.js 保持同一套显示规则：<1s 用 ms，<60s 用秒，再长用分秒。
+  function formatDuration(ms) {
+    const value = Number(ms);
+    if (!Number.isFinite(value) || value <= 0) return "";
+    if (value < 1000) return `${Math.round(value)}ms`;
+    if (value < 60000) {
+      const seconds = value / 1000;
+      return `${seconds < 10 ? seconds.toFixed(1) : Math.round(seconds)}s`;
+    }
+    const minutes = Math.floor(value / 60000);
+    const seconds = Math.round((value % 60000) / 1000);
+    return `${minutes}m ${seconds}s`;
+  }
+
   function el(tag, className, text) {
     const node = document.createElement(tag);
     if (className) node.className = className;
@@ -80,6 +94,10 @@
     metaItem(grid, "updated", task.updated_at || "—");
     if (job) {
       metaItem(grid, "job", `${job.status || "?"}${job.error ? " · " + job.error : ""}`);
+      const jobDuration = formatDuration(job.duration_ms);
+      if (jobDuration) metaItem(grid, "job 耗时", jobDuration);
+      const frontDuration = formatDuration(job.front_ms);
+      if (frontDuration) metaItem(grid, "Front 决策", frontDuration);
     }
     els.meta.appendChild(grid);
   }
@@ -135,6 +153,8 @@
     const head = el("div", "phase-head");
     head.appendChild(el("span", "phase-name", seg.phase || "phase"));
     if (seg.tokens != null) head.appendChild(badge(`${seg.tokens} tokens`));
+    const latency = formatDuration(seg.latency_ms);
+    if (latency) head.appendChild(badge(latency));
     if (seg.finish_reason) head.appendChild(badge(seg.finish_reason));
     if (seg.truncated) head.appendChild(badge("truncated", "warn"));
     phase.appendChild(head);
@@ -199,11 +219,17 @@
       block.className = `round${round.cognition ? " cognition" : ""}`;
       block.open = true;
       const summary = document.createElement("summary");
+      const roundLatency = round.latency_ms != null
+        ? round.latency_ms
+        : (round.segments || []).reduce(
+          (sum, seg) => sum + (Number(seg.latency_ms) || 0), 0);
+      const roundTime = formatDuration(roundLatency);
+      const timeSuffix = roundTime ? ` · ${roundTime}` : "";
       summary.textContent = round.cognition
-        ? `任务认知 · ${round.tokens || 0} tokens`
+        ? `任务认知 · ${round.tokens || 0} tokens${timeSuffix}`
         : `Round ${round.round || "?"} · ` +
           `${round.status_before || "?"} → ${round.status_after || "?"} · ` +
-          `${round.tokens || 0} tokens`;
+          `${round.tokens || 0} tokens${timeSuffix}`;
       block.appendChild(summary);
 
       const body = el("div", "round-body");
@@ -257,9 +283,14 @@
     const llm = data.llm || {};
     els.llm.innerHTML = "";
     els.llm.appendChild(el("div", "section-title", "LLM"));
-    els.llm.appendChild(el("div", "file-row",
+    let line =
       `${llm.calls || 0} calls · ${llm.input_tokens || 0} in · ` +
-      `${llm.output_tokens || 0} out · ${llm.cost_ai || 0} AIC`));
+      `${llm.output_tokens || 0} out · ${llm.cost_ai || 0} AIC`;
+    const totalTime = formatDuration(llm.latency_ms);
+    const avgTime = formatDuration(llm.avg_latency_ms);
+    if (totalTime) line += ` · 总耗时 ${totalTime}`;
+    if (avgTime) line += ` · 平均 ${avgTime}/call`;
+    els.llm.appendChild(el("div", "file-row", line));
   }
 
   function renderExecutions(data) {
