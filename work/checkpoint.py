@@ -176,6 +176,16 @@ def checkpoint_from_rounds(
        只看最后一轮会把 resume 最需要的那条事实丢掉。
     """
     last = rounds[-1] if rounds else {}
+    # 新日志有 run_id：失败只取**最近一次 run**，避免把上一次 run
+    # 已经修掉的失败当成 resume 的当前事实。旧日志没有 run_id，
+    # 无法区分，只能按时间顺序扫描。
+    latest_run = str(last.get("run_id") or "")
+
+    def _in_latest_run(item: Dict[str, Any]) -> bool:
+        if not latest_run:
+            return True
+        return str(item.get("run_id") or "") == latest_run
+
     summary = ""
     for item in reversed(rounds):
         summary = str(item.get("summary") or "").strip()
@@ -184,6 +194,8 @@ def checkpoint_from_rounds(
     failures: List[Dict[str, Any]] = []
     seen: set = set()
     for round_data in reversed(rounds):
+        if not _in_latest_run(round_data):
+            continue
         round_no = round_data.get("round")
         for segment in (round_data.get("segments") or []):
             for intent, result in zip(

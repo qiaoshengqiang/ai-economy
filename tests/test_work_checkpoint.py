@@ -109,3 +109,26 @@ def test_direct_action_failure_is_kept():
     assert checkpoint.action_failures[0]["action"] == "workspace_write"
     assert checkpoint.action_failures[0]["target"] == "README.md"
     assert "路径不存在" in checkpoint.action_failures[0]["error"]
+
+
+def test_only_latest_run_failures_are_kept():
+    old = _round(
+        1,
+        actions=[{
+            "action_type": "run_tool",
+            "parameters": {"tool": "node", "args": ["check.js"]},
+        }],
+        results=[{
+            "success": True,
+            "output": {"ran": True, "ok": False, "exit_code": 1,
+                       "stderr": "old failure"},
+        }],
+    )
+    old["run_id"] = "run_old"
+    new = _round(1, summary="new run")
+    new["run_id"] = "run_new"
+
+    checkpoint = checkpoint_from_rounds("task_x", [old, new])
+
+    assert checkpoint.run_id == "run_new"
+    assert checkpoint.action_failures == []
