@@ -140,6 +140,11 @@ def _render_last_turn(last: Optional[Dict[str, Any]]) -> str:
         lines.append(
             "- output budget: "
             f"effective={budget.get('effective')} tokens (fixed for Work)")
+    read_only_streak = last.get("read_only_streak")
+    if isinstance(read_only_streak, int) and read_only_streak >= 2:
+        lines.append(
+            f"- progress: the last {read_only_streak} rounds only read; "
+            "no file was written or changed and no tool was executed.")
     rewrites = last.get("rewrites")
     if isinstance(rewrites, dict) and rewrites:
         detail = ", ".join(
@@ -234,6 +239,7 @@ def build_cognition_prompt(
     tool_docs: Optional[Dict[str, str]] = None,
     available_actions: Iterable[str] = (),
     next_actions: Iterable[str] = (),
+    resume_context: str = "",
 ) -> str:
     """Task cognition: environment facts + a report from the Agent."""
     workspace = _render_workspace(
@@ -256,6 +262,9 @@ intend to proceed. The report is injected into every later decision.
 
 ========== BRIEF ==========
 {_render_brief(context.brief)}
+
+========== PREVIOUS RUN CHECKPOINT (READ-ONLY) ==========
+{resume_context.strip() or "(none)"}
 
 ========== ENVIRONMENT FACTS ==========
 workspace_id: {context.workspace_id}
@@ -386,6 +395,9 @@ Each call is in the decision or work phase:
 - decision: decide the next step;
 - work: continue after reads/tool results.
 The action set is the same; you may set thinking per phase.
+To inspect several files at once, put multiple `workspace_read` (or
+`workspace_search`) actions in one `actions` list — their results are
+returned together in the next Work step.
 
 ========== OPTIONAL: TUNE THE NEXT CALL ==========
 Put these at the TOP LEVEL of the JSON (not inside action.parameters):

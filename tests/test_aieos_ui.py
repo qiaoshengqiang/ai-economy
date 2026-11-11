@@ -1032,3 +1032,97 @@ def test_task_cards_mark_open_task_interrupted():
         controller.close()
 
     assert card["status"] == "INTERRUPTED"
+
+
+def test_controller_checkpoint_roundtrip(tmp_path):
+    from types import SimpleNamespace
+
+    from ui.rounds import TaskRoundLog
+
+    log = TaskRoundLog(tmp_path / "rounds")
+    log.append("task_cp", {
+        "round": 1,
+        "run_id": "run_before",
+        "summary": "已写完 index.html；Playwright 仍失败。",
+        "segments": [{
+            "actions": [{
+                "action_type": "run_tool",
+                "parameters": {"path": "tests/app.spec.js"},
+            }],
+            "results": [{
+                "success": False,
+                "error": 'Expected: "running" Received: "no-context"',
+            }],
+        }],
+    })
+    task = SimpleNamespace(
+        task_id="task_cp", workspace_id="", creator="agent_b",
+        participants=["agent_b"], iteration=2, status="IN_PROGRESS")
+    runtime = SimpleNamespace(
+        directory=_Directory(["agent_a", "agent_b"]),
+        economy=SimpleNamespace(agent=lambda aid: SimpleNamespace(
+            has_brain=True)),
+        tasks=SimpleNamespace(
+            get=lambda tid: task,
+            list_tasks=lambda limit=50: [],
+        ),
+    )
+    controller = AIEOSController(
+        runtime, front_agent="agent_a", round_log=log)
+    try:
+        controller._write_checkpoint(
+            "task_cp",
+            SimpleNamespace(error="达到 max_turns=24，任务尚未完成",
+                            summary=""))
+        checkpoint = controller._read_checkpoint("task_cp")
+    finally:
+        controller.close()
+
+    assert checkpoint is not None
+    assert checkpoint.run_id == "run_before"
+    assert checkpoint.iteration == 2
+    assert checkpoint.status == "IN_PROGRESS"
+    assert "max_turns=24" in checkpoint.error
+    assert "已写完 index.html" in checkpoint.summary
+    assert checkpoint.action_failures[0]["action"] == "run_tool"
+    assert "no-context" in checkpoint.action_failures[0]["error"]
+    assert (tmp_path / "checkpoints" / "task_cp.json").is_file()
+
+
+def test_max_turns_marks_job_interrupted():
+    from work.controller import WorkJob
+
+    class _Front:
+        def result_from_work(self, _result):
+            return SimpleNamespace(summary="", status="IN_PROGRESS")
+
+        def format_result(self, _result):
+            return "interrupted"
+
+    runtime = SimpleNamespace(
+        directory=_Directory(["agent_a", "agent_b"]),
+        economy=SimpleNamespace(agent=lambda aid: SimpleNamespace(
+            has_brain=True)),
+        tasks=SimpleNamespace(list_tasks=lambda limit=50: []),
+    )
+    controller = AIEOSController(runtime, front_agent="agent_a")
+    job = WorkJob(job_id="job_max_turns", human_text="x")
+    result = SimpleNamespace(
+        ok=False, error="达到 max_turns=24，任务尚未完成",
+        tokens=0, turns=24, status="IN_PROGRESS", summary="")
+    try:
+        controller._finish_work(job, _Front(), "task_x", result)
+    finally:
+        controller.close()
+
+    assert job.status == "INTERRUPTED"
+    assert "max_turns=24" in job.error
+
+
+def test_task_detail_js_separates_resumed_runs():
+    from pathlib import Path
+
+    js = (Path(__file__).resolve().parent.parent
+          / "ui" / "static" / "task.js").read_text(encoding="utf-8")
+    assert "round.run_id" in js
+    assert "run-divider" in js

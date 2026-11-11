@@ -22,6 +22,7 @@ SoloWorkRuntime —— Work 层最小执行循环
 from __future__ import annotations
 
 import json
+import uuid
 from typing import Any, Callable, Dict, List, Optional
 
 from core.task import Task, TaskMode, TaskStatus
@@ -46,6 +47,20 @@ _ENVELOPE_KEYS = frozenset({
     "decision", "action", "actions", "action_type",
     "thinking", "cognitive_budget", "reflection", "reflections",
 })
+
+#: 只读取事实、不改变 Workspace、也不执行工具的动作。
+#:
+#: 🔒 这是**结构分类**，不是策略：连续多轮只有这些动作，说明本轮
+#:    没有产生可交付变化。运行时只报告这个事实，并设一个中断上限；
+#:    具体是继续调查还是动手，仍由 Agent 决定。
+READ_ONLY_ACTION_TYPES = frozenset({
+    "workspace_read", "workspace_search", "tool_help",
+    "public_working_memory_read", "private_working_memory_read",
+    "short_term_memory_read", "long_term_memory_search",
+    "long_term_memory_read", "private_read", "private_list",
+    "draft_read", "draft_list",
+})
+
 
 def _strip_code_fence(text: str) -> str:
     body = str(text or "").strip()
@@ -104,7 +119,10 @@ class SoloWorkRuntime:
         drafts: Any = None,
         max_turns: int = 12,
         max_cognition_steps: int = 2,
+        max_work_steps: int = 4,
+        max_read_only_turns: int = 4,
         cognitive_budget: int = 65536,
+        resume_context: str = "",
         event_sink: Any = None,
         should_stop: Optional[Callable[[], bool]] = None,
         round_sink: Optional[Callable[[Dict[str, Any]], None]] = None,
@@ -118,7 +136,15 @@ class SoloWorkRuntime:
         self.brief = brief
         self.max_turns = max(1, int(max_turns))
         self.max_cognition_steps = max(1, int(max_cognition_steps))
+        self.max_work_steps = max(0, int(max_work_steps))
+        #: 连续多少轮只读就中断本次 run（0 = 不设上限）。
+        #: 中断不是失败：Task 保持 IN_PROGRESS，checkpoint 可续跑。
+        self.max_read_only_turns = max(0, int(max_read_only_turns))
         self.cognitive_budget = max(1, int(cognitive_budget))
+        #: 上一次 run 的只读 checkpoint；注入 cognition 和第一轮 Work。
+        self.resume_context = str(resume_context or "").strip()
+        #: 本次 run 的标识 —— 轮次日志用它区分 resume 前后的轮次。
+        self.run_id = f"run_{uuid.uuid4().hex[:12]}"
         self.event_sink = event_sink
         self.should_stop = should_stop or (lambda: False)
         self.round_sink = round_sink
@@ -242,6 +268,7 @@ class SoloWorkRuntime:
                     available_actions=dispatcher.action_types,
                     next_actions=getattr(
                         self._work_dispatcher, "action_types", ()),
+                    resume_context=self.resume_context,
                 ),
             }]
             seen_reads: set = set()
@@ -356,6 +383,8 @@ class SoloWorkRuntime:
             report = report.strip()
             self._emit_round({
                 "task_id": self.task.task_id,
+                "run_id": self.run_id,
+                "iteration": int(getattr(self.task, "iteration", 1) or 1),
                 "round": 0,
                 "cognition": True,
                 "status_before": self.task.status,
@@ -416,6 +445,7 @@ class SoloWorkRuntime:
             dispatcher = self._build_work_dispatcher()
             self._work_dispatcher = dispatcher
         empty_streak = 0
+        read_only_streak = 0
         last_turn_facts: Optional[Dict[str, Any]] = None
 
         for turn in range(1, self.max_turns + 1):
@@ -430,11 +460,17 @@ class SoloWorkRuntime:
                 result.error = "任务已被停止"
                 return result
             context = self._context(actor)
+            resume_text = ""
+            if turn == 1 and self.resume_context:
+                resume_text = (
+                    "\n========== PREVIOUS RUN CHECKPOINT (READ-ONLY) ==========\n"
+                    + self.resume_context + "\n")
             prompt = build_work_prompt(
                 context,
                 task_description=task.description,
                 runtime=self.rt,
                 last_turn=last_turn_facts,
+                extra_instruction=resume_text,
                 tool_docs=self._tool_docs,
                 available_actions=dispatcher.action_types,
             )
@@ -453,7 +489,7 @@ class SoloWorkRuntime:
                     experiment_run_id=getattr(self.rt, "experiment_run_id", None),
                     follow_up_on_reads=True,
                     work_loop=True,
-                    max_work_steps=2,
+                    max_work_steps=self.max_work_steps,
                     # 一轮 = decision → work（原始回喂）→ summary。
                     initial_phase="decision",
                     summary_phase=True,
@@ -480,6 +516,13 @@ class SoloWorkRuntime:
 
             action_types = [
                 str(getattr(i, "action_type", "")) for i in intents]
+            # 🔒 只统计「有动作且全部是读取」的轮次；没有动作由
+            #    empty_streak 单独处理，不混进同一个计数器。
+            if action_types and all(
+                    item in READ_ONLY_ACTION_TYPES for item in action_types):
+                read_only_streak += 1
+            else:
+                read_only_streak = 0
             action_feedback = []
             for intent, action_result in zip(intents, results):
                 params = getattr(intent, "parameters", None) or {}
@@ -544,10 +587,13 @@ class SoloWorkRuntime:
                 "rewrites": rewrites,
                 "action_feedback": action_feedback,
                 "summary_actions_ignored": summary_actions_ignored,
+                "read_only_streak": read_only_streak,
                 "round_summary": str(getattr(run, "summary", "") or ""),
             }
             self._emit_round({
                 "task_id": task.task_id,
+                "run_id": self.run_id,
+                "iteration": int(getattr(task, "iteration", 1) or 1),
                 "round": turn,
                 "status_before": result.status,
                 "status_after": status_after,
@@ -595,6 +641,18 @@ class SoloWorkRuntime:
                 result.summary = self._summary_from(
                     results, segments) or task.note or "任务完成"
                 return result
+
+            if (self.max_read_only_turns
+                    and read_only_streak >= self.max_read_only_turns):
+                # 只读本身不是错误；但连续多轮没有写入/执行就是
+                # 「本次 run 没有可交付进展」。中断而不是等 max_turns，
+                # checkpoint 仍会保存，Human 可以续跑。
+                result.status = status_after
+                result.error = (
+                    f"RUN_INTERRUPTED: {read_only_streak} consecutive "
+                    "rounds only read; no file was written or changed "
+                    "and no tool was executed")
+                break
 
             if not intents:
                 empty_streak += 1

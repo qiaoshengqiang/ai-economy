@@ -46,6 +46,9 @@ from front import (
     FRONT_SYSTEM_PROMPT, FrontAgentRuntime, FrontIntent, FrontResult,
 )
 from work.availability import AgentAvailability
+from work.checkpoint import (
+    RunCheckpoint, checkpoint_from_rounds, dumps as checkpoint_dumps,
+)
 from work.plan import WorkPlan, parse_work_plan
 from work.prompt import WORK_SYSTEM_PROMPT, build_lead_plan_prompt
 from work.roles import WorkContext, WorkRole
@@ -906,10 +909,24 @@ class AIEOSController:
                 should_stop=lambda: job.cancelled,
             )
         else:
+            checkpoint = self._read_checkpoint(task.task_id)
+            if checkpoint is None:
+                rounds = self._rounds(task.task_id)
+                if rounds:
+                    checkpoint = checkpoint_from_rounds(
+                        task.task_id, rounds,
+                        iteration=int(getattr(task, "iteration", 1) or 1),
+                        status=str(task.status or ""),
+                        files=self._workspace_files(task))
+            # 只传事实正文；两个 prompt（cognition / first Work）
+            # 各自负责加自己的标题，避免标题重复两次。
+            resume_context = (
+                checkpoint.render() if checkpoint is not None else "")
             runner = SoloWorkRuntime(
                 self.rt, task,
                 max_turns=self.max_solo_turns,
                 cognitive_budget=self.cognitive_budget,
+                resume_context=resume_context,
                 should_stop=lambda: job.cancelled,
                 round_sink=lambda payload: self._record_round(
                     task.task_id, payload),
@@ -948,6 +965,7 @@ class AIEOSController:
         else:
             job.status = JobStatus.FAILED
             job.error = result.error or f"Task {task_id} 未完成"
+        self._write_checkpoint(task_id, result)
         self._touch(job)
 
     def _reply_direct(
@@ -1251,6 +1269,54 @@ class AIEOSController:
             ],
         }
 
+    def _checkpoint_path(self, task_id: str) -> Optional[Path]:
+        if self.round_log is None:
+            return None
+        safe = "".join(
+            ch for ch in str(task_id or "")
+            if ch.isalnum() or ch in ("_", "-", "."))
+        root = Path(self.round_log.root).parent / "checkpoints"
+        root.mkdir(parents=True, exist_ok=True)
+        return root / f"{safe or 'unknown'}.json"
+
+    def _write_checkpoint(self, task_id: str, result: Any) -> None:
+        """把这次 run 的事实写成 resume 用的 checkpoint。"""
+        path = self._checkpoint_path(task_id)
+        if path is None:
+            return
+        try:
+            task = self.rt.tasks.get(task_id)
+        except Exception:                                     # noqa: BLE001
+            task = None
+        rounds = self._rounds(task_id)
+        files = self._workspace_files(task) if task is not None else []
+        checkpoint = checkpoint_from_rounds(
+            task_id,
+            rounds,
+            iteration=int(getattr(task, "iteration", 1) or 1),
+            status=str(getattr(task, "status", "") or ""),
+            error=str(getattr(result, "error", "") or ""),
+            files=files,
+        )
+        if not checkpoint.summary:
+            checkpoint.summary = str(getattr(result, "summary", "") or "")
+        try:
+            tmp = path.with_name(path.name + ".tmp")
+            tmp.write_text(checkpoint_dumps(checkpoint), encoding="utf-8")
+            tmp.replace(path)
+        except OSError:
+            pass
+
+    def _read_checkpoint(self, task_id: str) -> Optional[RunCheckpoint]:
+        path = self._checkpoint_path(task_id)
+        if path is None or not path.is_file():
+            return None
+        try:
+            return RunCheckpoint.from_dict(
+                json.loads(path.read_text(encoding="utf-8")))
+        except (OSError, ValueError, TypeError):
+            return None
+
     def _record_round(self, task_id: str, payload: Dict[str, Any]) -> None:
         if self.round_log is None:
             return
@@ -1553,6 +1619,8 @@ def _is_interruption(error: Any) -> bool:
         "llmtimeouterror" in text
         or "请求超时" in text
         or "timeout" in text
+        or "max_turns" in text
+        or "run_interrupted" in text
     )
 
 

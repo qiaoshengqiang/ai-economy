@@ -954,8 +954,31 @@ class TestSoloWorkRuntime:
             assert kwargs.get("system") == WORK_SYSTEM_PROMPT
             assert kwargs.get("requested_cognitive_budget") == 65536
             assert kwargs.get("apply_cognitive_budget") is False
+        work_calls = [
+            item for item in runtime.agent.kwargs_log
+            if item.get("initial_phase") != "cognition"]
+        assert work_calls
+        assert all(item.get("max_work_steps") == 4 for item in work_calls)
         assert "AIC" not in WORK_SYSTEM_PROMPT
         assert "Agent B" not in WORK_SYSTEM_PROMPT
+
+    def test_resume_context_is_injected_into_cognition_and_first_work(self, db):
+        task = Task.create(
+            task_id="T-RESUME-CTX", creator="agent_a",
+            description="继续", workspace_id="WS-X",
+            participants=["agent_a"], mode=TaskMode.SOLO)
+        task.claim_producer("agent_a")
+
+        runtime = _SoloRuntime(db, task)
+        runtime.agent = _CognitionAgent()
+        result = SoloWorkRuntime(
+            runtime, task, max_turns=1,
+            resume_context="CHECKPOINT-MARKER").run()
+
+        assert result.ok is True, result.error
+        assert "PREVIOUS RUN CHECKPOINT" in str(runtime.agent.prompts[0])
+        assert "CHECKPOINT-MARKER" in str(runtime.agent.prompts[0])
+        assert "CHECKPOINT-MARKER" in str(runtime.agent.prompts[-1])
 
     def test_each_turn_starts_with_a_fresh_read_dedupe_set(self, db):
         """
@@ -994,6 +1017,9 @@ class TestSoloWorkRuntime:
         assert result.ok is True, result.error
         assert len(rounds) == 2
         assert rounds[0]["cognition"] is True
+        assert rounds[0]["run_id"].startswith("run_")
+        assert rounds[0]["iteration"] == 1
+        assert rounds[1]["run_id"] == rounds[0]["run_id"]
         assert rounds[1]["round"] == 1
         assert rounds[1]["summary"] == "solo 总结"
         assert rounds[1]["segments"][0]["content"] == "done"
@@ -1127,3 +1153,56 @@ def test_summary_actions_are_reported_to_next_turn(db):
     next_prompt = str(runtime.agent.prompts[-1])
     assert "summary-phase actions were IGNORED" in next_prompt
     assert "workspace_write" in next_prompt
+
+
+class _ReadOnlyAgent(_FakeAgent):
+    """每一轮都只读：用来验证「连续只读」是事实并且会中断 run。"""
+
+    def __init__(self):
+        super().__init__()
+        self.prompts = []
+        self.calls = 0
+
+    def act(self, *, messages, dispatcher, **kwargs):
+        if kwargs.get("initial_phase") == "cognition":
+            return SimpleNamespace(
+                segments=[SimpleNamespace(
+                    tokens=1, content="cognition report",
+                    is_truncated=False)],
+                action_intents=[], action_results=[])
+        self.calls += 1
+        self.prompts.append(messages)
+        intent = ActionIntent(
+            action_type="workspace_read",
+            parameters={"path": "src/app.js"}, agent_id="agent_a")
+        result = ActionResult(
+            success=False, error="not found",
+            action_id=intent.intent_id,
+            action_type=intent.action_type)
+        return SimpleNamespace(
+            segments=[SimpleNamespace(
+                tokens=1, content="read again", is_truncated=False)],
+            action_intents=[intent], action_results=[result])
+
+
+class TestReadOnlyProgressGuard:
+    def test_read_only_streak_is_reported_then_interrupts_run(self, db):
+        task = Task.create(
+            task_id="T-READ-GUARD", creator="agent_a",
+            description="修页面", workspace_id="WS-X",
+            participants=["agent_a"], mode=TaskMode.SOLO)
+        task.claim_producer("agent_a")
+
+        runtime = _SoloRuntime(db, task)
+        runtime.agent = _ReadOnlyAgent()
+        result = SoloWorkRuntime(
+            runtime, task, max_turns=10,
+            max_read_only_turns=3).run()
+
+        assert result.ok is False
+        assert "RUN_INTERRUPTED" in result.error
+        assert "3 consecutive rounds only read" in result.error
+        assert result.turns == 3
+        # 第 2 轮开始，prompt 里应出现「连续只读」的事实。
+        assert "the last 2 rounds only read" in str(
+            runtime.agent.prompts[-1])

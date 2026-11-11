@@ -183,7 +183,18 @@
         "还没有轮次记录。旧任务可能没有落盘 phase 明细。"));
       return;
     }
+    let lastRunId = null;
     rounds.forEach((round) => {
+      const runId = String(round.run_id || "");
+      if (runId && runId !== lastRunId) {
+        // 同一 Task 可以 resume 多次；round 编号会从 1 重新开始。
+        // run 分隔让「两个 Round 1」不会看起来像数据重复。
+        const iteration = round.iteration == null
+          ? "" : ` · iteration ${round.iteration}`;
+        els.timeline.appendChild(el(
+          "div", "run-divider", `Run ${runId}${iteration}`));
+        lastRunId = runId;
+      }
       const block = document.createElement("details");
       block.className = `round${round.cognition ? " cognition" : ""}`;
       block.open = true;
