@@ -1208,4 +1208,5 @@ def test_task_detail_js_renders_call_latency():
           / "ui" / "static" / "task.js").read_text(encoding="utf-8")
     assert "seg.latency_ms" in js
     assert "round.latency_ms" in js
+    assert "result.output.duration_ms" in js
     assert "avg_latency_ms" in js

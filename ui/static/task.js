@@ -117,6 +117,9 @@
       action.action_type || action.type || "?"));
     const target = targetOf(action);
     if (target) head.appendChild(el("span", "action-target", target));
+    const toolDuration = result && result.output
+      ? formatDuration(result.output.duration_ms) : "";
+    if (toolDuration) head.appendChild(badge(toolDuration));
     if (!result) {
       head.appendChild(badge("未执行", "warn"));
     } else if (result.success) {
