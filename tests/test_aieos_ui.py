@@ -1682,3 +1682,40 @@ def test_pi_task_artifact_read_reads_disk(tmp_path):
     assert paged["ok"] is True
     assert paged["total_lines"] == 1
     assert paged["content"] == "<html>pi</html>"
+
+
+def test_chat_polling_does_not_clear_text_selection():
+    from pathlib import Path
+
+    static = Path(__file__).resolve().parent.parent / "ui" / "static"
+    js = (static / "app.js").read_text(encoding="utf-8")
+    assert "hasActiveTextSelection" in js
+    assert "selectstart" in js
+    assert "pointerSelecting" in js
+    assert "lastMessagesKey" in js
+    assert "if (hasActiveTextSelection()) return;" in js
+    # 选择 Task 卡片文字时不能触发整页跳转。
+    assert "if (hasActiveTextSelection()) return;" in js
+    assert "window.location.assign" in js
+
+
+def test_task_detail_polling_does_not_clear_text_selection():
+    from pathlib import Path
+
+    static = Path(__file__).resolve().parent.parent / "ui" / "static"
+    js = (static / "task.js").read_text(encoding="utf-8")
+    assert "hasActiveTextSelection" in js
+    assert "selectstart" in js
+    assert "pointerSelecting" in js
+    assert "if (signature !== lastSignature && !selecting)" in js
+    assert "if (!selecting && (jobEnded" in js
+
+
+def test_styles_keep_copy_actions_from_blocking_selection():
+    from pathlib import Path
+
+    css = (Path(__file__).resolve().parent.parent
+           / "ui" / "static" / "style.css").read_text(encoding="utf-8")
+    assert "::selection" in css
+    assert "pointer-events: none" in css
+    assert ".msg-actions .copy-btn { pointer-events: auto; }" in css

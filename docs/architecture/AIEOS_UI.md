@@ -236,6 +236,11 @@ GET  /api/health
 - 每轮 decision / work / summary 明细保存到 `runs/ui/rounds/<task_id>.json`；
 - Task 详情页用 `/api/task/<task_id>` 每 2 秒轮询，暂不引入 SSE；
   当前轮次数据量下，轮询不影响现有实现；
+- 轮询按内容签名增量重绘：内容没变时不重建 DOM；
+- 检测到文本选区（含拖选中的瞬时状态）时暂停列表重绘，
+  用户点掉选区后的下一次轮询再补上最新数据 ——
+  否则 1.2s / 2s 的整页重绘会清掉手动选择；
+- 复制按钮容器不拦截文字选择，只有按钮本身可点击；
 - 任务认知 + 每轮 phase 明细（decision / work / summary 原文与动作）已落盘；
   完整 system prompt / 原始 HTTP response 仍未保存；
 - Front 收到 `artifacts` 时把产物从 DB 导出到宿主机

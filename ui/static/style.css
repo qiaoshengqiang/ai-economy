@@ -14,6 +14,10 @@
 
 * { box-sizing: border-box; }
 html, body { height: 100%; }
+::selection {
+  background: rgba(94, 224, 255, .35);
+  color: #ffffff;
+}
 body {
   margin: 0;
   /* 让页面成为固定视口：消息只在聊天框内部滚动。 */
@@ -164,8 +168,11 @@ button { cursor: pointer; }
   display: flex;
   gap: 4px;
   opacity: 0;
+  /* 容器不挡住文字选择；按钮本身仍可点击。 */
+  pointer-events: none;
   transition: opacity .12s;
 }
+.msg-actions .copy-btn { pointer-events: auto; }
 .msg:hover .msg-actions,
 .msg:focus-within .msg-actions { opacity: 1; }
 .copy-btn {

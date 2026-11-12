@@ -15,8 +15,32 @@
   };
   let timer = 0;
   let lastSignature = "";
+  let pointerSelecting = false;
 
   const TERMINAL = new Set(["COMPLETED", "CANCELLED", "FAILED", "INTERRUPTED"]);
+
+  document.addEventListener("selectstart", () => {
+    pointerSelecting = true;
+  });
+  document.addEventListener("pointerup", () => {
+    pointerSelecting = false;
+  });
+  document.addEventListener("pointercancel", () => {
+    pointerSelecting = false;
+  });
+  window.addEventListener("blur", () => {
+    pointerSelecting = false;
+  });
+
+  function hasActiveTextSelection() {
+    if (pointerSelecting) return true;
+    const selection = window.getSelection();
+    return !!(
+      selection &&
+      !selection.isCollapsed &&
+      String(selection).length > 0
+    );
+  }
 
   // 与 app.js 保持同一套显示规则：<1s 用 ms，<60s 用秒，再长用分秒。
   function formatDuration(ms) {
@@ -365,7 +389,9 @@
       }
       const data = await response.json();
       const signature = JSON.stringify(data);
-      if (signature !== lastSignature) {
+      // 有选区时不要把整页 DOM 换掉；选区清掉后下一次轮询再补渲染。
+      const selecting = hasActiveTextSelection();
+      if (signature !== lastSignature && !selecting) {
         lastSignature = signature;
         render(data);
       }
@@ -374,7 +400,7 @@
       const jobRunning = jobStatus && !TERMINAL.has(jobStatus) &&
         !["DIRECT_REPLY", "CLARIFY"].includes(jobStatus);
       const jobEnded = jobStatus && TERMINAL.has(jobStatus);
-      if (jobEnded || (TERMINAL.has(status) && !jobRunning)) {
+      if (!selecting && (jobEnded || (TERMINAL.has(status) && !jobRunning))) {
         els.status.textContent += " · 已结束";
         clearInterval(timer);
         timer = 0;

@@ -28,6 +28,36 @@
   let submitting = false;
   let toastTimer = 0;
 
+  // 轮询重绘不能清掉用户正在拖选的文本。
+  // pointerSelecting 覆盖“刚按下鼠标、选区还没形成”的瞬间。
+  let pointerSelecting = false;
+  let lastMessagesKey = "";
+  let lastAgentsKey = "";
+  let lastTasksKey = "";
+
+  document.addEventListener("selectstart", () => {
+    pointerSelecting = true;
+  });
+  document.addEventListener("pointerup", () => {
+    pointerSelecting = false;
+  });
+  document.addEventListener("pointercancel", () => {
+    pointerSelecting = false;
+  });
+  window.addEventListener("blur", () => {
+    pointerSelecting = false;
+  });
+
+  function hasActiveTextSelection() {
+    if (pointerSelecting) return true;
+    const selection = window.getSelection();
+    return !!(
+      selection &&
+      !selection.isCollapsed &&
+      String(selection).length > 0
+    );
+  }
+
   // 与 task.js 保持同一套显示规则：<1s 用 ms，<60s 用秒，再长用分秒。
   function formatDuration(ms) {
     const value = Number(ms);
@@ -105,6 +135,9 @@
 
   function renderMessages(messages) {
     const box = els.messages;
+    const key = JSON.stringify(messages || []);
+    if (key === lastMessagesKey && box.childElementCount) return;
+    lastMessagesKey = key;
     const atBottom =
       box.scrollTop + box.clientHeight >= box.scrollHeight - 40;
     box.innerHTML = "";
@@ -192,6 +225,9 @@
 
   function renderAgents(agents) {
     const list = agents || [];
+    const key = JSON.stringify(list);
+    if (key === lastAgentsKey && els.agents.childElementCount) return;
+    lastAgentsKey = key;
     els.agentsCount.textContent = `${list.length} 个`;
     els.agents.innerHTML = "";
     list.forEach((agent) => {
@@ -223,6 +259,9 @@
 
   function renderTasks(tasks) {
     const list = tasks || [];
+    const key = JSON.stringify(list);
+    if (key === lastTasksKey && els.tasks.childElementCount) return;
+    lastTasksKey = key;
     els.tasksCount.textContent = `${list.length} 个`;
     els.tasks.innerHTML = "";
     if (!list.length) {
@@ -237,6 +276,8 @@
       card.className = `task-card clickable ${task.status || ""}`;
       card.title = "在新标签页打开执行明细";
       card.addEventListener("click", () => {
+        // 正在选择卡片文字时不跳转，否则拖选会在 mouseup 时被当成点击。
+        if (hasActiveTextSelection()) return;
         // 同一标签页打开：避免多个 AIEOS 页面并存，返回按钮也回到同一个入口。
         window.location.assign(
           `/task.html?task_id=${encodeURIComponent(task.task_id)}`,
@@ -296,6 +337,8 @@
     if (!state) return;
     els.frontBadge.textContent = `Front: ${state.front_agent || "—"}`;
     els.runningBadge.textContent = `Running: ${state.running_jobs || 0}`;
+    // 有选区时冻结列表重绘；用户点掉选区后，下一次轮询会补上最新数据。
+    if (hasActiveTextSelection()) return;
     renderMessages(state.messages || []);
     renderAgents(state.agents);
     renderTasks(state.tasks);
