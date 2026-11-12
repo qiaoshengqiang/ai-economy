@@ -45,9 +45,9 @@ from work.roles import WorkContext, WorkRole
 #:    `Brain` 的 Cognitive Context 会把这些东西拼进 system；Work 调用
 #:    通过 `cognitive=False` + 本 prompt 明确关掉它。
 WORK_SYSTEM_PROMPT = (
-    "You are a work agent executing one Task. "
-    "The Task and its Definition of Done define what to deliver. "
-    "The action schema defines how actions are expressed."
+    "你是一个执行单个 Task 的 Work Agent。"
+    "Task 及其 Definition of Done 决定要交付什么；"
+    "动作 schema 决定如何表达动作。"
 )
 
 
@@ -61,7 +61,7 @@ def _render_workspace(runtime: Any, workspace_id: str,
                       agent_id: str) -> str:
     """渲染 Workspace 的相对路径树（最多 80 行）。"""
     if runtime is None or not workspace_id:
-        return "(no Workspace)"
+        return "（没有 Workspace）"
     gateway = runtime.workspace_gateway
     lines: List[str] = []
 
@@ -102,12 +102,12 @@ def _render_workspace(runtime: Any, workspace_id: str,
                 lines.append(f"- {child}{suffix}")
 
     walk("/", 0)
-    return "\n".join(lines) if lines else "(empty Workspace)"
+    return "\n".join(lines) if lines else "（Workspace 为空）"
 
 
 def _render_brief(brief: Optional[Dict[str, Any]]) -> str:
     if not brief:
-        return "(no extra Brief; use the Task description)"
+        return "（没有额外 Brief；使用任务描述）"
     return json.dumps(brief, ensure_ascii=False, indent=2)
 
 
@@ -121,74 +121,72 @@ def _render_last_turn(last: Optional[Dict[str, Any]]) -> str:
         return ""
     lines = [
         "",
-        "========== PREVIOUS TURN FACTS ==========",
-        f"- status: {last.get('status_before')} -> {last.get('status_after')}",
-        f"- actions: {last.get('action_types') or []}",
-        f"- tokens: {last.get('tokens', 0)}",
+        "========== 上一轮事实 ==========",
+        f"- 状态：{last.get('status_before')} -> {last.get('status_after')}",
+        f"- 动作：{last.get('action_types') or []}",
+        f"- tokens：{last.get('tokens', 0)}",
     ]
     if last.get("decision_kind"):
-        line = f"- decision: {last['decision_kind']}"
+        line = f"- 决策：{last['decision_kind']}"
         if last.get("envelope_error"):
-            line += f" (envelope_error={last['envelope_error']})"
+            line += f"（envelope_error={last['envelope_error']}）"
         lines.append(line)
     if last.get("thinking"):
         lines.append(
-            "- thinking: "
+            "- thinking："
             + json.dumps(last["thinking"], ensure_ascii=False))
     budget = last.get("cognitive_budget")
     if isinstance(budget, dict):
         lines.append(
-            "- output budget: "
-            f"effective={budget.get('effective')} tokens (fixed for Work)")
+            "- 输出预算："
+            f"effective={budget.get('effective')} tokens（Work 固定）")
     read_only_streak = last.get("read_only_streak")
     if isinstance(read_only_streak, int) and read_only_streak >= 2:
         lines.append(
-            f"- progress: the last {read_only_streak} rounds only read; "
-            "no file was written or changed and no tool was executed.")
+            f"- 进展：最近 {read_only_streak} 轮只读；没有写文件、没有修改内容，"
+            "也没有执行工具。")
     rewrites = last.get("rewrites")
     if isinstance(rewrites, dict) and rewrites:
         detail = ", ".join(
             f"{path} x {count}"
             for path, count in sorted(rewrites.items()))
-        lines.append(f"- repeated full-file rewrites: {detail}")
+        lines.append(f"- 重复整文件重写：{detail}")
     summary = str(last.get("round_summary") or "")
     if summary:
         lines.append(
-            "\n========== PREVIOUS ROUND SUMMARY (FULL) ==========\n"
+            "\n========== 上一轮总结（完整） ==========\n"
             + summary)
     ignored = last.get("summary_actions_ignored")
     if isinstance(ignored, list) and ignored:
         lines.append(
-            "- summary-phase actions were IGNORED and NOT executed: "
+            "- summary 阶段返回的动作被忽略、未执行："
             + ", ".join(str(x) for x in ignored))
         lines.append(
-            "  The previous summary may imply they happened; verify before "
-            "relying on them.")
+            "  上一轮总结可能暗示这些动作已经发生；依赖它们之前请先核实。")
     feedback = last.get("action_feedback")
     if isinstance(feedback, list) and feedback:
-        lines.append("- previous action results:")
+        lines.append("- 上一轮动作结果：")
         for item in feedback[:10]:
             if not isinstance(item, dict):
                 continue
-            status = "ok" if item.get("ok") else (
-                "not executed (truncated)"
-                if not item.get("executed") else "failed")
+            status = "成功" if item.get("ok") else (
+                "未执行（输出截断）"
+                if not item.get("executed") else "失败")
             line = f"  - {item.get('action') or '?'}"
             if item.get("target"):
                 line += f" {item['target']}"
-            line += f": {status}"
+            line += f"：{status}"
             if item.get("code"):
-                line += f" ({item['code']})"
+                line += f"（{item['code']}）"
             error = str(item.get("error") or "")
             if error:
                 line += f" - {error[:240]}"
             lines.append(line)
     if last.get("truncated"):
         lines.append(
-            "- previous output was truncated; no actions from that "
-            "output were executed.")
+            "- 上一轮输出被截断；该输出中的动作没有执行。")
     if last.get("error"):
-        lines.append(f"- error: {last['error']}")
+        lines.append(f"- 错误：{last['error']}")
     return "\n".join(lines)
 
 
@@ -213,7 +211,7 @@ def _render_tool_docs(tool_docs: Optional[Dict[str, str]]) -> str:
     """
     if not tool_docs:
         return ""
-    blocks = ["========== TOOL DOCS ALREADY READ (AUTHORITATIVE) =========="]
+    blocks = ["========== 工具文档（已读取，权威） =========="]
     for name in sorted(tool_docs):
         content = str(tool_docs.get(name) or "").strip()
         if not content:
@@ -223,8 +221,7 @@ def _render_tool_docs(tool_docs: Optional[Dict[str, str]]) -> str:
         return ""
     blocks.extend([
         "",
-        "These are the real constraints from the tool docs. Follow them "
-        "exactly; do not rely on a paraphrase or on memory.",
+        "以上是工具文档中的真实约束。请严格遵守；不要依赖转述或记忆。",
     ])
     return "\n".join(blocks)
 
@@ -246,61 +243,60 @@ def build_cognition_prompt(
         runtime, context.workspace_id, context.agent_id)
     criteria = "\n".join(
         f"- {item}" for item in context.acceptance_criteria
-    ) or "(no explicit DoD; use the Human task text)"
-    return f"""You are {context.agent_id}. This is the TASK COGNITION phase.
+    ) or "（没有显式 DoD；以人类任务原文为准）"
+    return f"""你是 {context.agent_id}。当前是任务认知阶段。
 
-This phase is read-only. The Work phase will follow it.
+本阶段只读；之后才会进入 Work 阶段。
 
-Produce a cognition report describing what you understand and how you
-intend to proceed. The report is injected into every later decision.
+请产出一份认知报告，说明你理解了什么、打算如何推进。
+这份报告会注入后续每一次决策。
 
-========== HUMAN TASK TEXT ==========
+========== 人类任务原文 ==========
 {task_description}
 
-========== DEFINITION OF DONE ==========
+========== 完成标准（Definition of Done） ==========
 {criteria}
 
-========== BRIEF ==========
+========== Brief ==========
 {_render_brief(context.brief)}
 
-========== PREVIOUS RUN CHECKPOINT (READ-ONLY) ==========
-{resume_context.strip() or "(none)"}
+========== 上一次运行检查点（只读） ==========
+{resume_context.strip() or "（无）"}
 
-========== ENVIRONMENT FACTS ==========
+========== 环境事实 ==========
 workspace_id: {context.workspace_id}
 {workspace}
 
-========== ACTIONS IN THIS PHASE (READ-ONLY) ==========
+========== 本阶段可用动作（只读） ==========
 {describe_actions(available_actions)}
 
-========== ACTIONS IN THE WORK PHASE (NOT EXECUTABLE YET) ==========
+========== Work 阶段动作（尚不可执行） ==========
 {describe_actions(next_actions)}
 
-========== WORK ACTION PARAMETERS ==========
+========== Work 动作参数 ==========
 {describe_action_params(next_actions)}
 
-========== AVAILABLE TOOLS ==========
+========== 可用工具 ==========
 {_render_tool_catalog(tool_catalog)}
 {_render_tool_docs(tool_docs)}
-========== TOOL DOCS ==========
-The catalog lists names only. `tool_help` returns a tool's authoritative
-documentation.
+========== 工具文档 ==========
+工具目录只列名称；`tool_help` 返回工具的权威文档。
 
-========== PROTOCOL ==========
-This phase cannot write files or complete the Task.
-You get at most {max_steps} steps. Each step is exactly ONE of these two:
+========== 协议 ==========
+本阶段不能写文件，也不能完成 Task。
+最多 {max_steps} 步。每一步只能是下面两种之一：
 
-(A) ACT — one JSON object, no markdown fences, no tool-call markup:
-{{"decision":"act","reasoning":"one sentence",
+(A) ACT —— 一个 JSON 对象，不要 markdown 围栏，不要工具调用标记：
+{{"decision":"act","reasoning":"一句话",
  "actions":[{{"type":"tool_help","parameters":{{"tool":"playwright"}}}}]}}
 
-(B) REPORT — plain text, no JSON. Use this when you have enough facts.
+(B) REPORT —— 纯文本，不要 JSON。当你已经有足够事实时使用。
 
-Never emit provider tool-call syntax (for example `<|DSML|>`, `invoke name=`).
-Only the JSON shape above produces actions.
+不要输出 provider 的工具调用语法（例如 `<|DSML|>`、`invoke name=`）。
+只有上面的 JSON 形状会产生动作。
 
-The report should cover what matters for this Task: requirements,
-environment, approach, risks, plan, and how you will know it is done.
+报告应覆盖这个 Task 真正重要的内容：需求、环境、方法、风险、计划，
+以及你如何判断它已经完成。
 """
 
 
@@ -318,132 +314,129 @@ def build_work_prompt(
     role = context.role
     if role == WorkRole.SOLO:
         role_text = (
-            "You are the Solo worker for this Task. Complete the work "
-            "yourself and call work_complete when done.")
+            "你是这个 Task 的 Solo worker。请自己完成工作，并在结束时调用 "
+            "work_complete。")
     elif role == WorkRole.LEAD:
         role_text = (
-            "You are the Team Lead. Plan, assign, integrate, and deliver; "
-            "do not push work back to the Human.")
+            "你是 Team Lead。负责计划、分配、集成和交付；不要把工作推回给人类。")
     elif role == WorkRole.QA:
         role_text = (
-            "You are QA. Check the delivery against the Definition of Done "
-            "and return work_qa_verdict.")
+            "你是 QA。对照 Definition of Done 检查交付，并返回 "
+            "work_qa_verdict。")
     else:
         role_text = (
-            "You are a Team Member. Complete only your assigned items; "
-            "use work_item_done / work_item_blocked. Do not accept others' work.")
+            "你是 Team Member。只完成分配给你的 item；使用 work_item_done / "
+            "work_item_blocked。不要替别人验收。")
 
     criteria = "\n".join(
         f"- {item}" for item in context.acceptance_criteria
-    ) or "(no explicit DoD; use the task description)"
+    ) or "（没有显式 DoD；以任务描述为准）"
     reply_style = str(
         (context.brief or {}).get("reply_style") or "").strip()
     workspace = context.workspace_facts or _render_workspace(
         runtime, context.workspace_id, context.agent_id)
-    memory = context.memory_facts or "(no task-level memory)"
-    drafts = context.draft_facts or "(no drafts)"
+    memory = context.memory_facts or "（没有任务级记忆）"
+    drafts = context.draft_facts or "（没有草稿）"
 
     completion_hint = (
-        "When done, call:\n"
+        "完成时调用：\n"
         '{"decision":"act","reasoning":"...",'
         '"action":{"type":"work_complete","parameters":{'
-        '"result_ref":"<logical name, not a path>",'
-        '"summary":"one-line summary of the delivery"}}}'
+        '"result_ref":"<逻辑名，不是路径>",'
+        '"summary":"一句话说明交付内容"}}}'
         if role == WorkRole.SOLO
-        else "Call work_complete only after the assigned work is truly done."
+        else "只有分配的工作真正完成后，才调用 work_complete。"
     )
 
-    return f"""You are {context.agent_id}. You are working on Task {context.task_id}
-(iteration {context.iteration}).
+    return f"""你是 {context.agent_id}，正在处理 Task {context.task_id}
+（第 {context.iteration} 次迭代）。
 
-========== ROLE ==========
+========== 角色 ==========
 {role_text}
 
-========== TASK ==========
+========== 任务 ==========
 {task_description}
 
-========== BRIEF ==========
+========== Brief ==========
 {_render_brief(context.brief)}
 
-========== DEFINITION OF DONE ==========
+========== 完成标准（Definition of Done） ==========
 {criteria}
 
-========== REPLY FORMAT FROM FRONT ==========
-{reply_style or "(none; concise, friendly, conclusion first, then artifacts)"}
+========== Front 要求的回复格式 ==========
+{reply_style or "（无；简洁、友好，先结论后产物）"}
 
-========== TASK COGNITION (STARTUP SNAPSHOT) ==========
+========== 任务认知（启动快照） ==========
 {str(context.cognition_report or "").strip()
- or "(no cognition report; use the task text and current environment)"}
+ or "（没有认知报告；使用任务原文和当前环境）"}
 
-> This is a startup snapshot. The environment may have changed. Re-read or
-> search when needed; do not assume the snapshot is still current.
+> 这只是启动快照。环境可能已经变化；需要时请重新读取或搜索，
+> 不要假设快照仍然是最新状态。
 
-========== WORKSPACE FACTS ==========
+========== Workspace 事实 ==========
 workspace_id: {context.workspace_id}
 {workspace}
 
-========== TASK-LEVEL MEMORY (PRIVATE WORKING MEMORY) ==========
+========== 任务级记忆（私有工作记忆） ==========
 {memory}
 
-========== CURRENT DRAFTS ==========
+========== 当前草稿 ==========
 {drafts}
 {_render_last_turn(last_turn)}
 {extra_instruction}
 {_render_tool_docs(tool_docs)}
-========== DECISION / WORK ==========
-Each call is in the decision or work phase:
-- decision: decide the next step;
-- work: continue after reads/tool results.
-The action set is the same; you may set thinking per phase.
-To inspect several files at once, put multiple `workspace_read` (or
-`workspace_search`) actions in one `actions` list — their results are
-returned together in the next Work step.
+========== 决策 / 执行 ==========
+每次调用处于 decision 或 work 阶段：
+- decision：决定下一步；
+- work：在读取 / 工具结果之后继续。
+动作集合相同；你可以按阶段设置 thinking。
+如果一次要检查多个文件，可以在一个 `actions` 列表里放多个
+`workspace_read`（或 `workspace_search`）动作 —— 结果会在下一次
+Work 步骤一起返回。
 
-========== OPTIONAL: TUNE THE NEXT CALL ==========
-Put these at the TOP LEVEL of the JSON (not inside action.parameters):
+========== 可选：调整下一次调用 ==========
+把以下字段放在 JSON 的**顶层**（不要放进 action.parameters）：
 - "thinking": {{"enabled": true, "effort": "high"}}
-  Applies to the current phase; DeepSeek supports low / high / max.
-  Use enabled:false to disable. You may pass a per-phase map.
+  作用于当前阶段；DeepSeek 支持 low / high / max。
+  用 enabled:false 关闭。也可以传按阶段设置的映射。
 
-========== ENVIRONMENT CONSTRAINTS ==========
-- `workspace_write` / `workspace_edit` persist to the Workspace.
-- `run_tool` executes in a throwaway copy of the Workspace; files written
-  inside that copy do not return to the Workspace.
-- Tool output returned here is capped (~12,000 chars); the tool timeout is
-  1..300 seconds.
-- The Workspace is the delivered artifact channel.
-- `workspace_edit` needs an exact unique `old_string`; stale content fails.
+========== 环境约束 ==========
+- `workspace_write` / `workspace_edit` 会持久化到 Workspace。
+- `run_tool` 在 Workspace 的临时副本中执行；副本里写入的文件不会回到
+  Workspace。
+- 这里返回的工具输出有上限（约 12,000 字符）；工具超时范围为 1..300 秒。
+- Workspace 是交付物的通道。
+- `workspace_edit` 需要精确且唯一的 `old_string`；内容过期会失败。
 
-========== REGISTERED ACTIONS IN THIS PHASE ==========
+========== 本阶段注册的动作 ==========
 {describe_actions(available_actions)}
 
-========== ACTIONS AND PARAMETERS ==========
+========== 动作与参数 ==========
 {describe_action_params(available_actions)}
 
-This is the Work layer: no inter-Agent messages and no identity/economy.
-Tool docs are the authoritative source: `tool_help`.
-`work_complete` records your claim; the delivered result is what the
-Workspace contains.
+这里是 Work 层：没有 Agent 间消息，也没有身份 / 经济。
+工具文档是权威来源：`tool_help`。
+`work_complete` 记录你的声明；真正的交付结果是 Workspace 里的内容。
 
-Write the final `work_complete.summary` in the Human's language (the task
-text language), because Front shows it to the Human.
+`work_complete.summary` 请使用人类使用的语言（任务原文的语言），
+因为 Front 会把它展示给人类。
 
 {completion_hint}
 
-========== OUTPUT FORMAT ==========
-Return one JSON object, no markdown fences:
-{{"decision":"act","reasoning":"one sentence",
+========== 输出格式 ==========
+返回一个 JSON 对象，不要 markdown 围栏：
+{{"decision":"act","reasoning":"一句话",
  "thinking":{{"enabled":true,"effort":"high"}},
- "action":{{"type":"action_type","parameters":{{...}}}}}}
-thinking is optional; omit it to keep the current setting.
-For a plain reply: {{"decision":"reply","content":"..."}}.
+ "action":{{"type":"动作类型","parameters":{{...}}}}}}
+thinking 是可选的；省略表示保持当前设置。
+普通回复：{{"decision":"reply","content":"..."}}。
 
-To do several things at once (e.g. write several small files), use an action list:
+要一次做多件事（例如写多个小文件），使用动作列表：
 {{"decision":"act","reasoning":"...",
  "actions":[{{"type":"workspace_write","parameters":{{...}}}},
            {{"type":"workspace_write","parameters":{{...}}}}]}}
-Actions run in order; one failure does not block later ones. If the whole
-output is truncated, NO actions are executed.
+动作按顺序执行；一个失败不会阻塞后面的动作。如果整个输出被截断，
+则所有动作都不会执行。
 """
 
 

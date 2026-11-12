@@ -47,9 +47,8 @@ ROLES: Dict[str, WorkerRole] = {
         name="通用执行者",
         description="没有明确专业归类时使用；先理解任务，再选择合适工具完成。",
         system_prompt=(
-            "Work as a pragmatic generalist. Understand the task, inspect the "
-            "workspace before changing it, choose the simplest correct "
-            "approach, and verify the result with the available tools."
+            "以务实的方式工作。先理解任务，检查 Workspace 现状，再选择"
+            "最简单正确的做法，并用可用工具验证结果。"
         ),
     ),
     "frontend_engineer": WorkerRole(
@@ -57,14 +56,13 @@ ROLES: Dict[str, WorkerRole] = {
         name="前端工程师",
         description="网页、交互界面、响应式布局、浏览器兼容与可访问性。",
         system_prompt=(
-            "Work as a frontend engineer. Prioritize a working page, clear "
-            "visual hierarchy, responsive layout, accessible controls, and "
-            "browser-level verification. Avoid unnecessary dependencies. "
-            "Check console errors and real interaction, not just static HTML."
+            "以前端工程师的方式工作。优先交付可运行页面，保证清晰的视觉"
+            "层级、响应式布局、可访问控件和浏览器级验证。避免不必要的"
+            "依赖。检查控制台错误和真实交互，而不只是静态 HTML。"
         ),
         summary_sections=[
-            "How to open/run the page",
-            "Responsive and browser verification",
+            "页面打开 / 运行方式",
+            "响应式与浏览器验证",
         ],
     ),
     "game_developer": WorkerRole(
@@ -72,16 +70,15 @@ ROLES: Dict[str, WorkerRole] = {
         name="游戏开发者",
         description="小游戏、Canvas/WebGL、输入控制、碰撞、计分和可玩性。",
         system_prompt=(
-            "Work as a game developer. Build a playable loop with clear "
-            "controls, deterministic state updates, collision/game-over/"
-            "restart behavior, and visual feedback. Use requestAnimationFrame "
-            "with delta time where appropriate. Playtest the actual game in a "
-            "browser, not only unit-level code."
+            "以游戏开发者的方式工作。构建可玩的循环，提供清晰的控制方式、"
+            "确定性的状态更新、碰撞 / 结束 / 重开逻辑和视觉反馈。适当使用 "
+            "requestAnimationFrame 与 delta time。要在真实浏览器里试玩，"
+            "而不只是检查代码。"
         ),
         summary_sections=[
-            "Controls and how to play",
-            "Gameplay verification (movement, collision, restart)",
-            "Known gameplay limitations",
+            "操作方式与玩法",
+            "玩法验证（移动、碰撞、重开）",
+            "已知玩法限制",
         ],
     ),
     "backend_engineer": WorkerRole(
@@ -89,14 +86,13 @@ ROLES: Dict[str, WorkerRole] = {
         name="后端工程师",
         description="服务、API、数据处理、错误处理和自动化测试。",
         system_prompt=(
-            "Work as a backend engineer. Define clear interfaces, handle "
-            "failure paths explicitly, avoid silent exceptions, and verify "
-            "with executable tests or real requests. Keep data and side "
-            "effects auditable."
+            "以后端工程师的方式工作。定义清晰接口，显式处理失败路径，"
+            "避免静默异常，并用可执行测试或真实请求验证。保持数据和"
+            "副作用可审计。"
         ),
         summary_sections=[
-            "API/entry points",
-            "Test or request verification",
+            "API / 入口",
+            "测试或请求验证",
         ],
     ),
     "researcher": WorkerRole(
@@ -104,13 +100,12 @@ ROLES: Dict[str, WorkerRole] = {
         name="研究员",
         description="资料检索、对比、证据整理和结构化结论。",
         system_prompt=(
-            "Work as a researcher. Separate facts from inference, cite "
-            "sources or concrete evidence, compare alternatives, and produce "
-            "a structured conclusion with uncertainty called out."
+            "以研究员的方式工作。区分事实与推断，引用来源或具体证据，"
+            "比较备选方案，给出结构化结论并标明不确定性。"
         ),
         summary_sections=[
-            "Sources/evidence",
-            "Uncertainty or conflicting evidence",
+            "来源 / 证据",
+            "不确定性或冲突证据",
         ],
     ),
     "writer": WorkerRole(
@@ -118,13 +113,12 @@ ROLES: Dict[str, WorkerRole] = {
         name="写作者",
         description="长文、说明、文案、结构化和面向读者的表达。",
         system_prompt=(
-            "Work as a writer. Identify the audience and purpose, organize "
-            "the material clearly, keep claims concrete, and edit for "
-            "readability. Do not pad with generic filler."
+            "以写作者的方式工作。先确认读者和目的，清晰组织材料，保持"
+            "论点具体，做可读性编辑。不要用空泛套话填充。"
         ),
         summary_sections=[
-            "Audience and structure",
-            "What was written or changed",
+            "读者与结构",
+            "写了或改了什么",
         ],
     ),
     "qa_verifier": WorkerRole(
@@ -132,14 +126,13 @@ ROLES: Dict[str, WorkerRole] = {
         name="质量验证者",
         description="复现、测试矩阵、缺陷定位和证据记录。",
         system_prompt=(
-            "Work as a QA verifier. Reproduce behavior from evidence, build a "
-            "small test matrix for the stated risks, report exact commands and "
-            "results, and distinguish a real defect from an untested "
-            "assumption. Do not claim a pass without evidence."
+            "以质量验证者的方式工作。根据证据复现行为，为已说明的风险建立"
+            "小型测试矩阵，报告准确命令和结果，区分真实缺陷与未验证假设。"
+            "没有证据不要声称通过。"
         ),
         summary_sections=[
-            "What was tested and how",
-            "Failures, reproduction steps, and evidence",
+            "测试了什么、怎么测",
+            "失败、复现步骤与证据",
         ],
     ),
 }
@@ -160,13 +153,13 @@ def resolve_role(role_id: Optional[str]) -> Optional[WorkerRole]:
 
 def render_role_prompt(role: WorkerRole) -> str:
     lines = [
-        "========== WORKER ROLE ==========",
+        "========== Worker 角色 ==========",
         f"role_id: {role.role_id}",
         f"role_name: {role.name}",
         role.system_prompt,
     ]
     if role.summary_sections:
-        lines.append("Role-specific summary additions:")
+        lines.append("角色额外总结项：")
         lines.extend(f"- {item}" for item in role.summary_sections)
     return "\n".join(lines)
 

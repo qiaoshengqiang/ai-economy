@@ -324,15 +324,14 @@ class SoloWorkRuntime:
                     messages.append({
                         "role": "user",
                         "content": (
-                            "That output is not a valid action envelope and "
-                            "not a report.\n"
-                            "To act, use exactly this JSON shape (no "
-                            "tool-call markup, no markdown):\n"
+                            "这段输出既不是合法的动作信封，也不是报告。\n"
+                            "要执行动作，请严格使用下面的 JSON 形状"
+                            "（不要工具调用标记，不要 markdown）：\n"
                             '{"decision":"act","actions":'
                             '[{"type":"tool_help",'
                             '"parameters":{"tool":"playwright"}}]}\n'
-                            "If you already have enough facts, output the "
-                            "report as plain text (no JSON)."),
+                            "如果你已经有足够事实，请用纯文本输出报告"
+                            "（不要 JSON）。"),
                     })
                     continue
                 feedback = render_read_results(
@@ -352,8 +351,8 @@ class SoloWorkRuntime:
                 messages.append({
                     "role": "user",
                     "content": (
-                        "Output the complete TASK COGNITION report now as "
-                        "plain text. Do not output a JSON action."),
+                        "现在请用纯文本输出完整的任务认知报告。"
+                        "不要输出 JSON 动作。"),
                 })
                 run = agent.act(
                     messages=messages,
@@ -471,7 +470,7 @@ class SoloWorkRuntime:
             resume_text = ""
             if turn == 1 and self.resume_context:
                 resume_text = (
-                    "\n========== PREVIOUS RUN CHECKPOINT (READ-ONLY) ==========\n"
+                    "\n========== 上一次运行检查点（只读） ==========\n"
                     + self.resume_context + "\n")
             if self.role_prompt:
                 resume_text = self.role_prompt + "\n" + resume_text
@@ -664,9 +663,8 @@ class SoloWorkRuntime:
                 # checkpoint 仍会保存，Human 可以续跑。
                 result.status = status_after
                 result.error = (
-                    f"RUN_INTERRUPTED: {read_only_streak} consecutive "
-                    "rounds only read; no file was written or changed "
-                    "and no tool was executed")
+                    f"RUN_INTERRUPTED: 连续 {read_only_streak} 轮只读；"
+                    "没有写文件、没有修改内容，也没有执行工具")
                 break
 
             if not intents:

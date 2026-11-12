@@ -31,5 +31,5 @@ def test_role_prompt_includes_identity_and_summary_additions():
 
     assert "role_id: game_developer" in prompt
     assert "game_developer" in prompt
-    assert "Role-specific summary additions" in prompt
-    assert "Controls and how to play" in prompt
+    assert "角色额外总结项" in prompt
+    assert "操作方式与玩法" in prompt

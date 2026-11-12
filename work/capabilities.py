@@ -21,47 +21,47 @@ from typing import Iterable, List
 #: 每个动作的一句话事实。保持中性：只描述能力，不描述用法顺序。
 ACTION_SUMMARIES = {
     # Workspace
-    "workspace_read": "read a file from the Workspace",
-    "workspace_search": "search text across Workspace files",
-    "workspace_write": "create, replace, or append a Workspace file",
-    "workspace_edit": "replace one unique fragment in a Workspace file",
+    "workspace_read": "读取 Workspace 中的文件",
+    "workspace_search": "在 Workspace 文件中搜索文本",
+    "workspace_write": "创建、替换或追加 Workspace 文件",
+    "workspace_edit": "替换 Workspace 文件中一个唯一片段",
     # Drafts
-    "draft_write": "write a draft in the Agent's private draft space",
-    "draft_append": "append to a draft",
-    "draft_read": "read a draft",
-    "draft_list": "list drafts",
-    "draft_delete": "delete a draft",
-    "workspace_promote_drafts": "copy drafts into the Workspace",
+    "draft_write": "在 Agent 私有草稿空间写草稿",
+    "draft_append": "向草稿追加内容",
+    "draft_read": "读取草稿",
+    "draft_list": "列出草稿",
+    "draft_delete": "删除草稿",
+    "workspace_promote_drafts": "把草稿复制到 Workspace",
     # Execution
-    "run_tool": "run one tool from the public tool library in a throwaway copy",
-    "tool_help": "read a tool's authoritative documentation",
+    "run_tool": "在临时副本中运行公共工具库里的一个工具",
+    "tool_help": "读取工具的权威文档",
     # Resources
-    "resource_create": "create a resource node",
-    "resource_handoff": "hand a resource to another participant",
-    "resource_release": "release a resource",
+    "resource_create": "创建资源节点",
+    "resource_handoff": "把资源交给另一个参与者",
+    "resource_release": "释放资源",
     # Memory
-    "public_working_memory_read": "read the Task's public working memory",
-    "public_working_memory_update": "update the Task's public working memory",
-    "private_working_memory_read": "read this Agent's task-scoped memory",
-    "private_working_memory_update": "update this Agent's task-scoped memory",
-    "short_term_memory_read": "read this Agent's short-term memory",
-    "short_term_memory_update": "update this Agent's short-term memory",
-    "short_term_memory_reinforce": "mark a short-term memory entry as useful",
-    "long_term_memory_search": "search this Agent's long-term memory",
-    "long_term_memory_read": "read a long-term memory entry",
-    "long_term_memory_mark_used": "mark a long-term memory entry as used",
-    "long_term_memory_consolidate": "consolidate memory entries",
+    "public_working_memory_read": "读取 Task 的公共工作记忆",
+    "public_working_memory_update": "更新 Task 的公共工作记忆",
+    "private_working_memory_read": "读取本 Agent 的任务级记忆",
+    "private_working_memory_update": "更新本 Agent 的任务级记忆",
+    "short_term_memory_read": "读取本 Agent 的短期记忆",
+    "short_term_memory_update": "更新本 Agent 的短期记忆",
+    "short_term_memory_reinforce": "把一条短期记忆标记为有用",
+    "long_term_memory_search": "搜索本 Agent 的长期记忆",
+    "long_term_memory_read": "读取一条长期记忆",
+    "long_term_memory_mark_used": "把一条长期记忆标记为已使用",
+    "long_term_memory_consolidate": "合并记忆条目",
     # Private space
-    "private_write": "write a file in this Agent's private workspace",
-    "private_read": "read a file in this Agent's private workspace",
-    "private_list": "list this Agent's private workspace",
-    "private_delete": "delete a file in this Agent's private workspace",
+    "private_write": "在本 Agent 的私有 workspace 写文件",
+    "private_read": "读取本 Agent 私有 workspace 中的文件",
+    "private_list": "列出本 Agent 的私有 workspace",
+    "private_delete": "删除本 Agent 私有 workspace 中的文件",
     # Work lifecycle / team
-    "work_item_done": "mark a work item done",
-    "work_item_blocked": "mark a work item blocked",
-    "work_qa_verdict": "return a QA verdict",
-    "work_plan_update": "update the work plan",
-    "work_complete": "declare the Task delivered",
+    "work_item_done": "标记工作项完成",
+    "work_item_blocked": "标记工作项被阻塞",
+    "work_qa_verdict": "返回 QA 结论",
+    "work_plan_update": "更新工作计划",
+    "work_complete": "声明 Task 已交付",
 }
 
 
@@ -117,14 +117,13 @@ ACTION_PARAMS = {
         '  {"tool":"python|pytest|node|playwright", "args":[...], '
         '"source":"task|private", "path":"<optional copy path>", '
         '"timeout_seconds":60}\n'
-        '  There is no `command` field. Each arg is <= 2000 chars; write long '
-        'scripts to a file first, then run the file.'
+        '  没有 `command` 字段。每个 arg 不超过 2000 字符；长脚本先写入文件，'
+        '再运行该文件。'
     ),
     "tool_help": (
         '- tool_help:\n'
         '  {"tool":"python|pytest|node|playwright"}\n'
-        '  Public tool library only; action parameters are listed in this '
-        'section.'
+        '  只支持公共工具库；动作参数列在本节中。'
     ),
     # Resources
     "resource_create": '- resource_create:\n  {"path":"<relative path>"}',

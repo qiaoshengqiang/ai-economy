@@ -36,9 +36,9 @@ from front.parser import (
 #: 🔴 不写 Agent 身份 / 经济 / Constitution：那些属于接单与议价，
 #:    不属于「把 Human 的话路由到哪里」。
 FRONT_SYSTEM_PROMPT = (
-    "You are the Human-facing entry point of an agent system. "
-    "You can chat, use your private workspace and drafts, and hand work to "
-    "a Work Agent. Reply to the Human in the language they used."
+    "你是 Agent 系统中面向人类的入口。"
+    "你可以聊天、使用自己的私有 workspace 和草稿，并把工作交给 Work Agent。"
+    "请使用人类使用的语言回复。"
 )
 
 
@@ -155,7 +155,7 @@ class FrontAgentRuntime:
             if actions:
                 if self._execute_actions is None:
                     raise FrontUnavailableError(
-                        "Front actions are not available in this runtime")
+                        "当前 runtime 不支持 Front 动作")
                 receipt = self._execute_actions(actions)
                 action_history.append({
                     "step": len(action_history) + 1,
@@ -208,11 +208,11 @@ class FrontAgentRuntime:
             parse_failures += 1
             if parse_failures >= 2:
                 raise FrontUnavailableError(
-                    f"Front output could not be parsed: {last_error}")
+                    f"Front 输出无法解析：{last_error}")
 
         raise FrontUnavailableError(
-            f"Front did not reach a final decision within "
-            f"{self.max_steps} steps")
+            f"Front 未在限定步数内给出最终决定："
+            f"{self.max_steps} 步")
 
     def _think_with_retry(self, prompt: str) -> str:
         """LLM 调用失败时重试；最终失败交给上层标记可重试中断。"""
@@ -290,82 +290,81 @@ class FrontAgentRuntime:
             error_text = (
                 "\n上一次输出无法解析：" + previous_error +
                 "。继续下一步；最终仍要输出一个合法的 JSON。\n")
-        actions = ", ".join(self.action_types) or "(none)"
-        return f"""You are {self.agent_id}, the Human-facing entry point.
+        actions = ", ".join(self.action_types) or "（无）"
+        return f"""你是 {self.agent_id}，面向人类的入口。
 
-Talk naturally in the language the Human used. You can use your private
-workspace and drafts, and you can hand work to a Work Agent. The Work Agent
-creates the Task; you don't have a create-task action.
+请自然对话，使用人类使用的语言。你可以使用自己的私有 workspace 和草稿，
+也可以把工作交给 Work Agent。Task 由 Work Agent 创建；你没有创建 Task 的动作。
 
-========== RECENT CONVERSATION (READ-ONLY) ==========
+========== 最近对话（只读） ==========
 {_render_conversation(conversation)}
 
-========== CURRENT HUMAN INPUT ==========
+========== 当前人类输入 ==========
 {human_text}
 
-========== AGENTS (READ-ONLY FACTS) ==========
+========== Agent 事实（只读） ==========
 {_render_agents(agents)}
 
-========== WORKER ROLES (READ-ONLY) ==========
+========== Worker 角色（只读） ==========
 {_render_roles(self.roles)}
 
-========== ACTIVE TASKS (READ-ONLY) ==========
+========== 进行中的 Task（只读） ==========
 {_render_tasks(active)}
 
-========== COMPLETED TASKS (READ-ONLY) ==========
+========== 已完成的 Task（只读） ==========
 {_render_tasks(completed)}
 
-========== INSPECTION RESULTS (READ-ONLY) ==========
+========== 检查结果（只读） ==========
 {_render_inspection(inspection)}
 
-========== FRONT ACTIONS (OPTIONAL, MULTI-STEP) ==========
-Available actions: {actions}
+========== Front 动作（可选，多步） ==========
+可用动作：{actions}
 
-You may return action-only steps before the final intent:
+你可以在最终 intent 之前返回只包含动作的步骤：
 {{"actions":[{{"type":"private_write","parameters":{{"path":"notes.md","content":"..."}}}}]}}
 {{"actions":[{{"type":"artifact_read","parameters":{{"task_id":"task_x","path":"index.html","offset":1,"limit":10}}}}]}}
 
-Actions run for real; their results come back in the next prompt. Then continue.
-`artifact_read` is an **action**, not an intent: put it inside `actions`,
-not in `intent`.
-Parameters:
-- artifact_read {{task_id, path, offset?, limit?}} — read a file from a Task
-  Workspace (read-only; returns content + total_lines/revision)
-- private_write {{path, content}}; private_read {{path}}; private_list {{}}
+动作会真实执行；结果会在下一次 prompt 返回。然后继续。
+`artifact_read` 是一个**动作**，不是 intent：把它放进 `actions`，
+不要放进 `intent`。
+参数：
+- artifact_read {{task_id, path, offset?, limit?}} —— 读取 Task
+  Workspace 中的文件（只读；返回内容 + total_lines/revision）
+- private_write {{path, content}}；private_read {{path}}；private_list {{}}
 - private_delete {{path}}
-- draft_write {{content, label}}; draft_append {{draft_id, content}}
-- draft_read {{draft_id}}; draft_list {{}}; draft_delete {{draft_id}}
+- draft_write {{content, label}}；draft_append {{draft_id, content}}
+- draft_read {{draft_id}}；draft_list {{}}；draft_delete {{draft_id}}
 
-Capability facts:
-- artifact_read reads Task Workspace content directly; use it for
-  "show me the code / first N lines of a Task file".
-- artifact_read is Task-scoped; it does not read arbitrary host paths.
-- The `artifacts` intent only exports Task files to the host and returns
-  paths; it does NOT return file content.
+能力事实：
+- artifact_read 直接读取 Task Workspace 内容；用于
+  “给我看代码 / Task 文件的前 N 行”。
+- artifact_read 受 Task 范围限制；不能读取任意宿主机路径。
+- `artifacts` intent 只把 Task 文件导出到宿主机并返回路径，**不返回**
+  文件内容。
 
-A handoff can carry files you prepared in `brief.files`:
+handoff 可以携带你在 `brief.files` 里准备好的文件：
 [{{"path":"index.html","content":"..."}}]
 [{{"path":"index.html","from_private":"snake.html"}}]
 [{{"path":"index.html","draft_id":"draft_..."}}]
 
-========== ACTION RESULTS / STATE ==========
+========== 动作结果 / 状态 ==========
 {_render_actions(action_history)}
 
-========== OTHER CONTEXT ==========
-{context or "(none)"}
+========== 其他上下文 ==========
+{context or "（无）"}
 {error_text}
-========== INTENTS ==========
-1. direct_reply — answer directly.
+========== 意图 ==========
+1. direct_reply —— 直接回答。
    {{"intent":"direct_reply","reply":"...","reason":"..."}}
 
-2. handoff — a new work request.
-   task_text is what the Work Agent sees; human_text keeps the original.
-   preferred_agent is routing metadata; empty/omitted = system picks an idle worker.
-   brief may carry goal / deliverables / constraints / acceptance_expectations
-   and files.
+2. handoff —— 新的工作请求。
+   task_text 是 Work Agent 看到的内容；human_text 保留原文。
+   preferred_agent 是路由元数据；空 / 省略 = 系统选择一个空闲 worker。
+   brief 可以携带 goal / deliverables / constraints / acceptance_expectations
+   和 files。
    {{"intent":"handoff",
      "task_text":"...",
-     "role":"one of the worker role ids",
+     "role":"worker 角色 id 之一",
      "preferred_agent":"optional agent_id",
      "brief":{{"goal":"...","deliverables":["..."],
               "constraints":["..."],"acceptance_expectations":["..."],
@@ -373,55 +372,54 @@ A handoff can carry files you prepared in `brief.files`:
      "reply":"...",
      "reply_style":"...","reason":"..."}}
 
-3. rework — changes to a COMPLETED Task.
+3. rework —— 修改一个已完成的 Task。
    {{"intent":"rework","task_id":"...","reply":"...","reason":"..."}}
 
-4. follow_up — continue an ACTIVE / INTERRUPTED Task.
+4. follow_up —— 继续一个进行中 / 已中断的 Task。
    {{"intent":"follow_up","task_id":"...","reply":"...","reason":"..."}}
 
-5. cancel — stop an ACTIVE Task.
+5. cancel —— 停止一个进行中的 Task。
    {{"intent":"cancel","task_id":"...","reply":"...","reason":"..."}}
 
-6. artifacts — export a Task's files to the host; returns paths, not content.
-   Use artifact_read when you need to show file content.
+6. artifacts —— 把 Task 文件导出到宿主机；返回路径，不返回内容。
+   需要展示文件内容时使用 artifact_read。
    {{"intent":"artifacts","task_id":"...","reply":"...","reason":"..."}}
 
-7. clarify — ask the Human when the choice matters.
+7. clarify —— 当选择很重要时询问人类。
    {{"intent":"clarify","question":"...","reason":"..."}}
 
-8. inspect — read-only task facts; at most 2 per input.
+8. inspect —— 只读 Task 事实；每次输入最多 2 次。
    {{"intent":"inspect","task_id":"...","reason":"..."}}
 
-Multiple actions in one turn:
+一个回合内多个动作：
 {{"decisions":[
   {{"intent":"cancel","task_id":"task_a","reply":"task_a 已停"}},
   {{"intent":"cancel","task_id":"task_b","reply":"task_b 已停"}}
 ]}}
-Control actions (direct_reply / clarify / cancel / artifacts) run in the
-order you give. At most one execution action (handoff / rework / follow_up)
-per turn; it runs after the control actions.
+控制动作（direct_reply / clarify / cancel / artifacts）按你给出的顺序执行。
+每个回合最多一个执行动作（handoff / rework / follow_up），它在控制动作之后执行。
 
-Routing facts:
-- preferred_agent IDLE + can_work → assigned to it.
-- preferred_agent WORKING → rejected; no automatic substitution.
-- unknown / FRONT / cannot-work → rejected.
-- no preferred_agent → system picks an idle worker.
+路由事实：
+- preferred_agent 为 IDLE + can_work → 分配给它。
+- preferred_agent 为 WORKING → 拒绝；不会自动替换。
+- 未知 / FRONT / 不能工作 → 拒绝。
+- 没有 preferred_agent → 系统选择一个空闲 worker。
 
-A Task with status INTERRUPTED is not running now; follow_up can resume it.
-Return JSON only, no markdown fences.
+状态为 INTERRUPTED 的 Task 当前没有运行；follow_up 可以恢复它。
+只输出 JSON，不要 markdown 围栏。
 """
 
 
 def _render_actions(items: List[Dict[str, Any]]) -> str:
     if not items:
-        return "(none)"
+        return "（无）"
     lines: List[str] = []
     for item in items:
         actions = item.get("actions") or []
         names = ", ".join(
             str(action.get("type") or "?")
             for action in actions if isinstance(action, dict))
-        lines.append(f"step {item.get('step', '?')}: {names}")
+        lines.append(f"步骤 {item.get('step', '?')}：{names}")
         receipt = str(item.get("receipt") or "").strip()
         if receipt:
             if len(receipt) > 12000:
@@ -443,7 +441,7 @@ def _conversation_refs(
         if role not in ("human", "front") or not text:
             continue
         out.append({
-            "role": "Human" if role == "human" else "Front",
+            "role": "人类" if role == "human" else "Front Agent",
             "text": text[:1200],
         })
     return out[-max(0, int(limit)):]
@@ -475,7 +473,7 @@ def _agent_refs(items: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 def _render_roles(roles: List[Dict[str, Any]]) -> str:
     if not roles:
-        return "(none; use generalist)"
+        return "（无；使用 generalist）"
     return "\n".join(
         f"- {item['id']}: {item.get('name') or item['id']} — "
         f"{item.get('description') or ''}"
@@ -484,9 +482,9 @@ def _render_roles(roles: List[Dict[str, Any]]) -> str:
 
 def _render_agents(agents: List[Dict[str, Any]]) -> str:
     if not agents:
-        return "(none)"
+        return "（无）"
     return "\n".join(
-        f"- {item['agent_id']}: status={item['status'] or '?'} "
+        f"- {item['agent_id']}：status={item['status'] or '?'} "
         f"role={item['role'] or 'WORKER'} can_work={item['can_work']}"
         for item in agents
     )
@@ -494,7 +492,7 @@ def _render_agents(agents: List[Dict[str, Any]]) -> str:
 
 def _render_inspection(items: List[Dict[str, Any]]) -> str:
     if not items:
-        return "(none)"
+        return "（无）"
     lines: List[str] = []
     for item in items:
         task_id = str(item.get("task_id") or "")
@@ -506,7 +504,7 @@ def _render_inspection(items: List[Dict[str, Any]]) -> str:
         except (TypeError, ValueError):
             text = str(facts)
         if len(text) > 6000:
-            text = text[:6000] + "\n… (inspection facts truncated)"
+            text = text[:6000] + "\n…（检查结果已截断）"
         lines.append(f"[{task_id}]\n{text}")
     return "\n\n".join(lines)
 

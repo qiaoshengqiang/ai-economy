@@ -105,6 +105,8 @@ Budget     花多少
 - 角色 prompt 只**追加**，不覆盖全局规则；
 - Pi Task 把角色写入 `task.acceptance["role"]`，resume 时回退读取；
 - 全局总结契约固定 `RESULT.md` 的章节，角色只追加专业总结项。
+- 系统提供的 Front / Work / Worker 角色 prompt 使用中文；
+  JSON 字段、动作名、错误码等协议标识保持英文，避免改变协议。
 
 ## 5. 完成与 usage
 

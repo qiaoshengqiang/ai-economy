@@ -184,7 +184,7 @@ def test_clarify():
 
 def test_malformed_output_is_retryable_error():
     runtime = FrontAgentRuntime("front", _think_returning("not json"))
-    with pytest.raises(FrontUnavailableError, match="could not be parsed"):
+    with pytest.raises(FrontUnavailableError, match="无法解析"):
         runtime.decide("帮我做点事")
 
 
@@ -216,20 +216,20 @@ def test_front_prompt_is_human_facing_and_does_not_invent_constraints():
     runtime = FrontAgentRuntime("front", think)
     runtime.decide("继续做", active_tasks=[{"task_id": "task_1"}])
     prompt = captured["prompt"]
-    assert "You are front, the Human-facing entry point" in prompt
-    assert "FRONT ACTIONS (OPTIONAL, MULTI-STEP)" in prompt
+    assert "你是 front，面向人类的入口" in prompt
+    assert "Front 动作（可选，多步）" in prompt
     assert "artifact_read" in prompt
-    assert "does NOT return file content" in prompt
+    assert "不返回" in prompt
     assert "private_read" in prompt
     assert "brief.files" in prompt
-    assert "task_text is what the Work Agent sees" in prompt
-    assert "preferred_agent is routing metadata" in prompt
-    assert "RECENT CONVERSATION" in prompt
-    assert "create-task action" in prompt
+    assert "task_text 是 Work Agent 看到的内容" in prompt
+    assert "preferred_agent 是路由元数据" in prompt
+    assert "最近对话" in prompt
+    assert "没有创建 Task 的动作" in prompt
     assert "INTERRUPTED" in prompt
-    assert "follow_up can resume it" in prompt
+    assert "follow_up 可以恢复它" in prompt
     assert "artifacts" in prompt
-    assert "Multiple actions in one turn" in prompt
+    assert "一个回合内多个动作" in prompt
     # 旧版的强行为约束不应再出现。
     assert "Do not replace the Work Agent" not in prompt
     assert "not the task planner" not in prompt
@@ -259,8 +259,8 @@ def test_front_prompt_includes_recent_conversation():
         ],
     )
     prompt = captured["prompt"]
-    assert "Human: 之前那个台球网页做好了吗" in prompt
-    assert "Front: 已经做好了，可以直接打开看" in prompt
+    assert "人类: 之前那个台球网页做好了吗" in prompt
+    assert "Front Agent: 已经做好了，可以直接打开看" in prompt
 
 
 def test_front_cannot_create_task():
@@ -336,11 +336,11 @@ def test_prompt_exposes_agent_facts_and_routing_rules():
     ])
 
     prompt = think.prompt
-    assert "agent_b: status=WORKING" in prompt
-    assert "agent_e: status=IDLE" in prompt
-    assert "preferred_agent WORKING → rejected" in prompt
-    assert "no automatic substitution" in prompt
-    assert "inspect — read-only task facts" in prompt
+    assert "agent_b：status=WORKING" in prompt
+    assert "agent_e：status=IDLE" in prompt
+    assert "preferred_agent 为 WORKING → 拒绝" in prompt
+    assert "不会自动替换" in prompt
+    assert "inspect —— 只读 Task 事实" in prompt
 
 
 def test_inspect_loop_fetches_facts_then_decides():
@@ -371,7 +371,7 @@ def test_inspect_loop_fetches_facts_then_decides():
     assert calls == ["task_1"]
     assert len(prompts) == 2
     assert "IN_PROGRESS" in prompts[1]
-    assert "inspect — read-only task facts" in prompts[0]
+    assert "inspect —— 只读 Task 事实" in prompts[0]
 
 
 def test_inspect_is_bounded():
@@ -421,8 +421,8 @@ def test_prompt_separates_task_text_from_routing_metadata():
     ])
 
     prompt = think.prompt
-    assert "task_text is what the Work Agent sees" in prompt
-    assert "preferred_agent is routing metadata" in prompt
+    assert "task_text 是 Work Agent 看到的内容" in prompt
+    assert "preferred_agent 是路由元数据" in prompt
     assert "use it verbatim" not in prompt
 
 
@@ -432,9 +432,9 @@ def test_prompt_says_assignee_is_routing_not_task_text():
     runtime.decide("让 agent_e 写一个笑话")
 
     prompt = think.prompt
-    assert "task_text is what the Work Agent sees" in prompt
-    assert "preferred_agent is routing metadata" in prompt
-    assert "Routing facts:" in prompt
+    assert "task_text 是 Work Agent 看到的内容" in prompt
+    assert "preferred_agent 是路由元数据" in prompt
+    assert "路由事实：" in prompt
     assert "keep the original text" not in prompt
 
 
@@ -691,7 +691,7 @@ def test_prompt_lists_worker_roles():
     runtime.decide("你好")
 
     prompt = think.prompt
-    assert "WORKER ROLES" in prompt
+    assert "Worker 角色" in prompt
     assert "game_developer" in prompt
     assert "小游戏与 Canvas" in prompt
     assert "frontend_engineer" in prompt

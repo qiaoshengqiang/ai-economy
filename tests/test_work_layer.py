@@ -378,20 +378,20 @@ class TestWorkPrompt:
                           "tool_help"},
         )
 
-        assert "TASK COGNITION" in prompt
+        assert "任务认知" in prompt
         assert "做一个鹈鹕骑自行车网页" in prompt
         assert "playwright" in prompt
         assert "workspace_read" in prompt
-        assert "READ-ONLY" in prompt
-        assert "ACTIONS IN THE WORK PHASE" in prompt
+        assert "只读" in prompt
+        assert "Work 阶段动作" in prompt
         assert "workspace_write" in prompt
-        assert "WORK ACTION PARAMETERS" in prompt
+        assert "Work 动作参数" in prompt
         assert '"write_mode"' in prompt
-        assert "Public tool library only" in prompt
-        assert "TOOL DOCS" in prompt
+        assert "只支持公共工具库" in prompt
+        assert "工具文档" in prompt
         assert "## 3. Technical approach" not in prompt
         assert '"actions":[{"type":"tool_help"' in prompt
-        assert "Never emit provider tool-call syntax" in prompt
+        assert "不要输出 provider 的工具调用语法" in prompt
 
     def test_all_registered_solo_actions_are_visible(self):
         """能力清单来自 dispatcher：注册了什么，prompt 里就必须有什么。"""
@@ -412,9 +412,9 @@ class TestWorkPrompt:
             context, task_description="用 playwright 测试", runtime=None,
             tool_docs={"playwright": "SPEC-MUST-BE-*.spec.js"})
 
-        assert "TOOL DOCS ALREADY READ" in prompt
+        assert "工具文档（已读取" in prompt
         assert "SPEC-MUST-BE-*.spec.js" in prompt
-        assert "Tool docs are the authoritative source" in prompt
+        assert "工具文档是权威来源" in prompt
 
     def test_prompt_exposes_thinking_but_not_budget_control(self):
         context = WorkContext(
@@ -452,18 +452,18 @@ class TestWorkPrompt:
         assert "low / high / max" in prompt
         assert "cognitive_budget" not in prompt
         assert "65536" not in prompt
-        assert "output budget: effective=32768 tokens (fixed for Work)" in prompt
+        assert "输出预算：effective=32768 tokens（Work 固定）" in prompt
         assert "index.html x 3" in prompt
         assert "workspace_edit" in prompt
-        assert "no actions from that output were executed" in prompt
+        assert "该输出中的动作没有执行" in prompt
         assert '"actions"' in prompt
-        assert "Actions run in order" in prompt
-        assert "summary-phase actions were IGNORED" in prompt
+        assert "动作按顺序执行" in prompt
+        assert "summary 阶段返回的动作被忽略" in prompt
         assert "workspace_write" in prompt
-        assert "PREVIOUS ROUND SUMMARY (FULL)" in prompt
+        assert "上一轮总结（完整）" in prompt
         assert "ROUND-1 完整总结：已写 config.js。" in prompt
-        assert "previous action results" in prompt
-        assert "workspace_edit app/service.py: failed" in prompt
+        assert "上一轮动作结果" in prompt
+        assert "workspace_edit app/service.py：失败" in prompt
         assert "old_string_not_found" in prompt
 
     def test_prompt_has_work_actions(self):
@@ -478,7 +478,7 @@ class TestWorkPrompt:
                        "private_working_memory_update"):
             assert action in prompt
         assert "public_working_memory_update" not in prompt
-        assert "Tool docs are the authoritative source" in prompt
+        assert "工具文档是权威来源" in prompt
 
     def test_worker_prompt_includes_item_notes_and_public_memory(self):
         from work.plan import WorkItem
@@ -878,7 +878,7 @@ class TestSoloWorkRuntime:
         assert result.ok is True, result.error
         assert runtime.agent.cognition_calls == 2
         assert rounds[0]["summary"] == "COGNITION-REPORT-TEXT"
-        assert "not a valid action envelope" in str(
+        assert "不是合法的动作信封" in str(
             runtime.agent.prompts[1][-1])
 
     def test_provider_tool_call_markup_is_not_used_as_report(self, db):
@@ -908,7 +908,7 @@ class TestSoloWorkRuntime:
         assert result.ok is True, result.error
         assert runtime.agent.cognition_calls == 2
         assert rounds[0]["summary"] == "COGNITION-REPORT-TEXT"
-        assert "tool-call markup" in str(runtime.agent.prompts[1][-1])
+        assert "工具调用标记" in str(runtime.agent.prompts[1][-1])
 
     def test_tool_docs_read_in_cognition_survive_into_work_prompt(self, db):
         """
@@ -927,7 +927,7 @@ class TestSoloWorkRuntime:
 
         assert result.ok is True, result.error
         work_prompt = str(runtime.agent.prompts[-1])
-        assert "TOOL DOCS ALREADY READ" in work_prompt
+        assert "工具文档（已读取" in work_prompt
         assert "SPEC-MUST-BE-*.spec.js" in work_prompt
         assert "USE process.env.BASE_URL" in work_prompt
 
@@ -977,7 +977,7 @@ class TestSoloWorkRuntime:
             resume_context="CHECKPOINT-MARKER").run()
 
         assert result.ok is True, result.error
-        assert "PREVIOUS RUN CHECKPOINT" in str(runtime.agent.prompts[0])
+        assert "上一次运行检查点" in str(runtime.agent.prompts[0])
         assert "CHECKPOINT-MARKER" in str(runtime.agent.prompts[0])
         assert "CHECKPOINT-MARKER" in str(runtime.agent.prompts[-1])
 
@@ -1154,7 +1154,7 @@ def test_summary_actions_are_reported_to_next_turn(db):
 
     assert result.ok is True, result.error
     next_prompt = str(runtime.agent.prompts[-1])
-    assert "summary-phase actions were IGNORED" in next_prompt
+    assert "summary 阶段返回的动作被忽略" in next_prompt
     assert "workspace_write" in next_prompt
 
 
@@ -1204,10 +1204,10 @@ class TestReadOnlyProgressGuard:
 
         assert result.ok is False
         assert "RUN_INTERRUPTED" in result.error
-        assert "3 consecutive rounds only read" in result.error
+        assert "连续 3 轮只读" in result.error
         assert result.turns == 3
         # 第 2 轮开始，prompt 里应出现「连续只读」的事实。
-        assert "the last 2 rounds only read" in str(
+        assert "最近 2 轮只读" in str(
             runtime.agent.prompts[-1])
 
 
