@@ -261,6 +261,13 @@ def test_pi_work_runtime_completes_and_ingests_memory(db, monkeypatch, tmp_path)
     assert '"maxTokens": 16384' in model_cfg
     assert '"max": "max"' in model_cfg
     assert '"medium": null' in model_cfg
+    pi_settings = json.loads(
+        (pi_agent_dir / "settings.json").read_text("utf-8"))
+    assert pi_settings["compaction"] == {
+        "enabled": True,
+        "reserveTokens": 16384,
+        "keepRecentTokens": 20000,
+    }
 
     monkeypatch.setenv(
         "AIEOS_WEB_SEARCH_CMD", "/opt/aieos/aieos_web_search.py")

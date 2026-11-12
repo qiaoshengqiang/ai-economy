@@ -231,6 +231,17 @@ class PiWorkRuntime:
         (directory / "models.json").write_text(
             json.dumps(payload, ensure_ascii=False, indent=2),
             encoding="utf-8")
+        # 显式固定 Pi 的自动压缩设置，不依赖 Pi 未来默认值。
+        # 阈值 = contextWindow - reserveTokens；keepRecentTokens 保留最近上下文。
+        (directory / "settings.json").write_text(
+            json.dumps({
+                "compaction": {
+                    "enabled": True,
+                    "reserveTokens": 16384,
+                    "keepRecentTokens": 20000,
+                },
+            }, ensure_ascii=False, indent=2),
+            encoding="utf-8")
         return directory
 
     # ------------------------------------------------------------

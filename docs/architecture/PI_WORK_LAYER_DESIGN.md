@@ -57,6 +57,9 @@ tasks/<task_id>/
 - `--no-context-files`：不加载项目 `AGENTS.md` / `CLAUDE.md`；
   只保留 Pi 基础提示 + AIEOS Work addendum；
 - `--session-dir tasks/<id>/.aieos/pi-session` + `--session-id`；
+- `pi-agent/settings.json` 显式启用 Pi 自动压缩：`reserveTokens=16384`、
+  `keepRecentTokens=20000`；触发阈值 = `contextWindow - reserveTokens`，
+  `contextWindow` 来自 `pi-agent/models.json`；
 - Agent credential 只通过子进程环境变量传入，不写日志；
 - `agent_settled` 视为本次 Pi run 结束；
 - `abort` / 进程终止用于取消。
