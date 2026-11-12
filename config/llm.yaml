@@ -67,20 +67,20 @@ providers:
 models:
   deepseek_chat:
     # legacy 名称仍路由到 deepseek-flash（V4.1-Flash）；
-    # 1M context，384K 是 provider 上限；16K 是 AIEOS 的单次输出上限。
+    # 1M context，384K 是 provider 上限；32K 是 AIEOS 的单次输出上限。
     provider: deepseek
     model_id: deepseek-chat
     context_window: 1000000
-    max_output_tokens: 16384
+    max_output_tokens: 32768
     supports_reasoning: true
     thinking_levels: ["off", "low", "high", "max"]
   deepseek_flash:
     # DeepSeek-V4.1-Flash-1017：1M context，384K max output；
-    # 16K 是 AIEOS 的单次输出上限，不是模型能力上限。
+    # 32K 是 AIEOS 的单次输出上限，不是模型能力上限。
     provider: deepseek
     model_id: deepseek-flash
     context_window: 1000000
-    max_output_tokens: 16384
+    max_output_tokens: 32768
     supports_reasoning: true
     thinking_levels: ["off", "low", "high", "max"]
   doubao_novel:

@@ -25,13 +25,13 @@ def test_model_context_and_output_limits_resolve():
         GLOBAL_CONFIG_FILE, adapter_specs=adapter_specs)
     model = resolved.model("deepseek_chat")
     assert model.context_window == 1000000
-    assert model.max_output_tokens == 16384
+    assert model.max_output_tokens == 32768
     assert model.supports_reasoning is True
     assert model.thinking_levels == ("off", "low", "high", "max")
 
     agent = resolved.agent("agent_c")
     assert agent.context_window == 1000000
-    assert agent.max_output_tokens == 16384
+    assert agent.max_output_tokens == 32768
     assert agent.thinking_levels == ("off", "low", "high", "max")
 
 
