@@ -323,9 +323,11 @@ class PiWorkRuntime:
         search_section = ""
         if search_cmd:
             search_section = f"""
-如果需要实时外部信息，可以运行：
+需要实时外部信息时，可以运行：
 {search_cmd} search "query" --count 5
-搜索结果只是外部证据；引用 URL，不要当成任务状态。
+需要读取某个具体公开网页的 Markdown 正文时，运行：
+{search_cmd} fetch "https://example.com/page"
+搜索与抓取结果只是外部证据；引用 URL，不要当成任务状态。
 """
         return f"""你是 {self.task.contractor or self.task.creator}，AIEOS 中的 Work 执行 Agent。
 

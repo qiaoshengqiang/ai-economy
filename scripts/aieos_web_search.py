@@ -66,15 +66,16 @@ def _markdown(data: dict) -> str:
 
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description="AIEOS web search bridge")
+    parser = argparse.ArgumentParser(
+        description="AIEOS web search / fetch bridge")
     sub = parser.add_subparsers(dest="command", required=True)
-    search = sub.add_parser("search")
+    search = sub.add_parser("search", help="搜索网页")
     search.add_argument("query")
     search.add_argument("--count", type=int, default=5)
     search.add_argument("--content", action="store_true")
     search.add_argument("--ori-question", default="")
     search.add_argument("--json", action="store_true")
-    fetch = sub.add_parser("fetch")
+    fetch = sub.add_parser("fetch", help="抓取单个公开网页")
     fetch.add_argument("url")
     fetch.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
@@ -103,7 +104,7 @@ def main(argv=None) -> int:
                 print()
                 print(str(data.get("content") or "")[:20000])
     except Exception as exc:                                  # noqa: BLE001
-        print(f"web search failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        print(f"web tool failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
     return 0
 

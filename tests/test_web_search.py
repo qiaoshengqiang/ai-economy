@@ -142,7 +142,7 @@ def test_front_web_fetch_action_uses_service():
 
 
 def test_cli_bridge_uses_local_token(monkeypatch):
-    seen = {}
+    seen = []
 
     class _Endpoint(BaseHTTPRequestHandler):
         def log_message(self, *_args):
@@ -150,17 +150,29 @@ def test_cli_bridge_uses_local_token(monkeypatch):
 
         def do_POST(self):  # noqa: N802
             length = int(self.headers.get("Content-Length") or 0)
-            seen["path"] = self.path
-            seen["token"] = self.headers.get("X-AIEOS-Search-Token")
-            seen["payload"] = json.loads(self.rfile.read(length) or b"{}")
-            raw = json.dumps({
-                "ok": True,
-                "results": [{
-                    "title": "CLI result",
-                    "url": "https://example.com/cli",
-                    "summary": "summary",
-                }],
-            }).encode()
+            payload = json.loads(self.rfile.read(length) or b"{}")
+            seen.append({
+                "path": self.path,
+                "token": self.headers.get("X-AIEOS-Search-Token"),
+                "payload": payload,
+            })
+            if self.path == "/internal/web-fetch":
+                body = {
+                    "ok": True,
+                    "url": payload.get("url"),
+                    "title": "Fetched page",
+                    "content": "# Page body",
+                }
+            else:
+                body = {
+                    "ok": True,
+                    "results": [{
+                        "title": "CLI result",
+                        "url": "https://example.com/cli",
+                        "summary": "summary",
+                    }],
+                }
+            raw = json.dumps(body).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(raw)))
@@ -179,9 +191,14 @@ def test_cli_bridge_uses_local_token(monkeypatch):
         script = (
             Path(__file__).resolve().parents[1]
             / "scripts" / "aieos_web_search.py")
-        completed = subprocess.run(
+        search = subprocess.run(
             [sys.executable, str(script), "search", "hello",
              "--count", "3", "--json"],
+            capture_output=True, text=True, check=True,
+        )
+        fetch = subprocess.run(
+            [sys.executable, str(script), "fetch",
+             "https://example.com/page"],
             capture_output=True, text=True, check=True,
         )
     finally:
@@ -189,15 +206,23 @@ def test_cli_bridge_uses_local_token(monkeypatch):
         server.server_close()
         thread.join(timeout=2)
 
-    data = json.loads(completed.stdout)
+    data = json.loads(search.stdout)
     assert data["results"][0]["title"] == "CLI result"
-    assert seen["path"] == "/internal/web-search"
-    assert seen["token"] == "local-token"
-    assert seen["payload"] == {
+    assert "Fetched page" in fetch.stdout
+    assert "Page body" in fetch.stdout
+    assert seen[0]["path"] == "/internal/web-search"
+    assert seen[0]["token"] == "local-token"
+    assert seen[0]["payload"] == {
         "query": "hello",
         "count": 3,
         "need_content": False,
         "ori_question": "",
+        "agent_id": "agent_a",
+    }
+    assert seen[1]["path"] == "/internal/web-fetch"
+    assert seen[1]["token"] == "local-token"
+    assert seen[1]["payload"] == {
+        "url": "https://example.com/page",
         "agent_id": "agent_a",
     }
 
@@ -211,8 +236,12 @@ def test_ui_internal_endpoint_requires_token():
         front_agent = "agent_a"
 
         def web_search(self, agent_id, query, **kwargs):
-            calls.append((agent_id, query, kwargs))
+            calls.append(("search", agent_id, query, kwargs))
             return {"results": [{"title": "UI result"}]}
+
+        def web_fetch(self, agent_id, url):
+            calls.append(("fetch", agent_id, url))
+            return {"url": url, "title": "UI page", "content": "# body"}
 
     old_controller = Handler.controller
     old_token = Handler.web_search_token
@@ -221,7 +250,8 @@ def test_ui_internal_endpoint_requires_token():
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    url = f"http://127.0.0.1:{server.server_address[1]}/internal/web-search"
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+    url = base + "/internal/web-search"
     body = json.dumps({"query": "hello", "count": 2}).encode()
     try:
         denied = urllib.request.Request(
@@ -239,6 +269,19 @@ def test_ui_internal_endpoint_requires_token():
             })
         with urllib.request.urlopen(allowed, timeout=5) as response:
             data = json.loads(response.read().decode())
+
+        fetch_body = json.dumps({
+            "url": "https://example.com/page",
+            "agent_id": "agent_b",
+        }).encode()
+        fetch_request = urllib.request.Request(
+            base + "/internal/web-fetch", data=fetch_body, method="POST",
+            headers={
+                "Content-Type": "application/json",
+                "X-AIEOS-Search-Token": "expected-token",
+            })
+        with urllib.request.urlopen(fetch_request, timeout=5) as response:
+            fetched = json.loads(response.read().decode())
     finally:
         Handler.controller = old_controller
         Handler.web_search_token = old_token
@@ -248,7 +291,10 @@ def test_ui_internal_endpoint_requires_token():
 
     assert data["ok"] is True
     assert data["results"][0]["title"] == "UI result"
+    assert fetched["ok"] is True
+    assert fetched["title"] == "UI page"
     assert calls == [
-        ("agent_a", "hello",
+        ("search", "agent_a", "hello",
          {"count": 2, "need_content": False, "ori_question": ""}),
+        ("fetch", "agent_b", "https://example.com/page"),
     ]

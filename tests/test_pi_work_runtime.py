@@ -248,3 +248,9 @@ def test_pi_work_runtime_completes_and_ingests_memory(db, monkeypatch, tmp_path)
     assert '"maxTokens": 16384' in model_cfg
     assert '"max": "max"' in model_cfg
     assert '"medium": null' in model_cfg
+
+    monkeypatch.setenv(
+        "AIEOS_WEB_SEARCH_CMD", "/opt/aieos/aieos_web_search.py")
+    prompt = runner._minimal_system_prompt()
+    assert "aieos_web_search.py search" in prompt
+    assert "aieos_web_search.py fetch" in prompt
