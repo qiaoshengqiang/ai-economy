@@ -40,10 +40,92 @@ from services.private_workspace import (
 
 FRONT_ACTION_TYPES = frozenset({
     "artifact_read",
+    "web_search", "web_fetch",
     "private_read", "private_write", "private_list", "private_delete",
     "draft_read", "draft_write", "draft_append", "draft_list",
     "draft_delete",
 })
+
+
+class FrontWebSearchExecutor:
+    """`web_search` —— 只读外部事实，不写 Task / Workspace。"""
+
+    action_types = frozenset({"web_search"})
+
+    def __init__(self, search_fn: Callable[..., Any]) -> None:
+        self.search_fn = search_fn
+
+    def execute(self, intent: ActionIntent) -> ActionResult:
+        params = dict(getattr(intent, "parameters", None) or {})
+        query = str(params.get("query") or "").strip()
+        if not query:
+            return ActionResult(
+                success=False,
+                error="web_search 需要 query",
+                action_id=intent.intent_id,
+                action_type=intent.action_type,
+                metadata={"code": "bad_request"},
+            )
+        try:
+            raw = self.search_fn(
+                query,
+                count=int(params.get("count") or 5),
+                need_content=bool(params.get("need_content", False)),
+                ori_question=str(params.get("ori_question") or ""),
+            )
+        except Exception as exc:                              # noqa: BLE001
+            return ActionResult(
+                success=False,
+                error=f"{type(exc).__name__}: {exc}",
+                action_id=intent.intent_id,
+                action_type=intent.action_type,
+                metadata={"code": "search_failed"},
+            )
+        if not isinstance(raw, dict):
+            raw = {"results": raw}
+        return ActionResult(
+            success=True,
+            output=raw,
+            action_id=intent.intent_id,
+            action_type=intent.action_type,
+            metadata={"code": None},
+        )
+
+
+class FrontWebFetchExecutor:
+    action_types = frozenset({"web_fetch"})
+
+    def __init__(self, fetch_fn: Callable[..., Any]) -> None:
+        self.fetch_fn = fetch_fn
+
+    def execute(self, intent: ActionIntent) -> ActionResult:
+        params = dict(getattr(intent, "parameters", None) or {})
+        url = str(params.get("url") or "").strip()
+        if not url:
+            return ActionResult(
+                success=False,
+                error="web_fetch 需要 url",
+                action_id=intent.intent_id,
+                action_type=intent.action_type,
+                metadata={"code": "bad_request"},
+            )
+        try:
+            raw = self.fetch_fn(url)
+        except Exception as exc:                              # noqa: BLE001
+            return ActionResult(
+                success=False,
+                error=f"{type(exc).__name__}: {exc}",
+                action_id=intent.intent_id,
+                action_type=intent.action_type,
+                metadata={"code": "fetch_failed"},
+            )
+        return ActionResult(
+            success=True,
+            output=raw if isinstance(raw, dict) else {"content": str(raw)},
+            action_id=intent.intent_id,
+            action_type=intent.action_type,
+            metadata={"code": None},
+        )
 
 
 class FrontArtifactReadExecutor:
@@ -108,8 +190,10 @@ class FrontArtifactReadExecutor:
 def build_front_dispatcher(
     *,
     workspace_of: Callable[[str], Any],
-    drafts: Any,
+    drafts: Any = None,
     artifact_read_fn: Optional[Callable[..., Any]] = None,
+    web_search_fn: Optional[Callable[..., Any]] = None,
+    web_fetch_fn: Optional[Callable[..., Any]] = None,
 ) -> ActionDispatcher:
     """把 Front 的私有空间 / 草稿 / 只读产物动作接成一个 dispatcher。"""
 
@@ -121,14 +205,21 @@ def build_front_dispatcher(
         PrivateReadExecutor(read_private, workspace_of=_ws_of),
         PrivateListExecutor(list_private, workspace_of=_ws_of),
         PrivateDeleteExecutor(delete_private, workspace_of=_ws_of),
-        DraftWriteExecutor(drafts.write),
-        DraftAppendExecutor(drafts.append),
-        DraftReadExecutor(drafts.read),
-        DraftListExecutor(drafts.list),
-        DraftDeleteExecutor(drafts.delete),
     ]
+    if drafts is not None:
+        executors.extend([
+            DraftWriteExecutor(drafts.write),
+            DraftAppendExecutor(drafts.append),
+            DraftReadExecutor(drafts.read),
+            DraftListExecutor(drafts.list),
+            DraftDeleteExecutor(drafts.delete),
+        ])
     if artifact_read_fn is not None:
         executors.append(FrontArtifactReadExecutor(artifact_read_fn))
+    if web_search_fn is not None:
+        executors.append(FrontWebSearchExecutor(web_search_fn))
+    if web_fetch_fn is not None:
+        executors.append(FrontWebFetchExecutor(web_fetch_fn))
     return ActionDispatcher(executors)
 
 

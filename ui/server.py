@@ -17,9 +17,12 @@ AIEOS UI Server —— 人类与 Front Agent 的唯一入口
 from __future__ import annotations
 
 import argparse
+import hmac
 import json
 import mimetypes
+import os
 import re
+import secrets
 import sys
 from pathlib import Path
 from urllib.parse import unquote, urlparse
@@ -34,6 +37,7 @@ if str(ROOT) not in sys.path:
 
 class Handler(BaseHTTPRequestHandler):
     controller = None
+    web_search_token = ""
     server_version = "AIEOSUI/1.0"
 
     # ------------------------------------------------------------
@@ -124,6 +128,29 @@ class Handler(BaseHTTPRequestHandler):
         path = unquote(parsed.path)
         payload = self._read_json()
         try:
+            if path in ("/internal/web-search", "/internal/web-fetch"):
+                supplied = str(
+                    self.headers.get("X-AIEOS-Search-Token") or "")
+                if not self.web_search_token or not hmac.compare_digest(
+                        supplied, self.web_search_token):
+                    self._send_json(
+                        {"ok": False, "error": "forbidden"}, status=403)
+                    return
+                agent_id = str(
+                    payload.get("agent_id") or self.controller.front_agent)
+                if path == "/internal/web-search":
+                    result = self.controller.web_search(
+                        agent_id,
+                        str(payload.get("query") or ""),
+                        count=int(payload.get("count") or 5),
+                        need_content=bool(payload.get("need_content", False)),
+                        ori_question=str(payload.get("ori_question") or ""),
+                    )
+                else:
+                    result = self.controller.web_fetch(
+                        agent_id, str(payload.get("url") or ""))
+                self._send_json({"ok": True, **result})
+                return
             if path == "/api/submit":
                 text = str(payload.get("text") or "").strip()
                 job_id = self.controller.submit(text)
@@ -223,6 +250,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     from main import build_runtime
+    from core.logging_setup import setup_logging
     from core.paths import (
         ENV_FILE, GLOBAL_CONFIG_FILE, GLOBAL_LLM_CONFIG_FILE,
         GLOBAL_WORKER_ROLES_FILE,
@@ -230,6 +258,18 @@ def main(argv=None) -> int:
     from ui.rounds import TaskRoundLog
     from work.controller import AIEOSController
     from work.settings_admin import SystemConfigAdmin
+
+    setup_logging(level=os.environ.get("AI_ECONOMY_LOG_LEVEL", "INFO"))
+
+    # Pi 的 web_search CLI 桥；provider key 不进入 Pi。
+    search_token = secrets.token_urlsafe(32)
+    Handler.web_search_token = search_token
+    search_url = f"http://127.0.0.1:{int(args.port)}"
+    os.environ["AIEOS_WEB_SEARCH_URL"] = search_url
+    os.environ["AIEOS_WEB_SEARCH_TOKEN"] = search_token
+    os.environ["AIEOS_WEB_SEARCH_CMD"] = (
+        f"{sys.executable} {ROOT / 'scripts' / 'aieos_web_search.py'}")
+    os.environ["AIEOS_WEB_SEARCH_BASE_URL"] = "https://api.deepseek.com"
 
     if args.db:
         db_path = Path(args.db).expanduser().resolve()

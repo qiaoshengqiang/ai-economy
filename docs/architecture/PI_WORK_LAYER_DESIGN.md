@@ -191,6 +191,36 @@ Phase 责任
 - 系统提供的 Front / Work / Worker 角色 prompt 使用中文；
   JSON 字段、动作名、错误码等协议标识保持英文，避免改变协议。
 
+## 4.6 Web Search（外部事实）
+
+Front 与 Pi 共用同一个只读搜索服务，provider key 只在 AIEOS 主进程：
+
+```text
+Front                          Pi
+  web_search / web_fetch         bash: aieos_web_search.py
+        │                              │
+        ▼                              ▼
+   FrontActionExecutor          AIEOS 本地端点
+        │                       /internal/web-search
+        │                       /internal/web-fetch
+        └────────────┬─────────────────┘
+                     ▼
+             WebSearchClient
+                     ▼
+        DeepSeek /v1/tools/search · /v1/tools/fetch
+```
+
+- `llm/web_search.py` 是唯一搜索实现；
+- Front 动作：`web_search {query, count?, need_content?, ori_question?}`、
+  `web_fetch {url}`；结果只作为本轮证据，不进入 Task Core / Shared Context；
+- Pi 不获得 DeepSeek key。UI 启动时生成任务级
+  `AIEOS_WEB_SEARCH_TOKEN`，Pi 通过 `scripts/aieos_web_search.py` 调用
+  `127.0.0.1` 内部端点；`AIEOS_AGENT_ID` 决定使用哪个 Agent 的 credential；
+- `web_fetch` 只允许公开 `http/https` URL，拒绝 localhost / 私有 IP /
+  带用户名密码的地址；URL 长度上限 8192；
+- Search / Fetch 结果按条数和字符数截断；搜索失败按 action error 回喂，
+  不中断 Task。
+
 ## 5. 完成与 usage
 
 当前 pilot：

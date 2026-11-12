@@ -29,6 +29,7 @@ AIEOSController —— Human → Front → Solo Agent 的持续运行控制面
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import threading
 import time
@@ -41,6 +42,7 @@ from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
 from llm import prompt_log
+from llm.web_search import WebSearchClient, WebSearchError
 from core.task import Task, TaskMode, TaskStatus
 from demand.task_creation import TaskCreationService
 from services.artifacts import read_artifact
@@ -964,6 +966,39 @@ class AIEOSController:
     # ------------------------------------------------------------
     # Front / Leader / Task
     # ------------------------------------------------------------
+    def _web_search_client(self, agent_id: str) -> WebSearchClient:
+        agent = self._agent(str(agent_id or ""))
+        if agent is None:
+            raise WebSearchError(f"未知 Agent：{agent_id!r}")
+        brain = getattr(agent, "brain", None)
+        credential = None
+        try:
+            credential = brain.credential_for("deepseek") if brain else None
+        except Exception:                                     # noqa: BLE001
+            credential = None
+        material = str(getattr(credential, "material", "") or "")
+        if not material:
+            raise WebSearchError(
+                f"{agent_id} 没有可用的 DeepSeek credential，无法搜索。")
+        return WebSearchClient(
+            material,
+            base_url=os.environ.get(
+                "AIEOS_WEB_SEARCH_BASE_URL", "https://api.deepseek.com"),
+            timeout_seconds=30.0,
+        )
+
+    def web_search(
+        self, agent_id: str, query: str, *,
+        count: int = 5, need_content: bool = False,
+        ori_question: str = "",
+    ) -> Dict[str, Any]:
+        return self._web_search_client(agent_id).search(
+            query, count=count, need_content=need_content,
+            ori_question=ori_question)
+
+    def web_fetch(self, agent_id: str, url: str) -> Dict[str, Any]:
+        return self._web_search_client(agent_id).fetch(url)
+
     def _front_runtime(self) -> Optional[FrontAgentRuntime]:
         agent = self._agent(self.front_agent)
         if agent is None or not getattr(agent, "has_brain", False):
@@ -983,6 +1018,10 @@ class AIEOSController:
             workspace_of=self._workspace_of_agent,
             drafts=self._front_drafts(),
             artifact_read_fn=self._front_artifact_read,
+            web_search_fn=lambda query, **kwargs: self.web_search(
+                self.front_agent, query, **kwargs),
+            web_fetch_fn=lambda url: self.web_fetch(
+                self.front_agent, url),
         )
 
         def _execute(actions: List[Dict[str, Any]]) -> str:

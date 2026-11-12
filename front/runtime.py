@@ -333,6 +333,8 @@ class FrontAgentRuntime:
 - private_write {{path, content}}；private_read {{path}}；private_list {{}}
 - private_delete {{path}}
 - draft_write {{content, label}}；draft_append {{draft_id, content}}
+- web_search {{query, count?, need_content?, ori_question?}} —— 查询外部实时信息
+- web_fetch {{url}} —— 读取一个公开网页的 Markdown 内容
 - draft_read {{draft_id}}；draft_list {{}}；draft_delete {{draft_id}}
 
 能力事实：
@@ -341,6 +343,10 @@ class FrontAgentRuntime:
 - artifact_read 受 Task 范围限制；不能读取任意宿主机路径。
 - `artifacts` intent 只把 Task 文件导出到宿主机并返回路径，**不返回**
   文件内容。
+- web_search 是只读外部事实：只在当前事实不足、需要最新外部信息时使用；
+  搜索结果是证据，不是结论；引用 URL，不要把整页内容抄进回复。
+- 不要用 web_search 查询本地 Task / Workspace 已经能回答的问题。
+- web_fetch 只用于公开网页；不要 fetch 内网、localhost 或私有地址。
 
 handoff 可以携带你在 `brief.files` 里准备好的文件：
 [{{"path":"index.html","content":"..."}}]

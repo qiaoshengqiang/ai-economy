@@ -319,6 +319,14 @@ class PiWorkRuntime:
 
     def _minimal_system_prompt(self) -> str:
         paths = self.memory.paths()
+        search_cmd = os.environ.get("AIEOS_WEB_SEARCH_CMD", "").strip()
+        search_section = ""
+        if search_cmd:
+            search_section = f"""
+如果需要实时外部信息，可以运行：
+{search_cmd} search "query" --count 5
+搜索结果只是外部证据；引用 URL，不要当成任务状态。
+"""
         return f"""你是 {self.task.contractor or self.task.creator}，AIEOS 中的 Work 执行 Agent。
 
 你的工作目录是 Task Workspace：
@@ -333,6 +341,7 @@ class PiWorkRuntime:
 Task Workspace。不要使用 AIEOS Shared Context；本 Work 任务不提供它。
 读取 `{paths['memory_dir']}/context.md` 获取记忆快照。不要修改其他 Agent
 的私有目录。
+{search_section}
 
 如果任务中确实需要人类确认（需求歧义、关键设计选择、不可逆操作），
 不要猜测：在 Task Workspace 根目录写 `QUESTION.json`，格式：

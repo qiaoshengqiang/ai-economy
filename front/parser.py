@@ -28,6 +28,7 @@ from front.contracts import FrontBrief, FrontDecision, FrontIntent
 #: 这里把它识别成动作步骤，而不是最终 intent。
 FRONT_ACTION_NAMES = frozenset({
     "artifact_read",
+    "web_search", "web_fetch",
     "private_read", "private_write", "private_list", "private_delete",
     "draft_read", "draft_write", "draft_append", "draft_list",
     "draft_delete",
