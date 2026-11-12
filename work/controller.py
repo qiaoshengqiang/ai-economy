@@ -29,6 +29,7 @@ AIEOSController —— Human → Front → Solo Agent 的持续运行控制面
 from __future__ import annotations
 
 import json
+import shutil
 import threading
 import time
 import uuid
@@ -39,7 +40,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
-from core.task import TaskMode, TaskStatus
+from core.task import Task, TaskMode, TaskStatus
 from demand.task_creation import TaskCreationService
 from services.artifacts import read_artifact
 from work.artifact_export import (
@@ -57,6 +58,8 @@ from work.drafts import TaskDraftStore
 from work.front_actions import (
     build_front_dispatcher, execute_front_actions,
 )
+from work.pi_runtime import PiWorkRuntime
+from work.task_directory import TaskDirectoryManager
 from work.plan import WorkPlan, parse_work_plan
 from work.prompt import WORK_SYSTEM_PROMPT, build_lead_plan_prompt
 from work.roles import WorkContext, WorkRole
@@ -183,6 +186,13 @@ class AIEOSController:
         max_solo_turns: int = 24,
         cognitive_budget: int = 65536,
         solo_only: bool = True,
+        pi_work_agents: Any = (),
+        pi_cli_path: str = "pi",
+        pi_provider: str = "",
+        pi_model: str = "",
+        pi_agent_dir: Optional[Path] = None,
+        pi_timeout_seconds: float = 1800.0,
+        task_root: Optional[Path] = None,
         settings_path: Optional[Path] = None,
         log_dir: Optional[Path] = None,
         round_log: Any = None,
@@ -198,6 +208,16 @@ class AIEOSController:
         self.max_integration_turns = max(1, int(max_integration_turns))
         self.max_solo_turns = max(1, int(max_solo_turns))
         self.cognitive_budget = max(1, int(cognitive_budget))
+        self.pi_work_agents = {
+            str(item).strip() for item in (pi_work_agents or ())
+            if str(item).strip()
+        }
+        self.pi_cli_path = str(pi_cli_path or "pi")
+        self.pi_provider = str(pi_provider or "")
+        self.pi_model = str(pi_model or "")
+        self.pi_agent_dir = Path(pi_agent_dir) if pi_agent_dir else None
+        self.pi_timeout_seconds = float(pi_timeout_seconds)
+        self.task_directories = TaskDirectoryManager(task_root)
         self.settings_path = Path(settings_path) if settings_path else None
         self.log_dir = Path(log_dir) if log_dir else None
         self.round_log = round_log
@@ -580,6 +600,28 @@ class AIEOSController:
             execute_actions=_execute,
             action_types=dispatcher.action_types)
 
+    def _pi_enabled(self, agent_id: str) -> bool:
+        return str(agent_id or "") in self.pi_work_agents
+
+    def _pi_runner(
+        self,
+        task: Any,
+        *,
+        round_sink: Any = None,
+        should_stop: Any = None,
+    ) -> PiWorkRuntime:
+        return PiWorkRuntime(
+            self.rt, task,
+            task_directory=self.task_directories.for_task(task.task_id),
+            pi_cli_path=self.pi_cli_path,
+            pi_provider=self.pi_provider,
+            pi_model=self.pi_model,
+            timeout_seconds=self.pi_timeout_seconds,
+            should_stop=should_stop or (lambda: False),
+            round_sink=round_sink,
+            pi_agent_dir=self.pi_agent_dir,
+        )
+
     def _front_turn(
         self,
         front: Any,
@@ -789,15 +831,22 @@ class AIEOSController:
             self._fail(job, "Task 创建后无法读取")
             return worker, []
 
-        runner = SoloWorkRuntime(
-            self.rt, task,
-            brief=decision.brief.to_dict(),
-            max_turns=self.max_solo_turns,
-            cognitive_budget=self.cognitive_budget,
-            should_stop=lambda: job.cancelled,
-            round_sink=lambda payload: self._record_round(
-                task_id, payload),
-        )
+        if self._pi_enabled(worker):
+            runner = self._pi_runner(
+                task,
+                round_sink=lambda payload: self._record_round(
+                    task_id, payload),
+                should_stop=lambda: job.cancelled)
+        else:
+            runner = SoloWorkRuntime(
+                self.rt, task,
+                brief=decision.brief.to_dict(),
+                max_turns=self.max_solo_turns,
+                cognitive_budget=self.cognitive_budget,
+                should_stop=lambda: job.cancelled,
+                round_sink=lambda payload: self._record_round(
+                    task_id, payload),
+            )
         result = runner.run()
         if job.cancelled:
             self._finish_cancelled(job, task_id)
@@ -853,6 +902,8 @@ class AIEOSController:
         worker: str,
         decision: Any,
     ) -> Dict[str, Any]:
+        if self._pi_enabled(worker):
+            return self._create_solo_task_pi(job, worker, decision)
         run = SimpleNamespace(
             run_id=f"aieos_{job.job_id}",
             root_task_id=None,
@@ -880,6 +931,47 @@ class AIEOSController:
             workspace_plan=None,
             mode=TaskMode.SOLO,
         )
+
+    def _create_solo_task_pi(
+        self,
+        job: WorkJob,
+        worker: str,
+        decision: Any,
+    ) -> Dict[str, Any]:
+        """Pi Work 的 Task：真实目录；不创建 Shared Context / 逻辑 Workspace。"""
+        criteria = (
+            decision.brief.acceptance_expectations
+            or decision.brief.deliverables
+            or [str(decision.brief.task_text
+                    or decision.brief.human_text
+                    or decision.brief.goal).strip()]
+        )
+        try:
+            task = Task.create(
+                creator=worker,
+                description=_description_from_brief(decision.brief),
+                participants=[worker],
+                acceptance={"criteria": list(criteria)},
+                note=f"demand_run:aieos_{job.job_id}",
+                mode=TaskMode.SOLO,
+            )
+            task.claim_producer(worker)
+            self.rt.tasks.save(task)
+            try:
+                self.rt.budget_service.set_budget(task.task_id, 10.0)
+            except Exception:                                 # noqa: BLE001
+                pass
+        except Exception as exc:                              # noqa: BLE001
+            return {
+                "ok": False, "code": "task_create_failed",
+                "message": f"{type(exc).__name__}: {exc}",
+            }
+        return {
+            "ok": True,
+            "task_id": task.task_id,
+            "workspace_id": "",
+            "description": task.description,
+        }
 
     def _leader_plan(
         self,
@@ -1142,15 +1234,22 @@ class AIEOSController:
             # 各自负责加自己的标题，避免标题重复两次。
             resume_context = (
                 checkpoint.render() if checkpoint is not None else "")
-            runner = SoloWorkRuntime(
-                self.rt, task,
-                max_turns=self.max_solo_turns,
-                cognitive_budget=self.cognitive_budget,
-                resume_context=resume_context,
-                should_stop=lambda: job.cancelled,
-                round_sink=lambda payload: self._record_round(
-                    task.task_id, payload),
-            )
+            if self._pi_enabled(leader):
+                runner = self._pi_runner(
+                    task,
+                    round_sink=lambda payload: self._record_round(
+                        task.task_id, payload),
+                    should_stop=lambda: job.cancelled)
+            else:
+                runner = SoloWorkRuntime(
+                    self.rt, task,
+                    max_turns=self.max_solo_turns,
+                    cognitive_budget=self.cognitive_budget,
+                    resume_context=resume_context,
+                    should_stop=lambda: job.cancelled,
+                    round_sink=lambda payload: self._record_round(
+                        task.task_id, payload),
+                )
         result = (
             runner.reopen_and_run(reason=reason)
             if action == "rework" else runner.run())
@@ -1278,6 +1377,38 @@ class AIEOSController:
                 job, "找不到这个任务，无法导出产物。", task_id)
             return
         job.task_id = task.task_id
+        # Pi Work 的真实目录：直接复制 workspace 到 export 根。
+        try:
+            task_dir = self.task_directories.for_task(task.task_id)
+        except Exception:                                     # noqa: BLE001
+            task_dir = None
+        if task_dir is not None and task_dir.exists():
+            destination = self.export_root / task.task_id
+            try:
+                shutil.copytree(
+                    task_dir.workspace, destination, dirs_exist_ok=True)
+                files = task_dir.list_files()
+            except Exception as exc:                          # noqa: BLE001
+                self._reply_direct(
+                    job, f"产物导出失败：{type(exc).__name__}: {exc}",
+                    task.task_id)
+                return
+            reply = str(getattr(decision, "reply", "") or "").strip()
+            if reply:
+                self._message(
+                    "front", reply,
+                    job_id=job.job_id, task_id=task.task_id,
+                    duration_ms=self._job_duration_ms(job),
+                    thinking=job.front_thinking)
+            lines = [
+                f"产物已从 Task 目录导出到宿主机目录：\n{destination}",
+                "",
+                f"共 {len(files)} 个文件：",
+            ]
+            lines.extend(f"- {item['path']}" for item in files)
+            self._reply_direct(job, "\n".join(lines), task.task_id)
+            job.summary = str(destination)
+            return
         actor = task.creator or (
             task.participants[0] if task.participants else "")
         try:
@@ -1605,6 +1736,13 @@ class AIEOSController:
         }
 
     def _workspace_files(self, task: Any) -> List[Dict[str, Any]]:
+        # Pi Work 的真实目录优先；旧 Task 继续走逻辑 Workspace。
+        try:
+            task_dir = self.task_directories.for_task(task.task_id)
+            if task_dir.exists():
+                return task_dir.list_files()
+        except Exception:                                     # noqa: BLE001
+            pass
         workspace_id = task.workspace_id or ""
         agent_id = task.creator or (
             task.participants[0] if task.participants else "")
@@ -1929,6 +2067,52 @@ class AIEOSController:
         if task is None:
             return {"ok": False, "code": "not_found",
                     "message": f"找不到 Task：{task_id}"}
+        try:
+            task_dir = self.task_directories.for_task(task_id)
+        except Exception:                                     # noqa: BLE001
+            task_dir = None
+        if task_dir is not None and task_dir.exists():
+            try:
+                full_content = task_dir.read_text(path)
+            except FileNotFoundError:
+                return {"ok": False, "code": "not_found",
+                        "message": f"没有这个文件：{path}"}
+            except Exception as exc:                          # noqa: BLE001
+                return {"ok": False, "code": "read_failed",
+                        "message": f"{type(exc).__name__}: {exc}"}
+            lines = full_content.splitlines()
+            total_lines = len(lines)
+            explicit = offset is not None or limit is not None
+            if not explicit:
+                content = full_content
+                start_line = 1 if total_lines else 0
+                end_line = total_lines
+            else:
+                try:
+                    start_line = int(offset) if offset is not None else 1
+                    applied_limit = (
+                        int(limit) if limit is not None else max(
+                            1, total_lines - start_line + 1))
+                except (TypeError, ValueError):
+                    return {"ok": False, "code": "bad_pagination",
+                            "message": "offset / limit 必须是整数"}
+                if start_line < 1:
+                    start_line = 1
+                if applied_limit < 1:
+                    return {"ok": False, "code": "bad_pagination",
+                            "message": "limit 必须 >= 1"}
+                end_line = min(total_lines, start_line + applied_limit - 1)
+                content = "\n".join(lines[start_line - 1:end_line])
+            return {
+                "ok": True, "task_id": task_id, "path": path,
+                "content": content, "chars": len(content),
+                "total_chars": len(full_content),
+                "total_lines": total_lines,
+                "start_line": start_line, "end_line": end_line,
+                "truncated": explicit and (
+                    start_line > 1 or end_line < total_lines),
+                "read_as": "pi_task_directory",
+            }
         workspace_id = str(getattr(task, "workspace_id", "") or "")
         if not workspace_id:
             return {"ok": False, "code": "no_workspace",

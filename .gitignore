@@ -86,3 +86,6 @@ experiments/user_demand/runs/
 
 # Demand CLI runs (generated)
 runs/demand/
+
+# Pi Work 的真实 Task 目录（运行产物，不进仓库）
+tasks/

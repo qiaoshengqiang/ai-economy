@@ -1,0 +1,196 @@
+"""
+PiWorkRuntime：真实目录 + Pi 事件 + 记忆桥 + Task Core 的冒烟测试。
+
+不启动真实 Pi；用 fake PiRpcClient 检查：
+    · 任务目录里落盘的文件进入 manifest；
+    · Pi turn / tool / usage 映射成 WorkResult / round；
+    · working.md / inbox 被 AIEOS 记忆桥摄取；
+    · Task Core 最终 COMPLETED。
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from types import SimpleNamespace
+
+from core.task import Task, TaskMode, TaskStatus
+from core.task_store import TaskStore
+from work.pi_runtime import PiWorkRuntime
+from work.pi_rpc import PiRunResult
+from work.task_directory import TaskDirectoryManager
+
+
+class _FakeBrain:
+    provider = "deepseek"
+    model = "deepseek-flash"
+
+    def credential_for(self, _provider):
+        return SimpleNamespace(material="fake-key")
+
+
+class _FakeWorkspace:
+    def __init__(self, root: Path) -> None:
+        self.root = root / "workspace"
+        self.memory_dir = root / "memory"
+        self.root.mkdir(parents=True, exist_ok=True)
+        self.memory_dir.mkdir(parents=True, exist_ok=True)
+
+
+class _FakeWorkingMemory:
+    def __init__(self):
+        self.updated = None
+
+    def render(self, _agent_id, _task_id):
+        return "revision = 1\n（空）"
+
+    def read(self, _agent_id, _task_id):
+        return SimpleNamespace(revision=1)
+
+    def update(self, _agent_id, _task_id, *, expected_revision, nodes,
+               remove_nodes=None):
+        self.updated = (expected_revision, nodes)
+        return SimpleNamespace(
+            revision=2,
+            to_dict=lambda: {
+                "revision": 2,
+                "nodes": nodes,
+            },
+        )
+
+
+class _FakeShortMemory:
+    def __init__(self):
+        self.added = None
+
+    def render(self, _agent_id):
+        return "（空）"
+
+    def add_from_final(self, agent_id, task_id, snapshot):
+        self.added = (agent_id, task_id, snapshot)
+
+
+class _FakeLongMemory:
+    def render_top(self, _agent_id):
+        return "（空）"
+
+
+class _Recorder:
+    def __init__(self):
+        self.calls = []
+        self.PURPOSE_COGNITION = "cognition"
+
+    def record(self, **kwargs):
+        self.calls.append(kwargs)
+        return "call_1"
+
+
+def test_pi_work_runtime_completes_and_ingests_memory(db, monkeypatch, tmp_path):
+    task = Task.create(
+        task_id="T-PI-WORK", creator="agent_c",
+        description="写一个 hello.txt",
+        workspace_id="WS-PI", participants=["agent_c"],
+        mode=TaskMode.SOLO)
+    task.claim_producer("agent_c")
+    store = TaskStore(db)
+    store.save(task)
+
+    workspace = _FakeWorkspace(tmp_path / "agent_c")
+    working = _FakeWorkingMemory()
+    short = _FakeShortMemory()
+    recorder = _Recorder()
+    runtime = SimpleNamespace(
+        tasks=store,
+        economy=SimpleNamespace(agent=lambda aid: SimpleNamespace(
+            has_brain=True, brain=_FakeBrain(), workspace=workspace)),
+        private_working_memory=working,
+        private_short_term_memory=short,
+        private_long_term_memory=_FakeLongMemory(),
+        recorder=recorder,
+        experiment_run_id="exp-pi",
+    )
+
+    directory = TaskDirectoryManager(tmp_path / "tasks").for_task(task.task_id)
+    rounds = []
+
+    class _FakePiClient:
+        def __init__(self, **kwargs):
+            self.cwd = Path(kwargs["cwd"])
+            self.kwargs = kwargs
+
+        def run(self, prompt, *, timeout_seconds, should_stop, event_sink):
+            (self.cwd / "hello.txt").write_text("hello", encoding="utf-8")
+            (self.cwd / "RESULT.md").write_text(
+                "已写出 hello.txt", encoding="utf-8")
+            inbox = workspace.memory_dir / "pi" / "inbox"
+            inbox.mkdir(parents=True, exist_ok=True)
+            (inbox / "note.md").write_text(
+                "next time use a cat", encoding="utf-8")
+            events = [
+                {"type": "turn_start", "_received_at": 1.0},
+                {
+                    "type": "message_end",
+                    "_received_at": 2.0,
+                    "message": {
+                        "role": "assistant",
+                        "provider": "deepseek",
+                        "model": "deepseek-flash",
+                        "stopReason": "toolUse",
+                        "content": [
+                            {"type": "text", "text": "准备写文件"},
+                            {"type": "thinking", "thinking": "先检查目录"},
+                        ],
+                        "usage": {
+                            "input": 10, "output": 5,
+                            "cacheRead": 0, "cacheWrite": 0,
+                            "totalTokens": 15,
+                        },
+                    },
+                },
+                {
+                    "type": "tool_execution_start",
+                    "toolCallId": "call_1",
+                    "toolName": "write",
+                    "args": {"path": "hello.txt"},
+                },
+                {
+                    "type": "tool_execution_end",
+                    "toolCallId": "call_1",
+                    "toolName": "write",
+                    "result": "ok",
+                    "isError": False,
+                    "durationMs": 12,
+                },
+                {"type": "turn_end", "_received_at": 3.0},
+                {"type": "agent_settled", "_received_at": 3.1},
+            ]
+            if event_sink is not None:
+                for event in events:
+                    event_sink(event)
+            return PiRunResult(events=events, exit_code=0)
+
+    monkeypatch.setattr(
+        "work.pi_runtime.PiRpcClient", _FakePiClient, raising=True)
+    runner = PiWorkRuntime(
+        runtime, task,
+        task_directory=directory,
+        pi_cli_path="fake-pi",
+        round_sink=rounds.append,
+    )
+    result = runner.run()
+
+    assert result.ok is True, result.error
+    assert result.status == TaskStatus.COMPLETED
+    assert store.get(task.task_id).status == TaskStatus.COMPLETED
+    assert (directory.workspace / "hello.txt").read_text() == "hello"
+    assert result.turns == 1
+    assert result.tokens == 15
+    assert result.actions == 1
+    assert result.summary == "已写出 hello.txt"
+    assert "hello.txt" in result.artifacts
+    assert directory.manifest()
+    assert working.updated is not None
+    assert short.added is not None
+    assert recorder.calls and recorder.calls[0]["task_id"] == "T-PI-WORK"
+    assert rounds and rounds[0]["round"] == 1
+    assert rounds[0]["segments"][0]["actions"][0]["action_type"] == "write"
+    assert rounds[0]["segments"][0]["results"][0]["success"] is True

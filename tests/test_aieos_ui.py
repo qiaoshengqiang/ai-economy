@@ -1597,3 +1597,86 @@ def test_front_runtime_exposes_artifact_read():
         controller.close()
 
     assert "artifact_read" in front.action_types
+
+
+def test_pi_task_creation_skips_shared_context(db):
+    from core.task_store import TaskStore
+    from front import FrontBrief, FrontDecision, FrontIntent
+
+    store = TaskStore(db)
+    alignment_calls = []
+
+    class _Alignment:
+        def current(self, task_id):
+            alignment_calls.append(task_id)
+            return SimpleNamespace(context=SimpleNamespace(
+                acceptance_criteria=()))
+
+    class _Budget:
+        def set_budget(self, task_id, amount):
+            return None
+
+    runtime = SimpleNamespace(
+        directory=_Directory(["agent_a", "agent_c"]),
+        economy=SimpleNamespace(agent=lambda aid: SimpleNamespace(
+            has_brain=True, brain=None)),
+        tasks=store,
+        alignment=_Alignment(),
+        budget_service=_Budget(),
+    )
+    controller = AIEOSController(
+        runtime, front_agent="agent_a", pi_work_agents=["agent_c"])
+    decision = FrontDecision(
+        intent=FrontIntent.HANDOFF,
+        brief=FrontBrief(
+            goal="写 hello.txt",
+            task_text="写 hello.txt",
+            deliverables=["hello.txt"],
+        ),
+    )
+    try:
+        created = controller._create_solo_task(
+            SimpleNamespace(job_id="job_pi"), "agent_c", decision)
+    finally:
+        controller.close()
+
+    assert created["ok"] is True, created
+    task = store.get(created["task_id"])
+    assert task.creator == "agent_c"
+    assert task.workspace_id is None
+    assert alignment_calls == []
+
+
+def test_pi_task_artifact_read_reads_disk(tmp_path):
+    from work.task_directory import TaskDirectoryManager
+
+    directory = TaskDirectoryManager(tmp_path).for_task("task_pi_disk")
+    directory.ensure()
+    directory.write_text("index.html", "<html>pi</html>")
+    runtime = SimpleNamespace(
+        directory=_Directory(["agent_a"]),
+        economy=SimpleNamespace(agent=lambda aid: SimpleNamespace(
+            has_brain=True, brain=None)),
+        tasks=SimpleNamespace(
+            get=lambda tid: SimpleNamespace(
+                task_id=tid, creator="agent_c",
+                participants=["agent_c"], workspace_id=None),
+            list_tasks=lambda limit=50: [],
+        ),
+    )
+    controller = AIEOSController(
+        runtime, front_agent="agent_a", task_root=tmp_path)
+    try:
+        result = controller._front_artifact_read(
+            "task_pi_disk", "index.html")
+        paged = controller._front_artifact_read(
+            "task_pi_disk", "index.html", offset=1, limit=1)
+    finally:
+        controller.close()
+
+    assert result["ok"] is True
+    assert result["content"] == "<html>pi</html>"
+    assert result["read_as"] == "pi_task_directory"
+    assert paged["ok"] is True
+    assert paged["total_lines"] == 1
+    assert paged["content"] == "<html>pi</html>"

@@ -167,6 +167,22 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--integration-turns", type=int, default=8)
     ap.add_argument("--solo-turns", type=int, default=24)
     ap.add_argument("--cognitive-budget", type=int, default=65536)
+    ap.add_argument(
+        "--pi-agents", default="",
+        help="逗号分隔：这些 Agent 的 Solo Task 使用 Pi Work 引擎")
+    ap.add_argument("--pi-cli", default="pi",
+                    help="Pi CLI 路径（默认从 PATH 找 pi）")
+    ap.add_argument("--pi-provider", default="",
+                    help="覆盖 Pi provider；空 = 用 Agent Brain 的 provider")
+    ap.add_argument("--pi-model", default="",
+                    help="覆盖 Pi model；空 = 用 Agent Brain 的 model")
+    ap.add_argument("--pi-agent-dir", default=None,
+                    help="PI_CODING_AGENT_DIR（Pi 配置目录）")
+    ap.add_argument("--pi-timeout", type=float, default=1800.0)
+    ap.add_argument("--task-root", default=None,
+                    help="真实 Task 目录根；默认 <repo>/tasks")
+    # 保留旧参数兼容
+
     return ap
 
 
@@ -200,6 +216,22 @@ def main(argv=None) -> int:
         max_integration_turns=max(1, int(args.integration_turns)),
         max_solo_turns=max(1, int(args.solo_turns)),
         cognitive_budget=max(1, int(args.cognitive_budget)),
+        pi_work_agents=[
+            item.strip() for item in str(args.pi_agents or "").split(",")
+            if item.strip()
+        ],
+        pi_cli_path=args.pi_cli,
+        pi_provider=args.pi_provider,
+        pi_model=args.pi_model,
+        pi_agent_dir=(
+            Path(args.pi_agent_dir).expanduser().resolve()
+            if args.pi_agent_dir else None
+        ),
+        pi_timeout_seconds=max(1.0, float(args.pi_timeout)),
+        task_root=(
+            Path(args.task_root).expanduser().resolve()
+            if args.task_root else (ROOT / "tasks").resolve()
+        ),
         # 当前阶段只跑 Solo；Team 路径保留在代码里但不由 UI 触发。
         solo_only=True,
         settings_path=db_path.parent / "ui_settings.json",

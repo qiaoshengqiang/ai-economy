@@ -1,0 +1,145 @@
+# Pi Work Layer Design
+
+> 状态：**V1 pilot 已实现**（PiWorkRuntime · 真实任务目录 · 记忆文件桥 · usage 回写）
+> 目标：Pi 只做 Work 执行底座；Life 层、Task Core、经济与治理仍属于 AIEOS。
+
+## 1. 边界
+
+```text
+Life 层（AIEOS）
+  Front / Human 对话 · 私有 workspace / drafts · artifact_read
+  Task Core · Ledger · 验收 · 治理
+        │
+        │ 创建 Task + 真实任务目录
+        ▼
+Work 层（Pi）
+  Pi RPC · 原生 read/write/edit/bash
+  cwd = tasks/<task_id>/workspace
+  生产内容直接落盘
+        │
+        ▼
+AIEOS
+  manifest · usage · memory ingest · Task COMPLETED
+```
+
+Pi Work 路径**不使用**：
+
+- Task Shared Context / Alignment；
+- AIEOS ActionDispatcher；
+- `work_complete` / `workspace_write` 等 Work 动作；
+- 逻辑 Workspace 的锁 / revision。
+
+Task Core 仍是状态、预算、contractor、iteration 的唯一权威。
+
+## 2. 真实任务目录
+
+```text
+tasks/<task_id>/
+  workspace/              ← Pi cwd；交付物
+  .aieos/
+    TASK.md
+    manifest.json
+    pi-session/           ← Pi session，不进交付物
+    pi-stderr.log
+```
+
+- 磁盘是内容权威；
+- DB 只保存 Task 元数据和 manifest/hash；
+- Solo Pi 任务不引入逻辑锁；Team 共享目录以后再加协调；
+- `tasks/` 是运行产物，已加入 `.gitignore`。
+
+## 3. Pi 进程
+
+- 每个 Task 一个 Pi RPC 进程；
+- `--provider` / `--model` 来自 Agent Brain（可覆盖）；
+- 原生 `read/write/edit/bash`，`--tools read,write,edit,bash,grep,find,ls`；
+- `--session-dir tasks/<id>/.aieos/pi-session` + `--session-id`；
+- Agent credential 只通过子进程环境变量传入，不写日志；
+- `agent_settled` 视为本次 Pi run 结束；
+- `abort` / 进程终止用于取消。
+
+## 4. 记忆协议
+
+Pi 不直接访问结构化记忆 DB；使用文件协议：
+
+```text
+agents/<agent_id>/memory/pi/
+  context.md      AIEOS 生成，只读快照
+  working.md      Pi 可读写，任务级工作记忆
+  inbox/*.md      Pi 写入候选记忆
+  README.md
+```
+
+- 开始时 AIEOS 渲染 Working / Short-term / Long-term 到 `context.md`；
+- 结束时 AIEOS 读取 `working.md` + `inbox/*.md`；
+- 工作记忆写入 `pi_work` 节点；
+- 短期记忆通过 `add_from_final` 摄取；
+- Long-term 的自动合并仍是后续工作，避免 inbox 直接成为权威；
+- Pi session 不是长期记忆，只是任务执行记录。
+
+## 5. 完成与 usage
+
+当前 pilot：
+
+```text
+Pi agent_settled
+  → manifest / RESULT.md
+  → memory ingest
+  → Pi usage 回写 llm_calls
+  → WorkLifecycle.complete_solo
+```
+
+- `RESULT.md` 作为人类摘要；没有时用 Pi 最后一条 assistant 文本；
+- Pi 的 usage 事件转换为 `LLMResponse`，写入 `llm_calls` 与 Ledger；
+- **LLM Proxy 尚未替换**：当前是 Pi 直连 provider + usage 事件记账；
+- **独立验收尚未接入**：当前 pilot 以 Pi 落盘 + 自测报告作为完成依据，后续需要 AIEOS acceptance；
+- Team 共享目录、多 Agent 文件锁不在 V1 pilot。
+
+## 6. 开关
+
+`AIEOSController` 新增：
+
+```text
+pi_work_agents     # 只有这些 Agent 的 Solo Task 走 Pi
+pi_cli_path
+pi_provider
+pi_model
+pi_agent_dir
+pi_timeout_seconds
+task_root
+```
+
+UI 对应参数：
+
+```bash
+python -m ui.server \
+  --pi-agents agent_c \
+  --pi-cli /path/to/pi \
+  --pi-agent-dir /path/to/pi-agent \
+  --task-root /path/to/tasks
+```
+
+未开启的 Agent 继续走 `SoloWorkRuntime`，可回滚。
+
+## 7. 已验证
+
+Pilot（agent_c）：
+
+```text
+Task task_2cb3eac3
+  → Pi 4 turns / 3 tools
+  → tasks/task_2cb3eac3/workspace/{hello.txt,RESULT.md}
+  → manifest / .aieos/pi-session
+  → memory/pi/{context.md,working.md,README.md}
+  → llm_calls 4 条 / 65,627 tokens
+  → Task COMPLETED
+```
+
+## 8. 后续
+
+1. AIEOS LLM Proxy 替换直连 + usage 事件记账；
+2. AIEOS acceptance 接入（Pi 自测 ≠ 独立验收）；
+3. Pi 事件实时映射到 UI（当前为 run 结束后批量写 round）；
+4. Front `artifacts` 导出适配真实目录；
+5. Team 共享任务目录与文件锁；
+6. 多轮/多任务对比，确认是否扩大 `pi_work_agents`。
