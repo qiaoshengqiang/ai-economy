@@ -170,10 +170,25 @@ def test_pi_work_runtime_completes_and_ingests_memory(db, monkeypatch, tmp_path)
 
     monkeypatch.setattr(
         "work.pi_runtime.PiRpcClient", _FakePiClient, raising=True)
+
+    class _Acceptance:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def verify(self):
+            return SimpleNamespace(
+                passed=True, gaps=[], reasons=["ok"],
+                to_dict=lambda: {
+                    "passed": True, "gaps": [], "reasons": ["ok"],
+                })
+
+    monkeypatch.setattr(
+        "work.pi_runtime.PiAcceptance", _Acceptance, raising=True)
     runner = PiWorkRuntime(
         runtime, task,
         task_directory=directory,
         pi_cli_path="fake-pi",
+        use_llm_proxy=False,
         round_sink=rounds.append,
     )
     result = runner.run()

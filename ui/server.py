@@ -179,6 +179,9 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--pi-agent-dir", default=None,
                     help="PI_CODING_AGENT_DIR（Pi 配置目录）")
     ap.add_argument("--pi-timeout", type=float, default=1800.0)
+    ap.add_argument("--pi-acceptance-agent", default="agent_a",
+                    help="AIEOS 独立验收使用的 Agent Brain")
+    ap.add_argument("--pi-acceptance-timeout", type=float, default=120.0)
     ap.add_argument("--task-root", default=None,
                     help="真实 Task 目录根；默认 <repo>/tasks")
     # 保留旧参数兼容
@@ -228,6 +231,9 @@ def main(argv=None) -> int:
             if args.pi_agent_dir else None
         ),
         pi_timeout_seconds=max(1.0, float(args.pi_timeout)),
+        pi_acceptance_agent=args.pi_acceptance_agent,
+        pi_acceptance_timeout_seconds=max(
+            1.0, float(args.pi_acceptance_timeout)),
         task_root=(
             Path(args.task_root).expanduser().resolve()
             if args.task_root else (ROOT / "tasks").resolve()

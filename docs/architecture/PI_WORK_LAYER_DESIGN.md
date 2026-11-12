@@ -1,6 +1,6 @@
 # Pi Work Layer Design
 
-> 状态：**V1 pilot 已实现**（PiWorkRuntime · 真实任务目录 · 记忆文件桥 · usage 回写）
+> 状态：**V1 pilot 已实现**（PiWorkRuntime · 真实任务目录 · 记忆文件桥 · LLM Proxy · 独立验收）
 > 目标：Pi 只做 Work 执行底座；Life 层、Task Core、经济与治理仍属于 AIEOS。
 
 ## 1. 边界
@@ -74,7 +74,8 @@ agents/<agent_id>/memory/pi/
 - 结束时 AIEOS 读取 `working.md` + `inbox/*.md`；
 - 工作记忆写入 `pi_work` 节点；
 - 短期记忆通过 `add_from_final` 摄取；
-- Long-term 的自动合并仍是后续工作，避免 inbox 直接成为权威；
+- 短期记忆超过保留阈值时，自动调用 `consolidate` 合并为 Long-term；
+- inbox 不直接成为权威；AIEOS 决定如何合并；
 - Pi session 不是长期记忆，只是任务执行记录。
 
 ## 5. 完成与 usage
@@ -91,8 +92,10 @@ Pi agent_settled
 
 - `RESULT.md` 作为人类摘要；没有时用 Pi 最后一条 assistant 文本；
 - Pi 的 usage 事件转换为 `LLMResponse`，写入 `llm_calls` 与 Ledger；
-- **LLM Proxy 尚未替换**：当前是 Pi 直连 provider + usage 事件记账；
-- **独立验收尚未接入**：当前 pilot 以 Pi 落盘 + 自测报告作为完成依据，后续需要 AIEOS acceptance；
+- **LLM Proxy 已接入**：Pi 指向本地 AIEOS Proxy；请求前检查 Task 预算，
+  请求后解析 usage 写入 `llm_calls` / Ledger；
+- **独立验收已接入**：`PiAcceptance` 使用 Task acceptance criteria +
+  `acceptance_agent`（默认 `agent_a`）核对文件内容，fail-closed；
 - Team 共享目录、多 Agent 文件锁不在 V1 pilot。
 
 ## 6. 开关
@@ -123,13 +126,23 @@ python -m ui.server \
 
 ## 7. 已验证
 
-Pilot（agent_c）：
+Proxy + 独立验收 pilot（agent_c，验收 agent_a）：
+
+```text
+Task task_9e46a230
+  → Pi 4 turns / 3 tools
+  → LLM Proxy 记录 agent_c 4 calls / 65,968 tokens / 0.65968 AIC
+  → acceptance agent_a 1 call，passed=true
+  → tasks/task_9e46a230/workspace/{hello.txt,RESULT.md}
+  → .aieos/{acceptance.json,manifest.json,pi-session}
+  → Task COMPLETED
+```
+
+更早的 pilot（无 proxy）：
 
 ```text
 Task task_2cb3eac3
   → Pi 4 turns / 3 tools
-  → tasks/task_2cb3eac3/workspace/{hello.txt,RESULT.md}
-  → manifest / .aieos/pi-session
   → memory/pi/{context.md,working.md,README.md}
   → llm_calls 4 条 / 65,627 tokens
   → Task COMPLETED
@@ -137,9 +150,8 @@ Task task_2cb3eac3
 
 ## 8. 后续
 
-1. AIEOS LLM Proxy 替换直连 + usage 事件记账；
-2. AIEOS acceptance 接入（Pi 自测 ≠ 独立验收）；
-3. Pi 事件实时映射到 UI（当前为 run 结束后批量写 round）；
-4. Front `artifacts` 导出适配真实目录；
-5. Team 共享任务目录与文件锁；
-6. 多轮/多任务对比，确认是否扩大 `pi_work_agents`。
+1. Pi 事件实时映射到 UI（当前为 run 结束后批量写 round）；
+2. Team 共享任务目录与文件锁；
+3. 多轮/多任务对比，确认是否扩大 `pi_work_agents`；
+4. acceptance 规则调优（LLM verifier 的严格度 / 成本）；
+5. Proxy 对流式响应的兼容性继续压测。

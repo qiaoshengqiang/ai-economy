@@ -192,6 +192,8 @@ class AIEOSController:
         pi_model: str = "",
         pi_agent_dir: Optional[Path] = None,
         pi_timeout_seconds: float = 1800.0,
+        pi_acceptance_agent: str = "agent_a",
+        pi_acceptance_timeout_seconds: float = 120.0,
         task_root: Optional[Path] = None,
         settings_path: Optional[Path] = None,
         log_dir: Optional[Path] = None,
@@ -217,6 +219,9 @@ class AIEOSController:
         self.pi_model = str(pi_model or "")
         self.pi_agent_dir = Path(pi_agent_dir) if pi_agent_dir else None
         self.pi_timeout_seconds = float(pi_timeout_seconds)
+        self.pi_acceptance_agent = str(pi_acceptance_agent or "")
+        self.pi_acceptance_timeout_seconds = float(
+            pi_acceptance_timeout_seconds)
         self.task_directories = TaskDirectoryManager(task_root)
         self.settings_path = Path(settings_path) if settings_path else None
         self.log_dir = Path(log_dir) if log_dir else None
@@ -620,6 +625,8 @@ class AIEOSController:
             should_stop=should_stop or (lambda: False),
             round_sink=round_sink,
             pi_agent_dir=self.pi_agent_dir,
+            acceptance_agent=self.pi_acceptance_agent,
+            acceptance_timeout_seconds=self.pi_acceptance_timeout_seconds,
         )
 
     def _front_turn(

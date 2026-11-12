@@ -181,17 +181,35 @@ Task 工作目录: {self.task_workspace}
                     break
 
         short_ok = False
-        if updated is not None:
-            short_service = getattr(
-                self.rt, "private_short_term_memory", None)
-            if short_service is not None:
-                try:
-                    short_service.add_from_final(
-                        self.agent_id, self.task.task_id,
-                        updated.to_dict())
-                    short_ok = True
-                except Exception:                         # noqa: BLE001
-                    short_ok = False
+        long_ok = False
+        short_service = getattr(self.rt, "private_short_term_memory", None)
+        long_service = getattr(self.rt, "private_long_term_memory", None)
+        if updated is not None and short_service is not None:
+            try:
+                short_service.add_from_final(
+                    self.agent_id, self.task.task_id,
+                    updated.to_dict())
+                short_ok = True
+            except Exception:                             # noqa: BLE001
+                short_ok = False
+        # 短期记忆超过保留阈值时，自动抽象成长期记忆并归档旧条目。
+        if short_ok and long_service is not None:
+            try:
+                current = short_service.read(self.agent_id)
+                if getattr(current, "needs_compaction", False):
+                    long_service.consolidate(
+                        self.agent_id,
+                        task_id=self.task.task_id,
+                        expected_revision=int(current.revision),
+                        summary=(
+                            f"Pi task {self.task.task_id}: "
+                            + combined.strip()[:1200]),
+                        tasks=[self.task.task_id],
+                        events=[f"pi:{self.task.task_id}"],
+                    )
+                    long_ok = True
+            except Exception:                             # noqa: BLE001
+                long_ok = False
 
         # 清空已摄取的 inbox，避免下次重复合并。
         if inbox_texts:
@@ -205,6 +223,7 @@ Task 工作目录: {self.task_workspace}
             "ok": True,
             "updated": updated is not None,
             "short_term": short_ok,
+            "long_term": long_ok,
             "inbox": len(inbox_texts),
         }
 

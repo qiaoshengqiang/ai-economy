@@ -28,7 +28,9 @@ from typing import Any, Dict, List, Optional
 from core.task import Task, TaskMode, TaskStatus
 from core.task_execution import TaskResultRef
 from llm.base import LLMResponse, TOKEN_SOURCE_API
+from work.llm_proxy import AIEOSLLMProxy
 from work.lifecycle import WorkLifecycle
+from work.pi_acceptance import PiAcceptance
 from work.pi_memory import PiMemoryBridge
 from work.pi_rpc import PiRpcClient, PiRunResult
 from work.roles import WorkResult
@@ -50,6 +52,10 @@ class PiWorkRuntime:
         round_sink: Any = None,
         event_sink: Any = None,
         pi_agent_dir: Optional[Path] = None,
+        use_llm_proxy: bool = True,
+        upstream_base_url: str = "",
+        acceptance_agent: str = "",
+        acceptance_timeout_seconds: float = 120.0,
     ) -> None:
         if task.mode != TaskMode.SOLO:
             raise ValueError(
@@ -65,6 +71,10 @@ class PiWorkRuntime:
         self.round_sink = round_sink
         self.event_sink = event_sink
         self.pi_agent_dir = Path(pi_agent_dir) if pi_agent_dir else None
+        self.use_llm_proxy = bool(use_llm_proxy)
+        self.upstream_base_url = str(upstream_base_url or "")
+        self.acceptance_agent = str(acceptance_agent or "")
+        self.acceptance_timeout_seconds = float(acceptance_timeout_seconds)
         self.lifecycle = WorkLifecycle(runtime.tasks)
         self.memory = PiMemoryBridge(
             runtime,
@@ -90,7 +100,9 @@ class PiWorkRuntime:
             getattr(brain, "model", "") or "deepseek-flash")
         return provider, model
 
-    def _pi_env(self, provider: str) -> Dict[str, str]:
+    def _pi_env(
+        self, provider: str, *, include_key: bool = True,
+    ) -> Dict[str, str]:
         env = dict(os.environ)
         env.update({
             "AIEOS_TASK_WORKSPACE": str(self.task_directory.workspace),
@@ -111,12 +123,60 @@ class PiWorkRuntime:
         except Exception:                                     # noqa: BLE001
             credential = None
         material = str(getattr(credential, "material", "") or "")
-        if material:
+        if include_key and material:
             key = (
                 "DEEPSEEK_API_KEY" if provider == "deepseek"
                 else "OPENAI_API_KEY")
             env[key] = material
         return env
+
+    def _credential_material(self, provider: str) -> str:
+        agent = self._agent()
+        brain = getattr(agent, "brain", None)
+        try:
+            credential = brain.credential_for(provider) if brain else None
+        except Exception:                                     # noqa: BLE001
+            return ""
+        return str(getattr(credential, "material", "") or "")
+
+    def _upstream_base_url(self) -> str:
+        if self.upstream_base_url:
+            return self.upstream_base_url
+        provider = self._provider_and_model()[0]
+        return {
+            "deepseek": "https://api.deepseek.com",
+            "openai": "https://api.openai.com",
+        }.get(provider, "https://api.deepseek.com")
+
+    def _write_pi_models(self, base_url: str, model: str) -> Path:
+        directory = self.task_directory.aieos / "pi-agent"
+        directory.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "$schema": "https://pi.dev/schemas/models.schema.json",
+            "providers": {
+                "aieos-proxy": {
+                    "baseUrl": base_url,
+                    "api": "openai-completions",
+                    "apiKey": "aieos-proxy",
+                    "models": [{
+                        "id": model,
+                        "name": f"AIEOS proxy / {model}",
+                        "reasoning": True,
+                        "input": ["text"],
+                        "contextWindow": 128000,
+                        "maxTokens": 16384,
+                        "cost": {
+                            "input": 0, "output": 0,
+                            "cacheRead": 0, "cacheWrite": 0,
+                        },
+                    }],
+                },
+            },
+        }
+        (directory / "models.json").write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8")
+        return directory
 
     # ------------------------------------------------------------
     def run(self) -> WorkResult:
@@ -153,24 +213,65 @@ class PiWorkRuntime:
             memory_context = self.memory.prepare()
             system_prompt = self._system_prompt(memory_context)
             provider, model = self._provider_and_model()
-            env = self._pi_env(provider)
+            proxy = None
+            try:
+                if self.use_llm_proxy:
+                    material = self._credential_material(provider)
+                    if not material:
+                        result.error = (
+                            f"Agent 没有可用的 {provider} credential，"
+                            "无法启动 Pi LLM proxy")
+                        result.status = task.status
+                        return result
+                    proxy = AIEOSLLMProxy(
+                        self.rt,
+                        agent_id=actor,
+                        task_id=task.task_id,
+                        api_key=material,
+                        provider=provider,
+                        model=model,
+                        upstream_base_url=self._upstream_base_url(),
+                        timeout_seconds=self.timeout_seconds,
+                    )
+                    try:
+                        proxy_base = proxy.start()
+                    except Exception as exc:              # noqa: BLE001
+                        result.error = (
+                            f"无法启动 AIEOS LLM Proxy："
+                            f"{type(exc).__name__}: {exc}")
+                        result.status = task.status
+                        return result
+                    pi_agent_dir = self._write_pi_models(proxy_base, model)
+                    env = self._pi_env("aieos-proxy", include_key=False)
+                    env["PI_CODING_AGENT_DIR"] = str(pi_agent_dir)
+                    client_provider = "aieos-proxy"
+                    client_model = model
+                else:
+                    env = self._pi_env(provider)
+                    if self.pi_agent_dir is not None:
+                        env["PI_CODING_AGENT_DIR"] = str(self.pi_agent_dir)
+                    client_provider = provider
+                    client_model = model
 
-            client = PiRpcClient(
-                cli_path=self.pi_cli_path,
-                cwd=self.task_directory.workspace,
-                env=env,
-                provider=provider,
-                model=model,
-                system_prompt=system_prompt,
-                session_dir=self.task_directory.session_dir,
-                session_id=task.task_id,
-            )
-            run = client.run(
-                task.description or f"Task {task.task_id}",
-                timeout_seconds=self.timeout_seconds,
-                should_stop=self.should_stop,
-                event_sink=self.event_sink,
-            )
+                client = PiRpcClient(
+                    cli_path=self.pi_cli_path,
+                    cwd=self.task_directory.workspace,
+                    env=env,
+                    provider=client_provider,
+                    model=client_model,
+                    system_prompt=system_prompt,
+                    session_dir=self.task_directory.session_dir,
+                    session_id=task.task_id,
+                )
+                run = client.run(
+                    task.description or f"Task {task.task_id}",
+                    timeout_seconds=self.timeout_seconds,
+                    should_stop=self.should_stop,
+                    event_sink=self.event_sink,
+                )
+            finally:
+                if proxy is not None:
+                    proxy.stop()
             if run.aborted or self.should_stop():
                 result.error = run.error or "任务已被停止"
                 result.status = task.status
@@ -188,9 +289,33 @@ class PiWorkRuntime:
                 result.status = task.status
                 return result
 
+            acceptance = PiAcceptance(
+                self.rt,
+                task=task,
+                task_directory=self.task_directory,
+                manifest=manifest,
+                acceptance_agent=self.acceptance_agent,
+                timeout_seconds=self.acceptance_timeout_seconds,
+            ).verify()
+            self.task_directory.write_json(
+                "acceptance.json", acceptance.to_dict())
+            if not acceptance.passed:
+                result.error = (
+                    "AIEOS acceptance 未通过"
+                    + (": " + "; ".join(acceptance.gaps[:5])
+                       if acceptance.gaps else ""))
+                result.status = task.status
+                result.events = [{
+                    "type": "pi_acceptance_failed",
+                    "acceptance": acceptance.to_dict(),
+                    "files": len(manifest),
+                }]
+                return result
+
             summary = self._summary(run.events)
             memory_result = self.memory.ingest()
-            self._record_usage(actor, run.events, provider, model)
+            if not self.use_llm_proxy:
+                self._record_usage(actor, run.events, provider, model)
             self._emit_rounds(run.events, actor)
             result.turns = self._turn_count(run.events)
             result.tokens = self._token_count(run.events)
@@ -200,6 +325,7 @@ class PiWorkRuntime:
             result.events = [{
                 "type": "pi_settled",
                 "memory": memory_result,
+                "acceptance": acceptance.to_dict(),
                 "files": len(manifest),
             }]
 
@@ -213,6 +339,7 @@ class PiWorkRuntime:
                         "engine": "pi",
                         "manifest": manifest,
                         "memory": memory_result,
+                        "acceptance": acceptance.to_dict(),
                     },
                 ),
             )
