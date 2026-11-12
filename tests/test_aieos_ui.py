@@ -1811,3 +1811,14 @@ def test_settings_page_has_pi_timeout_switch():
     assert "pi-timeout-enabled" in html
     assert "pi-timeout-seconds" in html
     assert "pi_timeout_enabled" in js
+
+
+def test_task_timeline_preserves_manual_open_state():
+    from pathlib import Path
+
+    js = (Path(__file__).resolve().parent.parent
+          / "ui" / "static" / "task.js").read_text(encoding="utf-8")
+    assert "previousOpen" in js
+    assert "data-round-key" in js
+    assert "block.open = previousOpen.has(roundKey)" in js
+    assert ": false;" in js

@@ -241,6 +241,12 @@
 
   function renderTimeline(data) {
     const rounds = Array.isArray(data.rounds) ? data.rounds : [];
+    // 轮询会重建 timeline；先保存用户手动收起/展开的状态。
+    const previousOpen = new Map();
+    els.timeline.querySelectorAll("details.round[data-round-key]")
+      .forEach((node) => {
+        previousOpen.set(node.dataset.roundKey, node.open);
+      });
     els.timeline.innerHTML = "";
     if (!rounds.length) {
       els.timeline.appendChild(el("div", "empty",
@@ -261,7 +267,17 @@
       }
       const block = document.createElement("details");
       block.className = `round${round.cognition ? " cognition" : ""}`;
-      block.open = true;
+      const roundKey = [
+        runId || "run",
+        round.iteration == null ? "" : round.iteration,
+        round.round == null ? "" : round.round,
+        round.phase || (round.cognition ? "cognition" : "work"),
+      ].join("|");
+      block.dataset.roundKey = roundKey;
+      // 默认收起；用户手动展开 / 收起后，后续轮询保持该状态。
+      block.open = previousOpen.has(roundKey)
+        ? previousOpen.get(roundKey)
+        : false;
       const summary = document.createElement("summary");
       const roundLatency = round.latency_ms != null
         ? round.latency_ms
