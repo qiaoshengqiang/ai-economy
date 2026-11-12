@@ -48,6 +48,7 @@ class PiWorkRuntime:
         pi_provider: str = "",
         pi_model: str = "",
         timeout_seconds: float = 1800.0,
+        proxy_timeout_seconds: float = 300.0,
         should_stop: Any = None,
         round_sink: Any = None,
         event_sink: Any = None,
@@ -71,6 +72,7 @@ class PiWorkRuntime:
         self.pi_provider = str(pi_provider or "")
         self.pi_model = str(pi_model or "")
         self.timeout_seconds = float(timeout_seconds)
+        self.proxy_timeout_seconds = float(proxy_timeout_seconds)
         self.should_stop = should_stop or (lambda: False)
         self.round_sink = round_sink
         self.event_sink = event_sink
@@ -721,7 +723,7 @@ Task Workspace。不要使用 AIEOS Shared Context；本 Work 任务不提供它
                         provider=provider,
                         model=model,
                         upstream_base_url=self._upstream_base_url(),
-                        timeout_seconds=self.timeout_seconds,
+                        timeout_seconds=self.proxy_timeout_seconds,
                     )
                     try:
                         proxy_base = proxy.start()

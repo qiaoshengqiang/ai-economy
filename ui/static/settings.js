@@ -242,6 +242,10 @@
       agent.agent_id === regular.front_agent));
     $("max-teams").value = String(regular.max_parallel_teams || 3);
     $("max-solo-turns").value = String(regular.max_solo_turns || 24);
+    $("pi-timeout-enabled").checked = regular.pi_timeout_enabled !== false;
+    $("pi-timeout-seconds").value = String(
+      regular.pi_timeout_seconds || 1800);
+    $("pi-timeout-seconds").disabled = !$("pi-timeout-enabled").checked;
     $("prompt-log-enabled").checked = !!regular.prompt_log_enabled;
   }
 
@@ -515,6 +519,8 @@
           front_agent: $("front-select").value,
           max_parallel_teams: Number($("max-teams").value || 3),
           max_solo_turns: Number($("max-solo-turns").value || 24),
+          pi_timeout_enabled: $("pi-timeout-enabled").checked,
+          pi_timeout_seconds: Number($("pi-timeout-seconds").value || 1800),
           prompt_log_enabled: $("prompt-log-enabled").checked,
         }),
       });
@@ -655,6 +661,9 @@
   $("credential-new").addEventListener("click", newCredential);
   $("credential-save").addEventListener("click", saveCredential);
   $("runtime-save").addEventListener("click", saveRuntime);
+  $("pi-timeout-enabled").addEventListener("change", () => {
+    $("pi-timeout-seconds").disabled = !$("pi-timeout-enabled").checked;
+  });
   $("agents-save").addEventListener("click", saveAgents);
   $("role-new").addEventListener("click", newRole);
   $("role-save").addEventListener("click", saveRole);

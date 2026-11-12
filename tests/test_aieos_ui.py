@@ -60,7 +60,8 @@ class _FakeController:
     def update_settings(self, *, front_agent=None, max_parallel_teams=None,
                         max_solo_turns=None, pi_work_agents=None,
                         disabled_agents=None, prompt_log_enabled=None,
-                        agent_thinking=None):
+                        agent_thinking=None, pi_timeout_enabled=None,
+                        pi_timeout_seconds=None):
         if front_agent:
             self.front = front_agent
             self.settings["front_agent"] = front_agent
@@ -76,6 +77,10 @@ class _FakeController:
             self.settings["prompt_log_enabled"] = prompt_log_enabled
         if agent_thinking is not None:
             self.settings["agent_thinking"] = agent_thinking
+        if pi_timeout_enabled is not None:
+            self.settings["pi_timeout_enabled"] = pi_timeout_enabled
+        if pi_timeout_seconds is not None:
+            self.settings["pi_timeout_seconds"] = pi_timeout_seconds
         return self.settings
 
     def settings_snapshot(self):
@@ -1795,3 +1800,14 @@ def test_agent_question_bubble_and_answer_ui():
     assert "agent-question-bubble" in js
     assert "/api/answer" in js
     assert "playQuestionSound" in js
+
+
+def test_settings_page_has_pi_timeout_switch():
+    from pathlib import Path
+
+    static = Path(__file__).resolve().parent.parent / "ui" / "static"
+    html = (static / "index.html").read_text(encoding="utf-8")
+    js = (static / "settings.js").read_text(encoding="utf-8")
+    assert "pi-timeout-enabled" in html
+    assert "pi-timeout-seconds" in html
+    assert "pi_timeout_enabled" in js

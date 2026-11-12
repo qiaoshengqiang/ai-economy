@@ -186,7 +186,7 @@ Workspace 事实重新 read / search。
 | Task 卡片点击 | **同一标签页**打开 `/task.html?task_id=...`：任务认知 + 每轮 decision / work / summary 的 thinking、输出、动作与结果；每个 phase 显示 **thinking 强度 + LLM 调用耗时**，round 标题显示本轮总耗时，动作显示**工具执行耗时**；外加执行历史、文件、公共 WM、LLM 汇总（calls / tokens / 总耗时 / 平均耗时 / AIC） |
 | Agent 状态 | `IDLE` / `WORKING` / `STOPPING` · `FRONT` / `WORKER`；Work Agent 卡片可直接切换思考强度（Prototype 固定 max） |
 | Agent 中途提问 | Agent 卡片显示气泡并播放提示音；点击气泡直接回答，不经过 Front；Task 保持 IN_PROGRESS |
-| 设置按钮 | **系统设置**：服务商 / 模型 / API 凭据 / 系统信息；**常规设置**：Front Agent / 最大并行任务 / 单任务轮次 / Agent 启停与引擎 / Worker Roles / Prompt 日志开关。详见 [`UI_SETTINGS_DESIGN.md`](UI_SETTINGS_DESIGN.md) |
+| 设置按钮 | **系统设置**：服务商 / 模型 / API 凭据 / 系统信息；**常规设置**：Front Agent / 最大并行任务 / 单任务轮次 / Work 总时长开关 / Agent 启停与引擎 / Worker Roles / Prompt 日志开关。详见 [`UI_SETTINGS_DESIGN.md`](UI_SETTINGS_DESIGN.md) |
 
 ---
 

@@ -197,6 +197,7 @@ class AIEOSController:
         pi_model: str = "",
         pi_agent_dir: Optional[Path] = None,
         pi_timeout_seconds: float = 1800.0,
+        pi_timeout_enabled: bool = True,
         task_root: Optional[Path] = None,
         settings_path: Optional[Path] = None,
         log_dir: Optional[Path] = None,
@@ -230,6 +231,7 @@ class AIEOSController:
         self.pi_model = str(pi_model or "")
         self.pi_agent_dir = Path(pi_agent_dir) if pi_agent_dir else None
         self.pi_timeout_seconds = float(pi_timeout_seconds)
+        self.pi_timeout_enabled = bool(pi_timeout_enabled)
         self.task_directories = TaskDirectoryManager(task_root)
         self.settings_path = Path(settings_path) if settings_path else None
         self.log_dir = Path(log_dir) if log_dir else None
@@ -327,6 +329,14 @@ class AIEOSController:
                 and str(item).strip() != self.front_agent
             }
         self.prompt_log_enabled = bool(data.get("prompt_log_enabled", False))
+        if "pi_timeout_enabled" in data:
+            self.pi_timeout_enabled = bool(data.get("pi_timeout_enabled"))
+        try:
+            timeout = float(data.get("pi_timeout_seconds") or 0)
+        except (TypeError, ValueError):
+            timeout = 0
+        if timeout > 0:
+            self.pi_timeout_seconds = timeout
         raw_thinking = data.get("agent_thinking")
         if isinstance(raw_thinking, dict):
             self.agent_thinking = {
@@ -345,6 +355,8 @@ class AIEOSController:
         disabled_agents: Optional[List[str]] = None,
         prompt_log_enabled: Optional[bool] = None,
         agent_thinking: Optional[Dict[str, str]] = None,
+        pi_timeout_enabled: Optional[bool] = None,
+        pi_timeout_seconds: Optional[float] = None,
     ) -> Dict[str, Any]:
         with self._lock:
             if front_agent is not None:
@@ -408,6 +420,13 @@ class AIEOSController:
                             f"支持：{list(allowed)}")
                     cleaned[aid] = level
                 self.agent_thinking = cleaned
+            if pi_timeout_enabled is not None:
+                self.pi_timeout_enabled = bool(pi_timeout_enabled)
+            if pi_timeout_seconds is not None:
+                value = float(pi_timeout_seconds)
+                if value <= 0:
+                    raise ValueError("pi_timeout_seconds 必须 > 0")
+                self.pi_timeout_seconds = value
             self._persist_settings()
             self._configure_front_brain()
             self._notify()
@@ -423,7 +442,13 @@ class AIEOSController:
             "disabled_agents": sorted(self.disabled_agents),
             "prompt_log_enabled": bool(self.prompt_log_enabled),
             "agent_thinking": dict(self.agent_thinking),
+            "pi_timeout_enabled": bool(self.pi_timeout_enabled),
+            "pi_timeout_seconds": float(self.pi_timeout_seconds),
         }
+
+    def _pi_timeout(self) -> float:
+        return (float(self.pi_timeout_seconds)
+                if self.pi_timeout_enabled else 0.0)
 
     def _agent_thinking_levels(self, agent_id: str) -> tuple:
         agent = self._agent(str(agent_id))
@@ -987,7 +1012,10 @@ class AIEOSController:
             pi_cli_path=self.pi_cli_path,
             pi_provider=self.pi_provider,
             pi_model=self.pi_model,
-            timeout_seconds=self.pi_timeout_seconds,
+            timeout_seconds=self._pi_timeout(),
+            proxy_timeout_seconds=(
+                self.pi_timeout_seconds if self.pi_timeout_seconds > 0
+                else 300.0),
             should_stop=should_stop or (lambda: False),
             round_sink=round_sink,
             pi_agent_dir=self.pi_agent_dir,

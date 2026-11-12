@@ -213,6 +213,12 @@
                   <input id="max-teams" type="number" min="1" max="8" /></label>
                 <label class="field"><span>单任务最大轮次</span>
                   <input id="max-solo-turns" type="number" min="1" max="200" /></label>
+                <label class="field check wide"><span>限制 Work 总时长</span>
+                  <input id="pi-timeout-enabled" type="checkbox" /></label>
+                <label class="field"><span>Work 总时长（秒）</span>
+                  <input id="pi-timeout-seconds" type="number" min="1" value="1800" /></label>
+                <p class="muted wide">关闭后 Pi Work 不设总时限；
+                  LLM 单次请求仍受服务商 Timeout 限制。</p>
                 <label class="field check wide"><span>记录模型输入（Prompt 日志）</span>
                   <input id="prompt-log-enabled" type="checkbox" /></label>
                 <p class="muted wide">写入 runs/ui/prompts/；默认关闭，测完请关闭。

@@ -83,6 +83,29 @@ def test_agent_thinking_round_trip(tmp_path):
     assert data["agent_thinking"] == {"agent_c": "low"}
 
 
+def test_pi_timeout_switch_round_trip(tmp_path):
+    path = tmp_path / "ui_settings.json"
+    controller = _controller(tmp_path)
+    try:
+        controller.update_settings(
+            pi_timeout_enabled=False, pi_timeout_seconds=900)
+        assert controller.settings_dict()["pi_timeout_enabled"] is False
+        assert controller._pi_timeout() == 0.0
+    finally:
+        controller.close()
+
+    data = json.loads(path.read_text("utf-8"))
+    assert data["pi_timeout_enabled"] is False
+    assert data["pi_timeout_seconds"] == 900
+    reloaded = _controller(tmp_path)
+    try:
+        assert reloaded.settings_dict()["pi_timeout_enabled"] is False
+        reloaded.update_settings(pi_timeout_enabled=True)
+        assert reloaded._pi_timeout() == 900
+    finally:
+        reloaded.close()
+
+
 def test_front_agent_cannot_be_disabled(tmp_path):
     controller = _controller(tmp_path)
     try:

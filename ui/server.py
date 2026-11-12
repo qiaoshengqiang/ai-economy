@@ -151,6 +151,8 @@ class Handler(BaseHTTPRequestHandler):
                     disabled_agents=payload.get("disabled_agents"),
                     prompt_log_enabled=payload.get("prompt_log_enabled"),
                     agent_thinking=payload.get("agent_thinking"),
+                    pi_timeout_enabled=payload.get("pi_timeout_enabled"),
+                    pi_timeout_seconds=payload.get("pi_timeout_seconds"),
                 )
                 self._send_json({"ok": True, "settings": settings})
                 return

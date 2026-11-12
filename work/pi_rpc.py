@@ -172,7 +172,8 @@ class PiRpcClient:
                     except Exception:                     # noqa: BLE001
                         pass
                     break
-                if time.monotonic() - started > float(timeout_seconds):
+                if (float(timeout_seconds or 0) > 0
+                        and time.monotonic() - started > float(timeout_seconds)):
                     result.error = (
                         f"Pi 超时（{timeout_seconds}s）")
                     break

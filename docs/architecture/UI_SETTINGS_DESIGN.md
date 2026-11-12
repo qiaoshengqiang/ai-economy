@@ -115,6 +115,7 @@ profile / env / present / api_key（只写）
 - Front Agent；
 - 最大并行任务数；
 - 单任务最大轮次；
+- **Work 总时长开关与秒数**（关闭后 Pi Work 不设总时限）；
 - **Prompt 日志开关**（默认关闭）；
 - 设置立即生效，并持久化到 `ui_settings.json`。
 
