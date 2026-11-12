@@ -30,7 +30,6 @@ from core.task_execution import TaskResultRef
 from llm.base import LLMResponse, TOKEN_SOURCE_API
 from work.llm_proxy import AIEOSLLMProxy
 from work.lifecycle import WorkLifecycle
-from work.pi_acceptance import PiAcceptance
 from work.pi_memory import PiMemoryBridge
 from work.pi_rpc import PiRpcClient, PiRunResult
 from work.roles import WorkResult
@@ -54,8 +53,6 @@ class PiWorkRuntime:
         pi_agent_dir: Optional[Path] = None,
         use_llm_proxy: bool = True,
         upstream_base_url: str = "",
-        acceptance_agent: str = "",
-        acceptance_timeout_seconds: float = 120.0,
     ) -> None:
         if task.mode != TaskMode.SOLO:
             raise ValueError(
@@ -73,8 +70,6 @@ class PiWorkRuntime:
         self.pi_agent_dir = Path(pi_agent_dir) if pi_agent_dir else None
         self.use_llm_proxy = bool(use_llm_proxy)
         self.upstream_base_url = str(upstream_base_url or "")
-        self.acceptance_agent = str(acceptance_agent or "")
-        self.acceptance_timeout_seconds = float(acceptance_timeout_seconds)
         self.lifecycle = WorkLifecycle(runtime.tasks)
         self.memory = PiMemoryBridge(
             runtime,
@@ -289,30 +284,14 @@ class PiWorkRuntime:
                 result.status = task.status
                 return result
 
-            acceptance = PiAcceptance(
-                self.rt,
-                task=task,
-                task_directory=self.task_directory,
-                manifest=manifest,
-                acceptance_agent=self.acceptance_agent,
-                timeout_seconds=self.acceptance_timeout_seconds,
-            ).verify()
-            self.task_directory.write_json(
-                "acceptance.json", acceptance.to_dict())
-            if not acceptance.passed:
+            summary = self._summary(run.events)
+            if not summary:
                 result.error = (
-                    "AIEOS acceptance 未通过"
-                    + (": " + "; ".join(acceptance.gaps[:5])
-                       if acceptance.gaps else ""))
+                    "Pi 已结束，但没有产出总结："
+                    "既没有 RESULT.md，也没有可用的 assistant 文本")
                 result.status = task.status
-                result.events = [{
-                    "type": "pi_acceptance_failed",
-                    "acceptance": acceptance.to_dict(),
-                    "files": len(manifest),
-                }]
                 return result
 
-            summary = self._summary(run.events)
             memory_result = self.memory.ingest()
             if not self.use_llm_proxy:
                 self._record_usage(actor, run.events, provider, model)
@@ -325,9 +304,15 @@ class PiWorkRuntime:
             result.events = [{
                 "type": "pi_settled",
                 "memory": memory_result,
-                "acceptance": acceptance.to_dict(),
                 "files": len(manifest),
             }]
+            self.task_directory.write_json("result.json", {
+                "task_id": task.task_id,
+                "engine": "pi",
+                "summary": summary,
+                "files": manifest,
+                "memory": memory_result,
+            })
 
             self.lifecycle.complete_solo(
                 task, actor=actor,
@@ -339,7 +324,6 @@ class PiWorkRuntime:
                         "engine": "pi",
                         "manifest": manifest,
                         "memory": memory_result,
-                        "acceptance": acceptance.to_dict(),
                     },
                 ),
             )

@@ -1,6 +1,6 @@
 # Pi Work Layer Design
 
-> 状态：**V1 pilot 已实现**（PiWorkRuntime · 真实任务目录 · 记忆文件桥 · LLM Proxy · 独立验收）
+> 状态：**V1 pilot 已实现**（PiWorkRuntime · 真实任务目录 · 记忆文件桥 · LLM Proxy · Pi 总结回传）
 > 目标：Pi 只做 Work 执行底座；Life 层、Task Core、经济与治理仍属于 AIEOS。
 
 ## 1. 边界
@@ -94,8 +94,8 @@ Pi agent_settled
 - Pi 的 usage 事件转换为 `LLMResponse`，写入 `llm_calls` 与 Ledger；
 - **LLM Proxy 已接入**：Pi 指向本地 AIEOS Proxy；请求前检查 Task 预算，
   请求后解析 usage 写入 `llm_calls` / Ledger；
-- **独立验收已接入**：`PiAcceptance` 使用 Task acceptance criteria +
-  `acceptance_agent`（默认 `agent_a`）核对文件内容，fail-closed；
+- **不再做 AIEOS 独立验收**：Pi 结束后以 `RESULT.md` / 最后一条
+  assistant 文本作为总结；AIEOS 写入 `.aieos/result.json` 并完成 Task；
 - Team 共享目录、多 Agent 文件锁不在 V1 pilot。
 
 ## 6. 开关
@@ -126,15 +126,14 @@ python -m ui.server \
 
 ## 7. 已验证
 
-Proxy + 独立验收 pilot（agent_c，验收 agent_a）：
+Proxy pilot（agent_c）：
 
 ```text
 Task task_9e46a230
   → Pi 4 turns / 3 tools
   → LLM Proxy 记录 agent_c 4 calls / 65,968 tokens / 0.65968 AIC
-  → acceptance agent_a 1 call，passed=true
   → tasks/task_9e46a230/workspace/{hello.txt,RESULT.md}
-  → .aieos/{acceptance.json,manifest.json,pi-session}
+  → .aieos/{manifest.json,pi-session}
   → Task COMPLETED
 ```
 
@@ -148,10 +147,13 @@ Task task_2cb3eac3
   → Task COMPLETED
 ```
 
+> 已知问题：`task_1a1f8608` 的真实赛车任务被旧 `PiAcceptance`
+> 的 8,000 字符截断误判为失败；该 acceptance gate 已移除。
+
 ## 8. 后续
 
 1. Pi 事件实时映射到 UI（当前为 run 结束后批量写 round）；
 2. Team 共享任务目录与文件锁；
 3. 多轮/多任务对比，确认是否扩大 `pi_work_agents`；
-4. acceptance 规则调优（LLM verifier 的严格度 / 成本）；
+4. 总结质量校验（RESULT.md 缺失/为空时的行为）；
 5. Proxy 对流式响应的兼容性继续压测。
