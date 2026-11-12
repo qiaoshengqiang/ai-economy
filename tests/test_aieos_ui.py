@@ -1408,3 +1408,18 @@ def test_job_log_file_contains_front_raw_output(tmp_path):
         (tmp_path / "job_raw_log.json").read_text(encoding="utf-8"))
     assert data["job"]["front_decision"]["raw_output"] == "RAW-FRONT"
     assert data["job"]["front_decision"]["task_text"] == "TEXT"
+
+
+def test_main_layout_keeps_messages_scrollable_and_composer_visible():
+    from pathlib import Path
+
+    css = (Path(__file__).resolve().parent.parent
+           / "ui" / "static" / "style.css").read_text(encoding="utf-8")
+    assert "height: 100dvh" in css
+    assert "overflow: hidden" in css
+    assert "flex: 1 1 auto" in css
+    assert "min-height: 0" in css
+    assert "overflow-y: auto" in css
+    assert "resize: none" in css
+    # 移动端必须让聊天面板占满首屏，而不是和侧栏平分高度。
+    assert "flex: 0 0 100%" in css
