@@ -54,7 +54,7 @@ default_model / request（高级 JSON）
 
 ```text
 profile / provider / model_id
-context_window / max_output_tokens / supports_reasoning
+context_window / max_output_tokens / supports_reasoning / thinking_levels
 ```
 
 上下文语义：
@@ -62,21 +62,23 @@ context_window / max_output_tokens / supports_reasoning
 | 概念 | 归属 | 说明 |
 |---|---|---|
 | `context_window` | 模型 | 模型总上下文窗口 |
-| `max_output_tokens` | 模型 | 默认最大输出 |
+| `max_output_tokens` | 模型 | 默认最大输出；Pi Work 统一使用它 |
+| `thinking_levels` | 模型 | 固定思考强度集合，Agent 卡片选项只从这里来 |
 | `brain.max_tokens` | Agent | 输出上限偏好 |
 | `cognitive_budget` | Runtime | 单次调用输出硬上限 |
 
-实际输出上限：
+原生 Brain 调用的实际输出上限：
 
 ```text
 min(agent.max_tokens, model.max_output_tokens, cognitive_budget)
 ```
 
-Pi 的 `models.json` 使用：
+Pi Work 的 `models.json` 使用：
 
 - `contextWindow = context_window`
-- `maxTokens = min(model.max_output_tokens, agent.max_tokens)`
+- `maxTokens = model.max_output_tokens`（Pi Work 不再用 Agent 的 max_tokens 二次截断）
 - `reasoning = supports_reasoning`
+- `thinkingLevelMap` 由 `thinking_levels` 生成；不支持的档位为 null
 
 校验：`context_window > 0`、`max_output_tokens > 0`、
 `max_output_tokens <= context_window`。
@@ -154,8 +156,12 @@ runs/ui/prompts/prompts-YYYY-MM-DD.jsonl
 | 启用 / 停用 | 新任务 |
 | 引擎 Solo / Pi | 新任务 |
 | 模型 / 凭据 | 只读展示，来自系统设置 |
+| 思考强度 | Agent 卡片直接切换；Prototype 固定 max |
 | 状态 | 只读 |
 
+- Agent 卡片的 Thinking 选项来自模型 `thinking_levels`；
+- **Prototype 固定 max**，卡片设置只影响 Engineering / Evolution；
+- `Auto` → Engineering high / Evolution medium；固定档位覆盖后续阶段；
 - 停用 Agent 不删除身份、账本、记忆和历史；
 - Front Agent 不能被停用；
 - 运行中的任务不受停用或引擎切换影响。

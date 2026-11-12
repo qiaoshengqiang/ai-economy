@@ -211,6 +211,8 @@ class ResolvedModel:
     max_output_tokens: Optional[int] = None
     #: 是否支持隐藏推理 / reasoning。
     supports_reasoning: bool = False
+    #: 模型支持的固定思考强度；UI 的选项只从这里来。
+    thinking_levels: Tuple[str, ...] = ()
     source: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
@@ -222,6 +224,7 @@ class ResolvedModel:
                 "context_window": self.context_window,
                 "max_output_tokens": self.max_output_tokens,
                 "supports_reasoning": self.supports_reasoning,
+                "thinking_levels": list(self.thinking_levels),
                 "source": self.source}
 
 
@@ -268,6 +271,7 @@ class ResolvedAgent:
     context_window: Optional[int] = None
     max_output_tokens: Optional[int] = None
     supports_reasoning: bool = False
+    thinking_levels: Tuple[str, ...] = ()
     system_prompt: str = ""
     #: 其余**原样保留**的 Agent 配置段（economy / capabilities / negotiation /
     #: behavior / identity），迁移时不允许丢字段。
@@ -289,6 +293,7 @@ class ResolvedAgent:
             "context_window": self.context_window,
             "max_output_tokens": self.max_output_tokens,
             "supports_reasoning": self.supports_reasoning,
+            "thinking_levels": list(self.thinking_levels),
             "system_prompt_chars": len(self.system_prompt or ""),
             "source": self.source,
         }
@@ -386,6 +391,11 @@ CANONICAL_SCALARS: Tuple[str, ...] = ("version",)
 #: 同一个段不允许同时出现在 config.yaml 与 llm.yaml。
 LLM_CONFIG_SECTIONS: Tuple[str, ...] = (
     "providers", "models", "credentials",
+)
+
+#: Pi / 模型支持的固定思考强度集合。
+THINKING_LEVELS: Tuple[str, ...] = (
+    "off", "minimal", "low", "medium", "high", "xhigh", "max",
 )
 
 
@@ -851,6 +861,22 @@ class ConfigResolver:
             raise ConfigurationError(
                 f"models.{profile}.max_output_tokens ({max_output_tokens}) "
                 f"不能大于 context_window ({context_window})。")
+        raw_levels = raw.get("thinking_levels")
+        if raw_levels is None:
+            thinking_levels: Tuple[str, ...] = ()
+        else:
+            if not isinstance(raw_levels, (list, tuple)):
+                raise ConfigurationError(
+                    f"models.{profile}.thinking_levels 必须是列表。")
+            thinking_levels = tuple(str(x) for x in raw_levels)
+            unknown = [x for x in thinking_levels if x not in THINKING_LEVELS]
+            if unknown:
+                raise ConfigurationError(
+                    f"models.{profile}.thinking_levels 包含未知档位 "
+                    f"{unknown}；允许：{list(THINKING_LEVELS)}。")
+            if not thinking_levels:
+                raise ConfigurationError(
+                    f"models.{profile}.thinking_levels 不能为空。")
         return ResolvedModel(
             profile=profile,
             model_id=_require_text(raw.get("model_id"),
@@ -859,6 +885,7 @@ class ConfigResolver:
             context_window=context_window,
             max_output_tokens=max_output_tokens,
             supports_reasoning=bool(raw.get("supports_reasoning", False)),
+            thinking_levels=thinking_levels,
             source=self._src(f"models.{profile}"),
         )
 
@@ -911,6 +938,7 @@ class ConfigResolver:
             context_window=model.context_window,
             max_output_tokens=model.max_output_tokens,
             supports_reasoning=model.supports_reasoning,
+            thinking_levels=model.thinking_levels,
             # 🔒 `.strip()` 不是装饰 —— 它保持与旧的
             #    `AgentConfig.system_prompt`（`core/config.py` 里也 strip）
             #    **逐字节一致**。

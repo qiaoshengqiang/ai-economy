@@ -246,6 +246,48 @@
         ? `task ${agent.task_id}`
         : (agent.has_brain ? "IDLE · ready" : "no brain");
       card.appendChild(task);
+      const levels = Array.isArray(agent.thinking_levels)
+        ? agent.thinking_levels : [];
+      if (levels.length && agent.role !== "FRONT") {
+        const row = document.createElement("div");
+        row.className = "agent-thinking";
+        const label = document.createElement("span");
+        label.textContent = "思考";
+        const select = document.createElement("select");
+        select.className = "agent-thinking-select";
+        select.title = "Prototype 固定 max；这里设置 Engineering / Evolution";
+        const auto = document.createElement("option");
+        auto.value = "auto";
+        auto.textContent = "Auto（阶段策略）";
+        auto.selected = !agent.thinking || agent.thinking === "auto";
+        select.appendChild(auto);
+        levels.forEach((level) => {
+          const option = document.createElement("option");
+          option.value = level;
+          option.textContent = level;
+          option.selected = agent.thinking === level;
+          select.appendChild(option);
+        });
+        select.addEventListener("change", async () => {
+          select.disabled = true;
+          try {
+            await api("/api/settings", {
+              method: "POST",
+              body: JSON.stringify({
+                agent_thinking: { [agent.agent_id]: select.value },
+              }),
+            });
+            showToast(`${agent.agent_id} 思考强度：${select.value}`);
+            await refresh();
+          } catch (error) {
+            showToast(`保存失败：${error.message}`, true);
+            select.disabled = false;
+          }
+        });
+        row.appendChild(label);
+        row.appendChild(select);
+        card.appendChild(row);
+      }
       els.agents.appendChild(card);
     });
   }

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -55,6 +56,8 @@ class PiWorkRuntime:
         upstream_base_url: str = "",
         role_prompt: str = "",
         extra_args: Optional[List[str]] = None,
+        phase_plan: Optional[List[str]] = None,
+        thinking: str = "auto",
     ) -> None:
         if task.mode != TaskMode.SOLO:
             raise ValueError(
@@ -79,6 +82,10 @@ class PiWorkRuntime:
         self.extra_args = list(
             extra_args if extra_args is not None
             else ["--no-skills", "--no-context-files"])
+        self.phase_plan = list(
+            phase_plan or ["prototype", "engineering", "evolution"])
+        self.thinking = str(thinking or "auto").strip().lower()
+        self._work_state: Dict[str, Any] = {}
         self.lifecycle = WorkLifecycle(runtime.tasks)
         self.memory = PiMemoryBridge(
             runtime,
@@ -152,23 +159,31 @@ class PiWorkRuntime:
             "openai": "https://api.openai.com",
         }.get(provider, "https://api.deepseek.com")
 
-    def _model_limits(self) -> tuple[int, int, bool]:
-        """模型上下文窗口 / 最大输出 / reasoning，来自 Agent Brain 的解析配置。"""
+    def _model_limits(self) -> tuple[int, int, bool, tuple]:
+        """模型上下文 / 最大输出 / reasoning / 思考档位。"""
         agent = self._agent()
         settings = getattr(getattr(agent, "brain", None), "settings", None)
         context_window = int(
             getattr(settings, "context_window", None) or 128000)
+        # Pi Work 统一使用模型的最大输出上限；Agent 的较低 max_tokens
+        # 不在这里二次截断。阶段可以通过 prompt 自行输出更短。
         max_output = int(
             getattr(settings, "max_output_tokens", None) or 16384)
-        agent_max = getattr(settings, "max_tokens", None)
-        if agent_max:
-            max_output = min(max_output, int(agent_max))
         reasoning = bool(getattr(settings, "supports_reasoning", True))
-        return context_window, max_output, reasoning
+        levels = tuple(getattr(settings, "thinking_levels", ()) or ())
+        if not levels:
+            levels = (("off", "low", "medium", "high", "max")
+                      if reasoning else ("off",))
+        return context_window, max_output, reasoning, levels
 
     def _write_pi_models(self, base_url: str, model: str) -> Path:
         directory = self.task_directory.aieos / "pi-agent"
-        context_window, max_output, reasoning = self._model_limits()
+        context_window, max_output, reasoning, levels = self._model_limits()
+        level_map = {
+            level: (level if level in levels else None)
+            for level in ("off", "minimal", "low", "medium",
+                          "high", "xhigh", "max")
+        }
         directory.mkdir(parents=True, exist_ok=True)
         payload = {
             "$schema": "https://pi.dev/schemas/models.schema.json",
@@ -181,6 +196,7 @@ class PiWorkRuntime:
                         "id": model,
                         "name": f"AIEOS proxy / {model}",
                         "reasoning": reasoning,
+                        "thinkingLevelMap": level_map,
                         "input": ["text"],
                         "contextWindow": context_window,
                         "maxTokens": max_output,
@@ -196,6 +212,216 @@ class PiWorkRuntime:
             json.dumps(payload, ensure_ascii=False, indent=2),
             encoding="utf-8")
         return directory
+
+    # ------------------------------------------------------------
+    # Work phases
+    # ------------------------------------------------------------
+    _PHASE_LABELS = {
+        "prototype": "原型生成",
+        "engineering": "实现验证",
+        "evolution": "持续迭代",
+    }
+    _THINKING_ORDER = (
+        "max", "xhigh", "high", "medium", "low", "minimal", "off")
+
+    def _phase_thinking(self, phase: str) -> str:
+        levels = tuple(self._model_limits()[3])
+        supported = set(levels)
+        rank = {
+            "off": 0, "minimal": 1, "low": 2, "medium": 3,
+            "high": 4, "xhigh": 5, "max": 6,
+        }
+
+        def pick(preferred: str, fallback: str = "off") -> str:
+            if preferred in supported:
+                return preferred
+            if not supported:
+                return fallback
+            target = rank.get(preferred, 3)
+            # 优先选择离目标最近的一档；距离相同则选更高的一档，
+            # 避免把 engineering 的 high 静默降成 low。
+            return min(
+                supported,
+                key=lambda level: (
+                    abs(rank[level] - target),
+                    rank[level] < target,
+                ),
+            )
+
+        # Prototype 固定最高档；Agent 卡片只影响后续阶段。
+        if phase == "prototype":
+            return pick("max")
+        if self.thinking and self.thinking != "auto":
+            return pick(self.thinking)
+        defaults = {"engineering": "high", "evolution": "medium"}
+        return pick(defaults.get(phase, "medium"))
+
+    def _minimal_system_prompt(self) -> str:
+        paths = self.memory.paths()
+        return f"""你是 {self.task.contractor or self.task.creator}，AIEOS 中的 Work 执行 Agent。
+
+你的工作目录是 Task Workspace：
+{paths['task_workspace']}
+
+你的私有 workspace 是：
+{paths['private_workspace']}
+你的记忆目录是：
+{paths['memory_dir']}
+
+请直接使用原生 read/write/edit/bash/grep/find/ls 工具把交付物写入
+Task Workspace。不要使用 AIEOS Shared Context；本 Work 任务不提供它。
+读取 `{paths['memory_dir']}/context.md` 获取记忆快照。不要修改其他 Agent
+的私有目录。
+"""
+
+    def _bounded_text(self, relative_path: str, limit: int = 6000) -> str:
+        try:
+            text = self.task_directory.read_text(relative_path).strip()
+        except (OSError, ValueError):
+            return ""
+        if len(text) > limit:
+            return text[:limit] + "\n…（已截断）"
+        return text
+
+    def _environment_facts(self, phase: str) -> str:
+        files = self.task_directory.list_files()
+        lines = [f"workspace: {self.task_directory.workspace}"]
+        if files:
+            lines.append("当前文件：")
+            for item in files[:80]:
+                chars = item.get("chars")
+                suffix = f" ({chars} chars)" if chars is not None else ""
+                lines.append(f"- {item['path']}{suffix}")
+            if len(files) > 80:
+                lines.append(f"- …（还有 {len(files) - 80} 个文件）")
+        else:
+            lines.append("当前 Workspace 为空。")
+        lines.append("可用工具：read / write / edit / bash / grep / find / ls。")
+        if phase in ("engineering", "evolution"):
+            prototype = self._bounded_text("PROTOTYPE.md")
+            if prototype:
+                lines.append("\n========== PROTOTYPE.md ==========\n" + prototype)
+        if phase == "evolution":
+            engineering = self._bounded_text("ENGINEERING.md")
+            if engineering:
+                lines.append("\n========== ENGINEERING.md ==========\n" + engineering)
+        return "\n".join(lines)
+
+    def _phase_prompt(self, phase: str, memory_context: str) -> str:
+        task_text = self.task.description or f"Task {self.task.task_id}"
+        env = self._environment_facts(phase)
+        if phase == "prototype":
+            return f"""========== 任务 ==========
+{task_text}
+
+========== 环境事实 ==========
+{env}
+
+这是原型阶段。不要先写计划，直接把想法变成实际成果。
+
+请尽可能构建一个完整、可运行、有实际体验的初始原型。你可以自主决定
+结构、交互、视觉和实现方式；优先让核心体验真正可玩、可用。
+
+完成时：
+1. 确保 Workspace 中至少有可运行产物；
+2. 写 `PROTOTYPE.md`，说明设计意图、关键取舍、运行方式和已知缺口；
+3. 最后一行输出 `PROTOTYPE_READY`。
+"""
+        role = self.role_prompt.strip()
+        if phase == "engineering":
+            return f"""========== 任务 ==========
+{task_text}
+
+========== Worker 角色 ==========
+{role or "（无额外角色约束）"}
+
+========== 环境事实 ==========
+{env}
+
+原型阶段已经结束。现在进入工程阶段。
+
+请先理解 `PROTOTYPE.md` 记录的设计意图，然后检查现有代码和运行状态，
+实际运行/验证原型，发现问题并修复、补测试、必要时重构。
+这不是重新设计游戏；只有发现根本性问题时，才允许推翻部分设计，并在
+`ENGINEERING.md` 中说明理由。
+
+完成时：
+1. 写 `ENGINEERING.md`：验证了什么、发现了什么、改了什么、还剩什么；
+2. 最后一行输出 `ENGINEERING_READY`。
+"""
+        if phase == "evolution":
+            issues = self._work_state.get("open_issues") or []
+            issue_text = "\n".join(f"- {item}" for item in issues) or "（暂无记录）"
+            return f"""========== 任务 ==========
+{task_text}
+
+========== Worker 角色 ==========
+{role or "（无额外角色约束）"}
+
+========== 环境事实 ==========
+{env}
+
+========== 未解决问题 ==========
+{issue_text}
+
+进入持续迭代阶段。继续基于当前代码和运行结果工作，直到原始目标满足。
+每次修改后尽量验证实际效果；发现新问题时记录到 `ENGINEERING.md` 或
+`RESULT.md` 的“已知限制”中。
+
+完成时：
+1. 在 Task Workspace 写 `RESULT.md`，作为给人类的最终总结；
+2. 最后一行输出 `TASK_COMPLETE`。
+"""
+        raise ValueError(f"未知 Work phase：{phase!r}")
+
+    def _write_work_state(self, phase: str, *, status: str,
+                          thinking: str) -> None:
+        history = list(self._work_state.get("history") or [])
+        if status != "running":
+            history.append({
+                "phase": phase,
+                "status": status,
+                "thinking": thinking,
+                "at": datetime.now(timezone.utc).isoformat(),
+            })
+            history = history[-20:]
+        self._work_state = {
+            "phase": phase,
+            "phase_label": self._PHASE_LABELS.get(phase, phase),
+            "status": status,
+            "thinking": thinking,
+            "open_issues": list(self._work_state.get("open_issues") or []),
+            "history": history,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        self.task_directory.write_json("work_state.json", self._work_state)
+
+    def _ensure_phase_artifact(
+        self, name: str, events: List[Dict[str, Any]], title: str,
+    ) -> None:
+        """阶段产物缺失时，用该阶段模型最后输出补一个可追溯的交接文件。"""
+        target = self.task_directory.workspace / name
+        if target.is_file():
+            return
+        text = self._last_assistant_text(events).strip()
+        if not text:
+            return
+        self.task_directory.write_text(
+            name,
+            f"# {title}\n\n"
+            "> 该文件由 AIEOS 从本阶段模型最后输出提取；"
+            "模型没有显式写出阶段文件。\n\n"
+            + text[:6000] + "\n")
+
+    def _prototype_ready(self, events: List[Dict[str, Any]]) -> bool:
+        artifacts = [
+            item for item in self.task_directory.list_files()
+            if item.get("path") not in ("PROTOTYPE.md", "RESULT.md")
+        ]
+        if artifacts:
+            return True
+        text = self._last_assistant_text(events)
+        return "PROTOTYPE_READY" in text
 
     # ------------------------------------------------------------
     def run(self) -> WorkResult:
@@ -230,8 +456,18 @@ class PiWorkRuntime:
                 "TASK.md",
                 f"# Task {task.task_id}\n\n{task.description or ''}\n")
             memory_context = self.memory.prepare()
-            system_prompt = self._system_prompt(memory_context)
             provider, model = self._provider_and_model()
+            state_path = self.task_directory.aieos / "work_state.json"
+            if state_path.exists():
+                try:
+                    loaded = json.loads(state_path.read_text("utf-8"))
+                    if isinstance(loaded, dict):
+                        self._work_state = loaded
+                except (OSError, ValueError):
+                    self._work_state = {}
+            all_events: List[Dict[str, Any]] = []
+            phase_runs: List[Dict[str, Any]] = []
+            all_stderr: List[str] = []
             proxy = None
             try:
                 if self.use_llm_proxy:
@@ -272,44 +508,93 @@ class PiWorkRuntime:
                     client_provider = provider
                     client_model = model
 
-                client = PiRpcClient(
-                    cli_path=self.pi_cli_path,
-                    cwd=self.task_directory.workspace,
-                    env=env,
-                    provider=client_provider,
-                    model=client_model,
-                    system_prompt=system_prompt,
-                    session_dir=self.task_directory.session_dir,
-                    session_id=task.task_id,
-                    extra_args=self.extra_args,
-                )
-                run = client.run(
-                    task.description or f"Task {task.task_id}",
-                    timeout_seconds=self.timeout_seconds,
-                    should_stop=self.should_stop,
-                    event_sink=self.event_sink,
-                )
+                for phase in self.phase_plan:
+                    thinking = self._phase_thinking(phase)
+                    prompt = self._phase_prompt(phase, memory_context)
+                    self._write_work_state(
+                        phase, status="running", thinking=thinking)
+                    client = PiRpcClient(
+                        cli_path=self.pi_cli_path,
+                        cwd=self.task_directory.workspace,
+                        env=env,
+                        provider=client_provider,
+                        model=client_model,
+                        system_prompt=self._minimal_system_prompt(),
+                        session_dir=self.task_directory.session_dir,
+                        session_id=task.task_id,
+                        extra_args=self.extra_args + [
+                            "--thinking", thinking],
+                    )
+                    run = client.run(
+                        prompt,
+                        timeout_seconds=self.timeout_seconds,
+                        should_stop=self.should_stop,
+                        event_sink=self.event_sink,
+                    )
+                    all_events.extend(run.events)
+                    if run.stderr:
+                        all_stderr.append(run.stderr)
+                    if not self.use_llm_proxy:
+                        self._record_usage(actor, run.events, provider, model)
+                    self._emit_rounds(run.events, actor, phase=phase)
+                    phase_runs.append({
+                        "phase": phase,
+                        "thinking": thinking,
+                        "turns": self._turn_count(run.events),
+                        "tokens": self._token_count(run.events),
+                        "actions": self._tool_count(run.events),
+                        "error": run.error,
+                    })
+                    if run.aborted or self.should_stop():
+                        self._write_work_state(
+                            phase, status="stopped", thinking=thinking)
+                        result.error = run.error or "任务已被停止"
+                        result.status = task.status
+                        return result
+                    if run.error:
+                        self._write_work_state(
+                            phase, status="failed", thinking=thinking)
+                        result.error = run.error
+                        result.status = task.status
+                        return result
+                    if phase == "prototype":
+                        if not self._prototype_ready(run.events):
+                            self._write_work_state(
+                                phase, status="failed", thinking=thinking)
+                            result.error = (
+                                "原型阶段没有产生可运行产物或 PROTOTYPE_READY")
+                            result.status = task.status
+                            return result
+                        self._ensure_phase_artifact(
+                            "PROTOTYPE.md", run.events, "原型设计记录")
+                    elif phase == "engineering":
+                        self._ensure_phase_artifact(
+                            "ENGINEERING.md", run.events, "工程验证记录")
+                    self._write_work_state(
+                        phase, status="completed", thinking=thinking)
             finally:
                 if proxy is not None:
                     proxy.stop()
-            if run.aborted or self.should_stop():
-                result.error = run.error or "任务已被停止"
-                result.status = task.status
-                return result
-            if run.error:
-                result.error = run.error
-                result.status = task.status
-                return result
 
+            self._work_state = {
+                **self._work_state,
+                "phase": "complete",
+                "phase_label": "已完成",
+                "status": "completed",
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            self.task_directory.write_json(
+                "work_state.json", self._work_state)
             manifest = self.task_directory.write_manifest()
-            if run.stderr:
-                self.task_directory.write_meta("pi-stderr.log", run.stderr)
+            if all_stderr:
+                self.task_directory.write_meta(
+                    "pi-stderr.log", "\n".join(all_stderr))
             if not manifest:
                 result.error = "Pi 已结束，但 Task Workspace 没有任何文件"
                 result.status = task.status
                 return result
 
-            summary = self._summary(run.events)
+            summary = self._summary(all_events)
             if not summary:
                 result.error = (
                     "Pi 已结束，但没有产出总结："
@@ -318,15 +603,14 @@ class PiWorkRuntime:
                 return result
 
             memory_result = self.memory.ingest()
-            if not self.use_llm_proxy:
-                self._record_usage(actor, run.events, provider, model)
-            self._emit_rounds(run.events, actor)
-            result.turns = self._turn_count(run.events)
-            result.tokens = self._token_count(run.events)
-            result.actions = self._tool_count(run.events)
+            result.turns = sum(item["turns"] for item in phase_runs)
+            result.tokens = sum(item["tokens"] for item in phase_runs)
+            result.actions = sum(item["actions"] for item in phase_runs)
             result.summary = summary
             result.artifacts = [item["path"] for item in manifest]
-            result.events = [{
+            result.events = [
+                {"type": "pi_phase", **item} for item in phase_runs
+            ] + [{
                 "type": "pi_settled",
                 "memory": memory_result,
                 "files": len(manifest),
@@ -523,10 +807,11 @@ class PiWorkRuntime:
     # ------------------------------------------------------------
     def _emit_rounds(
         self, events: List[Dict[str, Any]], actor: str,
+        *, phase: str = "",
     ) -> None:
         if self.round_sink is None:
             return
-        rounds = self._rounds_from_events(events, actor)
+        rounds = self._rounds_from_events(events, actor, phase=phase)
         for payload in rounds:
             try:
                 self.round_sink(payload)
@@ -535,6 +820,7 @@ class PiWorkRuntime:
 
     def _rounds_from_events(
         self, events: List[Dict[str, Any]], actor: str,
+        *, phase: str = "",
     ) -> List[Dict[str, Any]]:
         rounds: List[Dict[str, Any]] = []
         current: Optional[Dict[str, Any]] = None
@@ -549,6 +835,7 @@ class PiWorkRuntime:
                     "run_id": f"pi_{self.task.task_id}",
                     "iteration": int(self.task.iteration or 1),
                     "round": turn_no,
+                    "phase": phase,
                     "status_before": self.task.status,
                     "status_after": self.task.status,
                     "summary": "",

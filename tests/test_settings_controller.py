@@ -63,6 +63,26 @@ def test_regular_settings_round_trip(tmp_path):
         reloaded.close()
 
 
+def test_agent_thinking_round_trip(tmp_path):
+    path = tmp_path / "ui_settings.json"
+    controller = _controller(tmp_path)
+    try:
+        controller.update_settings(
+            agent_thinking={"agent_c": "low"})
+        assert controller.settings_dict()["agent_thinking"] == {
+            "agent_c": "low"}
+        state = controller.state()
+        agent_c = next(
+            item for item in state["agents"]
+            if item["agent_id"] == "agent_c")
+        assert agent_c["thinking"] == "low"
+    finally:
+        controller.close()
+
+    data = json.loads(path.read_text("utf-8"))
+    assert data["agent_thinking"] == {"agent_c": "low"}
+
+
 def test_front_agent_cannot_be_disabled(tmp_path):
     controller = _controller(tmp_path)
     try:

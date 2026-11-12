@@ -220,6 +220,8 @@ class AIEOSController:
         }
         #: 停用的 Agent 不再接新任务；运行中的任务继续完成。
         self.disabled_agents: set[str] = set()
+        #: Agent 卡片选择的思考强度；"auto" = 阶段策略。
+        self.agent_thinking: Dict[str, str] = {}
         self.pi_cli_path = str(pi_cli_path or "pi")
         self.pi_provider = str(pi_provider or "")
         self.pi_model = str(pi_model or "")
@@ -322,6 +324,13 @@ class AIEOSController:
                 and str(item).strip() != self.front_agent
             }
         self.prompt_log_enabled = bool(data.get("prompt_log_enabled", False))
+        raw_thinking = data.get("agent_thinking")
+        if isinstance(raw_thinking, dict):
+            self.agent_thinking = {
+                str(aid): str(level)
+                for aid, level in raw_thinking.items()
+                if str(aid) in self._agent_ids
+            }
 
     def update_settings(
         self,
@@ -332,6 +341,7 @@ class AIEOSController:
         pi_work_agents: Optional[List[str]] = None,
         disabled_agents: Optional[List[str]] = None,
         prompt_log_enabled: Optional[bool] = None,
+        agent_thinking: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         with self._lock:
             if front_agent is not None:
@@ -379,6 +389,22 @@ class AIEOSController:
             if prompt_log_enabled is not None:
                 self.prompt_log_enabled = bool(prompt_log_enabled)
                 self._apply_prompt_log_config()
+            if agent_thinking is not None:
+                cleaned: Dict[str, str] = {}
+                for aid, level in dict(agent_thinking).items():
+                    aid = str(aid).strip()
+                    level = str(level).strip().lower()
+                    if aid not in self._agent_ids:
+                        raise ValueError(f"未知 Agent：{aid!r}")
+                    if level == "auto":
+                        continue
+                    allowed = self._agent_thinking_levels(aid)
+                    if allowed and level not in allowed:
+                        raise ValueError(
+                            f"{aid} 的模型不支持 thinking level {level!r}；"
+                            f"支持：{list(allowed)}")
+                    cleaned[aid] = level
+                self.agent_thinking = cleaned
             self._persist_settings()
             self._configure_front_brain()
             self._notify()
@@ -393,7 +419,17 @@ class AIEOSController:
             "pi_work_agents": sorted(self.pi_work_agents),
             "disabled_agents": sorted(self.disabled_agents),
             "prompt_log_enabled": bool(self.prompt_log_enabled),
+            "agent_thinking": dict(self.agent_thinking),
         }
+
+    def _agent_thinking_levels(self, agent_id: str) -> tuple:
+        agent = self._agent(str(agent_id))
+        brain = getattr(agent, "brain", None) if agent is not None else None
+        settings = getattr(brain, "settings", None)
+        return tuple(getattr(settings, "thinking_levels", ()) or ())
+
+    def _thinking_for_agent(self, agent_id: str) -> str:
+        return str(self.agent_thinking.get(str(agent_id)) or "auto")
 
     def _apply_prompt_log_config(self) -> None:
         prompt_log.configure(
@@ -444,6 +480,9 @@ class AIEOSController:
                 "credential": info.get("credential", ""),
                 "status": self.availability.state(aid),
                 "has_brain": self._agent_has_brain(aid),
+                "thinking": self._thinking_for_agent(aid),
+                "thinking_levels": list(
+                    self._agent_thinking_levels(aid)),
             })
         return facts
 
@@ -775,6 +814,8 @@ class AIEOSController:
             round_sink=round_sink,
             pi_agent_dir=self.pi_agent_dir,
             role_prompt=role_prompt,
+            thinking=self._thinking_for_agent(
+                task.contractor or task.creator),
         )
 
     def _front_turn(
@@ -1743,6 +1784,9 @@ class AIEOSController:
                     "task_id": task.get("task_id", ""),
                     "has_brain": self._agent_has_brain(aid),
                     "enabled": aid not in self.disabled_agents,
+                    "thinking": self._thinking_for_agent(aid),
+                    "thinking_levels": list(
+                        self._agent_thinking_levels(aid)),
                 })
             jobs = [
                 self._jobs[jid].to_dict()

@@ -27,10 +27,12 @@ def test_model_context_and_output_limits_resolve():
     assert model.context_window == 128000
     assert model.max_output_tokens == 16384
     assert model.supports_reasoning is True
+    assert model.thinking_levels == ("off", "low", "high", "max")
 
     agent = resolved.agent("agent_c")
     assert agent.context_window == 128000
     assert agent.max_output_tokens == 16384
+    assert agent.thinking_levels == ("off", "low", "high", "max")
 
 
 def test_duplicate_llm_section_is_rejected():

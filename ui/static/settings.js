@@ -388,6 +388,10 @@
     $("model-context").value = String(raw.context_window || 128000);
     $("model-output").value = String(raw.max_output_tokens || 16384);
     $("model-reasoning").checked = !!raw.supports_reasoning;
+    const levels = new Set(raw.thinking_levels || []);
+    document.querySelectorAll("#model-thinking-levels input").forEach((box) => {
+      box.checked = levels.has(box.value);
+    });
   }
 
   function newModel() {
@@ -399,6 +403,9 @@
     $("model-context").value = "128000";
     $("model-output").value = "16384";
     $("model-reasoning").checked = true;
+    document.querySelectorAll("#model-thinking-levels input").forEach((box) => {
+      box.checked = box.value === "off";
+    });
   }
 
   async function saveModel() {
@@ -409,7 +416,10 @@
       context_window: Number($("model-context").value || 128000),
       max_output_tokens: Number($("model-output").value || 16384),
       supports_reasoning: $("model-reasoning").checked,
+      thinking_levels: [...document.querySelectorAll(
+        "#model-thinking-levels input:checked")].map((box) => box.value),
     };
+    if (!payload.thinking_levels.length) payload.thinking_levels = ["off"];
     try {
       await api("/api/settings/system", {
         method: "POST",

@@ -71,36 +71,42 @@ models:
     context_window: 128000
     max_output_tokens: 16384
     supports_reasoning: true
+    thinking_levels: ["off", "low", "high", "max"]
   deepseek_flash:
     provider: deepseek
     model_id: deepseek-flash
     context_window: 128000
     max_output_tokens: 16384
     supports_reasoning: true
+    thinking_levels: ["off", "low", "high", "max"]
   doubao_novel:
     provider: doubao
     model_id: ep-20261004151436-sgwpt
     context_window: 128000
     max_output_tokens: 16384
     supports_reasoning: true
+    thinking_levels: ["off"]
   qwen_fast:
     provider: bailian
     model_id: qwen3.8-flash
     context_window: 128000
     max_output_tokens: 16384
     supports_reasoning: true
+    thinking_levels: ["off", "low", "medium", "high"]
   qwen_max:
     provider: bailian
     model_id: qwen3.8-max
     context_window: 128000
     max_output_tokens: 16384
     supports_reasoning: true
+    thinking_levels: ["off", "low", "medium", "high"]
   mock_model:
     provider: mock
     model_id: mock-model-v1
     context_window: 128000
     max_output_tokens: 16384
     supports_reasoning: false
+    thinking_levels: ["off"]
 credentials:
   deepseek_key_a:
     env: DEEPSEEK_KEY_AGENT_A

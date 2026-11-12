@@ -59,7 +59,8 @@ class _FakeController:
 
     def update_settings(self, *, front_agent=None, max_parallel_teams=None,
                         max_solo_turns=None, pi_work_agents=None,
-                        disabled_agents=None, prompt_log_enabled=None):
+                        disabled_agents=None, prompt_log_enabled=None,
+                        agent_thinking=None):
         if front_agent:
             self.front = front_agent
             self.settings["front_agent"] = front_agent
@@ -73,6 +74,8 @@ class _FakeController:
             self.settings["disabled_agents"] = disabled_agents
         if prompt_log_enabled is not None:
             self.settings["prompt_log_enabled"] = prompt_log_enabled
+        if agent_thinking is not None:
+            self.settings["agent_thinking"] = agent_thinking
         return self.settings
 
     def settings_snapshot(self):

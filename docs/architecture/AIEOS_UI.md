@@ -184,7 +184,7 @@ Workspace 事实重新 read / search。
 | 输出显示框 | Human / Front / 系统消息；Front 回复下方显示本次 **thinking 强度 + 耗时**（Front 决策耗时或整次 Job 耗时） |
 | Task 卡片列表 | task_id · 状态 · 执行 Agent · 参与者 · 迭代 · **Front → Work 提示词前 3 行**（超出省略） |
 | Task 卡片点击 | **同一标签页**打开 `/task.html?task_id=...`：任务认知 + 每轮 decision / work / summary 的 thinking、输出、动作与结果；每个 phase 显示 **thinking 强度 + LLM 调用耗时**，round 标题显示本轮总耗时，动作显示**工具执行耗时**；外加执行历史、文件、公共 WM、LLM 汇总（calls / tokens / 总耗时 / 平均耗时 / AIC） |
-| Agent 状态 | `IDLE` / `WORKING` / `STOPPING` · `FRONT` / `WORKER` |
+| Agent 状态 | `IDLE` / `WORKING` / `STOPPING` · `FRONT` / `WORKER`；Work Agent 卡片可直接切换思考强度（Prototype 固定 max） |
 | 设置按钮 | **系统设置**：服务商 / 模型 / API 凭据 / 系统信息；**常规设置**：Front Agent / 最大并行任务 / 单任务轮次 / Agent 启停与引擎 / Worker Roles / Prompt 日志开关。详见 [`UI_SETTINGS_DESIGN.md`](UI_SETTINGS_DESIGN.md) |
 
 ---

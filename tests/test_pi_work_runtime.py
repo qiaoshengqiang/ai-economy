@@ -23,6 +23,13 @@ from work.task_directory import TaskDirectoryManager
 class _FakeBrain:
     provider = "deepseek"
     model = "deepseek-flash"
+    settings = SimpleNamespace(
+        context_window=128000,
+        max_output_tokens=16384,
+        supports_reasoning=True,
+        thinking_levels=("off", "low", "high", "max"),
+        max_tokens=2048,
+    )
 
     def credential_for(self, _provider):
         return SimpleNamespace(material="fake-key")
@@ -119,12 +126,19 @@ def test_pi_work_runtime_completes_and_ingests_memory(db, monkeypatch, tmp_path)
 
         def run(self, prompt, *, timeout_seconds, should_stop, event_sink):
             (self.cwd / "hello.txt").write_text("hello", encoding="utf-8")
-            (self.cwd / "RESULT.md").write_text(
-                "已写出 hello.txt", encoding="utf-8")
-            inbox = workspace.memory_dir / "pi" / "inbox"
-            inbox.mkdir(parents=True, exist_ok=True)
-            (inbox / "note.md").write_text(
-                "next time use a cat", encoding="utf-8")
+            if "原型阶段" in prompt:
+                (self.cwd / "PROTOTYPE.md").write_text(
+                    "prototype design", encoding="utf-8")
+            elif "工程阶段" in prompt:
+                (self.cwd / "ENGINEERING.md").write_text(
+                    "engineering verification", encoding="utf-8")
+            else:
+                (self.cwd / "RESULT.md").write_text(
+                    "已写出 hello.txt", encoding="utf-8")
+                inbox = workspace.memory_dir / "pi" / "inbox"
+                inbox.mkdir(parents=True, exist_ok=True)
+                (inbox / "note.md").write_text(
+                    "next time use a cat", encoding="utf-8")
             events = [
                 {"type": "turn_start", "_received_at": 1.0},
                 {
@@ -185,11 +199,14 @@ def test_pi_work_runtime_completes_and_ingests_memory(db, monkeypatch, tmp_path)
     assert result.status == TaskStatus.COMPLETED
     assert store.get(task.task_id).status == TaskStatus.COMPLETED
     assert (directory.workspace / "hello.txt").read_text() == "hello"
-    assert result.turns == 1
-    assert result.tokens == 15
-    assert result.actions == 1
+    assert result.turns == 3
+    assert result.tokens == 45
+    assert result.actions == 3
     assert result.summary == "已写出 hello.txt"
-    assert "ROLE-MARKER" in runner._system_prompt("")
+    assert "ROLE-MARKER" in runner._phase_prompt("engineering", "")
+    assert runner._phase_thinking("prototype") == "max"
+    assert runner._phase_thinking("engineering") == "high"
+    assert runner._phase_thinking("evolution") == "high"
     assert runner.extra_args == ["--no-skills", "--no-context-files"]
     assert "hello.txt" in result.artifacts
     assert directory.manifest()
@@ -197,5 +214,14 @@ def test_pi_work_runtime_completes_and_ingests_memory(db, monkeypatch, tmp_path)
     assert short.added is not None
     assert recorder.calls and recorder.calls[0]["task_id"] == "T-PI-WORK"
     assert rounds and rounds[0]["round"] == 1
+    assert [item["phase"] for item in rounds] == [
+        "prototype", "engineering", "evolution"]
+    assert (directory.aieos / "work_state.json").exists()
     assert rounds[0]["segments"][0]["actions"][0]["action_type"] == "write"
     assert rounds[0]["segments"][0]["results"][0]["success"] is True
+
+    pi_agent_dir = runner._write_pi_models("http://127.0.0.1:1", "m")
+    model_cfg = (pi_agent_dir / "models.json").read_text("utf-8")
+    assert '"maxTokens": 16384' in model_cfg
+    assert '"max": "max"' in model_cfg
+    assert '"medium": null' in model_cfg

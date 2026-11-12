@@ -132,6 +132,17 @@
                   <input id="model-output" type="number" min="1" value="16384" /></label>
                 <label class="field check"><span>支持 reasoning</span>
                   <input id="model-reasoning" type="checkbox" /></label>
+                <div class="field wide"><span>支持的思考强度</span>
+                  <div class="check-row" id="model-thinking-levels">
+                    <label><input type="checkbox" value="off" /> off</label>
+                    <label><input type="checkbox" value="minimal" /> minimal</label>
+                    <label><input type="checkbox" value="low" /> low</label>
+                    <label><input type="checkbox" value="medium" /> medium</label>
+                    <label><input type="checkbox" value="high" /> high</label>
+                    <label><input type="checkbox" value="xhigh" /> xhigh</label>
+                    <label><input type="checkbox" value="max" /> max</label>
+                  </div>
+                </div>
               </div>
               <div class="form-actions">
                 <button type="button" class="primary" id="model-save">保存模型</button>

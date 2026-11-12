@@ -81,6 +81,42 @@ agents/<agent_id>/memory/pi/
 - inbox 不直接成为权威；AIEOS 决定如何合并；
 - Pi session 不是长期记忆，只是任务执行记录。
 
+## 4.4 Work Phases（Prototype → Engineering → Evolution）
+
+Pi Work 不再是一段无阶段连续执行，而是三段式：
+
+```text
+Prototype 原型生成
+  → Engineering 实现验证
+  → Evolution 持续迭代
+  → COMPLETED
+```
+
+- 三段复用同一个 Pi session，阶段通过 user prompt 切换；
+- 阶段状态写入 `.aieos/work_state.json`（含 history）；
+- Phase 1 成功条件：Workspace 有非 `PROTOTYPE.md` / `RESULT.md` 的产物；
+- Phase 1 结束前确保存在 `PROTOTYPE.md`；模型没写时，从最后输出提取；
+- Phase 2 结束前确保存在 `ENGINEERING.md`；
+- Phase 3 产出 `RESULT.md`；
+- 阶段记录写入 round log 的 `phase` 字段。
+
+环境事实分层：
+
+| 阶段 | 环境上下文 |
+|---|---|
+| Prototype | 最小事实：路径 / 文件树 / 工具 / 当前为空 |
+| Engineering | 文件树 + `PROTOTYPE.md` + 运行验证要求 |
+| Evolution | 文件树 + `ENGINEERING.md` + 未解决问题 |
+
+角色 prompt 只在 Engineering / Evolution 注入；Prototype 不给完整工程规范。
+
+思考强度：
+
+- Prototype 固定 `max`（模型不支持时取最近支持档）；
+- Engineering / Evolution 使用 Agent 卡片设置；
+- `Auto` → Engineering `high`、Evolution `medium`（不支持时取最近档）；
+- 输出上限统一取模型 `max_output_tokens`。
+
 ## 4.5 Worker Role（任务级专业角色）
 
 Role 是**任务属性**，不是 Agent 身份、权限、能力或预算：

@@ -74,6 +74,8 @@ class BrainSettings:
     context_window: Optional[int] = None
     max_output_tokens: Optional[int] = None
     supports_reasoning: bool = False
+    #: 模型支持的固定思考强度；UI 的选项来自这里。
+    thinking_levels: tuple = ()
 
     #: 🔒 **这里刻意只有 `credential_ref`，没有 `api_key`。**
     #:
@@ -110,6 +112,7 @@ class BrainSettings:
             context_window=resolved.context_window,
             max_output_tokens=resolved.max_output_tokens,
             supports_reasoning=bool(resolved.supports_reasoning),
+            thinking_levels=tuple(resolved.thinking_levels or ()),
             credential_ref=str(resolved.credential_profile or ""),
         )
 

@@ -29,7 +29,7 @@ import yaml
 
 from core.config_resolver import (
     ConfigLoader, ConfigResolver, ConfigValidator, ConfigurationError,
-    LLM_CONFIG_SECTIONS, merge_llm_sections,
+    LLM_CONFIG_SECTIONS, THINKING_LEVELS, merge_llm_sections,
 )
 from core.paths import (
     ENV_FILE, GLOBAL_CONFIG_FILE, GLOBAL_LLM_CONFIG_FILE,
@@ -348,12 +348,27 @@ class SystemConfigAdmin:
             raise SettingsAdminError(
                 "max_output_tokens 不能大于 context_window。")
         models = dict(llm.get("models") or {})
+        raw_levels = payload.get("thinking_levels")
+        if raw_levels is None:
+            raw_levels = ["off"]
+        if isinstance(raw_levels, str):
+            raw_levels = [x.strip() for x in raw_levels.split(",") if x.strip()]
+        if not isinstance(raw_levels, list,):
+            raise SettingsAdminError("thinking_levels 必须是列表。")
+        levels = [str(x) for x in raw_levels]
+        unknown = [x for x in levels if x not in THINKING_LEVELS]
+        if unknown:
+            raise SettingsAdminError(
+                f"未知 thinking level：{unknown}；允许：{list(THINKING_LEVELS)}。")
+        if not levels:
+            raise SettingsAdminError("thinking_levels 不能为空。")
         models[profile] = {
             "provider": provider,
             "model_id": model_id,
             "context_window": context_window,
             "max_output_tokens": max_output,
             "supports_reasoning": bool(payload.get("supports_reasoning")),
+            "thinking_levels": levels,
         }
         llm["models"] = models
 
