@@ -60,6 +60,9 @@ tasks/<task_id>/
 - `pi-agent/settings.json` 显式启用 Pi 自动压缩：`reserveTokens=16384`、
   `keepRecentTokens=20000`；触发阈值 = `contextWindow - reserveTokens`，
   `contextWindow` 来自 `pi-agent/models.json`；
+- DeepSeek V4.1 Flash 的 `context_window` 为 **1,000,000**，因此 Pi 压缩阈值
+  约 **983k**；`max_output_tokens` 仍保持 16k，是 AIEOS 的单次输出上限，
+  不是模型能力上限；
 - Agent credential 只通过子进程环境变量传入，不写日志；
 - `agent_settled` 视为本次 Pi run 结束；
 - `abort` / 进程终止用于取消。
