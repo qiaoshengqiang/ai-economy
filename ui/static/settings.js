@@ -242,6 +242,7 @@
       agent.agent_id === regular.front_agent));
     $("max-teams").value = String(regular.max_parallel_teams || 3);
     $("max-solo-turns").value = String(regular.max_solo_turns || 24);
+    $("prompt-log-enabled").checked = !!regular.prompt_log_enabled;
   }
 
   function renderAgents() {
@@ -504,6 +505,7 @@
           front_agent: $("front-select").value,
           max_parallel_teams: Number($("max-teams").value || 3),
           max_solo_turns: Number($("max-solo-turns").value || 24),
+          prompt_log_enabled: $("prompt-log-enabled").checked,
         }),
       });
       await load();

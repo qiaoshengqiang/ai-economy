@@ -11,6 +11,7 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
 
+from llm import prompt_log
 from work.llm_proxy import AIEOSLLMProxy
 
 
@@ -54,6 +55,42 @@ def _upstream():
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     return server, f"http://127.0.0.1:{server.server_address[1]}"
+
+
+def test_proxy_can_record_prompt_input(tmp_path):
+    upstream, upstream_url = _upstream()
+    recorder = _Recorder()
+    runtime = SimpleNamespace(
+        recorder=recorder, experiment_run_id="exp")
+    proxy = AIEOSLLMProxy(
+        runtime, agent_id="agent_c", task_id="task_x",
+        api_key="fake", provider="deepseek", model="deepseek-flash",
+        upstream_base_url=upstream_url)
+    prompt_log.configure(True, tmp_path)
+    base = proxy.start()
+    try:
+        request = urllib.request.Request(
+            base + "/chat/completions",
+            data=json.dumps({
+                "model": "deepseek-flash",
+                "messages": [{"role": "user", "content": "PI-PROMPT-MARKER"}],
+            }).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST")
+        urllib.request.urlopen(request, timeout=5).read()
+    finally:
+        proxy.stop()
+        upstream.shutdown()
+        upstream.server_close()
+        prompt_log.configure(False, None)
+
+    files = list(tmp_path.glob("prompts-*.jsonl"))
+    assert len(files) == 1
+    record = json.loads(files[0].read_text("utf-8").splitlines()[0])
+    assert record["agent_id"] == "agent_c"
+    assert record["task_id"] == "task_x"
+    assert record["phase"] == "pi"
+    assert record["messages"][0]["content"] == "PI-PROMPT-MARKER"
 
 
 def test_proxy_records_usage_without_budget_gate():

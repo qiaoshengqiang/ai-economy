@@ -45,6 +45,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, Sequence, Union
 
+from llm import prompt_log
 from core.logging_setup import get_logger
 from llm.base import LLMResponse, Message
 from llm.recorder import LLMCallRecorder
@@ -68,6 +69,11 @@ class BrainSettings:
     system_prompt: str = ""
     temperature: float = 0.7
     max_tokens: int = 2048
+    #: 来自 model profile 的上下文窗口 / 默认输出上限。
+    #: Agent 的 max_tokens 仍然可以覆盖 max_output_tokens。
+    context_window: Optional[int] = None
+    max_output_tokens: Optional[int] = None
+    supports_reasoning: bool = False
 
     #: 🔒 **这里刻意只有 `credential_ref`，没有 `api_key`。**
     #:
@@ -101,6 +107,9 @@ class BrainSettings:
             temperature=float(resolved.temperature),
             max_tokens=int(resolved.max_tokens if resolved.max_tokens
                            is not None else 2048),
+            context_window=resolved.context_window,
+            max_output_tokens=resolved.max_output_tokens,
+            supports_reasoning=bool(resolved.supports_reasoning),
             credential_ref=str(resolved.credential_profile or ""),
         )
 
@@ -831,6 +840,19 @@ class Brain:
                 messages=messages, system=effective_system, ctx=built_ctx,
                 call_purpose=call_purpose, cognition_turn_id=cognition_turn_id,
                 experiment_run_id=experiment_run_id,
+            )
+
+            # 可选 Prompt 日志：记录最终交给 Router 的输入。
+            # 🔒 默认关闭；失败不影响调用。
+            prompt_log.record(
+                self.agent_id,
+                phase=str(phase or ""),
+                system=str(effective_system or ""),
+                messages=messages,
+                task_id=str(task_id or ""),
+                provider=str(effective_provider or ""),
+                model=str(effective_model or ""),
+                purpose=str(call_purpose or ""),
             )
 
             response = self.router.generate(

@@ -59,7 +59,7 @@ class _FakeController:
 
     def update_settings(self, *, front_agent=None, max_parallel_teams=None,
                         max_solo_turns=None, pi_work_agents=None,
-                        disabled_agents=None):
+                        disabled_agents=None, prompt_log_enabled=None):
         if front_agent:
             self.front = front_agent
             self.settings["front_agent"] = front_agent
@@ -71,6 +71,8 @@ class _FakeController:
             self.settings["pi_work_agents"] = pi_work_agents
         if disabled_agents is not None:
             self.settings["disabled_agents"] = disabled_agents
+        if prompt_log_enabled is not None:
+            self.settings["prompt_log_enabled"] = prompt_log_enabled
         return self.settings
 
     def settings_snapshot(self):
@@ -1765,3 +1767,14 @@ def test_styles_keep_copy_actions_from_blocking_selection():
     assert "::selection" in css
     assert "pointer-events: none" in css
     assert ".msg-actions .copy-btn { pointer-events: auto; }" in css
+
+
+def test_settings_page_has_prompt_log_toggle():
+    from pathlib import Path
+
+    static = Path(__file__).resolve().parent.parent / "ui" / "static"
+    html = (static / "index.html").read_text(encoding="utf-8")
+    js = (static / "settings.js").read_text(encoding="utf-8")
+    assert "prompt-log-enabled" in html
+    assert "prompt_log_enabled" in js
+    assert "runs/ui/prompts/" in html

@@ -40,6 +40,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
+from llm import prompt_log
 from core.task import Task, TaskMode, TaskStatus
 from demand.task_creation import TaskCreationService
 from services.artifacts import read_artifact
@@ -200,6 +201,7 @@ class AIEOSController:
         export_root: Optional[Path] = None,
         worker_roles_path: Optional[Path] = None,
         worker_roles_backup_dir: Optional[Path] = None,
+        prompt_log_path: Optional[Path] = None,
         system_settings: Any = None,
     ) -> None:
         self.rt = runtime
@@ -233,6 +235,9 @@ class AIEOSController:
         )
         self.worker_roles = WorkerRoleStore(
             worker_roles_path, backup_dir=worker_roles_backup_dir)
+        self.prompt_log_path = (
+            Path(prompt_log_path) if prompt_log_path is not None else None)
+        self.prompt_log_enabled = False
         #: 系统设置（providers/models/credentials）的写入口。
         #: 由组合根注入；测试不注入时系统设置页只读。
         self.system_settings = system_settings
@@ -264,6 +269,7 @@ class AIEOSController:
         #: Front 自己的持久草稿（按 agent 私有空间隔离）。
         self._front_drafts_store: Optional[TaskDraftStore] = None
         self._load_settings()
+        self._apply_prompt_log_config()
 
         # 固定 Front Agent 不参与组队，也不显示为 WORKING。
         if self.front_agent not in self._agent_ids:
@@ -315,6 +321,7 @@ class AIEOSController:
                 if str(item).strip() in self._agent_ids
                 and str(item).strip() != self.front_agent
             }
+        self.prompt_log_enabled = bool(data.get("prompt_log_enabled", False))
 
     def update_settings(
         self,
@@ -324,6 +331,7 @@ class AIEOSController:
         max_solo_turns: Optional[int] = None,
         pi_work_agents: Optional[List[str]] = None,
         disabled_agents: Optional[List[str]] = None,
+        prompt_log_enabled: Optional[bool] = None,
     ) -> Dict[str, Any]:
         with self._lock:
             if front_agent is not None:
@@ -368,6 +376,9 @@ class AIEOSController:
                 if self.front_agent in wanted:
                     raise ValueError("Front Agent 不能被停用")
                 self.disabled_agents = wanted
+            if prompt_log_enabled is not None:
+                self.prompt_log_enabled = bool(prompt_log_enabled)
+                self._apply_prompt_log_config()
             self._persist_settings()
             self._configure_front_brain()
             self._notify()
@@ -381,7 +392,14 @@ class AIEOSController:
             "max_solo_turns": self.max_solo_turns,
             "pi_work_agents": sorted(self.pi_work_agents),
             "disabled_agents": sorted(self.disabled_agents),
+            "prompt_log_enabled": bool(self.prompt_log_enabled),
         }
+
+    def _apply_prompt_log_config(self) -> None:
+        prompt_log.configure(
+            bool(self.prompt_log_enabled),
+            self.prompt_log_path,
+        )
 
     # ------------------------------------------------------------
     # 设置页：系统设置 / Worker Roles
@@ -503,6 +521,7 @@ class AIEOSController:
         leader = ""
         members: List[str] = []
         admitted = False
+        prompt_log.bind_job(job.job_id)
         try:
             if not self._admit_job(job):
                 return
@@ -695,6 +714,7 @@ class AIEOSController:
             if admitted:
                 with self._condition:
                     self._active_jobs = max(0, self._active_jobs - 1)
+            prompt_log.clear_job()
             self._write_job_log(job)
             self._notify()
 
@@ -713,6 +733,7 @@ class AIEOSController:
                 prompt,
                 cognitive=False,
                 system=FRONT_SYSTEM_PROMPT,
+                call_purpose="front",
             )
 
         dispatcher = build_front_dispatcher(
@@ -2349,6 +2370,8 @@ class AIEOSController:
             self._closed = True
         self._notify()
         self._executor.shutdown(wait=False, cancel_futures=True)
+        prompt_log.clear_job()
+        prompt_log.configure(False, None)
 
 
 def _description_from_brief(brief: Any) -> str:

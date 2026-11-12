@@ -141,6 +141,7 @@ class Handler(BaseHTTPRequestHandler):
                     max_solo_turns=payload.get("max_solo_turns"),
                     pi_work_agents=payload.get("pi_work_agents"),
                     disabled_agents=payload.get("disabled_agents"),
+                    prompt_log_enabled=payload.get("prompt_log_enabled"),
                 )
                 self._send_json({"ok": True, "settings": settings})
                 return
@@ -276,6 +277,7 @@ def main(argv=None) -> int:
         ),
         worker_roles_path=GLOBAL_WORKER_ROLES_FILE,
         worker_roles_backup_dir=db_path.parent / "config_backups",
+        prompt_log_path=db_path.parent / "prompts",
         system_settings=system_admin,
     )
     Handler.controller = controller

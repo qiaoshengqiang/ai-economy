@@ -113,7 +113,37 @@ profile / env / present / api_key（只写）
 - Front Agent；
 - 最大并行任务数；
 - 单任务最大轮次；
+- **Prompt 日志开关**（默认关闭）；
 - 设置立即生效，并持久化到 `ui_settings.json`。
+
+Prompt 日志写入：
+
+```text
+runs/ui/prompts/prompts-YYYY-MM-DD.jsonl
+```
+
+每行记录一次模型输入：
+
+```json
+{
+  "at": "...",
+  "agent_id": "agent_a",
+  "job_id": "job_x",
+  "task_id": "task_x",
+  "phase": "front | cognition | work | pi",
+  "provider": "deepseek",
+  "model": "deepseek-flash",
+  "purpose": "front / work / pi_work",
+  "system": "...",
+  "messages": [...],
+  "message_count": 3
+}
+```
+
+- 只记录输入，不记录响应；
+- 不记录 API key / Authorization；
+- 默认关闭；测试完应在设置页关闭；
+- 写日志失败不影响模型调用。
 
 ### 4.2 Agent
 

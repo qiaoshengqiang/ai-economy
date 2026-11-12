@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
+from llm import prompt_log
 from work.controller import AIEOSController
 
 
@@ -73,6 +74,22 @@ def test_front_agent_cannot_be_disabled(tmp_path):
             raise AssertionError("Front Agent 不应该能被停用")
     finally:
         controller.close()
+
+
+def test_prompt_log_toggle_round_trip(tmp_path):
+    path = tmp_path / "ui_settings.json"
+    controller = _controller(
+        tmp_path, prompt_log_path=tmp_path / "prompts")
+    try:
+        controller.update_settings(prompt_log_enabled=True)
+        assert prompt_log.enabled() is True
+        assert json.loads(path.read_text("utf-8"))[
+            "prompt_log_enabled"] is True
+        controller.update_settings(prompt_log_enabled=False)
+        assert prompt_log.enabled() is False
+    finally:
+        controller.close()
+    assert prompt_log.enabled() is False
 
 
 def test_worker_roles_crud_through_controller(tmp_path):

@@ -23,6 +23,7 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict, Optional
 
+from llm import prompt_log
 from llm.base import LLMResponse, TOKEN_SOURCE_API
 
 
@@ -69,6 +70,16 @@ class _ProxyHandler(BaseHTTPRequestHandler):
                 if isinstance(message, dict) and message.get("role") == "developer":
                     message["role"] = "system"
         model = str(payload.get("model") or self.proxy.model)
+        # 可选 Prompt 日志：Pi 的请求体就是它的完整输入。
+        prompt_log.record(
+            self.proxy.agent_id,
+            phase="pi",
+            messages=messages,
+            task_id=str(self.proxy.task_id or ""),
+            provider=str(self.proxy.provider or ""),
+            model=model,
+            purpose="pi_work",
+        )
         stream = bool(payload.get("stream"))
         upstream = self.proxy.upstream_url(self.path)
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
