@@ -10,6 +10,7 @@ PiWorkRuntime：真实目录 + Pi 事件 + 记忆桥 + Task Core 的冒烟测试
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -227,6 +228,18 @@ def test_pi_work_runtime_completes_and_ingests_memory(db, monkeypatch, tmp_path)
     assert [item["phase"] for item in rounds] == [
         "prototype", "engineering", "evolution"]
     assert (directory.aieos / "work_state.json").exists()
+    state_path = directory.aieos / "work_state.json"
+    state = json.loads(state_path.read_text("utf-8"))
+    assert state["session_id"] == "T-PI-WORK"
+    runner._write_work_state(
+        "prototype", status="failed", thinking="max",
+        error="Pi 超时（1800.0s）")
+    state = json.loads(state_path.read_text("utf-8"))
+    assert state["last_error"] == "Pi 超时（1800.0s）"
+    runner._write_work_state(
+        "prototype", status="completed", thinking="max")
+    state = json.loads(state_path.read_text("utf-8"))
+    assert state["last_error"] == ""
     assert rounds[0]["segments"][0]["actions"][0]["action_type"] == "write"
     assert rounds[0]["segments"][0]["results"][0]["success"] is True
 

@@ -102,6 +102,7 @@ class PiWorkRuntime:
         self.rework_scope = str(rework_scope or "").strip().lower()
         self.thinking = str(thinking or "auto").strip().lower()
         self._work_state: Dict[str, Any] = {}
+        self._session_id: str = ""
         self._recent_tool_results: List[str] = []
         self._resumed = False
         self._resume_reason = ""
@@ -254,6 +255,28 @@ class PiWorkRuntime:
             "creative_product": ["prototype", "engineering", "evolution"],
         }.get(profile, ["prototype", "engineering"]))
 
+    @staticmethod
+    def _pi_session_id(
+        task_id: str, iteration: int, state: Dict[str, Any],
+    ) -> str:
+        """同一 iteration 复用 session；新 iteration 开新 session。
+
+        中断恢复必须复用原 session，才能接着上一段对话；
+        返工 / Reopen 则使用新 session，旧成果通过
+        RESULT / ENGINEERING / PROTOTYPE / TASK_DOC 交接，
+        避免把整个旧 transcript 反复塞进新 iteration。
+        """
+        task_id = str(task_id or "")
+        iteration = int(iteration or 1)
+        state = state or {}
+        state_iter = int(state.get("iteration") or 0)
+        existing = str(state.get("session_id") or "").strip()
+        if existing and state_iter == iteration:
+            return existing
+        if iteration <= 1:
+            return task_id
+        return f"{task_id}.i{iteration}"
+
     def _phase_plan_for_run(
         self, state: Dict[str, Any],
     ) -> tuple[List[str], bool, str]:
@@ -399,6 +422,8 @@ Task Workspace。不要使用 AIEOS Shared Context；本 Work 任务不提供它
 - phase: {state.get('phase', '')}（{state.get('phase_label', '')}）
 - status: {state.get('status', '')}
 - thinking: {state.get('thinking', '')}
+- session: {state.get('session_id', '')}
+- last_error: {state.get('last_error', '') or '（无）'}
 - updated_at: {state.get('updated_at', '')}
 
 ## 迭代 / 阶段历史
@@ -533,6 +558,9 @@ Task Workspace。不要使用 AIEOS Shared Context；本 Work 任务不提供它
                 f"当前不是从头开始。resume_reason={self._resume_reason}；"
                 f"上次阶段={latest.get('phase', '?')}；"
                 f"上次状态={latest.get('status', '?')}。")
+            last_error = str(self._work_state.get("last_error") or "").strip()
+            if last_error:
+                lines.append(f"上次错误：{last_error[:800]}")
             lines.append(
                 "先确认当前文件和运行状态，再从现有成果继续；"
                 "不要重建已经存在的原型或重复已完成的工作。")
@@ -650,7 +678,7 @@ Task Workspace。不要使用 AIEOS Shared Context；本 Work 任务不提供它
         raise ValueError(f"未知 Work phase：{phase!r}")
 
     def _write_work_state(self, phase: str, *, status: str,
-                          thinking: str) -> None:
+                          thinking: str, error: str = "") -> None:
         history = list(self._work_state.get("history") or [])
         if status != "running":
             history.append({
@@ -663,6 +691,13 @@ Task Workspace。不要使用 AIEOS Shared Context；本 Work 任务不提供它
         attempt = int(self._work_state.get("attempt") or 0)
         if status == "running":
             attempt += 1
+        previous_error = str(self._work_state.get("last_error") or "")
+        if status == "completed":
+            last_error = ""
+        elif status in ("failed", "stopped"):
+            last_error = str(error or previous_error)
+        else:
+            last_error = previous_error
         self._work_state = {
             "iteration": int(self.task.iteration or 1),
             "phase": phase,
@@ -672,10 +707,9 @@ Task Workspace。不要使用 AIEOS Shared Context；本 Work 任务不提供它
             "attempt": attempt,
             "thinking": thinking,
             "resume_reason": self._resume_reason,
-            "last_error": (
-                self._work_state.get("last_error") or ""
-                if status != "failed"
-                else str(self._work_state.get("last_error") or "")),
+            "session_id": self._session_id or str(
+                self._work_state.get("session_id") or ""),
+            "last_error": last_error,
             "open_issues": list(self._work_state.get("open_issues") or []),
             "history": history,
             "updated_at": datetime.now(timezone.utc).isoformat(),
@@ -753,6 +787,9 @@ Task Workspace。不要使用 AIEOS Shared Context；本 Work 任务不提供它
                         self._work_state = loaded
                 except (OSError, ValueError):
                     self._work_state = {}
+            self._session_id = self._pi_session_id(
+                task.task_id, task.iteration, self._work_state)
+            self._work_state["session_id"] = self._session_id
             phase_plan, resumed, resume_reason = self._phase_plan_for_run(
                 self._work_state)
             self._resume_reason = resume_reason
@@ -814,7 +851,7 @@ Task Workspace。不要使用 AIEOS Shared Context；本 Work 任务不提供它
                         model=client_model,
                         system_prompt=self._minimal_system_prompt(),
                         session_dir=self.task_directory.session_dir,
-                        session_id=task.task_id,
+                        session_id=self._session_id,
                         extra_args=self.extra_args + [
                             "--thinking", thinking],
                     )
@@ -841,14 +878,17 @@ Task Workspace。不要使用 AIEOS Shared Context；本 Work 任务不提供它
                         "error": run.error,
                     })
                     if run.aborted or self.should_stop():
+                        error_text = run.error or "任务已被停止"
                         self._write_work_state(
-                            phase, status="stopped", thinking=thinking)
-                        result.error = run.error or "任务已被停止"
+                            phase, status="stopped", thinking=thinking,
+                            error=error_text)
+                        result.error = error_text
                         result.status = task.status
                         return result
                     if run.error:
                         self._write_work_state(
-                            phase, status="failed", thinking=thinking)
+                            phase, status="failed", thinking=thinking,
+                            error=run.error)
                         result.error = run.error
                         result.status = task.status
                         return result
@@ -878,10 +918,12 @@ Task Workspace。不要使用 AIEOS Shared Context；本 Work 任务不提供它
                         return result
                     if phase == "prototype":
                         if not self._prototype_ready(run.events):
-                            self._write_work_state(
-                                phase, status="failed", thinking=thinking)
-                            result.error = (
+                            error_text = (
                                 "原型阶段没有产生可运行产物或 PROTOTYPE_READY")
+                            self._write_work_state(
+                                phase, status="failed", thinking=thinking,
+                                error=error_text)
+                            result.error = error_text
                             result.status = task.status
                             return result
                         self._ensure_phase_artifact(

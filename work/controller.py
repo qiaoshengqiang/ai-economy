@@ -1606,6 +1606,17 @@ class AIEOSController:
         decision.role = role.role_id
         if isinstance(job.front_decision, dict):
             job.front_decision["role"] = role.role_id
+        # 返工 / 续跑也可能换角色：把本轮选择写回 Task，
+        # 否则下一次 resume 会退回旧角色。
+        acceptance = getattr(task, "acceptance", None)
+        if not isinstance(acceptance, dict):
+            acceptance = {}
+        if acceptance.get("role") != role.role_id:
+            acceptance["role"] = role.role_id
+            task.acceptance = acceptance
+            save_task = getattr(self.rt.tasks, "save", None)
+            if callable(save_task):
+                save_task(task)
         role_prompt = self.worker_roles.render(role)
 
         if self.solo_only and task.mode != TaskMode.SOLO:
@@ -2733,8 +2744,9 @@ def _is_interruption(error: Any) -> bool:
     text = str(error or "").lower()
     return (
         "llmtimeouterror" in text
-        or "请求超时" in text
+        or "超时" in text
         or "timeout" in text
+        or "timed out" in text
         or "max_turns" in text
         or "run_interrupted" in text
     )

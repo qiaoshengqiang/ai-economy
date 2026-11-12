@@ -120,8 +120,10 @@ resume_reason / history`。恢复时不再重跑三阶段：
   未解决问题；
 - 已完成任务的 rework 按 `rework_scope` 选择起点：
   `fix → direct`、`enhance → engineering`、`redesign → prototype`；
-- 中断恢复复用同一个 Pi session；新 iteration 建议使用新 session +
-  旧 RESULT/ENGINEERING/TASK_DOC 作为交接。
+- 中断恢复复用同一个 Pi session；新 iteration 使用新 session
+  （`<task_id>.i<N>`）+ 旧 RESULT/ENGINEERING/TASK_DOC 作为交接；
+- `work_state.json` 记录 `session_id` / `last_error`；恢复简报注入上次错误，
+  避免 Agent 只看到「failed」却不知道失败原因。
 
 ### Agent 中途提问
 
