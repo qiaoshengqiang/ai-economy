@@ -314,13 +314,26 @@ Available actions: {actions}
 
 You may return action-only steps before the final intent:
 {{"actions":[{{"type":"private_write","parameters":{{"path":"notes.md","content":"..."}}}}]}}
+{{"actions":[{{"type":"artifact_read","parameters":{{"task_id":"task_x","path":"index.html","offset":1,"limit":10}}}}]}}
 
 Actions run for real; their results come back in the next prompt. Then continue.
+`artifact_read` is an **action**, not an intent: put it inside `actions`,
+not in `intent`.
 Parameters:
+- artifact_read {{task_id, path, offset?, limit?}} — read a file from a Task
+  Workspace (read-only; returns content + total_lines/revision)
 - private_write {{path, content}}; private_read {{path}}; private_list {{}}
 - private_delete {{path}}
 - draft_write {{content, label}}; draft_append {{draft_id, content}}
 - draft_read {{draft_id}}; draft_list {{}}; draft_delete {{draft_id}}
+
+Capability facts:
+- artifact_read reads Task Workspace content directly; use it for
+  "show me the code / first N lines of a Task file".
+- artifact_read is Task-scoped; it does not read arbitrary host paths.
+- The `artifacts` intent only exports Task files to the host and returns
+  paths; it does NOT return file content.
+
 A handoff can carry files you prepared in `brief.files`:
 [{{"path":"index.html","content":"..."}}]
 [{{"path":"index.html","from_private":"snake.html"}}]
@@ -359,7 +372,8 @@ A handoff can carry files you prepared in `brief.files`:
 5. cancel — stop an ACTIVE Task.
    {{"intent":"cancel","task_id":"...","reply":"...","reason":"..."}}
 
-6. artifacts — show / export a Task's files.
+6. artifacts — export a Task's files to the host; returns paths, not content.
+   Use artifact_read when you need to show file content.
    {{"intent":"artifacts","task_id":"...","reply":"...","reason":"..."}}
 
 7. clarify — ask the Human when the choice matters.

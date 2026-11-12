@@ -39,23 +39,84 @@ from services.private_workspace import (
 
 
 FRONT_ACTION_TYPES = frozenset({
+    "artifact_read",
     "private_read", "private_write", "private_list", "private_delete",
     "draft_read", "draft_write", "draft_append", "draft_list",
     "draft_delete",
 })
 
 
+class FrontArtifactReadExecutor:
+    """`artifact_read` —— 只读一个 Task Workspace 里的文件内容。"""
+
+    action_types = frozenset({"artifact_read"})
+
+    def __init__(self, read_fn: Callable[..., Any]) -> None:
+        self.read_fn = read_fn
+
+    def execute(self, intent: ActionIntent) -> ActionResult:
+        params = dict(getattr(intent, "parameters", None) or {})
+        task_id = str(params.get("task_id") or "").strip()
+        path = str(params.get("path") or "").strip()
+        if not task_id or not path:
+            return ActionResult(
+                success=False,
+                error="artifact_read 需要 task_id 和 path",
+                action_id=intent.intent_id,
+                action_type=intent.action_type,
+                metadata={"code": "bad_request"},
+            )
+        try:
+            raw = self.read_fn(
+                task_id, path,
+                offset=params.get("offset"),
+                limit=params.get("limit"))
+        except Exception as exc:                              # noqa: BLE001
+            return ActionResult(
+                success=False,
+                error=f"{type(exc).__name__}: {exc}",
+                action_id=intent.intent_id,
+                action_type=intent.action_type,
+                metadata={"code": "read_failed"},
+            )
+        if not isinstance(raw, dict):
+            return ActionResult(
+                success=False,
+                error="artifact_read 返回的不是对象",
+                action_id=intent.intent_id,
+                action_type=intent.action_type,
+                metadata={"code": "invalid_result"},
+            )
+        if not raw.get("ok"):
+            return ActionResult(
+                success=False,
+                output=raw,
+                error=str(raw.get("message") or "artifact_read 失败"),
+                action_id=intent.intent_id,
+                action_type=intent.action_type,
+                metadata={"code": str(raw.get("code") or "unknown")},
+            )
+        return ActionResult(
+            success=True,
+            output=dict(raw),
+            action_id=intent.intent_id,
+            action_type=intent.action_type,
+            metadata={"code": None},
+        )
+
+
 def build_front_dispatcher(
     *,
     workspace_of: Callable[[str], Any],
     drafts: Any,
+    artifact_read_fn: Optional[Callable[..., Any]] = None,
 ) -> ActionDispatcher:
-    """把 Front 的私有空间 / 草稿动作接成一个 dispatcher。"""
+    """把 Front 的私有空间 / 草稿 / 只读产物动作接成一个 dispatcher。"""
 
     def _ws_of(agent_id: str) -> Any:
         return workspace_of(str(agent_id))
 
-    return ActionDispatcher([
+    executors: List[Any] = [
         PrivateWriteExecutor(write_private, workspace_of=_ws_of),
         PrivateReadExecutor(read_private, workspace_of=_ws_of),
         PrivateListExecutor(list_private, workspace_of=_ws_of),
@@ -65,7 +126,10 @@ def build_front_dispatcher(
         DraftReadExecutor(drafts.read),
         DraftListExecutor(drafts.list),
         DraftDeleteExecutor(drafts.delete),
-    ])
+    ]
+    if artifact_read_fn is not None:
+        executors.append(FrontArtifactReadExecutor(artifact_read_fn))
+    return ActionDispatcher(executors)
 
 
 def execute_front_actions(

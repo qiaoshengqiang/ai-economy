@@ -17,12 +17,13 @@ from work.front_actions import (
 )
 
 
-def _setup(tmp_path):
+def _setup(tmp_path, artifact_read_fn=None):
     workspace = Workspace(tmp_path / "agent_a", "agent_a")
     drafts = TaskDraftStore(
         task_id="front", workspace_of=lambda _aid: workspace)
     dispatcher = build_front_dispatcher(
-        workspace_of=lambda _aid: workspace, drafts=drafts)
+        workspace_of=lambda _aid: workspace, drafts=drafts,
+        artifact_read_fn=artifact_read_fn)
     return workspace, dispatcher
 
 
@@ -62,11 +63,44 @@ def test_front_can_write_and_read_drafts(tmp_path):
     assert "content_chars" in receipt
 
 
-def test_front_action_set_is_private_only():
-    assert FRONT_ACTION_TYPES == {
+def test_front_action_set_is_scoped():
+    assert "artifact_read" in FRONT_ACTION_TYPES
+    assert {
         "private_read", "private_write", "private_list", "private_delete",
         "draft_read", "draft_write", "draft_append", "draft_list",
         "draft_delete",
-    }
+    } <= FRONT_ACTION_TYPES
     assert "workspace_write" not in FRONT_ACTION_TYPES
     assert "run_tool" not in FRONT_ACTION_TYPES
+
+
+def test_front_can_read_task_artifact(tmp_path):
+    calls = []
+
+    def artifact_read(task_id, path, *, offset=None, limit=None):
+        calls.append((task_id, path, offset, limit))
+        return {
+            "ok": True, "task_id": task_id, "path": path,
+            "content": "line1\nline2", "chars": 11,
+            "total_lines": 2, "offset": 1, "limit": 2,
+        }
+
+    _workspace, dispatcher = _setup(
+        tmp_path, artifact_read_fn=artifact_read)
+    receipt = execute_front_actions(
+        dispatcher,
+        [{"type": "artifact_read", "parameters": {
+            "task_id": "task_x", "path": "index.html",
+            "offset": 1, "limit": 2}}],
+        agent_id="agent_a",
+    )
+
+    assert calls == [("task_x", "index.html", 1, 2)]
+    assert "line1" in receipt
+    assert "artifact_read" in receipt
+
+
+def test_front_action_names_match_executor():
+    from front.parser import FRONT_ACTION_NAMES
+
+    assert FRONT_ACTION_NAMES == FRONT_ACTION_TYPES

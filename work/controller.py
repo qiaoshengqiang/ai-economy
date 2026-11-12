@@ -41,6 +41,7 @@ from typing import Any, Dict, List, Optional
 
 from core.task import TaskMode, TaskStatus
 from demand.task_creation import TaskCreationService
+from services.artifacts import read_artifact
 from work.artifact_export import (
     ArtifactExportError, export_task_workspace,
 )
@@ -566,6 +567,7 @@ class AIEOSController:
         dispatcher = build_front_dispatcher(
             workspace_of=self._workspace_of_agent,
             drafts=self._front_drafts(),
+            artifact_read_fn=self._front_artifact_read,
         )
 
         def _execute(actions: List[Dict[str, Any]]) -> str:
@@ -1905,6 +1907,69 @@ class AIEOSController:
     def _workspace_of_agent(self, aid: str) -> Any:
         agent = self._agent(aid)
         return getattr(agent, "workspace", None)
+
+    def _front_artifact_read(
+        self,
+        task_id: str,
+        path: str,
+        *,
+        offset: Any = None,
+        limit: Any = None,
+    ) -> Dict[str, Any]:
+        """Front 只读一个 Task Workspace 文件；不创建 Task、不读宿主路径。"""
+        task_id = str(task_id or "").strip()
+        path = str(path or "").strip()
+        if not task_id or not path:
+            return {"ok": False, "code": "bad_request",
+                    "message": "artifact_read 需要 task_id 和 path"}
+        try:
+            task = self.rt.tasks.get(task_id)
+        except Exception:                                     # noqa: BLE001
+            task = None
+        if task is None:
+            return {"ok": False, "code": "not_found",
+                    "message": f"找不到 Task：{task_id}"}
+        workspace_id = str(getattr(task, "workspace_id", "") or "")
+        if not workspace_id:
+            return {"ok": False, "code": "no_workspace",
+                    "message": f"Task {task_id} 没有 Workspace"}
+        participants = list(getattr(task, "participants", None) or [])
+        actor = str(
+            getattr(task, "creator", "")
+            or (participants[0] if participants else ""))
+        if not actor:
+            return {"ok": False, "code": "no_actor",
+                    "message": f"Task {task_id} 没有可用的读取身份"}
+        gateway = getattr(self.rt, "workspace_gateway", None)
+        if gateway is None:
+            return {"ok": False, "code": "no_gateway",
+                    "message": "当前 Runtime 没有 Workspace Gateway"}
+        # 默认只取 200 行，避免一次读入整份大文件；调用方可用 limit 覆盖。
+        effective_limit = 200 if limit is None else limit
+        try:
+            effective_offset = (
+                int(offset) if offset is not None else None)
+            effective_limit = int(effective_limit)
+        except (TypeError, ValueError):
+            return {"ok": False, "code": "bad_pagination",
+                    "message": "offset / limit 必须是整数"}
+        if effective_offset is not None and effective_offset < 1:
+            effective_offset = 1
+        try:
+            raw = read_artifact(
+                gateway, workspace_id, actor, path,
+                offset=effective_offset, limit=effective_limit)
+        except Exception as exc:                              # noqa: BLE001
+            return {"ok": False, "code": "read_failed",
+                    "message": f"{type(exc).__name__}: {exc}"}
+        if not isinstance(raw, dict):
+            return {"ok": False, "code": "invalid_result",
+                    "message": "read_artifact 返回的不是对象"}
+        if raw.get("ok"):
+            raw = dict(raw)
+            raw["task_id"] = task_id
+            raw["read_as"] = actor
+        return raw
 
     def _front_drafts(self) -> TaskDraftStore:
         if self._front_drafts_store is None:

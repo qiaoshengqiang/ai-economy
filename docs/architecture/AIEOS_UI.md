@@ -85,10 +85,16 @@ LLM → 动作（private_* / draft_*）→ 真实结果回喂
     → 继续动作 / 最终 intent（direct_reply / handoff / ...）
 ```
 
-- 可用动作：`private_read` / `private_write` / `private_list` /
-  `private_delete`；`draft_read` / `draft_write` / `draft_append` /
-  `draft_list` / `draft_delete`。
-- 动作只碰 Front 自己的私有空间与草稿，不写 Task Workspace。
+- 可用动作：
+  - `artifact_read {task_id, path, offset?, limit?}`：只读 Task Workspace
+    文件内容；不创建 Task，不读宿主绝对路径；
+  - `private_read` / `private_write` / `private_list` /
+    `private_delete`；`draft_read` / `draft_write` / `draft_append` /
+    `draft_list` / `draft_delete`。
+- `artifacts` intent 只负责把 Task 文件导出到宿主机并返回路径，
+  **不返回内容**；要看源码/前 N 行用 `artifact_read`。
+- 动作只碰 Front 自己的私有空间 / 草稿，以及只读的 Task Workspace；
+  不写 Task Workspace。
 - 最终 handoff 的 `brief.files` 把文件交给 Work Agent；Work prompt
   会看到文件内容。
 - Front 一次可以给出多个最终动作：

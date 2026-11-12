@@ -1528,3 +1528,72 @@ def test_follow_up_sends_front_reply(monkeypatch):
         item["role"] == "front"
         and item["text"] == "我继续把它做完。"
         for item in messages)
+
+
+def test_front_artifact_read_uses_task_workspace(monkeypatch):
+    import work.controller as controller_module
+
+    task = SimpleNamespace(
+        task_id="task_x", workspace_id="WS-X", creator="agent_b",
+        participants=["agent_b"], status="COMPLETED")
+    gateway = object()
+    runtime = SimpleNamespace(
+        directory=_Directory(["agent_a", "agent_b"]),
+        economy=SimpleNamespace(agent=lambda aid: SimpleNamespace(
+            has_brain=True, brain=None)),
+        tasks=SimpleNamespace(
+            get=lambda tid: task if tid == "task_x" else None,
+            list_tasks=lambda limit=50: [],
+        ),
+        workspace_gateway=gateway,
+    )
+    calls = {}
+
+    def fake_read(_gateway, workspace_id, agent_id, path, *,
+                  offset=None, limit=None):
+        calls.update({
+            "gateway": _gateway, "workspace_id": workspace_id,
+            "agent_id": agent_id, "path": path,
+            "offset": offset, "limit": limit,
+        })
+        return {
+            "ok": True, "path": path, "content": "line1\nline2",
+            "revision": 1, "chars": 11, "total_lines": 2,
+        }
+
+    monkeypatch.setattr(controller_module, "read_artifact", fake_read)
+    controller = AIEOSController(runtime, front_agent="agent_a")
+    try:
+        result = controller._front_artifact_read(
+            "task_x", "index.html", offset=1, limit=2)
+        missing = controller._front_artifact_read(
+            "task_missing", "index.html")
+    finally:
+        controller.close()
+
+    assert result["ok"] is True
+    assert result["task_id"] == "task_x"
+    assert result["read_as"] == "agent_b"
+    assert calls == {
+        "gateway": gateway, "workspace_id": "WS-X",
+        "agent_id": "agent_b", "path": "index.html",
+        "offset": 1, "limit": 2,
+    }
+    assert missing["ok"] is False
+    assert missing["code"] == "not_found"
+
+
+def test_front_runtime_exposes_artifact_read():
+    runtime = SimpleNamespace(
+        directory=_Directory(["agent_a"]),
+        economy=SimpleNamespace(agent=lambda aid: SimpleNamespace(
+            has_brain=True, brain=None, workspace=None)),
+        tasks=SimpleNamespace(list_tasks=lambda limit=50: []),
+    )
+    controller = AIEOSController(runtime, front_agent="agent_a")
+    try:
+        front = controller._front_runtime()
+    finally:
+        controller.close()
+
+    assert "artifact_read" in front.action_types

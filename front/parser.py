@@ -23,6 +23,17 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 from front.contracts import FrontBrief, FrontDecision, FrontIntent
 
 
+#: Front 的动作名（与 work.front_actions.FRONT_ACTION_TYPES 对齐）。
+#: 模型有时把动作写成 {"intent":"artifact_read", ...}；
+#: 这里把它识别成动作步骤，而不是最终 intent。
+FRONT_ACTION_NAMES = frozenset({
+    "artifact_read",
+    "private_read", "private_write", "private_list", "private_delete",
+    "draft_read", "draft_write", "draft_append", "draft_list",
+    "draft_delete",
+})
+
+
 def _iter_json_objects(text: str):
     decoder = json.JSONDecoder()
     for index, char in enumerate(text or ""):
@@ -88,9 +99,23 @@ def parse_front_actions(
         error != ""     看起来是动作信封，但结构不合法
     """
     for payload in _iter_json_objects(str(text or "")):
-        raw = payload.get("actions")
-        if raw is None and isinstance(payload.get("action"), dict):
-            raw = [payload["action"]]
+        direct = str(
+            payload.get("intent") or payload.get("action_type") or "").strip()
+        if direct in FRONT_ACTION_NAMES:
+            params = payload.get("parameters")
+            if not isinstance(params, dict):
+                params = {
+                    key: value for key, value in payload.items()
+                    if key not in (
+                        "intent", "action_type", "reason", "decision",
+                        "action", "actions",
+                    )
+                }
+            raw = [{"type": direct, "parameters": params}]
+        else:
+            raw = payload.get("actions")
+            if raw is None and isinstance(payload.get("action"), dict):
+                raw = [payload["action"]]
         if raw is None:
             continue
         if isinstance(raw, dict):

@@ -218,6 +218,8 @@ def test_front_prompt_is_human_facing_and_does_not_invent_constraints():
     prompt = captured["prompt"]
     assert "You are front, the Human-facing entry point" in prompt
     assert "FRONT ACTIONS (OPTIONAL, MULTI-STEP)" in prompt
+    assert "artifact_read" in prompt
+    assert "does NOT return file content" in prompt
     assert "private_read" in prompt
     assert "brief.files" in prompt
     assert "task_text is what the Work Agent sees" in prompt
@@ -630,3 +632,26 @@ def test_decide_turn_returns_multiple_decisions():
     assert [item.task_id for item in turn.decisions] == [
         "task_a", "task_b"]
     assert turn.raw_output
+
+
+def test_action_written_as_intent_is_still_an_action_step():
+    text = json.dumps({
+        "intent": "artifact_read",
+        "task_id": "task_x",
+        "path": "index.html",
+        "offset": 1,
+        "limit": 10,
+        "reason": "show first lines",
+    })
+    actions, error = parse_front_actions(text)
+    decision, _decision_error = parse_front_decision(text)
+
+    assert error == ""
+    assert decision is None
+    assert actions == [{
+        "type": "artifact_read",
+        "parameters": {
+            "task_id": "task_x", "path": "index.html",
+            "offset": 1, "limit": 10,
+        },
+    }]
