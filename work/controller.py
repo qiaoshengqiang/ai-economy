@@ -957,10 +957,7 @@ class AIEOSController:
             )
             task.claim_producer(worker)
             self.rt.tasks.save(task)
-            try:
-                self.rt.budget_service.set_budget(task.task_id, 10.0)
-            except Exception:                                 # noqa: BLE001
-                pass
+            # Work 只负责生产；Task 预算不再是 Pi Work 的前置约束。
         except Exception as exc:                              # noqa: BLE001
             return {
                 "ok": False, "code": "task_create_failed",

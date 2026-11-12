@@ -92,8 +92,8 @@ Pi agent_settled
 
 - `RESULT.md` 作为人类摘要；没有时用 Pi 最后一条 assistant 文本；
 - Pi 的 usage 事件转换为 `LLMResponse`，写入 `llm_calls` 与 Ledger；
-- **LLM Proxy 已接入**：Pi 指向本地 AIEOS Proxy；请求前检查 Task 预算，
-  请求后解析 usage 写入 `llm_calls` / Ledger；
+- **LLM Proxy 已接入**：Pi 指向本地 AIEOS Proxy；**不做预算 gate**，
+  只解析 usage 写入 `llm_calls` / Ledger；Work 只负责生产；
 - **不再做 AIEOS 独立验收**：Pi 结束后以 `RESULT.md` / 最后一条
   assistant 文本作为总结；AIEOS 写入 `.aieos/result.json` 并完成 Task；
 - Team 共享目录、多 Agent 文件锁不在 V1 pilot。

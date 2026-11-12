@@ -6,10 +6,8 @@ from __future__ import annotations
 
 import json
 import threading
-import urllib.error
 import urllib.request
 
-import pytest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
 
@@ -58,14 +56,11 @@ def _upstream():
     return server, f"http://127.0.0.1:{server.server_address[1]}"
 
 
-def test_proxy_records_usage_and_rejects_exhausted_budget():
+def test_proxy_records_usage_without_budget_gate():
     upstream, upstream_url = _upstream()
     recorder = _Recorder()
-    budget = SimpleNamespace(
-        snapshot=lambda _task_id: SimpleNamespace(remaining_aic=1.0))
     runtime = SimpleNamespace(
-        recorder=recorder, budget_service=budget,
-        experiment_run_id="exp")
+        recorder=recorder, experiment_run_id="exp")
     proxy = AIEOSLLMProxy(
         runtime, agent_id="agent_c", task_id="task_x",
         api_key="fake", provider="deepseek", model="deepseek-flash",
@@ -88,11 +83,6 @@ def test_proxy_records_usage_and_rejects_exhausted_budget():
         assert recorded["response"].input_tokens == 10
         assert recorded["response"].output_tokens == 5
         assert recorded["response"].total_tokens == 15
-
-        budget.snapshot = lambda _task_id: SimpleNamespace(remaining_aic=0.0)
-        with pytest.raises(urllib.error.HTTPError) as exc:
-            urllib.request.urlopen(request, timeout=5)
-        assert exc.value.code == 429
     finally:
         proxy.stop()
         upstream.shutdown()

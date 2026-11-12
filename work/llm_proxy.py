@@ -60,15 +60,7 @@ class _ProxyHandler(BaseHTTPRequestHandler):
             self._send_json(400, {"error": {"message": "bad request"}})
             return
 
-        # ---- 预算检查（请求前）-----------------------------------
-        budget_error = self.proxy.check_budget()
-        if budget_error:
-            self._send_json(429, {"error": {
-                "message": budget_error,
-                "type": "aieos_budget_exhausted",
-            }})
-            return
-
+        # 预算不是 Work 的生产约束；proxy 只记账，不因预算拒绝请求。
         # Pi 的 openai-completions 可能发送 `developer` role；DeepSeek
         # 只接受 system/user/assistant/tool。这里做 provider 兼容归一化。
         messages = payload.get("messages")
@@ -235,25 +227,6 @@ class AIEOSLLMProxy:
         if not path.startswith("/"):
             path = "/" + path
         return self.upstream_base_url + path
-
-    def check_budget(self) -> str:
-        service = getattr(self.rt, "budget_service", None)
-        if service is None:
-            return ""
-        try:
-            snapshot = service.snapshot(self.task_id)
-        except Exception:                                     # noqa: BLE001
-            return ""
-        if snapshot is None:
-            return ""
-        remaining = getattr(snapshot, "remaining_aic", None)
-        if remaining is None:
-            return ""
-        if float(remaining) <= 0:
-            return (
-                f"Task {self.task_id} 的预算已用完"
-                f"（remaining={remaining} AIC）")
-        return ""
 
     def record_usage(
         self,
