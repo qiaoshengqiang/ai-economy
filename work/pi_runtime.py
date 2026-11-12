@@ -84,8 +84,11 @@ class PiWorkRuntime:
         self.extra_args = list(
             extra_args if extra_args is not None
             else ["--no-skills", "--no-context-files"])
+        self._explicit_phase_plan = (
+            list(phase_plan) if phase_plan is not None else None)
         self.phase_plan = list(
-            phase_plan or ["prototype", "engineering", "evolution"])
+            self._explicit_phase_plan
+            or ["prototype", "engineering", "evolution"])
         acceptance = getattr(task, "acceptance", None) or {}
         self.work_profile = str(
             work_profile
@@ -235,11 +238,21 @@ class PiWorkRuntime:
     _THINKING_ORDER = (
         "max", "xhigh", "high", "medium", "low", "minimal", "off")
 
+    def _base_phase_plan(self) -> List[str]:
+        if self._explicit_phase_plan is not None:
+            return list(self._explicit_phase_plan)
+        profile = self.work_profile or "standard"
+        return list({
+            "direct": ["direct"],
+            "standard": ["prototype", "engineering"],
+            "creative_product": ["prototype", "engineering", "evolution"],
+        }.get(profile, ["prototype", "engineering"]))
+
     def _phase_plan_for_run(
         self, state: Dict[str, Any],
     ) -> tuple[List[str], bool, str]:
         """返回 (phase_plan, resumed, resume_reason)。"""
-        phases = list(self.phase_plan)
+        phases = self._base_phase_plan()
         known = ["direct"] + [p for p in phases if p != "direct"]
         phase = str(state.get("phase") or "")
         status = str(state.get("phase_status") or state.get("status") or "")
@@ -314,6 +327,15 @@ class PiWorkRuntime:
 Task Workspace。不要使用 AIEOS Shared Context；本 Work 任务不提供它。
 读取 `{paths['memory_dir']}/context.md` 获取记忆快照。不要修改其他 Agent
 的私有目录。
+
+如果任务中确实需要人类确认（需求歧义、关键设计选择、不可逆操作），
+不要猜测：在 Task Workspace 根目录写 `QUESTION.json`，格式：
+
+{{"question":"需要确认的问题","options":["选项 A","选项 B"],
+  "allow_free_text":true}}
+
+然后结束本轮，不要继续工作。AIEOS 会暂停任务，等待人类回答后从当前
+阶段继续。不要用问题代替本可以自主完成的工作。
 """
 
     def _bounded_text(self, relative_path: str, limit: int = 6000) -> str:
@@ -339,6 +361,16 @@ Task Workspace。不要使用 AIEOS Shared Context；本 Work 任务不提供它
         engineering = self._bounded_text("ENGINEERING.md", 2500)
         open_issues = state.get("open_issues") or []
         issue_lines = [f"- {item}" for item in open_issues] or ["- （暂无）"]
+        if state.get("status") == "waiting_human":
+            try:
+                pending = json.loads(
+                    (self.task_directory.aieos / "question.json").read_text(
+                        "utf-8"))
+                if isinstance(pending, dict):
+                    issue_lines.insert(
+                        0, f"- 等待人类回答：{pending.get('question', '')}")
+            except (OSError, ValueError):
+                pass
         file_lines = [f"- {item['path']}" for item in files] or ["- （空）"]
         content = f"""# 任务文档
 
@@ -369,6 +401,77 @@ Task Workspace。不要使用 AIEOS Shared Context；本 Work 任务不提供它
 """
         self.task_directory.write_text("TASK_DOC.md", content)
 
+    def _read_question(self) -> Optional[Dict[str, Any]]:
+        path = self.task_directory.workspace / "QUESTION.json"
+        if not path.is_file():
+            return None
+        try:
+            raw = json.loads(path.read_text("utf-8"))
+        except (OSError, ValueError):
+            raw = {}
+        if isinstance(raw, dict):
+            question = str(raw.get("question") or "").strip()
+            options = raw.get("options") or []
+            allow_free_text = bool(raw.get("allow_free_text", True))
+        else:
+            question = str(raw).strip()
+            options = []
+            allow_free_text = True
+        question = question or "Agent 需要人类确认后才能继续。"
+        clean_options = [
+            str(item).strip() for item in options
+            if str(item).strip()
+        ] if isinstance(options, list) else []
+        payload = {
+            "task_id": self.task.task_id,
+            "question": question,
+            "options": clean_options,
+            "allow_free_text": allow_free_text,
+            "asked_at": datetime.now(timezone.utc).isoformat(),
+        }
+        try:
+            path.unlink()
+        except OSError:
+            pass
+        self.task_directory.write_json("question.json", payload)
+        return payload
+
+    def _write_question_history(
+        self, question: Dict[str, Any], answer: str,
+    ) -> None:
+        path = self.task_directory.aieos / "questions.json"
+        try:
+            history = json.loads(path.read_text("utf-8")) if path.exists() else []
+        except (OSError, ValueError):
+            history = []
+        if not isinstance(history, list):
+            history = []
+        history.append({
+            **question,
+            "answer": str(answer),
+            "answered_at": datetime.now(timezone.utc).isoformat(),
+        })
+        self.task_directory.write_json("questions.json", history)
+
+    def _clear_answer(self) -> None:
+        path = self.task_directory.aieos / "ANSWER.json"
+        try:
+            path.unlink()
+        except OSError:
+            pass
+
+    def _answer_text(self) -> str:
+        path = self.task_directory.aieos / "ANSWER.json"
+        if not path.is_file():
+            return ""
+        try:
+            data = json.loads(path.read_text("utf-8"))
+        except (OSError, ValueError):
+            return ""
+        if isinstance(data, dict):
+            return str(data.get("answer") or "").strip()
+        return str(data).strip()
+
     def _environment_facts(self, phase: str) -> str:
         files = self.task_directory.list_files()
         lines = [f"workspace: {self.task_directory.workspace}"]
@@ -397,6 +500,9 @@ Task Workspace。不要使用 AIEOS Shared Context；本 Work 任务不提供它
         task_doc = self._bounded_text("TASK_DOC.md", 4000)
         if task_doc:
             lines.append("\n========== TASK_DOC.md ==========\n" + task_doc)
+        answer = self._answer_text()
+        if answer:
+            lines.append("\n========== 人类回答 ==========\n" + answer)
         if phase in ("engineering", "evolution"):
             prototype = self._bounded_text("PROTOTYPE.md")
             if prototype:
@@ -661,6 +767,7 @@ Task Workspace。不要使用 AIEOS Shared Context；本 Work 任务不提供它
                         event_sink=self.event_sink,
                     )
                     all_events.extend(run.events)
+                    self._clear_answer()
                     if run.stderr:
                         all_stderr.append(run.stderr)
                     if not self.use_llm_proxy:
@@ -685,6 +792,30 @@ Task Workspace。不要使用 AIEOS Shared Context；本 Work 任务不提供它
                             phase, status="failed", thinking=thinking)
                         result.error = run.error
                         result.status = task.status
+                        return result
+                    question = self._read_question()
+                    if question is not None:
+                        self._write_work_state(
+                            phase, status="waiting_human",
+                            thinking=thinking)
+                        result.waiting_human = True
+                        result.question = question
+                        result.summary = str(question.get("question") or "")
+                        result.status = task.status
+                        result.turns = sum(
+                            item["turns"] for item in phase_runs)
+                        result.tokens = sum(
+                            item["tokens"] for item in phase_runs)
+                        result.actions = sum(
+                            item["actions"] for item in phase_runs)
+                        result.events = [
+                            {"type": "pi_phase", **item}
+                            for item in phase_runs
+                        ] + [{
+                            "type": "pi_waiting_human",
+                            "phase": phase,
+                            "question": question,
+                        }]
                         return result
                     if phase == "prototype":
                         if not self._prototype_ready(run.events):

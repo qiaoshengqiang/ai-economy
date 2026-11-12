@@ -57,6 +57,31 @@
 
   <div id="toast" class="toast" hidden></div>
 
+  <div class="modal-backdrop" id="question-modal" hidden>
+    <div class="modal question-modal">
+      <div class="settings-head">
+        <div>
+          <h2>Agent 需要确认</h2>
+          <span class="muted" id="question-agent"></span>
+        </div>
+        <button class="icon-btn" id="question-close">✕</button>
+      </div>
+      <div class="question-body">
+        <p id="question-text"></p>
+        <div id="question-options" class="question-options"></div>
+        <label class="field">
+          <span>你的回答</span>
+          <textarea id="question-answer" rows="3"
+            placeholder="输入回答，或选择上面的选项"></textarea>
+        </label>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="icon-btn" id="question-later">稍后</button>
+        <button type="button" class="primary" id="question-submit">提交回答</button>
+      </div>
+    </div>
+  </div>
+
   <div class="modal-backdrop settings-backdrop" id="settings-modal" hidden>
     <div class="modal settings-modal">
       <div class="settings-head">

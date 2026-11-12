@@ -1783,3 +1783,15 @@ def test_settings_page_has_prompt_log_toggle():
     assert "prompt-log-enabled" in html
     assert "prompt_log_enabled" in js
     assert "runs/ui/prompts/" in html
+
+
+def test_agent_question_bubble_and_answer_ui():
+    from pathlib import Path
+
+    static = Path(__file__).resolve().parent.parent / "ui" / "static"
+    html = (static / "index.html").read_text(encoding="utf-8")
+    js = (static / "app.js").read_text(encoding="utf-8")
+    assert "question-modal" in html
+    assert "agent-question-bubble" in js
+    assert "/api/answer" in js
+    assert "playQuestionSound" in js

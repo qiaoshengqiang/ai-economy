@@ -714,3 +714,51 @@ button { cursor: pointer; }
   padding: 3px 5px;
   font-size: 11px;
 }
+
+.question-modal {
+  width: min(560px, calc(100vw - 32px));
+  padding: 0 0 16px;
+}
+.question-body { padding: 4px 18px 0; }
+.question-body p {
+  margin: 8px 0 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+.question-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.question-options label {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.agent { position: relative; }
+.agent-question-bubble {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 200, 87, .75);
+  background: rgba(255, 200, 87, .18);
+  color: #ffd77a;
+  font-weight: 700;
+  line-height: 1;
+  animation: question-pulse 1.6s ease-in-out infinite;
+}
+.agent-question-bubble:hover { background: rgba(255, 200, 87, .32); }
+@keyframes question-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 200, 87, .35); }
+  50% { box-shadow: 0 0 0 6px rgba(255, 200, 87, 0); }
+}

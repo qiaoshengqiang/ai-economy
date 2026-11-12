@@ -216,6 +216,8 @@ def test_pi_work_runtime_completes_and_ingests_memory(db, monkeypatch, tmp_path)
     assert plan == ["engineering", "evolution"]
     assert resumed is True
     assert reason == "task_resume"
+    runner.work_profile = "direct"
+    assert runner._phase_plan_for_run({})[0] == ["direct"]
     assert "hello.txt" in result.artifacts
     assert directory.manifest()
     assert working.updated is not None

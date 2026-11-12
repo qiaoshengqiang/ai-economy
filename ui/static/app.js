@@ -14,6 +14,14 @@
     agentsCount: $("agents-count"),
     tasks: $("tasks"),
     tasksCount: $("tasks-count"),
+    questionModal: $("question-modal"),
+    questionAgent: $("question-agent"),
+    questionText: $("question-text"),
+    questionOptions: $("question-options"),
+    questionAnswer: $("question-answer"),
+    questionSubmit: $("question-submit"),
+    questionClose: $("question-close"),
+    questionLater: $("question-later"),
   };
 
   let state = null;
@@ -27,6 +35,113 @@
   let lastMessagesKey = "";
   let lastAgentsKey = "";
   let lastTasksKey = "";
+  let activeQuestion = null;
+  let lastQuestionKey = "";
+  let audioContext = null;
+
+  function ensureAudio() {
+    if (audioContext) return audioContext;
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return null;
+    try { audioContext = new Ctx(); } catch (e) { audioContext = null; }
+    return audioContext;
+  }
+
+  document.addEventListener("pointerdown", () => {
+    const ctx = ensureAudio();
+    if (ctx && ctx.state === "suspended") ctx.resume().catch(() => {});
+  }, { once: true });
+
+  function playQuestionSound() {
+    const ctx = ensureAudio();
+    if (!ctx) return;
+    try {
+      const now = ctx.currentTime;
+      [880, 1174].forEach((freq, index) => {
+        const oscillator = ctx.createOscillator();
+        const gain = ctx.createGain();
+        oscillator.type = "sine";
+        oscillator.frequency.value = freq;
+        gain.gain.setValueAtTime(0.0001, now + index * 0.16);
+        gain.gain.exponentialRampToValueAtTime(0.12, now + index * 0.16 + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + index * 0.16 + 0.14);
+        oscillator.connect(gain);
+        gain.connect(ctx.destination);
+        oscillator.start(now + index * 0.16);
+        oscillator.stop(now + index * 0.16 + 0.16);
+      });
+    } catch (error) {
+      // 浏览器拦截声音时忽略；气泡仍然可见。
+    }
+  }
+
+  function maybeQuestionSound(agents) {
+    const question = (agents || []).find((agent) => agent.question);
+    const key = question ? `${question.question.task_id}:${question.question.asked_at || ""}:${question.question.question || ""}` : "";
+    if (key && key !== lastQuestionKey) playQuestionSound();
+    lastQuestionKey = key;
+  }
+
+  function openQuestion(question) {
+    activeQuestion = question;
+    els.questionAgent.textContent = question.task_id || "";
+    els.questionText.textContent = question.question || "";
+    els.questionOptions.innerHTML = "";
+    (question.options || []).forEach((label, index) => {
+      const row = document.createElement("label");
+      const radio = document.createElement("input");
+      radio.type = "radio";
+      radio.name = "question-option";
+      radio.value = String(label);
+      radio.id = `question-option-${index}`;
+      row.appendChild(radio);
+      row.appendChild(document.createTextNode(label));
+      els.questionOptions.appendChild(row);
+    });
+    els.questionAnswer.value = "";
+    els.questionAnswer.disabled = question.allow_free_text === false;
+    if (question.allow_free_text === false) {
+      els.questionAnswer.placeholder = "请选择一个选项";
+    } else {
+      els.questionAnswer.placeholder = "输入回答，或选择上面的选项";
+    }
+    els.questionModal.hidden = false;
+  }
+
+  function closeQuestion() {
+    els.questionModal.hidden = true;
+    activeQuestion = null;
+  }
+
+  async function submitQuestion() {
+    if (!activeQuestion) return;
+    const selected = document.querySelector(
+      'input[name="question-option"]:checked');
+    const answer = els.questionAnswer.value.trim();
+    const optionId = selected ? selected.value : "";
+    if (!optionId && !answer) {
+      showToast("请选择一个选项或输入回答", true);
+      return;
+    }
+    els.questionSubmit.disabled = true;
+    try {
+      await api("/api/answer", {
+        method: "POST",
+        body: JSON.stringify({
+          task_id: activeQuestion.task_id,
+          answer,
+          option_id: optionId,
+        }),
+      });
+      closeQuestion();
+      showToast("回答已提交，Agent 将继续");
+      await refresh();
+    } catch (error) {
+      showToast(`提交失败：${error.message}`, true);
+    } finally {
+      els.questionSubmit.disabled = false;
+    }
+  }
 
   document.addEventListener("selectstart", () => {
     pointerSelecting = true;
@@ -288,6 +403,19 @@
         row.appendChild(select);
         card.appendChild(row);
       }
+      if (agent.question) {
+        const bubble = document.createElement("button");
+        bubble.type = "button";
+        bubble.className = "agent-question-bubble";
+        bubble.textContent = "?";
+        bubble.title = "Agent 需要你的确认，点击回答";
+        bubble.setAttribute("aria-label", "回答 Agent 的问题");
+        bubble.addEventListener("click", (event) => {
+          event.stopPropagation();
+          openQuestion({ ...agent.question, task_id: agent.question.task_id || agent.task_id });
+        });
+        card.appendChild(bubble);
+      }
       els.agents.appendChild(card);
     });
   }
@@ -359,6 +487,7 @@
     els.runningBadge.textContent = `Running: ${state.running_jobs || 0}`;
     // 有选区时冻结列表重绘；用户点掉选区后，下一次轮询会补上最新数据。
     if (hasActiveTextSelection()) return;
+    maybeQuestionSound(state.agents || []);
     renderMessages(state.messages || []);
     renderAgents(state.agents);
     renderTasks(state.tasks);
@@ -403,6 +532,12 @@
 
   /* events */
   els.submit.addEventListener("click", submitPrompt);
+  els.questionSubmit.addEventListener("click", submitQuestion);
+  els.questionClose.addEventListener("click", closeQuestion);
+  els.questionLater.addEventListener("click", closeQuestion);
+  els.questionModal.addEventListener("click", (event) => {
+    if (event.target === els.questionModal) closeQuestion();
+  });
   els.prompt.addEventListener("keydown", (event) => {
     if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
       event.preventDefault();

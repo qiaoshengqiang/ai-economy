@@ -84,6 +84,8 @@ class JobStatus:
     FAILED = "FAILED"
     #: LLM 超时/中断：Task 仍是 IN_PROGRESS，后续可以 follow_up 续跑。
     INTERRUPTED = "INTERRUPTED"
+    #: Agent 在 Work 中途等待人类回答；Task / 阶段都保持原状态。
+    WAITING_HUMAN = "WAITING_HUMAN"
     DIRECT_REPLY = "DIRECT_REPLY"
     CLARIFY = "CLARIFY"
 
@@ -105,6 +107,7 @@ _ENDED_JOB_STATUSES = frozenset({
     JobStatus.FAILED,
     JobStatus.CANCELLED,
     JobStatus.INTERRUPTED,
+    JobStatus.WAITING_HUMAN,
     JobStatus.DIRECT_REPLY,
     JobStatus.CLARIFY,
 })
@@ -454,6 +457,18 @@ class AIEOSController:
             "agents": self._agent_settings_facts(),
         }
 
+    def _pending_question(self, agent_id: str) -> Optional[Dict[str, Any]]:
+        info = self._agent_tasks.get(str(agent_id), {}) or {}
+        task_id = str(info.get("task_id") or "")
+        if not task_id:
+            return None
+        path = self.task_directories.for_task(task_id).aieos / "question.json"
+        try:
+            data = json.loads(path.read_text("utf-8"))
+        except (OSError, ValueError):
+            return None
+        return data if isinstance(data, dict) else None
+
     def _agent_settings_facts(self) -> List[Dict[str, Any]]:
         facts: List[Dict[str, Any]] = []
         from core.config_resolver import ConfigLoader
@@ -543,6 +558,166 @@ class AIEOSController:
             self._message("human", text, job_id=job.job_id)
         self._executor.submit(self._run_job, job)
         return job.job_id
+
+    def answer_question(
+        self, task_id: str, answer: str, *, option_id: str = "",
+    ) -> str:
+        """Human 直接回答 Agent 的中途问题；不经过 Front。"""
+        text = str(answer or "").strip()
+        with self._lock:
+            try:
+                task = self.rt.tasks.get(str(task_id))
+            except Exception:                                 # noqa: BLE001
+                task = None
+            if task is None:
+                raise ValueError("找不到这个 Task")
+            if not getattr(task, "is_open", False):
+                raise ValueError(f"Task 当前是 {task.status}，不能回答问题")
+            directory = self.task_directories.for_task(task.task_id)
+            qpath = directory.aieos / "question.json"
+            try:
+                question = json.loads(qpath.read_text("utf-8"))
+            except (OSError, ValueError):
+                question = None
+            if not isinstance(question, dict):
+                raise ValueError("这个 Task 当前没有待回答的问题")
+            options = question.get("options") or []
+            chosen = ""
+            if option_id:
+                for index, item in enumerate(options):
+                    label = str(item)
+                    if option_id in (label, str(index), str(index + 1)):
+                        chosen = label
+                        break
+            answer_text = "\n".join(
+                item for item in (chosen, text) if item)
+            if not answer_text:
+                raise ValueError("回答不能为空")
+            worker = str(task.contractor or task.creator or "")
+            if not worker:
+                raise ValueError("Task 没有执行 Agent")
+            directory.write_json("ANSWER.json", {
+                "task_id": task.task_id,
+                "question": question,
+                "answer": answer_text,
+                "answered_at": _now(),
+            })
+            try:
+                qpath.unlink()
+            except OSError:
+                pass
+            workspace_question = directory.workspace / "QUESTION.json"
+            try:
+                workspace_question.unlink()
+            except OSError:
+                pass
+            history_path = directory.aieos / "questions.json"
+            try:
+                history = json.loads(
+                    history_path.read_text("utf-8"))
+            except (OSError, ValueError):
+                history = []
+            if not isinstance(history, list):
+                history = []
+            history.append({
+                **question,
+                "answer": answer_text,
+                "answered_at": _now(),
+            })
+            directory.write_json("questions.json", history)
+            job = WorkJob(
+                job_id=f"job_{uuid.uuid4().hex[:10]}",
+                human_text=f"回答：{answer_text}",
+                task_id=task.task_id,
+                front_intent="answer",
+                front_decision={
+                    "intent": "answer",
+                    "task_id": task.task_id,
+                    "answer": answer_text,
+                    "question": question,
+                },
+                created_at=_now(),
+                updated_at=_now(),
+            )
+            self._jobs[job.job_id] = job
+            self._job_order.append(job.job_id)
+            self._message(
+                "human", f"回答：{answer_text}",
+                job_id=job.job_id, task_id=task.task_id)
+        self._executor.submit(self._run_answer_job, job)
+        return job.job_id
+
+    def _run_answer_job(self, job: WorkJob) -> None:
+        """回答后直接恢复 Pi Work；不调用 Front。"""
+        worker = ""
+        admitted = False
+        prompt_log.bind_job(job.job_id)
+        try:
+            if not self._admit_job(job):
+                return
+            admitted = True
+            task = self.rt.tasks.get(job.task_id)
+            if task is None:
+                self._fail(job, "找不到要恢复的 Task")
+                return
+            worker = str(task.contractor or task.creator or "")
+            if not worker:
+                self._fail(job, "Task 没有执行 Agent")
+                return
+            with self._condition:
+                while not self._closed:
+                    if self.availability.try_acquire(worker):
+                        break
+                    job.status = JobStatus.WAITING_FOR_AGENT
+                    self._touch(job)
+                    self._condition.wait(timeout=0.5)
+                else:
+                    return
+            job.leader = worker
+            job.members = [worker]
+            self._bind_agent(worker, job, "LEADER")
+            self._bind_task_to_agents([worker], task.task_id)
+            self._set_job(job, JobStatus.RUNNING)
+            self._message(
+                "system",
+                f"人类已回答，{worker} 继续 Task {task.task_id}。",
+                job_id=job.job_id, task_id=task.task_id)
+            if not self._pi_enabled(worker):
+                self._fail(job, "当前问题回答恢复只支持 Pi Work")
+                return
+            acceptance = getattr(task, "acceptance", None) or {}
+            role_id = str(
+                acceptance.get("role") if isinstance(acceptance, dict) else ""
+            ).strip()
+            role = self.worker_roles.resolve(role_id, include_archived=True)
+            if role is None:
+                role = self.worker_roles.resolve("generalist")
+            role_prompt = self.worker_roles.render(role) if role else ""
+            runner = self._pi_runner(
+                task,
+                round_sink=lambda payload: self._record_round(
+                    task.task_id, payload),
+                should_stop=lambda: job.cancelled,
+                role_prompt=role_prompt,
+            )
+            result = runner.run()
+            if job.cancelled:
+                self._finish_cancelled(job, task.task_id)
+            else:
+                self._finish_work(job, None, task.task_id, result)
+        except Exception as exc:                              # noqa: BLE001
+            self._fail(job, f"{type(exc).__name__}: {exc}")
+        finally:
+            if worker:
+                self.availability.release(worker)
+                if job.status != JobStatus.WAITING_HUMAN:
+                    self._unbind_agent(worker)
+            if admitted:
+                with self._condition:
+                    self._active_jobs = max(0, self._active_jobs - 1)
+            prompt_log.clear_job()
+            self._write_job_log(job)
+            self._notify()
 
     def _admit_job(self, job: WorkJob) -> bool:
         """等待一个并行 Team 槽位；设置修改后可立即生效。"""
@@ -749,7 +924,10 @@ class AIEOSController:
             for aid in [leader, *members]:
                 if aid:
                     self.availability.release(aid)
-                    self._unbind_agent(aid)
+                    # WAITING_HUMAN 保留 agent→task 绑定，UI 才能继续显示
+                    # 气泡并知道回答属于哪个 Task。
+                    if job.status != JobStatus.WAITING_HUMAN:
+                        self._unbind_agent(aid)
             if admitted:
                 with self._condition:
                     self._active_jobs = max(0, self._active_jobs - 1)
@@ -1520,10 +1698,25 @@ class AIEOSController:
     ) -> None:
         job.tokens = int(getattr(result, "tokens", 0) or 0)
         job.turns = int(getattr(result, "turns", 0) or 0)
-        front_result = front.result_from_work(result)
+        if getattr(result, "waiting_human", False):
+            question = dict(getattr(result, "question", None) or {})
+            job.status = JobStatus.WAITING_HUMAN
+            job.front_intent = "question"
+            job.summary = str(question.get("question") or "等待人类回答")
+            job.error = ""
+            self._message(
+                "system",
+                "Agent 需要人类确认：" + job.summary,
+                job_id=job.job_id, task_id=task_id,
+                duration_ms=self._job_duration_ms(job))
+            self._write_checkpoint(task_id, result)
+            self._touch(job)
+            return
+        front_cls = front or FrontAgentRuntime
+        front_result = front_cls.result_from_work(result)
         self._message(
-            "front",
-            front.format_result(front_result),
+            "front" if front is not None else "system",
+            front_cls.format_result(front_result),
             job_id=job.job_id, task_id=task_id,
             duration_ms=self._job_duration_ms(job))
         job.summary = front_result.summary or front_result.status
@@ -1806,6 +1999,7 @@ class AIEOSController:
                     "thinking": self._thinking_for_agent(aid),
                     "thinking_levels": list(
                         self._agent_thinking_levels(aid)),
+                    "question": self._pending_question(aid),
                 })
             jobs = [
                 self._jobs[jid].to_dict()

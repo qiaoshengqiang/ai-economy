@@ -89,6 +89,9 @@ class WorkResult:
     artifacts: List[str] = field(default_factory=list)
     events: List[Dict[str, Any]] = field(default_factory=list)
     plan_history: List[Dict[str, Any]] = field(default_factory=list)
+    #: Work 层等待人类确认，不改变 Task 生命周期状态。
+    waiting_human: bool = False
+    question: Optional[Dict[str, Any]] = None
 
     @property
     def ok(self) -> bool:
@@ -107,4 +110,6 @@ class WorkResult:
             "artifacts": list(self.artifacts),
             "events": list(self.events),
             "plan_history": list(self.plan_history),
+            "waiting_human": bool(self.waiting_human),
+            "question": dict(self.question) if self.question else None,
         }

@@ -123,6 +123,24 @@ resume_reason / history`。恢复时不再重跑三阶段：
 - 中断恢复复用同一个 Pi session；新 iteration 建议使用新 session +
   旧 RESULT/ENGINEERING/TASK_DOC 作为交接。
 
+### Agent 中途提问
+
+Agent 确实需要人类确认时，在 Task Workspace 写 `QUESTION.json`：
+
+```json
+{"question":"...","options":["A","B"],"allow_free_text":true}
+```
+
+然后结束本轮。AIEOS：
+
+1. 消费问题并移到 `.aieos/question.json`；
+2. `work_state.phase_status = "waiting_human"`；
+3. Task 保持 `IN_PROGRESS`，不完成、不失败；
+4. UI Agent 卡片显示气泡 + 音效；
+5. Human 点击气泡直接回答，不经过 Front；
+6. 回答写入 `.aieos/ANSWER.json` 和 `.aieos/questions.json`；
+7. 从当前阶段恢复，不重跑已完成的阶段。
+
 环境事实分层：
 
 | 阶段 | 环境上下文 |
