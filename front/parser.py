@@ -221,6 +221,7 @@ def parse_front_decision(
                 reply_style=reply_style,
                 preferred_agent=str(
                     payload.get("preferred_agent") or "").strip(),
+                role=str(payload.get("role") or "").strip(),
                 confidence=confidence,
                 reason=str(payload.get("reason") or "")), ""
 

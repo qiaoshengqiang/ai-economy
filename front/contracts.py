@@ -154,6 +154,8 @@ class FrontDecision:
     #: handoff：Human 显式指定的执行者（路由约束，不是任务内容）。
     #: 空字符串 = 没有指定，由系统选空闲 Agent。
     preferred_agent: str = ""
+    #: handoff：任务级专业角色（见 work.worker_roles）。
+    role: str = ""
     confidence: float = 1.0
     reason: str = ""
     #: 产生这个决定的模型原始输出（可审计，不参与逻辑）。
@@ -188,6 +190,7 @@ class FrontDecision:
             "question": self.question,
             "reply_style": self.reply_style,
             "preferred_agent": self.preferred_agent,
+            "role": self.role,
             "confidence": self.confidence,
             "reason": self.reason,
             "raw_output": self.raw_output,

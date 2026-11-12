@@ -1628,6 +1628,7 @@ def test_pi_task_creation_skips_shared_context(db):
         runtime, front_agent="agent_a", pi_work_agents=["agent_c"])
     decision = FrontDecision(
         intent=FrontIntent.HANDOFF,
+        role="game_developer",
         brief=FrontBrief(
             goal="写 hello.txt",
             task_text="写 hello.txt",
@@ -1644,6 +1645,7 @@ def test_pi_task_creation_skips_shared_context(db):
     task = store.get(created["task_id"])
     assert task.creator == "agent_c"
     assert task.workspace_id is None
+    assert task.acceptance["role"] == "game_developer"
     assert alignment_calls == []
 
 

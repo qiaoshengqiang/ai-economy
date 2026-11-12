@@ -53,6 +53,7 @@ class PiWorkRuntime:
         pi_agent_dir: Optional[Path] = None,
         use_llm_proxy: bool = True,
         upstream_base_url: str = "",
+        role_prompt: str = "",
     ) -> None:
         if task.mode != TaskMode.SOLO:
             raise ValueError(
@@ -70,6 +71,7 @@ class PiWorkRuntime:
         self.pi_agent_dir = Path(pi_agent_dir) if pi_agent_dir else None
         self.use_llm_proxy = bool(use_llm_proxy)
         self.upstream_base_url = str(upstream_base_url or "")
+        self.role_prompt = str(role_prompt or "").strip()
         self.lifecycle = WorkLifecycle(runtime.tasks)
         self.memory = PiMemoryBridge(
             runtime,
@@ -342,7 +344,11 @@ class PiWorkRuntime:
     # ------------------------------------------------------------
     def _system_prompt(self, memory_context: str) -> str:
         paths = self.memory.paths()
+        role_section = (
+            "\n" + self.role_prompt + "\n" if self.role_prompt else "")
         return f"""You are {self.task.contractor or self.task.creator}, a Work Agent in AIEOS.
+{role_section}
+
 
 Your working directory is the Task Workspace:
 {paths['task_workspace']}
@@ -360,11 +366,14 @@ Read `{paths['memory_dir']}/context.md` for the memory snapshot.
 You may update `{paths['memory_dir']}/working.md` and write candidate
 memories to `{paths['memory_dir']}/inbox/*.md`.
 
-When the task is complete, write `RESULT.md` in the Task Workspace with:
-- what you delivered;
-- files and paths;
-- self-test or verification results;
-- known limitations.
+When the task is complete, write a human-facing summary in `RESULT.md`
+in the Task Workspace. Use these sections:
+- What was delivered
+- Files and paths
+- How to open / run / verify
+- Verification results
+- Known limitations
+- Next steps (if any)
 
 Do not modify other Agents' private directories.
 
@@ -378,11 +387,11 @@ Task description:
             try:
                 text = result_path.read_text(encoding="utf-8").strip()
                 if text:
-                    return text[:4000]
+                    return text[:8000]
             except OSError:
                 pass
         text = self._last_assistant_text(events)
-        return text[:4000] or "Pi 已完成执行"
+        return text[:8000]
 
     @staticmethod
     def _last_assistant_text(events: List[Dict[str, Any]]) -> str:

@@ -1,6 +1,6 @@
 # Pi Work Layer Design
 
-> 状态：**V1 pilot 已实现**（PiWorkRuntime · 真实任务目录 · 记忆文件桥 · LLM Proxy · Pi 总结回传）
+> 状态：**V1 pilot 已实现**（PiWorkRuntime · 真实任务目录 · 记忆文件桥 · LLM Proxy · Pi 总结回传 · Worker Role）
 > 目标：Pi 只做 Work 执行底座；Life 层、Task Core、经济与治理仍属于 AIEOS。
 
 ## 1. 边界
@@ -77,6 +77,34 @@ agents/<agent_id>/memory/pi/
 - 短期记忆超过保留阈值时，自动调用 `consolidate` 合并为 Long-term；
 - inbox 不直接成为权威；AIEOS 决定如何合并；
 - Pi session 不是长期记忆，只是任务执行记录。
+
+## 4.5 Worker Role（任务级专业角色）
+
+Role 是**任务属性**，不是 Agent 身份、权限、能力或预算：
+
+```text
+Role       这次任务用什么专业视角工作
+Agent      谁来做
+Permission 能访问什么
+Budget     花多少
+```
+
+- Front 的 system prompt 注入角色目录（id / name / 一句话描述）；
+- Front handoff 输出 `role`；未填 → `generalist`；未知角色 → 失败；
+- 角色注册表在 `work/worker_roles.py`，V1 有 7 个：
+  `generalist` · `frontend_engineer` · `game_developer` ·
+  `backend_engineer` · `researcher` · `writer` · `qa_verifier`；
+- Worker 的 system prompt 由三部分拼成：
+
+```text
+全局 Work 契约（工具 / 落盘 / RESULT.md）
+  + 角色 prompt（专业视角 + 额外总结项）
+  + 具体 Task
+```
+
+- 角色 prompt 只**追加**，不覆盖全局规则；
+- Pi Task 把角色写入 `task.acceptance["role"]`，resume 时回退读取；
+- 全局总结契约固定 `RESULT.md` 的章节，角色只追加专业总结项。
 
 ## 5. 完成与 usage
 

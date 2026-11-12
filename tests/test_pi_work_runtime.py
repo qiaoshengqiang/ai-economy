@@ -176,6 +176,7 @@ def test_pi_work_runtime_completes_and_ingests_memory(db, monkeypatch, tmp_path)
         task_directory=directory,
         pi_cli_path="fake-pi",
         use_llm_proxy=False,
+        role_prompt="ROLE-MARKER: game developer",
         round_sink=rounds.append,
     )
     result = runner.run()
@@ -188,6 +189,7 @@ def test_pi_work_runtime_completes_and_ingests_memory(db, monkeypatch, tmp_path)
     assert result.tokens == 15
     assert result.actions == 1
     assert result.summary == "已写出 hello.txt"
+    assert "ROLE-MARKER" in runner._system_prompt("")
     assert "hello.txt" in result.artifacts
     assert directory.manifest()
     assert working.updated is not None

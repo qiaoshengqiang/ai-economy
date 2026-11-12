@@ -655,3 +655,43 @@ def test_action_written_as_intent_is_still_an_action_step():
             "offset": 1, "limit": 10,
         },
     }]
+
+
+def test_handoff_parses_worker_role():
+    runtime = FrontAgentRuntime(
+        "front", _think_returning({
+            "intent": "handoff",
+            "task_text": "做一个赛车游戏",
+            "role": "game_developer",
+            "reply": "好",
+        }),
+        roles=[{
+            "id": "game_developer",
+            "name": "游戏开发者",
+            "description": "小游戏与 Canvas",
+        }],
+    )
+    decision = runtime.decide("做个赛车游戏")
+
+    assert decision.role == "game_developer"
+    assert decision.to_dict()["role"] == "game_developer"
+
+
+def test_prompt_lists_worker_roles():
+    think = _think_returning({"intent": "direct_reply", "reply": "好"})
+    runtime = FrontAgentRuntime(
+        "front", think,
+        roles=[
+            {"id": "game_developer", "name": "游戏开发者",
+             "description": "小游戏与 Canvas"},
+            {"id": "frontend_engineer", "name": "前端工程师",
+             "description": "网页与交互"},
+        ],
+    )
+    runtime.decide("你好")
+
+    prompt = think.prompt
+    assert "WORKER ROLES" in prompt
+    assert "game_developer" in prompt
+    assert "小游戏与 Canvas" in prompt
+    assert "frontend_engineer" in prompt

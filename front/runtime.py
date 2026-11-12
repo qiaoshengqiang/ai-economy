@@ -55,6 +55,7 @@ class FrontAgentRuntime:
         think: Callable[[str], str],
         *,
         inspect_fn: Optional[Callable[[str], Any]] = None,
+        roles: Iterable[Dict[str, Any]] = (),
         execute_actions: Optional[
             Callable[[List[Dict[str, Any]]], str]] = None,
         action_types: Iterable[str] = (),
@@ -67,6 +68,11 @@ class FrontAgentRuntime:
         self._think = think
         #: 只读 inspect 能力：task_id → 事实（dict/str）。None = 不可用。
         self._inspect_fn = inspect_fn
+        #: Front 可见的 Worker 角色目录（id/name/description）。
+        self.roles = [
+            dict(item) for item in (roles or ())
+            if isinstance(item, dict) and item.get("id")
+        ]
         #: Front 自己的动作执行器（私有空间 / 草稿）。
         self._execute_actions = execute_actions
         self.action_types = tuple(sorted({
@@ -300,6 +306,9 @@ creates the Task; you don't have a create-task action.
 ========== AGENTS (READ-ONLY FACTS) ==========
 {_render_agents(agents)}
 
+========== WORKER ROLES (READ-ONLY) ==========
+{_render_roles(self.roles)}
+
 ========== ACTIVE TASKS (READ-ONLY) ==========
 {_render_tasks(active)}
 
@@ -356,6 +365,7 @@ A handoff can carry files you prepared in `brief.files`:
    and files.
    {{"intent":"handoff",
      "task_text":"...",
+     "role":"one of the worker role ids",
      "preferred_agent":"optional agent_id",
      "brief":{{"goal":"...","deliverables":["..."],
               "constraints":["..."],"acceptance_expectations":["..."],
@@ -461,6 +471,15 @@ def _agent_refs(items: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
             "can_work": bool(item.get("can_work", True)),
         })
     return out
+
+
+def _render_roles(roles: List[Dict[str, Any]]) -> str:
+    if not roles:
+        return "(none; use generalist)"
+    return "\n".join(
+        f"- {item['id']}: {item.get('name') or item['id']} — "
+        f"{item.get('description') or ''}"
+        for item in roles)
 
 
 def _render_agents(agents: List[Dict[str, Any]]) -> str:

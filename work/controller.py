@@ -60,6 +60,9 @@ from work.front_actions import (
 )
 from work.pi_runtime import PiWorkRuntime
 from work.task_directory import TaskDirectoryManager
+from work.worker_roles import (
+    render_role_prompt, resolve_role, role_catalog,
+)
 from work.plan import WorkPlan, parse_work_plan
 from work.prompt import WORK_SYSTEM_PROMPT, build_lead_plan_prompt
 from work.roles import WorkContext, WorkRole
@@ -597,6 +600,7 @@ class AIEOSController:
         return FrontAgentRuntime(
             self.front_agent, _front_think,
             inspect_fn=self._front_inspect_facts,
+            roles=role_catalog(),
             execute_actions=_execute,
             action_types=dispatcher.action_types)
 
@@ -609,6 +613,7 @@ class AIEOSController:
         *,
         round_sink: Any = None,
         should_stop: Any = None,
+        role_prompt: str = "",
     ) -> PiWorkRuntime:
         return PiWorkRuntime(
             self.rt, task,
@@ -620,6 +625,7 @@ class AIEOSController:
             should_stop=should_stop or (lambda: False),
             round_sink=round_sink,
             pi_agent_dir=self.pi_agent_dir,
+            role_prompt=role_prompt,
         )
 
     def _front_turn(
@@ -788,6 +794,17 @@ class AIEOSController:
         front: Any,
     ) -> tuple[str, List[str]]:
         """Front handoff → 一个 Agent → SOLO Task → SoloWorkRuntime。"""
+        role = resolve_role(getattr(decision, "role", ""))
+        if role is None:
+            self._fail(
+                job,
+                f"Front 选择了未知 Worker 角色："
+                f"{getattr(decision, 'role', '')!r}")
+            return "", []
+        decision.role = role.role_id
+        if isinstance(job.front_decision, dict):
+            job.front_decision["role"] = role.role_id
+        role_prompt = render_role_prompt(role)
         preferred = str(
             getattr(decision, "preferred_agent", "") or "").strip()
         if preferred:
@@ -836,13 +853,15 @@ class AIEOSController:
                 task,
                 round_sink=lambda payload: self._record_round(
                     task_id, payload),
-                should_stop=lambda: job.cancelled)
+                should_stop=lambda: job.cancelled,
+                role_prompt=role_prompt)
         else:
             runner = SoloWorkRuntime(
                 self.rt, task,
                 brief=decision.brief.to_dict(),
                 max_turns=self.max_solo_turns,
                 cognitive_budget=self.cognitive_budget,
+                role_prompt=role_prompt,
                 should_stop=lambda: job.cancelled,
                 round_sink=lambda payload: self._record_round(
                     task_id, payload),
@@ -951,7 +970,10 @@ class AIEOSController:
                 creator=worker,
                 description=_description_from_brief(decision.brief),
                 participants=[worker],
-                acceptance={"criteria": list(criteria)},
+                acceptance={
+                    "criteria": list(criteria),
+                    "role": str(getattr(decision, "role", "") or "generalist"),
+                },
                 note=f"demand_run:aieos_{job.job_id}",
                 mode=TaskMode.SOLO,
             )
@@ -1115,6 +1137,22 @@ class AIEOSController:
                 job, "找不到这个任务；它可能已经被清理了。", decision.task_id)
             return "", []
 
+        role_id = str(getattr(decision, "role", "") or "").strip()
+        if not role_id:
+            acceptance = getattr(task, "acceptance", None) or {}
+            if isinstance(acceptance, dict):
+                role_id = str(acceptance.get("role") or "").strip()
+        role = resolve_role(role_id)
+        if role is None:
+            self._fail(
+                job,
+                f"Front 选择了未知 Worker 角色：{role_id!r}")
+            return "", []
+        decision.role = role.role_id
+        if isinstance(job.front_decision, dict):
+            job.front_decision["role"] = role.role_id
+        role_prompt = render_role_prompt(role)
+
         if self.solo_only and task.mode != TaskMode.SOLO:
             self._reply_direct(
                 job,
@@ -1236,13 +1274,15 @@ class AIEOSController:
                     task,
                     round_sink=lambda payload: self._record_round(
                         task.task_id, payload),
-                    should_stop=lambda: job.cancelled)
+                    should_stop=lambda: job.cancelled,
+                    role_prompt=role_prompt)
             else:
                 runner = SoloWorkRuntime(
                     self.rt, task,
                     max_turns=self.max_solo_turns,
                     cognitive_budget=self.cognitive_budget,
                     resume_context=resume_context,
+                    role_prompt=role_prompt,
                     should_stop=lambda: job.cancelled,
                     round_sink=lambda payload: self._record_round(
                         task.task_id, payload),

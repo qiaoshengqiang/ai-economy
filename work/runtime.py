@@ -123,6 +123,7 @@ class SoloWorkRuntime:
         max_read_only_turns: int = 4,
         cognitive_budget: int = 65536,
         resume_context: str = "",
+        role_prompt: str = "",
         event_sink: Any = None,
         should_stop: Optional[Callable[[], bool]] = None,
         round_sink: Optional[Callable[[Dict[str, Any]], None]] = None,
@@ -143,6 +144,8 @@ class SoloWorkRuntime:
         self.cognitive_budget = max(1, int(cognitive_budget))
         #: 上一次 run 的只读 checkpoint；注入 cognition 和第一轮 Work。
         self.resume_context = str(resume_context or "").strip()
+        #: 任务级 Worker 角色提示；每轮都要注入。
+        self.role_prompt = str(role_prompt or "").strip()
         #: 本次 run 的标识 —— 轮次日志用它区分 resume 前后的轮次。
         self.run_id = f"run_{uuid.uuid4().hex[:12]}"
         self.event_sink = event_sink
@@ -470,6 +473,8 @@ class SoloWorkRuntime:
                 resume_text = (
                     "\n========== PREVIOUS RUN CHECKPOINT (READ-ONLY) ==========\n"
                     + self.resume_context + "\n")
+            if self.role_prompt:
+                resume_text = self.role_prompt + "\n" + resume_text
             prompt = build_work_prompt(
                 context,
                 task_description=task.description,
