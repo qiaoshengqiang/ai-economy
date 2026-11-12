@@ -146,6 +146,7 @@ class FrontAgentRuntime:
                 action_history.append({
                     "step": len(action_history) + 1,
                     "actions": actions,
+                    "raw_output": str(raw or ""),
                     "receipt": str(receipt or ""),
                 })
                 self.last_action_history = list(action_history)
