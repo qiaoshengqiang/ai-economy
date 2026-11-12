@@ -18,7 +18,7 @@ Front 决策解析
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, Iterable, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from front.contracts import FrontBrief, FrontDecision, FrontIntent
 
@@ -69,10 +69,52 @@ def _brief_from(payload: Dict[str, Any], human_text: str) -> Optional[FrontBrief
             ambiguities=_string_list(raw.get("ambiguities")),
             non_goals=_string_list(raw.get("non_goals")),
             context_refs=_string_list(raw.get("context_refs")),
+            files=raw.get("files") or [],
             fallback=bool(raw.get("fallback")),
         )
     except ValueError:
         return None
+
+
+def parse_front_actions(
+    text: str,
+) -> Tuple[Optional[List[Dict[str, Any]]], str]:
+    """解析 Front 的动作步骤。
+
+    返回 `(actions, error)`：
+
+        actions = None  本轮不是动作步骤（交给 parse_front_decision）
+        actions = [...] 动作步骤；按声明顺序执行
+        error != ""     看起来是动作信封，但结构不合法
+    """
+    for payload in _iter_json_objects(str(text or "")):
+        raw = payload.get("actions")
+        if raw is None and isinstance(payload.get("action"), dict):
+            raw = [payload["action"]]
+        if raw is None:
+            continue
+        if isinstance(raw, dict):
+            raw = [raw]
+        if not isinstance(raw, list):
+            return None, "front_actions_not_a_list"
+        actions: List[Dict[str, Any]] = []
+        for item in raw:
+            if not isinstance(item, dict):
+                return None, "front_action_not_an_object"
+            action_type = str(
+                item.get("type") or item.get("action_type") or "").strip()
+            parameters = item.get("parameters")
+            if not action_type:
+                return None, "front_action_missing_type"
+            if not isinstance(parameters, dict):
+                return None, "front_action_missing_parameters"
+            actions.append({
+                "type": action_type,
+                "parameters": dict(parameters),
+            })
+        if actions:
+            return actions, ""
+    return None, ""
 
 
 def parse_front_decision(
@@ -93,6 +135,11 @@ def parse_front_decision(
     for payload in _iter_json_objects(str(text or "")):
         raw_intent = str(
             payload.get("intent") or payload.get("decision") or "").strip()
+        # 动作步骤不是最终决定：即使模型顺手写了 reply，也不能把它
+        # 当成 direct_reply 而跳过动作。交给 parse_front_actions。
+        if not raw_intent and (
+                "actions" in payload or "action" in payload):
+            continue
         # 兼容自然形状：有 goal 就是 handoff，有 reply 就是 direct_reply。
         if not raw_intent:
             if "goal" in payload or "brief" in payload:

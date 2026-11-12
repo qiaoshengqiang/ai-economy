@@ -69,10 +69,32 @@ Front Agent（固定）
 ### 角色约束
 
 - Front Agent **永不创建 Task**；
-- Front Agent 不参与执行；
+- Front Agent 不参与 Task 执行；它可以对话、使用自己的**私有空间 / 草稿**准备文件；
+- handoff 的 `brief.files` 可以把 Front 准备的文件交给 Work Agent
+  （`content` / `from_private` / `draft_id` 三种来源）；
 - 承接的 Agent 是普通 Agent，也是 Task Creator；
 - 同一任务只占用一个 Agent；
 - 工作结束时释放 Agent 回到 `IDLE`。
+
+### Front 的多步能力
+
+Front 在一次 Human 输入内可以**连续调用多次 LLM**：
+
+```text
+LLM → 动作（private_* / draft_*）→ 真实结果回喂
+    → 继续动作 / 最终 intent（direct_reply / handoff / ...）
+```
+
+- 可用动作：`private_read` / `private_write` / `private_list` /
+  `private_delete`；`draft_read` / `draft_write` / `draft_append` /
+  `draft_list` / `draft_delete`。
+- 动作只碰 Front 自己的私有空间与草稿，不写 Task Workspace。
+- 最终 handoff 的 `brief.files` 把文件交给 Work Agent；Work prompt
+  会看到文件内容。
+- 每次 decide 的 `FrontDecision`（含 `raw_output`）和动作结果写入
+  `runs/ui/jobs/<job_id>.json` 的 `front_decision` / `front_actions`。
+- Front LLM 调用失败或输出无法解析时，Job 标记 `INTERRUPTED` +
+  `retryable`，不伪装成 `clarify`，也不创建 Task；UI 提供「重试」。
 
 ### 已有 Task 的后续输入
 

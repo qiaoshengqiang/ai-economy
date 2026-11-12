@@ -1209,3 +1209,16 @@ class TestReadOnlyProgressGuard:
         # 第 2 轮开始，prompt 里应出现「连续只读」的事实。
         assert "the last 2 rounds only read" in str(
             runtime.agent.prompts[-1])
+
+
+def test_work_prompt_renders_front_supplied_files():
+    context = WorkContext(
+        task_id="T-FILES", agent_id="agent_a", role=WorkRole.SOLO,
+        brief={"goal": "落盘 Front 给的文件", "files": [
+            {"path": "index.html", "content": "FRONT-CODE"},
+        ]})
+    prompt = build_work_prompt(
+        context, task_description="写 index.html", runtime=None)
+
+    assert '"files"' in prompt
+    assert "FRONT-CODE" in prompt

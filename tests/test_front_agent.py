@@ -7,8 +7,8 @@ Front Agent V1：意图 / Brief / Result 契约
     · Front 只在 direct_reply / handoff / rework / follow_up / clarify 之间判断；
     · rework 只能引用已完成的 Task；
     · follow_up 只能引用进行中的 Task；
-    · 解析失败时向 Human 澄清，不擅自建 Task；
-    · Front 源码里没有创建 Task 的能力。
+    · 解析/LLM 失败 → 可重试错误，不伪装成 clarify，也不擅自建 Task；
+    · Front 可以使用私有空间 / 草稿做多步准备；源码里没有创建 Task 的能力。
 """
 
 from __future__ import annotations
@@ -16,9 +16,11 @@ from __future__ import annotations
 import inspect
 import json
 
+import pytest
+
 from front import (
     FrontAgentRuntime, FrontBrief, FrontDecision, FrontIntent, FrontResult,
-    parse_front_decision,
+    FrontUnavailableError, parse_front_actions, parse_front_decision,
 )
 from front.runtime import FrontAgentRuntime as RuntimeClass
 
@@ -109,14 +111,13 @@ def test_rework_requires_completed_task():
     assert decision.task_id == "task_1"
 
 
-def test_rework_on_unknown_task_falls_back_to_clarify():
+def test_rework_on_unknown_task_is_retryable_error():
     runtime = FrontAgentRuntime(
         "front", _think_returning(
             {"intent": "rework", "task_id": "task_missing"}))
-    decision = runtime.decide(
-        "改一下", completed_tasks=[{"task_id": "task_1"}])
-    assert decision.intent == FrontIntent.CLARIFY
-    assert decision.reason.startswith("front_parse_failed")
+    with pytest.raises(FrontUnavailableError):
+        runtime.decide(
+            "改一下", completed_tasks=[{"task_id": "task_1"}])
 
 
 def test_follow_up_requires_active_task():
@@ -140,14 +141,13 @@ def test_cancel_requires_active_task():
     assert decision.task_id == "task_2"
 
 
-def test_cancel_on_non_active_task_falls_back_to_clarify():
+def test_cancel_on_non_active_task_is_retryable_error():
     runtime = FrontAgentRuntime(
         "front", _think_returning(
             {"intent": "cancel", "task_id": "task_missing"}))
-    decision = runtime.decide(
-        "停掉它", active_tasks=[{"task_id": "task_2"}])
-    assert decision.intent == FrontIntent.CLARIFY
-    assert decision.reason.startswith("front_parse_failed")
+    with pytest.raises(FrontUnavailableError):
+        runtime.decide(
+            "停掉它", active_tasks=[{"task_id": "task_2"}])
 
 
 def test_artifacts_require_known_task():
@@ -162,15 +162,14 @@ def test_artifacts_require_known_task():
     assert decision.task_id == "task_1"
 
 
-def test_artifacts_on_unknown_task_falls_back_to_clarify():
+def test_artifacts_on_unknown_task_is_retryable_error():
     runtime = FrontAgentRuntime(
         "front", _think_returning(
             {"intent": "artifacts", "task_id": "task_missing"}))
-    decision = runtime.decide(
-        "看看这个任务的产物",
-        completed_tasks=[{"task_id": "task_1"}])
-    assert decision.intent == FrontIntent.CLARIFY
-    assert decision.reason.startswith("front_parse_failed")
+    with pytest.raises(FrontUnavailableError):
+        runtime.decide(
+            "看看这个任务的产物",
+            completed_tasks=[{"task_id": "task_1"}])
 
 
 def test_clarify():
@@ -182,12 +181,10 @@ def test_clarify():
     assert "哪个文件" in decision.question
 
 
-def test_malformed_output_falls_back_to_clarify():
+def test_malformed_output_is_retryable_error():
     runtime = FrontAgentRuntime("front", _think_returning("not json"))
-    decision = runtime.decide("帮我做点事")
-    assert decision.intent == FrontIntent.CLARIFY
-    assert decision.confidence == 0.0
-    assert decision.reason.startswith("front_parse_failed")
+    with pytest.raises(FrontUnavailableError, match="could not be parsed"):
+        runtime.decide("帮我做点事")
 
 
 def test_parser_accepts_natural_goal_shape():
@@ -218,19 +215,22 @@ def test_front_prompt_is_human_facing_and_does_not_invent_constraints():
     runtime = FrontAgentRuntime("front", think)
     runtime.decide("继续做", active_tasks=[{"task_id": "task_1"}])
     prompt = captured["prompt"]
-    assert "Do not expose Brief" in prompt
-    assert "You decide how to hand it off" in prompt
-    assert "task_text" in prompt
-    assert "Preserve the Human's intended task" in prompt
-    assert "reply_style only describes" in prompt
+    assert "You are front, the Human-facing entry point" in prompt
+    assert "FRONT ACTIONS (OPTIONAL, MULTI-STEP)" in prompt
+    assert "private_read" in prompt
+    assert "brief.files" in prompt
+    assert "task_text is what the Work Agent sees" in prompt
+    assert "preferred_agent is routing metadata" in prompt
     assert "RECENT CONVERSATION" in prompt
-    assert "You are the Human's entry point" in prompt
-    assert "Task list is known facts, not a matching table" in prompt
-    assert "Do not use keyword lists" not in prompt
+    assert "create-task action" in prompt
     assert "INTERRUPTED" in prompt
-    assert "still processing" in prompt
-    assert "stopping must go through this intent" in prompt
-    assert "artifacts / code / files / result" in prompt
+    assert "follow_up can resume it" in prompt
+    assert "artifacts" in prompt
+    # 旧版的强行为约束不应再出现。
+    assert "Do not replace the Work Agent" not in prompt
+    assert "not the task planner" not in prompt
+    assert "Do not expose" not in prompt
+    assert "No wallet" not in prompt
 
 
 def test_front_prompt_includes_recent_conversation():
@@ -334,9 +334,9 @@ def test_prompt_exposes_agent_facts_and_routing_rules():
     prompt = think.prompt
     assert "agent_b: status=WORKING" in prompt
     assert "agent_e: status=IDLE" in prompt
-    assert "preferred_agent that is WORKING" in prompt
-    assert "handoff is rejected" in prompt
-    assert "inspect_task(task_id)" in prompt
+    assert "preferred_agent WORKING → rejected" in prompt
+    assert "no automatic substitution" in prompt
+    assert "inspect — read-only task facts" in prompt
 
 
 def test_inspect_loop_fetches_facts_then_decides():
@@ -367,7 +367,7 @@ def test_inspect_loop_fetches_facts_then_decides():
     assert calls == ["task_1"]
     assert len(prompts) == 2
     assert "IN_PROGRESS" in prompts[1]
-    assert "inspect_task(task_id)" in prompts[0]
+    assert "inspect — read-only task facts" in prompts[0]
 
 
 def test_inspect_is_bounded():
@@ -385,28 +385,27 @@ def test_inspect_is_bounded():
     runtime = FrontAgentRuntime(
         "front", think, inspect_fn=lambda tid: calls.append(tid) or {"x": 1})
 
-    decision = runtime.decide(
-        "看看",
-        active_tasks=[{"task_id": "task_1", "status": "IN_PROGRESS"}],
-    )
+    with pytest.raises(FrontUnavailableError, match="inspect_limit"):
+        runtime.decide(
+            "看看",
+            active_tasks=[{"task_id": "task_1",
+                           "status": "IN_PROGRESS"}],
+        )
 
     assert len(calls) == 2, "最多 inspect 2 次"
-    assert decision.intent == FrontIntent.CLARIFY
-    assert "inspect_limit" in decision.reason
 
 
-def test_inspect_without_capability_falls_back_to_clarify():
+def test_inspect_without_capability_is_retryable_error():
     runtime = FrontAgentRuntime(
         "front",
         _think_returning({"intent": "inspect", "task_id": "task_1"}),
     )
-    decision = runtime.decide(
-        "看看",
-        active_tasks=[{"task_id": "task_1", "status": "IN_PROGRESS"}],
-    )
-
-    assert decision.intent == FrontIntent.CLARIFY
-    assert "inspect_unavailable" in decision.reason
+    with pytest.raises(FrontUnavailableError, match="inspect_unavailable"):
+        runtime.decide(
+            "看看",
+            active_tasks=[{"task_id": "task_1",
+                           "status": "IN_PROGRESS"}],
+        )
 
 
 def test_prompt_separates_task_text_from_routing_metadata():
@@ -418,7 +417,7 @@ def test_prompt_separates_task_text_from_routing_metadata():
     ])
 
     prompt = think.prompt
-    assert "task_text is the work content" in prompt
+    assert "task_text is what the Work Agent sees" in prompt
     assert "preferred_agent is routing metadata" in prompt
     assert "use it verbatim" not in prompt
 
@@ -429,7 +428,174 @@ def test_prompt_says_assignee_is_routing_not_task_text():
     runtime.decide("让 agent_e 写一个笑话")
 
     prompt = think.prompt
-    assert "Routing (who does it)" in prompt
-    assert "name belongs to preferred_agent" in prompt
-    assert "work, not the addressee" in prompt or "need not repeat it" in prompt
+    assert "task_text is what the Work Agent sees" in prompt
+    assert "preferred_agent is routing metadata" in prompt
+    assert "Routing facts:" in prompt
     assert "keep the original text" not in prompt
+
+
+# ============================================================
+# Front actions / files / raw output / retry
+# ============================================================
+def test_parse_front_actions_shape():
+    actions, error = parse_front_actions(
+        '{"actions":[{"type":"private_write",'
+        '"parameters":{"path":"a.txt","content":"hi"}}]}')
+    assert error == ""
+    assert actions == [{
+        "type": "private_write",
+        "parameters": {"path": "a.txt", "content": "hi"},
+    }]
+
+    actions, error = parse_front_actions('{"intent":"direct_reply"}')
+    assert actions is None
+    assert error == ""
+
+
+def test_handoff_parses_files():
+    runtime = FrontAgentRuntime(
+        "front", _think_returning({
+            "intent": "handoff",
+            "task_text": "落盘 Front 给的代码",
+            "brief": {
+                "goal": "写 index.html",
+                "files": [
+                    {"path": "index.html", "content": "<html>hi</html>"},
+                    {"path": "app.js", "from_private": "app.js"},
+                    {"path": "style.css", "draft_id": "draft_1"},
+                ],
+            },
+            "reply": "好",
+        }))
+    decision = runtime.decide("把这段代码写下来")
+
+    assert decision.brief.files == [
+        {"path": "index.html", "content": "<html>hi</html>"},
+        {"path": "app.js", "from_private": "app.js"},
+        {"path": "style.css", "draft_id": "draft_1"},
+    ]
+    assert decision.brief.to_dict()["files"] == decision.brief.files
+
+
+def test_raw_output_is_preserved_for_audit():
+    raw = json.dumps({"intent": "direct_reply", "reply": "好"})
+    runtime = FrontAgentRuntime("front", _think_returning(raw))
+    decision = runtime.decide("你好")
+
+    assert decision.raw_output == raw
+    assert decision.to_dict()["raw_output"] == raw
+
+
+def test_decision_to_dict_exposes_top_level_task_text():
+    raw = json.dumps({
+        "intent": "handoff",
+        "task_text": "TOP-LEVEL-TEXT",
+        "brief": {"goal": "g"},
+    })
+    runtime = FrontAgentRuntime("front", _think_returning(raw))
+    decision = runtime.decide("做一个东西")
+
+    assert decision.to_dict()["task_text"] == "TOP-LEVEL-TEXT"
+
+
+def test_action_loop_feeds_real_results_back():
+    responses = [
+        {"actions": [{
+            "type": "private_write",
+            "parameters": {"path": "snake.html", "content": "<html>"},
+        }]},
+        {"intent": "direct_reply", "reply": "写好了"},
+    ]
+    prompts = []
+    seen = []
+
+    def think(prompt):
+        prompts.append(prompt)
+        return json.dumps(responses.pop(0), ensure_ascii=False)
+
+    def execute(actions):
+        seen.append(actions)
+        return "private_write ok path=snake.html chars=6"
+
+    runtime = FrontAgentRuntime(
+        "front", think, execute_actions=execute,
+        action_types=["private_write"])
+    decision = runtime.decide("准备一个页面")
+
+    assert decision.intent == FrontIntent.DIRECT_REPLY
+    assert seen == [[{
+        "type": "private_write",
+        "parameters": {"path": "snake.html", "content": "<html>"},
+    }]]
+    assert len(prompts) == 2
+    assert "private_write ok path=snake.html" in prompts[1]
+    assert runtime.last_action_history[0]["actions"] == seen[0]
+
+
+def test_llm_failure_retries_once_then_succeeds():
+    calls = []
+
+    def think(prompt):
+        calls.append(prompt)
+        if len(calls) == 1:
+            raise RuntimeError("network down")
+        return json.dumps({"intent": "direct_reply", "reply": "恢复了"})
+
+    runtime = FrontAgentRuntime("front", think, think_retries=1)
+    decision = runtime.decide("你好")
+
+    assert decision.intent == FrontIntent.DIRECT_REPLY
+    assert len(calls) == 2
+
+
+def test_llm_failure_after_retry_is_retryable_error():
+    def think(prompt):
+        raise RuntimeError("network down")
+
+    runtime = FrontAgentRuntime("front", think, think_retries=1)
+    with pytest.raises(FrontUnavailableError, match="LLM call failed"):
+        runtime.decide("你好")
+
+
+def test_action_step_with_reply_is_not_direct_reply():
+    text = json.dumps({
+        "reply": "我先写文件",
+        "actions": [{
+            "type": "private_write",
+            "parameters": {"path": "a.txt", "content": "hi"},
+        }],
+    })
+    decision, _error = parse_front_decision(text)
+    actions, _action_error = parse_front_actions(text)
+
+    assert decision is None
+    assert actions and actions[0]["type"] == "private_write"
+
+
+def test_action_and_final_intent_in_one_output():
+    text = json.dumps({
+        "actions": [{
+            "type": "private_write",
+            "parameters": {"path": "code.js", "content": "const x = 1;"},
+        }],
+        "intent": "handoff",
+        "task_text": "落盘 code.js",
+        "brief": {
+            "goal": "落盘 code.js",
+            "files": [{"path": "code.js", "from_private": "code.js"}],
+        },
+        "reply": "好",
+    })
+    seen = []
+
+    runtime = FrontAgentRuntime(
+        "front", _think_returning(text),
+        execute_actions=lambda actions: seen.append(actions) or "ok",
+        action_types=["private_write"])
+    decision = runtime.decide("把代码交给后台")
+
+    assert decision.intent == FrontIntent.HANDOFF
+    assert decision.brief.files == [
+        {"path": "code.js", "from_private": "code.js"}]
+    assert len(seen) == 1
+    assert runtime.last_action_history

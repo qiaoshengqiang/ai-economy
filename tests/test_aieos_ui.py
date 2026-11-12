@@ -28,6 +28,7 @@ class _FakeController:
     def __init__(self):
         self.front = "agent_a"
         self.submitted = []
+        self.retried = []
         self.settings = {
             "front_agent": "agent_a",
             "max_parallel_teams": 3,
@@ -51,6 +52,10 @@ class _FakeController:
     def submit(self, text):
         self.submitted.append(text)
         return "job_test"
+
+    def retry(self, job_id):
+        self.retried.append(job_id)
+        return "job_retry"
 
     def update_settings(self, *, front_agent=None, max_parallel_teams=None):
         if front_agent:
@@ -142,6 +147,11 @@ def test_submit_and_settings_api(server):
                             {"front_agent": "agent_b"})
     assert status == 200
     assert payload["settings"]["front_agent"] == "agent_b"
+
+    status, payload = _post(base + "/api/retry", {"job_id": "job_failed"})
+    assert status == 200
+    assert payload["job_id"] == "job_retry"
+    assert fake.retried == ["job_failed"]
 
 
 def test_task_detail_api(server):
@@ -668,7 +678,7 @@ def test_front_think_uses_minimal_system_context():
 
         def think(self, prompt, **kwargs):
             self.seen.append(dict(kwargs))
-            return "{}"
+            return '{"intent":"direct_reply","reply":"好"}'
 
     agent = _Agent()
     runtime = SimpleNamespace(
@@ -1203,6 +1213,8 @@ def test_chat_js_renders_message_duration():
           / "ui" / "static" / "app.js").read_text(encoding="utf-8")
     assert "message.duration_ms" in js
     assert "message.thinking" in js
+    assert "message.retryable" in js
+    assert "/api/retry" in js
     assert "msg-duration" in js
     assert "window.location.assign" in js
     assert "window.open(" not in js
@@ -1218,3 +1230,181 @@ def test_task_detail_js_renders_call_latency():
     assert "round.latency_ms" in js
     assert "result.output.duration_ms" in js
     assert "avg_latency_ms" in js
+
+
+def test_handoff_sends_front_reply(monkeypatch, tmp_path):
+    from front import FrontBrief, FrontDecision, FrontIntent
+    from work.controller import WorkJob
+    import work.controller as controller_module
+
+    class _FakeRunner:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def run(self):
+            return SimpleNamespace(
+                ok=True, tokens=1, turns=1, status="COMPLETED",
+                summary="done", error="")
+
+    monkeypatch.setattr(controller_module, "SoloWorkRuntime", _FakeRunner)
+
+    task = SimpleNamespace(task_id="task_x", status="IN_PROGRESS")
+    runtime = SimpleNamespace(
+        directory=_Directory(["agent_a", "agent_b"]),
+        economy=SimpleNamespace(agent=lambda aid: SimpleNamespace(
+            has_brain=True, brain=None)),
+        tasks=SimpleNamespace(
+            get=lambda tid: task,
+            list_tasks=lambda limit=50: [],
+        ),
+    )
+    controller = AIEOSController(
+        runtime, front_agent="agent_a", log_dir=tmp_path)
+    controller._acquire_worker = lambda job: "agent_b"
+    controller._create_solo_task = (
+        lambda job, worker, decision: {"ok": True, "task_id": "task_x"})
+    controller._bind_task_to_agents = lambda agents, tid: None
+
+    class _Front:
+        def result_from_work(self, _result):
+            return SimpleNamespace(summary="done", status="COMPLETED")
+
+        def format_result(self, _result):
+            return "result"
+
+    job = WorkJob(job_id="job_handoff", human_text="x")
+    decision = FrontDecision(
+        intent=FrontIntent.HANDOFF,
+        reply="我来安排后台执行。",
+        brief=FrontBrief(goal="g", task_text="t"),
+    )
+    try:
+        controller._run_handoff_solo(job, decision, _Front())
+        messages = controller.state()["messages"]
+    finally:
+        controller.close()
+
+    assert any(
+        item["role"] == "front"
+        and item["text"] == "我来安排后台执行。"
+        for item in messages)
+
+
+def test_resolve_brief_files_reads_private_and_drafts():
+    from front import FrontBrief
+
+    class _Workspace:
+        def read_text(self, path):
+            assert path == "src/app.js"
+            return "PRIVATE-CODE"
+
+    runtime = SimpleNamespace(
+        directory=_Directory(["agent_a"]),
+        economy=SimpleNamespace(agent=lambda aid: SimpleNamespace(
+            has_brain=True, brain=None, workspace=_Workspace())),
+        tasks=SimpleNamespace(list_tasks=lambda limit=50: []),
+    )
+    controller = AIEOSController(runtime, front_agent="agent_a")
+    controller._front_drafts_store = SimpleNamespace(
+        read=lambda aid, did: {"ok": True, "content": "DRAFT-CODE"})
+    brief = FrontBrief(
+        goal="g",
+        files=[
+            {"path": "a.js", "from_private": "src/app.js"},
+            {"path": "b.js", "draft_id": "draft_1"},
+            {"path": "c.js", "content": "INLINE"},
+        ],
+    )
+    try:
+        controller._resolve_brief_files(brief)
+    finally:
+        controller.close()
+
+    assert brief.files == [
+        {"path": "a.js", "content": "PRIVATE-CODE"},
+        {"path": "b.js", "content": "DRAFT-CODE"},
+        {"path": "c.js", "content": "INLINE"},
+    ]
+
+
+def test_front_failure_is_retryable_and_retry_reuses_text():
+    from work.controller import WorkJob
+
+    runtime = SimpleNamespace(
+        directory=_Directory(["agent_a"]),
+        economy=SimpleNamespace(agent=lambda aid: SimpleNamespace(
+            has_brain=True, brain=None)),
+        tasks=SimpleNamespace(list_tasks=lambda limit=50: []),
+    )
+    controller = AIEOSController(runtime, front_agent="agent_a")
+    job = WorkJob(
+        job_id="job_front_fail", human_text="原始需求",
+        front_ms=12, front_thinking={"enabled": True, "effort": "low"})
+    controller._jobs[job.job_id] = job
+    try:
+        controller._interrupt_front(job, "network down")
+        message = controller.state()["messages"][-1]
+        controller.submit = lambda text: f"new:{text}"
+        retried = controller.retry(job.job_id)
+    finally:
+        controller.close()
+
+    assert job.status == "INTERRUPTED"
+    assert job.retryable is True
+    assert message["retryable"] is True
+    assert "没有创建任务" in message["text"]
+    assert retried == "new:原始需求"
+
+
+def test_job_log_contains_front_decision_and_raw_output():
+    from work.controller import WorkJob
+
+    job = WorkJob(
+        job_id="job_log",
+        human_text="x",
+        front_decision={
+            "intent": "handoff",
+            "task_text": "TEXT",
+            "brief": {"goal": "g"},
+            "raw_output": "RAW-FRONT-OUTPUT",
+        },
+        front_actions=[{"step": 1, "actions": [], "receipt": "ok"}],
+    )
+
+    state_data = job.to_dict()
+    log_data = job.to_log_dict()
+
+    assert "front_decision" not in state_data
+    assert log_data["front_decision"]["task_text"] == "TEXT"
+    assert log_data["front_decision"]["raw_output"] == "RAW-FRONT-OUTPUT"
+    assert log_data["front_actions"][0]["receipt"] == "ok"
+
+
+def test_job_log_file_contains_front_raw_output(tmp_path):
+    from work.controller import WorkJob
+
+    runtime = SimpleNamespace(
+        directory=_Directory(["agent_a"]),
+        economy=SimpleNamespace(agent=lambda aid: SimpleNamespace(
+            has_brain=True, brain=None)),
+        tasks=SimpleNamespace(list_tasks=lambda limit=50: []),
+    )
+    controller = AIEOSController(
+        runtime, front_agent="agent_a", log_dir=tmp_path)
+    job = WorkJob(
+        job_id="job_raw_log", human_text="x",
+        front_decision={
+            "task_text": "TEXT",
+            "raw_output": "RAW-FRONT",
+            "brief": {"goal": "g"},
+        })
+    controller._jobs[job.job_id] = job
+    try:
+        controller._write_job_log(job)
+    finally:
+        controller.close()
+
+    data = json.loads(
+        (tmp_path / "job_raw_log.json").read_text(encoding="utf-8"))
+    assert data["job"]["front_decision"]["raw_output"] == "RAW-FRONT"
+    assert data["job"]["front_decision"]["task_text"] == "TEXT"

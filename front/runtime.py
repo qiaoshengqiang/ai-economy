@@ -14,7 +14,8 @@ FrontAgentRuntime —— Human 意图入口
         └─ clarify
 
 🔒 Front Agent 永不创建 Task。
-   它只输出 Decision / Brief；Task 由承接的 Agent 创建。
+   它可以对话、使用自己的私有空间 / 草稿，并输出 Decision / Brief；
+   Task 由承接的 Agent 创建。
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ import json
 from typing import Any, Callable, Dict, Iterable, List, Optional
 
 from front.contracts import FrontDecision, FrontIntent, FrontResult
-from front.parser import parse_front_decision
+from front.parser import parse_front_actions, parse_front_decision
 
 
 #: Front 调用的 system prompt —— 只描述入口职责。
@@ -32,10 +33,13 @@ from front.parser import parse_front_decision
 #:    不属于「把 Human 的话路由到哪里」。
 FRONT_SYSTEM_PROMPT = (
     "You are the Human-facing entry point of an agent system. "
-    "Decide the next action from the Human input, the recent conversation, "
-    "and the task list. Reply to the Human in the language they used. "
-    "Do not discuss wallet, price, or identity."
+    "You can chat, use your private workspace and drafts, and hand work to "
+    "a Work Agent. Reply to the Human in the language they used."
 )
+
+
+class FrontUnavailableError(RuntimeError):
+    """Front 本次没有产出可用决定；这是可重试的失败，不是 clarify。"""
 
 
 class FrontAgentRuntime:
@@ -47,6 +51,11 @@ class FrontAgentRuntime:
         think: Callable[[str], str],
         *,
         inspect_fn: Optional[Callable[[str], Any]] = None,
+        execute_actions: Optional[
+            Callable[[List[Dict[str, Any]]], str]] = None,
+        action_types: Iterable[str] = (),
+        max_steps: int = 12,
+        think_retries: int = 1,
     ) -> None:
         if not callable(think):
             raise ValueError("FrontAgentRuntime 需要可调用的 think(prompt)")
@@ -54,6 +63,15 @@ class FrontAgentRuntime:
         self._think = think
         #: 只读 inspect 能力：task_id → 事实（dict/str）。None = 不可用。
         self._inspect_fn = inspect_fn
+        #: Front 自己的动作执行器（私有空间 / 草稿）。
+        self._execute_actions = execute_actions
+        self.action_types = tuple(sorted({
+            str(item) for item in action_types if str(item).strip()}))
+        self.max_steps = max(1, int(max_steps))
+        self.think_retries = max(0, int(think_retries))
+        #: 最近一次 decide 的动作历史 / 原始输出（观测用）。
+        self.last_action_history: List[Dict[str, Any]] = []
+        self.last_raw_output: str = ""
 
     # ------------------------------------------------------------
     # 决策
@@ -96,23 +114,20 @@ class FrontAgentRuntime:
         agent_facts = _agent_refs(agents)
 
         inspection: List[Dict[str, Any]] = []
+        action_history: List[Dict[str, Any]] = []
         last_error = ""
         parse_failures = 0
         inspect_count = 0
-        # 硬上限：2 次 inspect + 2 次格式修复；防止无限空转。
-        for _step in range(max_inspect + 4):
+        self.last_action_history = []
+        self.last_raw_output = ""
+        for _step in range(self.max_steps):
             prompt = self._prompt(
                 human_text, active, completed, conversation=history,
                 agents=agent_facts, inspection=inspection,
+                action_history=action_history,
                 context=context, previous_error=last_error)
-            try:
-                raw = self._think(prompt)
-            except Exception as exc:                          # noqa: BLE001
-                last_error = f"{type(exc).__name__}: {exc}"
-                parse_failures += 1
-                if parse_failures >= 2:
-                    break
-                continue
+            raw = self._think_with_retry(prompt)
+            self.last_raw_output = str(raw or "")
 
             decision, error = parse_front_decision(
                 raw,
@@ -120,41 +135,72 @@ class FrontAgentRuntime:
                 active_task_ids=active_ids,
                 completed_task_ids=completed_ids,
             )
-            if decision is None:
-                last_error = error
-                parse_failures += 1
-                if parse_failures >= 2:
-                    break
-                continue
 
-            if decision.intent == FrontIntent.INSPECT:
-                if self._inspect_fn is None:
-                    last_error = "inspect_unavailable"
-                    break
-                if inspect_count >= max_inspect:
-                    last_error = "inspect_limit"
-                    break
-                try:
-                    facts = self._inspect_fn(decision.task_id)
-                except Exception as exc:                      # noqa: BLE001
-                    facts = f"inspect_error: {type(exc).__name__}: {exc}"
-                inspection.append({
-                    "task_id": decision.task_id,
-                    "facts": facts,
+            # 动作先执行：同一份输出里既写文件又给出最终 intent 也成立。
+            actions, action_error = parse_front_actions(raw)
+            if actions:
+                if self._execute_actions is None:
+                    raise FrontUnavailableError(
+                        "Front actions are not available in this runtime")
+                receipt = self._execute_actions(actions)
+                action_history.append({
+                    "step": len(action_history) + 1,
+                    "actions": actions,
+                    "receipt": str(receipt or ""),
                 })
-                inspect_count += 1
-                continue
+                self.last_action_history = list(action_history)
+                parse_failures = 0
+                last_error = ""
+                if decision is None:
+                    continue
 
-            return decision
+            if decision is not None:
+                if decision.intent == FrontIntent.INSPECT:
+                    if self._inspect_fn is None:
+                        raise FrontUnavailableError(
+                            "inspect_unavailable：Front 需要读取任务事实，"
+                            "但当前没有 inspect 能力")
+                    if inspect_count >= max_inspect:
+                        raise FrontUnavailableError(
+                            f"inspect_limit：本次最多 inspect {max_inspect} 次")
+                    try:
+                        facts = self._inspect_fn(decision.task_id)
+                    except Exception as exc:                  # noqa: BLE001
+                        facts = (
+                            f"inspect_error: {type(exc).__name__}: {exc}")
+                    inspection.append({
+                        "task_id": decision.task_id,
+                        "facts": facts,
+                    })
+                    inspect_count += 1
+                    continue
 
-        return FrontDecision(
-            intent=FrontIntent.CLARIFY,
-            question=(
-                "我需要再确认一下：你是想让我直接回答，"
-                "还是要开始 / 继续一项工作？"),
-            confidence=0.0,
-            reason=f"front_parse_failed:{last_error}",
-        )
+                decision.raw_output = str(raw or "")
+                self.last_action_history = list(action_history)
+                return decision
+
+            last_error = action_error or error or "front_decision_not_found"
+            parse_failures += 1
+            if parse_failures >= 2:
+                raise FrontUnavailableError(
+                    f"Front output could not be parsed: {last_error}")
+
+        raise FrontUnavailableError(
+            f"Front did not reach a final decision within "
+            f"{self.max_steps} steps")
+
+    def _think_with_retry(self, prompt: str) -> str:
+        """LLM 调用失败时重试；最终失败交给上层标记可重试中断。"""
+        attempts = self.think_retries + 1
+        last: Optional[Exception] = None
+        for _ in range(attempts):
+            try:
+                return self._think(prompt)
+            except Exception as exc:                          # noqa: BLE001
+                last = exc
+        raise FrontUnavailableError(
+            f"Front LLM call failed after {attempts} attempt(s): "
+            f"{type(last).__name__}: {last}")
 
     # ------------------------------------------------------------
     # 结果格式化
@@ -210,20 +256,21 @@ class FrontAgentRuntime:
         conversation: List[Dict[str, str]] = (),
         agents: List[Dict[str, Any]] = (),
         inspection: List[Dict[str, Any]] = (),
+        action_history: List[Dict[str, Any]] = (),
         context: str = "",
         previous_error: str = "",
     ) -> str:
         error_text = ""
         if previous_error:
             error_text = (
-                "\n上一轮输出不合法：" + previous_error +
-                "。请只输出一个合法 JSON 对象。\n")
+                "\n上一次输出无法解析：" + previous_error +
+                "。继续下一步；最终仍要输出一个合法的 JSON。\n")
+        actions = ", ".join(self.action_types) or "(none)"
+        return f"""You are {self.agent_id}, the Human-facing entry point.
 
-        return f"""You are {self.agent_id}, the only entry point between the Human and the Agent Economy.
-You are chatting with the Human: every reply/question must sound natural and friendly.
-Reply to the Human in the language they used. Internal reasoning may be English.
-Do not expose Brief, Creator, Task, acceptance chain, routing, or scope unless the
-Human explicitly asks how the system works.
+Talk naturally in the language the Human used. You can use your private
+workspace and drafts, and you can hand work to a Work Agent. The Work Agent
+creates the Task; you don't have a create-task action.
 
 ========== RECENT CONVERSATION (READ-ONLY) ==========
 {_render_conversation(conversation)}
@@ -243,126 +290,92 @@ Human explicitly asks how the system works.
 ========== INSPECTION RESULTS (READ-ONLY) ==========
 {_render_inspection(inspection)}
 
+========== FRONT ACTIONS (OPTIONAL, MULTI-STEP) ==========
+Available actions: {actions}
+
+You may return action-only steps before the final intent:
+{{"actions":[{{"type":"private_write","parameters":{{"path":"notes.md","content":"..."}}}}]}}
+
+Actions run for real; their results come back in the next prompt. Then continue.
+Parameters:
+- private_write {{path, content}}; private_read {{path}}; private_list {{}}
+- private_delete {{path}}
+- draft_write {{content, label}}; draft_append {{draft_id, content}}
+- draft_read {{draft_id}}; draft_list {{}}; draft_delete {{draft_id}}
+A handoff can carry files you prepared in `brief.files`:
+[{{"path":"index.html","content":"..."}}]
+[{{"path":"index.html","from_private":"snake.html"}}]
+[{{"path":"index.html","draft_id":"draft_..."}}]
+
+========== ACTION RESULTS / STATE ==========
+{_render_actions(action_history)}
+
 ========== OTHER CONTEXT ==========
 {context or "(none)"}
 {error_text}
-========== RESPONSIBILITY AND BOUNDARIES ==========
-You are the Human's entry point, not the task planner, producer, or acceptor.
-Use the current input, recent conversation, task list, and task state to decide
-what should happen next, and choose one Decision within your boundaries.
-
-Boundaries:
-- Never create a Task. On handoff, you decide whether task_text is the original
-  Human text or a faithful restatement.
-- Preserve the Human's intended task: do not add, remove, or weaken key
-  requirements. When unsure, clarify. human_text always keeps the original.
-- You may decide the reply_style (format), but not the technical solution.
-- Do not replace the Work Agent in design, decomposition, or acceptance.
-- If information is insufficient and the choice matters, use clarify.
-- `preferred_agent` is routing metadata, not task content. It is optional.
-
-========== ROUTING RULES (ENVIRONMENT FACTS) ==========
-- preferred_agent that is IDLE and can_work → assigned to it.
-- preferred_agent that is WORKING → the handoff is rejected with a reason;
-  there is no automatic substitution.
-- unknown / FRONT / cannot-work preferred_agent → handoff is rejected.
-- no preferred_agent → the system picks an idle worker.
-
-========== INSPECT (READ-ONLY CAPABILITY) ==========
-inspect_task(task_id) returns task facts (status, creator/contractor, rounds,
-errors, files, artifacts, LLM usage). It does not change Task state.
-You may use it before deciding; at most 2 inspects per Human input.
-
-Consider:
-- Is this a new work request, or talk about / modification / continuation of
-  existing work?
-- Does the recent conversation change what this input means?
-- The Task list is known facts, not a matching table; similar wording does not
-  automatically mean the same intent.
-- If the Human wants a new deliverable instance, handoff may be right even when
-  it resembles an earlier Task.
-- If the Human wants changes to an existing delivery, consider rework; if they
-  only ask for status/result, consider direct_reply / follow_up; if they ask to
-  see artifacts, consider artifacts.
-- If there is no unique correct answer, choose the path that best matches the
-  Human's current intent and reasonable cost.
-
-status INTERRUPTED means the Task was interrupted and is not running now:
-do not say "still processing"; when the Human wants to continue, use follow_up
-and the system will resume it.
-
-Available intents:
-
-1. direct_reply
-   No work is needed; answer directly.
+========== INTENTS ==========
+1. direct_reply — answer directly.
    {{"intent":"direct_reply","reply":"...","reason":"..."}}
 
-2. handoff
-   This is a new work request. You decide how to hand it off:
-   - task_text is the work content the Work Agent sees. Routing (who does it)
-     is preferred_agent, not task_text. If the Human names an assignee, that
-     name belongs to preferred_agent; human_text keeps the original wording.
-   - The Work Agent already knows its own agent_id; task_text need not repeat it.
-   - preferred_agent is routing metadata. The Work Agent does not see it.
-   An optional brief may carry goal / deliverables / constraints / acceptance.
-
+2. handoff — a new work request.
+   task_text is what the Work Agent sees; human_text keeps the original.
+   preferred_agent is routing metadata; empty/omitted = system picks an idle worker.
+   brief may carry goal / deliverables / constraints / acceptance_expectations
+   and files.
    {{"intent":"handoff",
-     "task_text":"text handed to the Work Agent",
-     "preferred_agent":"optional agent_id; empty or omitted = system picks",
+     "task_text":"...",
+     "preferred_agent":"optional agent_id",
      "brief":{{"goal":"...","deliverables":["..."],
-              "constraints":["..."],"acceptance_expectations":["..."]}},
-     "reply":"short confirmation for the Human",
-     "reply_style":"final reply format, e.g. friendly, concise, conclusion first",
-     "reason":"..."}}
+              "constraints":["..."],"acceptance_expectations":["..."],
+              "files":[{{"path":"index.html","content":"..."}}]}},
+     "reply":"...",
+     "reply_style":"...","reason":"..."}}
 
-   Critical: preserve what the Human wants to accomplish. Do not add, remove,
-   or weaken key requirements. If unsure, clarify.
-   reply_style only describes how to reply to the Human, not the task.
-   task_text contains the work; preferred_agent contains routing.
+3. rework — changes to a COMPLETED Task.
+   {{"intent":"rework","task_id":"...","reply":"...","reason":"..."}}
 
-3. rework
-   The Human wants changes to a COMPLETED Task. Reference its task_id.
-   {{"intent":"rework","task_id":"...","reply":"short confirmation",
-     "reason":"..."}}
-   The reply is for the Human, e.g. "Understood, I will have the original
-   Agent update it." Do not write internal instructions.
+4. follow_up — continue an ACTIVE / INTERRUPTED Task.
+   {{"intent":"follow_up","task_id":"...","reply":"...","reason":"..."}}
 
-4. follow_up
-   The Human follows up on an ACTIVE / INTERRUPTED Task.
-   {{"intent":"follow_up","task_id":"...","reply":"natural status update",
-     "reason":"..."}}
-   Example: "This is already in progress; I will tell you when it is done."
-   or "This task was interrupted; I am continuing it now."
+5. cancel — stop an ACTIVE Task.
+   {{"intent":"cancel","task_id":"...","reply":"...","reason":"..."}}
 
-5. cancel
-   The Human explicitly asks to stop / cancel an ACTIVE Task.
-   {{"intent":"cancel","task_id":"...","reply":"confirmation for the Human",
-     "reason":"..."}}
-   Only reference an active task_id. Never claim "already stopped" in a
-   direct_reply: stopping must go through this intent.
+6. artifacts — show / export a Task's files.
+   {{"intent":"artifacts","task_id":"...","reply":"...","reason":"..."}}
 
-6. artifacts
-   The Human asks to see a Task's artifacts / code / files / result.
-   {{"intent":"artifacts","task_id":"...","reply":"short confirmation",
-     "reason":"..."}}
-   Only reference a task_id shown above. If "the previous one" is ambiguous,
-   choose the best match from the task lists; if still unclear, clarify.
-
-7. clarify
-   The intent is unclear; ask the Human.
+7. clarify — ask the Human when the choice matters.
    {{"intent":"clarify","question":"...","reason":"..."}}
 
-8. inspect
-   Read-only task facts; not a final decision. At most 2 per input.
+8. inspect — read-only task facts; at most 2 per input.
    {{"intent":"inspect","task_id":"...","reason":"..."}}
 
-No wallet / price / identity discussion; those are not Front decisions.
-The Human has no "accept task" action. Completed Tasks are only reopened through
-later Human input; do not emit an accept intent.
+Routing facts:
+- preferred_agent IDLE + can_work → assigned to it.
+- preferred_agent WORKING → rejected; no automatic substitution.
+- unknown / FRONT / cannot-work → rejected.
+- no preferred_agent → system picks an idle worker.
 
+A Task with status INTERRUPTED is not running now; follow_up can resume it.
 Return JSON only, no markdown fences.
 """
 
+
+def _render_actions(items: List[Dict[str, Any]]) -> str:
+    if not items:
+        return "(none)"
+    lines: List[str] = []
+    for item in items:
+        actions = item.get("actions") or []
+        names = ", ".join(
+            str(action.get("type") or "?")
+            for action in actions if isinstance(action, dict))
+        lines.append(f"step {item.get('step', '?')}: {names}")
+        receipt = str(item.get("receipt") or "").strip()
+        if receipt:
+            if len(receipt) > 12000:
+                receipt = receipt[:12000] + "\n…（动作结果已截断）"
+            lines.append(receipt)
+    return "\n".join(lines)
 
 def _conversation_refs(
     items: Iterable[Dict[str, Any]],

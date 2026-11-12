@@ -148,6 +148,29 @@
         }
       });
       actions.appendChild(copy);
+      if (message.retryable && message.job_id) {
+        const retry = document.createElement("button");
+        retry.type = "button";
+        retry.className = "copy-btn retry-btn";
+        retry.textContent = "重试";
+        retry.addEventListener("click", async (event) => {
+          event.stopPropagation();
+          retry.disabled = true;
+          try {
+            await api("/api/retry", {
+              method: "POST",
+              body: JSON.stringify({ job_id: message.job_id }),
+            });
+            showToast("已重新提交");
+            await refresh();
+          } catch (error) {
+            showToast(`重试失败：${error.message}`, true);
+          } finally {
+            retry.disabled = false;
+          }
+        });
+        actions.appendChild(retry);
+      }
       item.appendChild(meta);
       item.appendChild(text);
       const footerParts = [];

@@ -42,7 +42,9 @@ load_dotenv(ROOT / ".env")
 
 from core.task import TaskStatus                                  # noqa: E402
 from demand.task_creation import TaskCreationService              # noqa: E402
-from front import FrontAgentRuntime, FrontIntent                  # noqa: E402
+from front import (                                              # noqa: E402
+    FrontAgentRuntime, FrontIntent, FrontUnavailableError,
+)
 from work.availability import AgentAvailability                   # noqa: E402
 from work.runtime import SoloWorkRuntime                          # noqa: E402
 from work.scheduler import RequestStatus, TeamScheduler           # noqa: E402
@@ -212,8 +214,13 @@ def main(argv=None) -> int:
         front_agent.think,
     )
     active, completed = _task_refs(runtime.tasks.list_tasks(limit=50))
-    decision = front.decide(
-        human_text, active_tasks=active, completed_tasks=completed)
+    try:
+        decision = front.decide(
+            human_text, active_tasks=active, completed_tasks=completed)
+    except FrontUnavailableError as exc:
+        print(f"❌ Front 调用失败：{exc}")
+        print("可以重试；本次没有创建 Task。")
+        return 2
 
     if decision.intent in (FrontIntent.DIRECT_REPLY, FrontIntent.CLARIFY):
         return _print_decision_only(decision)

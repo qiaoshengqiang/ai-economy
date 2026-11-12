@@ -67,6 +67,14 @@ class FrontBrief:
     ambiguities: List[str] = field(default_factory=list)
     non_goals: List[str] = field(default_factory=list)
     context_refs: List[str] = field(default_factory=list)
+    #: Front 自己准备好的文件，随 Brief 交给 Work Agent。
+    #:
+    #: 每项：
+    #:   {"path": "index.html", "content": "<完整内容>"}
+    #:   {"path": "index.html", "from_private": "snake.html"}
+    #:   {"path": "index.html", "draft_id": "draft_..."}
+    #: 后两种由组合根从 Front 的私有空间 / 草稿解析成 content。
+    files: List[Dict[str, str]] = field(default_factory=list)
     #: Front 给 Work Agent 的最终回复格式要求（不是任务需求）。
     reply_style: str = ""
     created_at: str = ""
@@ -87,6 +95,7 @@ class FrontBrief:
         self.ambiguities = _strings(self.ambiguities)
         self.non_goals = _strings(self.non_goals)
         self.context_refs = _strings(self.context_refs)
+        self.files = _files(self.files)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -100,6 +109,7 @@ class FrontBrief:
             "ambiguities": list(self.ambiguities),
             "non_goals": list(self.non_goals),
             "context_refs": list(self.context_refs),
+            "files": [dict(item) for item in self.files],
             "reply_style": self.reply_style,
             "created_at": self.created_at,
             "fallback": self.fallback,
@@ -119,6 +129,7 @@ class FrontBrief:
             ambiguities=data.get("ambiguities") or [],
             non_goals=data.get("non_goals") or [],
             context_refs=data.get("context_refs") or [],
+            files=data.get("files") or [],
             reply_style=str(data.get("reply_style") or ""),
             created_at=str(data.get("created_at") or ""),
             fallback=bool(data.get("fallback")),
@@ -145,6 +156,8 @@ class FrontDecision:
     preferred_agent: str = ""
     confidence: float = 1.0
     reason: str = ""
+    #: 产生这个决定的模型原始输出（可审计，不参与逻辑）。
+    raw_output: str = ""
 
     def __post_init__(self) -> None:
         if self.intent not in FrontIntent.all():
@@ -169,12 +182,15 @@ class FrontDecision:
             "intent": self.intent,
             "reply": self.reply,
             "brief": self.brief.to_dict() if self.brief else None,
+            # 顶层也放一份，方便 job log / UI 直接读，不必解 brief。
+            "task_text": self.brief.task_text if self.brief else "",
             "task_id": self.task_id,
             "question": self.question,
             "reply_style": self.reply_style,
             "preferred_agent": self.preferred_agent,
             "confidence": self.confidence,
             "reason": self.reason,
+            "raw_output": self.raw_output,
         }
 
 
@@ -219,6 +235,33 @@ class FrontResult:
             lines.append("下一步：")
             lines.extend(f"- {item}" for item in self.next_actions)
         return "\n".join(lines)
+
+
+def _files(value: Any) -> List[Dict[str, str]]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    out: List[Dict[str, str]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        path = str(item.get("path") or "").strip()
+        if not path:
+            continue
+        entry: Dict[str, str] = {"path": path}
+        content = item.get("content")
+        if isinstance(content, str):
+            entry["content"] = content
+        source = item.get("from_private")
+        if source:
+            entry["from_private"] = str(source).strip()
+        draft_id = item.get("draft_id")
+        if draft_id:
+            entry["draft_id"] = str(draft_id).strip()
+        # 没有内容来源的条目没有意义，不保留。
+        if len(entry) == 1:
+            continue
+        out.append(entry)
+    return out
 
 
 def _strings(value: Any) -> List[str]:

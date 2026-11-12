@@ -126,6 +126,11 @@ class Handler(BaseHTTPRequestHandler):
                 job_id = self.controller.submit(text)
                 self._send_json({"ok": True, "job_id": job_id})
                 return
+            if path == "/api/retry":
+                job_id = str(payload.get("job_id") or "").strip()
+                new_job_id = self.controller.retry(job_id)
+                self._send_json({"ok": True, "job_id": new_job_id})
+                return
             if path == "/api/settings":
                 settings = self.controller.update_settings(
                     front_agent=payload.get("front_agent"),

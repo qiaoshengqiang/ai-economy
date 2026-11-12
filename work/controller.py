@@ -46,10 +46,15 @@ from work.artifact_export import (
 )
 from front import (
     FRONT_SYSTEM_PROMPT, FrontAgentRuntime, FrontIntent, FrontResult,
+    FrontUnavailableError,
 )
 from work.availability import AgentAvailability
 from work.checkpoint import (
     RunCheckpoint, checkpoint_from_rounds, dumps as checkpoint_dumps,
+)
+from work.drafts import TaskDraftStore
+from work.front_actions import (
+    build_front_dispatcher, execute_front_actions,
 )
 from work.plan import WorkPlan, parse_work_plan
 from work.prompt import WORK_SYSTEM_PROMPT, build_lead_plan_prompt
@@ -116,6 +121,13 @@ class WorkJob:
     front_ms: int = 0
     #: Front 决策这次调用实际请求的思考强度。
     front_thinking: Optional[Dict[str, Any]] = None
+    #: 完整的 FrontDecision（含 brief / task_text / raw_output）。
+    #: 🔒 只进 job log，不进高频轮询的 state。
+    front_decision: Dict[str, Any] = field(default_factory=dict)
+    #: Front 本轮执行过的私有空间 / 草稿动作（含真实结果）。
+    front_actions: List[Dict[str, Any]] = field(default_factory=list)
+    #: 这次 Job 是否可以直接重试（Front 调用失败 / 输出不可解析）。
+    retryable: bool = False
     cancelled: bool = False
     created_at: str = ""
     updated_at: str = ""
@@ -141,10 +153,18 @@ class WorkJob:
                 self.created_at,
                 self.updated_at
                 if self.status in _ENDED_JOB_STATUSES else _now()),
+            "retryable": bool(self.retryable),
             "cancelled": self.cancelled,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
+
+    def to_log_dict(self) -> Dict[str, Any]:
+        """Job log 的完整版本：包含 Front 决定 / 原始输出 / 动作结果。"""
+        data = self.to_dict()
+        data["front_decision"] = dict(self.front_decision)
+        data["front_actions"] = list(self.front_actions)
+        return data
 
 
 class AIEOSController:
@@ -209,6 +229,8 @@ class AIEOSController:
         )
         self._active_jobs = 0
         self._closed = False
+        #: Front 自己的持久草稿（按 agent 私有空间隔离）。
+        self._front_drafts_store: Optional[TaskDraftStore] = None
         self._load_settings()
 
         # 固定 Front Agent 不参与组队，也不显示为 WORKING。
@@ -342,18 +364,34 @@ class AIEOSController:
             active, completed = self._task_refs()
             with self._front_lock:
                 front_started = time.perf_counter()
-                decision = front.decide(
-                    job.human_text,
-                    active_tasks=active,
-                    completed_tasks=completed,
-                    conversation=self._conversation(job),
-                    agents=self._agent_facts(),
-                )
+                try:
+                    decision = front.decide(
+                        job.human_text,
+                        active_tasks=active,
+                        completed_tasks=completed,
+                        conversation=self._conversation(job),
+                        agents=self._agent_facts(),
+                    )
+                except FrontUnavailableError as exc:
+                    job.front_ms = max(0, int(
+                        (time.perf_counter() - front_started) * 1000))
+                    job.front_actions = list(
+                        getattr(front, "last_action_history", []) or [])
+                    job.front_decision = {
+                        "error": str(exc),
+                        "raw_output": str(
+                            getattr(front, "last_raw_output", "") or ""),
+                    }
+                    self._interrupt_front(job, str(exc))
+                    return
                 job.front_ms = max(0, int(
                     (time.perf_counter() - front_started) * 1000))
                 job.front_thinking = self._thinking_for(
                     self.front_agent, "decision")
             job.front_intent = decision.intent
+            job.front_decision = decision.to_dict()
+            job.front_actions = list(
+                getattr(front, "last_action_history", []) or [])
             self._set_job(job, job.status)
 
             if decision.intent == FrontIntent.DIRECT_REPLY:
@@ -427,6 +465,11 @@ class AIEOSController:
                 self._bind_agent(aid, job, "MEMBER")
 
             mode = TaskMode.TEAM if members else TaskMode.SOLO
+            try:
+                self._resolve_brief_files(decision.brief)
+            except ValueError as exc:
+                self._fail(job, str(exc))
+                return
             created = self._create_task(
                 job, leader, members, plan, decision, mode=mode)
             if not created.get("ok"):
@@ -436,6 +479,12 @@ class AIEOSController:
             job.task_id = task_id
             self._bind_task_to_agents([leader, *members], task_id)
             self._set_job(job, JobStatus.RUNNING)
+            if decision.reply:
+                self._message(
+                    "front", decision.reply,
+                    job_id=job.job_id, task_id=task_id,
+                    duration_ms=self._job_duration_ms(job),
+                    thinking=job.front_thinking)
             detail = (
                 f"已选择成员 {', '.join(members)}" if members
                 else "独立执行")
@@ -495,17 +544,28 @@ class AIEOSController:
             return None
 
         def _front_think(prompt: str) -> str:
-            # 🔒 Front 只做入口判断：不注入 Agent 的身份 / 经济 /
-            #    Constitution，也不看自我模型。它的判断材料已经在 prompt 里。
+            # 🔒 Front 不注入 Agent 的身份 / 经济 / Constitution，
+            #    也不看自我模型。它的判断材料已经在 prompt 里。
             return agent.think(
                 prompt,
                 cognitive=False,
                 system=FRONT_SYSTEM_PROMPT,
             )
 
+        dispatcher = build_front_dispatcher(
+            workspace_of=self._workspace_of_agent,
+            drafts=self._front_drafts(),
+        )
+
+        def _execute(actions: List[Dict[str, Any]]) -> str:
+            return execute_front_actions(
+                dispatcher, actions, agent_id=self.front_agent)
+
         return FrontAgentRuntime(
             self.front_agent, _front_think,
-            inspect_fn=self._front_inspect_facts)
+            inspect_fn=self._front_inspect_facts,
+            execute_actions=_execute,
+            action_types=dispatcher.action_types)
 
     def _acquire_leader(self, job: WorkJob) -> Optional[str]:
         candidates = [
@@ -630,6 +690,12 @@ class AIEOSController:
         self._bind_agent(worker, job, "WORKER")
         self._set_job(job, JobStatus.RUNNING)
 
+        try:
+            self._resolve_brief_files(decision.brief)
+        except ValueError as exc:
+            self._fail(job, str(exc))
+            return worker, []
+
         created = self._create_solo_task(job, worker, decision)
         if not created.get("ok"):
             self._fail(job, created.get("message") or "Task 创建失败")
@@ -638,6 +704,12 @@ class AIEOSController:
         task_id = str(created["task_id"])
         job.task_id = task_id
         self._bind_task_to_agents([worker], task_id)
+        if decision.reply:
+            self._message(
+                "front", decision.reply,
+                job_id=job.job_id, task_id=task_id,
+                duration_ms=self._job_duration_ms(job),
+                thinking=job.front_thinking)
         self._message(
             "system",
             f"Agent {worker} 开始 Solo 执行；Task {task_id}。",
@@ -663,6 +735,48 @@ class AIEOSController:
         else:
             self._finish_work(job, front, task_id, result)
         return worker, []
+
+    def _resolve_brief_files(self, brief: Any) -> None:
+        """把 Front 的 from_private / draft_id 附件解析成真实 content。
+
+        🔒 只读 Front 自己的私有空间 / 草稿；跨 Agent 的默认无权读仍成立。
+        """
+        files = list(getattr(brief, "files", []) or [])
+        if not files:
+            return
+        workspace = self._workspace_of_agent(self.front_agent)
+        drafts = self._front_drafts()
+        resolved: List[Dict[str, str]] = []
+        for item in files:
+            if not isinstance(item, dict):
+                continue
+            path = str(item.get("path") or "").strip()
+            content = item.get("content")
+            if not isinstance(content, str):
+                source = str(item.get("from_private") or "").strip()
+                if source:
+                    if workspace is None:
+                        raise ValueError(
+                            f"Front 没有私有空间，无法读取附件 {source}")
+                    try:
+                        content = workspace.read_text(source)
+                    except Exception as exc:              # noqa: BLE001
+                        raise ValueError(
+                            f"Front 附件读取失败 {source}："
+                            f"{type(exc).__name__}: {exc}") from exc
+                else:
+                    draft_id = str(item.get("draft_id") or "").strip()
+                    if draft_id:
+                        read = drafts.read(self.front_agent, draft_id)
+                        if not read.get("ok"):
+                            raise ValueError(
+                                f"Front 草稿读取失败 {draft_id}："
+                                f"{read.get('message') or read.get('code')}")
+                        content = read.get("content")
+            if not isinstance(content, str):
+                raise ValueError(f"Front 附件 {path or '?'} 没有内容来源")
+            resolved.append({"path": path, "content": content})
+        brief.files = resolved
 
     def _create_solo_task(
         self,
@@ -1547,6 +1661,7 @@ class AIEOSController:
         task_id: str = "",
         duration_ms: Optional[int] = None,
         thinking: Optional[Dict[str, Any]] = None,
+        retryable: bool = False,
     ) -> None:
         with self._lock:
             self._messages.append({
@@ -1559,6 +1674,7 @@ class AIEOSController:
                     if duration_ms is not None else None),
                 "thinking": (
                     dict(thinking) if isinstance(thinking, dict) else None),
+                "retryable": bool(retryable),
                 "at": _now(),
             })
 
@@ -1592,7 +1708,7 @@ class AIEOSController:
                     if message.get("job_id") == job.job_id
                 ]
                 payload = {
-                    "job": job.to_dict(),
+                    "job": job.to_log_dict(),
                     "messages": messages,
                 }
             self.log_dir.mkdir(parents=True, exist_ok=True)
@@ -1611,6 +1727,38 @@ class AIEOSController:
             self._message(
                 "system", f"任务失败：{message}", job_id=job.job_id)
         self._write_job_log(job)
+
+    def _interrupt_front(self, job: WorkJob, message: str) -> None:
+        """Front 调用失败：可重试，不伪装成 clarify，也不创建 Task。"""
+        with self._lock:
+            job.status = JobStatus.INTERRUPTED
+            job.error = str(message)
+            job.retryable = True
+            self._touch(job)
+            self._message(
+                "front",
+                "这次 Front 调用失败了，没有创建任务。可以点重试，或把需求再发一次。\n\n"
+                f"原因：{message}",
+                job_id=job.job_id,
+                duration_ms=job.front_ms,
+                thinking=job.front_thinking,
+                retryable=True,
+            )
+        self._write_job_log(job)
+
+    def retry(self, job_id: str) -> str:
+        """用同一个 Human 输入重试一次 Front 调用。"""
+        with self._lock:
+            old = self._jobs.get(str(job_id))
+            if old is None:
+                raise ValueError(f"找不到 Job：{job_id}")
+            if not old.retryable and old.status not in (
+                    JobStatus.INTERRUPTED, JobStatus.FAILED):
+                raise ValueError("这个 Job 当前不需要重试")
+            text = str(old.human_text or "").strip()
+        if not text:
+            raise ValueError("原 Job 没有可重试的输入")
+        return self.submit(text)
 
     def _bind_agent(self, aid: str, job: WorkJob, role: str) -> None:
         with self._lock:
@@ -1667,6 +1815,19 @@ class AIEOSController:
             return self.rt.economy.agent(aid)
         except Exception:                                     # noqa: BLE001
             return None
+
+    def _workspace_of_agent(self, aid: str) -> Any:
+        agent = self._agent(aid)
+        return getattr(agent, "workspace", None)
+
+    def _front_drafts(self) -> TaskDraftStore:
+        if self._front_drafts_store is None:
+            # Front 没有 Task；用固定的 personal draft bucket。
+            self._front_drafts_store = TaskDraftStore(
+                task_id="front",
+                workspace_of=self._workspace_of_agent,
+            )
+        return self._front_drafts_store
 
     def _agent_has_brain(self, aid: str) -> bool:
         agent = self._agent(aid)
