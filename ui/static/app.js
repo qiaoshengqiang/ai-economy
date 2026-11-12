@@ -14,13 +14,6 @@
     agentsCount: $("agents-count"),
     tasks: $("tasks"),
     tasksCount: $("tasks-count"),
-    settingsBtn: $("settings-btn"),
-    settingsModal: $("settings-modal"),
-    settingsClose: $("settings-close"),
-    settingsCancel: $("settings-cancel"),
-    settingsSave: $("settings-save"),
-    frontSelect: $("front-select"),
-    maxTeams: $("max-teams"),
   };
 
   let state = null;
@@ -318,21 +311,6 @@
     });
   }
 
-  function renderSettings() {
-    if (!state) return;
-    const front = state.front_agent || "";
-    const options = (state.agents || []).map((agent) => agent.agent_id);
-    els.frontSelect.innerHTML = "";
-    options.forEach((id) => {
-      const option = document.createElement("option");
-      option.value = id;
-      option.textContent = id;
-      option.selected = id === front;
-      els.frontSelect.appendChild(option);
-    });
-    els.maxTeams.value = String(state.settings?.max_parallel_teams || 3);
-  }
-
   function render() {
     if (!state) return;
     els.frontBadge.textContent = `Front: ${state.front_agent || "—"}`;
@@ -342,8 +320,6 @@
     renderMessages(state.messages || []);
     renderAgents(state.agents);
     renderTasks(state.tasks);
-    // 设置弹窗打开时不要被轮询覆盖用户正在编辑的值。
-    if (els.settingsModal.hidden) renderSettings();
   }
 
   async function refresh() {
@@ -383,35 +359,6 @@
     }
   }
 
-  function openSettings() {
-    renderSettings();
-    els.settingsModal.hidden = false;
-  }
-
-  function closeSettings() {
-    els.settingsModal.hidden = true;
-  }
-
-  async function saveSettings() {
-    try {
-      const settings = await api("/api/settings", {
-        method: "POST",
-        body: JSON.stringify({
-          front_agent: els.frontSelect.value,
-          max_parallel_teams: Number(els.maxTeams.value || 3),
-        }),
-      });
-      state = state || {};
-      state.front_agent = settings.settings?.front_agent || els.frontSelect.value;
-      state.settings = settings.settings;
-      closeSettings();
-      await refresh();
-      showToast("设置已保存");
-    } catch (error) {
-      showToast(`保存失败：${error.message}`, true);
-    }
-  }
-
   /* events */
   els.submit.addEventListener("click", submitPrompt);
   els.prompt.addEventListener("keydown", (event) => {
@@ -420,14 +367,6 @@
       submitPrompt();
     }
   });
-  els.settingsBtn.addEventListener("click", openSettings);
-  els.settingsClose.addEventListener("click", closeSettings);
-  els.settingsCancel.addEventListener("click", closeSettings);
-  els.settingsSave.addEventListener("click", saveSettings);
-  els.settingsModal.addEventListener("click", (event) => {
-    if (event.target === els.settingsModal) closeSettings();
-  });
-
   refresh();
   setInterval(refresh, 1200);
 })();

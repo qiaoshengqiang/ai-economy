@@ -93,6 +93,16 @@ def _require_positive_number(value: Any, where: str) -> float:
     return float(value)
 
 
+def _optional_positive_int(value: Any, where: str) -> Optional[int]:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ConfigurationError(f"{where} 必须是整数，收到 {value!r}。")
+    if value <= 0:
+        raise ConfigurationError(f"{where} 必须 > 0，收到 {value!r}。")
+    return int(value)
+
+
 #: 疑似 secret 的形状（Guard 3 用）。
 #:
 #: 🔒 刻意只做**形状**判断，不做熵计算：
@@ -195,6 +205,12 @@ class ResolvedModel:
     profile: str
     model_id: str
     provider: ResolvedProvider
+    #: 模型总上下文窗口（输入 + 输出）。None = 未声明，由调用方决定。
+    context_window: Optional[int] = None
+    #: 模型默认最大输出 tokens。None = 未声明，由调用方决定。
+    max_output_tokens: Optional[int] = None
+    #: 是否支持隐藏推理 / reasoning。
+    supports_reasoning: bool = False
     source: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
@@ -203,6 +219,9 @@ class ResolvedModel:
                 "adapter": self.provider.adapter,
                 "base_url": self.provider.base_url,
                 "timeout_seconds": self.provider.timeout_seconds,
+                "context_window": self.context_window,
+                "max_output_tokens": self.max_output_tokens,
+                "supports_reasoning": self.supports_reasoning,
                 "source": self.source}
 
 
@@ -245,7 +264,11 @@ class ResolvedAgent:
     credential: ResolvedCredential
     temperature: float
     max_tokens: Optional[int]
-    system_prompt: str
+    #: 来自 model 的上下文窗口 / 默认输出上限；Agent 可覆盖 max_tokens。
+    context_window: Optional[int] = None
+    max_output_tokens: Optional[int] = None
+    supports_reasoning: bool = False
+    system_prompt: str = ""
     #: 其余**原样保留**的 Agent 配置段（economy / capabilities / negotiation /
     #: behavior / identity），迁移时不允许丢字段。
     raw: Mapping[str, Any] = field(default_factory=dict)
@@ -263,6 +286,9 @@ class ResolvedAgent:
             "credential_present": self.credential.present,
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
+            "context_window": self.context_window,
+            "max_output_tokens": self.max_output_tokens,
+            "supports_reasoning": self.supports_reasoning,
             "system_prompt_chars": len(self.system_prompt or ""),
             "source": self.source,
         }
@@ -356,6 +382,60 @@ CANONICAL_SECTIONS: Tuple[str, ...] = (
 #: canonical 的**标量**键（不是映射，不能当段处理）。
 CANONICAL_SCALARS: Tuple[str, ...] = ("version",)
 
+#: GUI 系统设置管理的 LLM 注册表段。它们从 `config/llm.yaml` 合并进来；
+#: 同一个段不允许同时出现在 config.yaml 与 llm.yaml。
+LLM_CONFIG_SECTIONS: Tuple[str, ...] = (
+    "providers", "models", "credentials",
+)
+
+
+def merge_llm_sections(
+    base: Mapping[str, Any],
+    llm: Mapping[str, Any],
+    *,
+    config_source: str = "config/config.yaml",
+    llm_source: str = "config/llm.yaml",
+) -> Dict[str, Any]:
+    """把 llm.yaml 的三段合并进 config.yaml，并拒绝重复定义。"""
+    merged = dict(base)
+    for key in llm:
+        if key not in ("version",) + LLM_CONFIG_SECTIONS:
+            raise ConfigurationError(
+                f"{llm_source} 包含未知段 {key!r}。"
+                f"只允许：{', '.join(LLM_CONFIG_SECTIONS)}。")
+    for section in LLM_CONFIG_SECTIONS:
+        if section in merged and section in llm:
+            raise ConfigurationError(
+                f"{section!r} 同时出现在 {config_source} 与 {llm_source}。\n"
+                f"同一事实只能有一个权威来源：请只保留 {llm_source} 里的定义。")
+        if section in llm:
+            merged[section] = llm[section]
+    if "version" in llm and "version" not in merged:
+        merged["version"] = llm["version"]
+    return merged
+
+
+def load_merged_raw_config(
+    path: Any, *, loader: Optional[Callable] = None,
+) -> Dict[str, Any]:
+    """读取配置文件；若同目录存在 `llm.yaml`，合并 LLM 注册表。
+
+    `llm.yaml` 是可选的：测试与一次性脚本仍然可以只传一份完整 config。
+    """
+    from pathlib import Path as _Path
+
+    p = _Path(path)
+    if loader is None:
+        from core.config import load_yaml
+        loader = load_yaml
+    data = dict(_require_mapping(loader(p), str(p)))
+    companion = p.with_name("llm.yaml")
+    if companion.exists():
+        llm = dict(_require_mapping(loader(companion), str(companion)))
+        data = merge_llm_sections(
+            data, llm, config_source=str(p), llm_source=str(companion))
+    return data
+
 #: 已被**合并进别处**的旧键。它们**不许再出现** ——
 #: 否则同一事实又会多出一份定义。
 #:
@@ -403,7 +483,8 @@ class ConfigLoader:
         if loader is None:
             from core.config import load_yaml           # 复用既有 loader
             loader = load_yaml
-        return cls(loader(p), source_file=str(p))
+        data = load_merged_raw_config(p, loader=loader)
+        return cls(data, source_file=str(p))
 
     # ---- 取段 ----
     def section(self, name: str) -> Dict[str, Any]:
@@ -761,11 +842,23 @@ class ConfigResolver:
                 f"{sorted((self.canonical.get('models') or {}))}")
         provider_name = _require_text(raw.get("provider"),
                                       f"models.{profile}.provider")
+        context_window = _optional_positive_int(
+            raw.get("context_window"), f"models.{profile}.context_window")
+        max_output_tokens = _optional_positive_int(
+            raw.get("max_output_tokens"), f"models.{profile}.max_output_tokens")
+        if (context_window is not None and max_output_tokens is not None
+                and max_output_tokens > context_window):
+            raise ConfigurationError(
+                f"models.{profile}.max_output_tokens ({max_output_tokens}) "
+                f"不能大于 context_window ({context_window})。")
         return ResolvedModel(
             profile=profile,
             model_id=_require_text(raw.get("model_id"),
                                    f"models.{profile}.model_id"),
             provider=self.provider(provider_name),
+            context_window=context_window,
+            max_output_tokens=max_output_tokens,
+            supports_reasoning=bool(raw.get("supports_reasoning", False)),
             source=self._src(f"models.{profile}"),
         )
 
@@ -815,6 +908,9 @@ class ConfigResolver:
             temperature=float(brain.get("temperature", 0.7)),
             max_tokens=(int(brain["max_tokens"])
                         if brain.get("max_tokens") is not None else None),
+            context_window=model.context_window,
+            max_output_tokens=model.max_output_tokens,
+            supports_reasoning=model.supports_reasoning,
             # 🔒 `.strip()` 不是装饰 —— 它保持与旧的
             #    `AgentConfig.system_prompt`（`core/config.py` 里也 strip）
             #    **逐字节一致**。

@@ -28,6 +28,11 @@ LOGS_DIR: Path = PROJECT_ROOT / "logs"
 TESTS_DIR: Path = PROJECT_ROOT / "tests"
 
 GLOBAL_CONFIG_FILE: Path = CONFIG_DIR / "config.yaml"
+#: GUI「系统设置」管理的 LLM 注册表（providers / models / credentials）。
+#: 它是这三段的唯一权威；config.yaml 不再保留副本。
+GLOBAL_LLM_CONFIG_FILE: Path = CONFIG_DIR / "llm.yaml"
+#: GUI「常规设置」管理的 Worker Roles。
+GLOBAL_WORKER_ROLES_FILE: Path = CONFIG_DIR / "worker_roles.yaml"
 ENV_FILE: Path = PROJECT_ROOT / ".env"
 
 

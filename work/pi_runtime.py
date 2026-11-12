@@ -145,8 +145,23 @@ class PiWorkRuntime:
             "openai": "https://api.openai.com",
         }.get(provider, "https://api.deepseek.com")
 
+    def _model_limits(self) -> tuple[int, int, bool]:
+        """模型上下文窗口 / 最大输出 / reasoning，来自 Agent Brain 的解析配置。"""
+        agent = self._agent()
+        settings = getattr(getattr(agent, "brain", None), "settings", None)
+        context_window = int(
+            getattr(settings, "context_window", None) or 128000)
+        max_output = int(
+            getattr(settings, "max_output_tokens", None) or 16384)
+        agent_max = getattr(settings, "max_tokens", None)
+        if agent_max:
+            max_output = min(max_output, int(agent_max))
+        reasoning = bool(getattr(settings, "supports_reasoning", True))
+        return context_window, max_output, reasoning
+
     def _write_pi_models(self, base_url: str, model: str) -> Path:
         directory = self.task_directory.aieos / "pi-agent"
+        context_window, max_output, reasoning = self._model_limits()
         directory.mkdir(parents=True, exist_ok=True)
         payload = {
             "$schema": "https://pi.dev/schemas/models.schema.json",
@@ -158,10 +173,10 @@ class PiWorkRuntime:
                     "models": [{
                         "id": model,
                         "name": f"AIEOS proxy / {model}",
-                        "reasoning": True,
+                        "reasoning": reasoning,
                         "input": ["text"],
-                        "contextWindow": 128000,
-                        "maxTokens": 16384,
+                        "contextWindow": context_window,
+                        "maxTokens": max_output,
                         "cost": {
                             "input": 0, "output": 0,
                             "cacheRead": 0, "cacheWrite": 0,

@@ -57,11 +57,36 @@ class _FakeController:
         self.retried.append(job_id)
         return "job_retry"
 
-    def update_settings(self, *, front_agent=None, max_parallel_teams=None):
+    def update_settings(self, *, front_agent=None, max_parallel_teams=None,
+                        max_solo_turns=None, pi_work_agents=None,
+                        disabled_agents=None):
         if front_agent:
             self.front = front_agent
             self.settings["front_agent"] = front_agent
+        if max_parallel_teams is not None:
+            self.settings["max_parallel_teams"] = max_parallel_teams
+        if max_solo_turns is not None:
+            self.settings["max_solo_turns"] = max_solo_turns
+        if pi_work_agents is not None:
+            self.settings["pi_work_agents"] = pi_work_agents
+        if disabled_agents is not None:
+            self.settings["disabled_agents"] = disabled_agents
         return self.settings
+
+    def settings_snapshot(self):
+        return {
+            "regular": self.settings,
+            "system": {"providers": {}, "models": {},
+                       "credentials": {}, "restart_required": False},
+            "roles": {"roles": []},
+            "agents": [],
+        }
+
+    def apply_system_settings(self, action, payload):
+        return {"action": action, "payload": payload, "restart_required": True}
+
+    def apply_worker_roles(self, action, payload):
+        return {"action": action, "payload": payload, "roles": []}
 
     def task_detail(self, task_id):
         if task_id != "task_ok":
@@ -152,6 +177,27 @@ def test_submit_and_settings_api(server):
     assert status == 200
     assert payload["job_id"] == "job_retry"
     assert fake.retried == ["job_failed"]
+
+
+def test_settings_snapshot_and_system_roles_api(server):
+    fake, base = server
+    status, body = _get(base + "/api/settings")
+    assert status == 200
+    assert json.loads(body)["regular"]["front_agent"] == "agent_a"
+
+    status, payload = _post(base + "/api/settings/system", {
+        "action": "provider.upsert",
+        "data": {"name": "x"},
+    })
+    assert status == 200
+    assert payload["system"]["action"] == "provider.upsert"
+
+    status, payload = _post(base + "/api/settings/roles", {
+        "action": "upsert",
+        "data": {"role_id": "x"},
+    })
+    assert status == 200
+    assert payload["roles"]["action"] == "upsert"
 
 
 def test_task_detail_api(server):

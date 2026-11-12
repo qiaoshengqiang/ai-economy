@@ -284,10 +284,15 @@ class Config:
 
 
 def load_global_config(config_path: Optional[Path] = None) -> Config:
-    """加载全局配置。"""
+    """加载全局配置。
+
+    `config/config.yaml` 与 `config/llm.yaml` 会在这里合并成同一份 canonical
+    视图；后者只包含 GUI 管理的 providers / models / credentials。
+    """
     load_env_file()
     path = config_path or GLOBAL_CONFIG_FILE
-    return Config(load_yaml(path), source=path)
+    from core.config_resolver import load_merged_raw_config
+    return Config(load_merged_raw_config(path), source=path)
 
 
 # ============================================================

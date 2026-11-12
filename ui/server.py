@@ -98,6 +98,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/state":
             self._send_json(self.controller.state())
             return
+        if path == "/api/settings":
+            self._send_json(self.controller.settings_snapshot())
+            return
         if path.startswith("/api/task/"):
             task_id = path[len("/api/task/"):].strip()
             if not task_id or not re.fullmatch(r"[A-Za-z0-9_.:-]+", task_id):
@@ -135,8 +138,27 @@ class Handler(BaseHTTPRequestHandler):
                 settings = self.controller.update_settings(
                     front_agent=payload.get("front_agent"),
                     max_parallel_teams=payload.get("max_parallel_teams"),
+                    max_solo_turns=payload.get("max_solo_turns"),
+                    pi_work_agents=payload.get("pi_work_agents"),
+                    disabled_agents=payload.get("disabled_agents"),
                 )
                 self._send_json({"ok": True, "settings": settings})
+                return
+            if path == "/api/settings/system":
+                data = payload.get("data")
+                if not isinstance(data, dict):
+                    data = {}
+                result = self.controller.apply_system_settings(
+                    str(payload.get("action") or ""), data)
+                self._send_json({"ok": True, "system": result})
+                return
+            if path == "/api/settings/roles":
+                data = payload.get("data")
+                if not isinstance(data, dict):
+                    data = {}
+                result = self.controller.apply_worker_roles(
+                    str(payload.get("action") or ""), data)
+                self._send_json({"ok": True, "roles": result})
                 return
         except Exception as exc:                              # noqa: BLE001
             self._send_json(
@@ -189,8 +211,13 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     from main import build_runtime
+    from core.paths import (
+        ENV_FILE, GLOBAL_CONFIG_FILE, GLOBAL_LLM_CONFIG_FILE,
+        GLOBAL_WORKER_ROLES_FILE,
+    )
     from ui.rounds import TaskRoundLog
     from work.controller import AIEOSController
+    from work.settings_admin import SystemConfigAdmin
 
     if args.db:
         db_path = Path(args.db).expanduser().resolve()
@@ -208,6 +235,12 @@ def main(argv=None) -> int:
     except Exception as exc:                                  # noqa: BLE001
         print(f"Tool run 清理失败（已忽略）：{exc}", flush=True)
 
+    system_admin = SystemConfigAdmin(
+        config_path=GLOBAL_CONFIG_FILE,
+        llm_path=GLOBAL_LLM_CONFIG_FILE,
+        env_path=ENV_FILE,
+        backup_dir=db_path.parent / "config_backups",
+    )
     controller = AIEOSController(
         runtime,
         front_agent=str(args.front_agent),
@@ -241,6 +274,9 @@ def main(argv=None) -> int:
             Path(args.export_dir).expanduser().resolve()
             if args.export_dir else (ROOT / "runs" / "exports").resolve()
         ),
+        worker_roles_path=GLOBAL_WORKER_ROLES_FILE,
+        worker_roles_backup_dir=db_path.parent / "config_backups",
+        system_settings=system_admin,
     )
     Handler.controller = controller
     httpd = ThreadingHTTPServer((args.host, int(args.port)), Handler)

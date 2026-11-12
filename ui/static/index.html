@@ -57,28 +57,175 @@
 
   <div id="toast" class="toast" hidden></div>
 
-  <div class="modal-backdrop" id="settings-modal" hidden>
-    <div class="modal">
-      <div class="panel-head">
-        <h2>设置</h2>
+  <div class="modal-backdrop settings-backdrop" id="settings-modal" hidden>
+    <div class="modal settings-modal">
+      <div class="settings-head">
+        <div>
+          <h2>设置</h2>
+          <span class="muted">系统设置需要重启；常规设置对新任务或当前会话生效。</span>
+        </div>
         <button class="icon-btn" id="settings-close">✕</button>
       </div>
-      <label class="field">
-        <span>Front Agent</span>
-        <select id="front-select"></select>
-      </label>
-      <label class="field">
-        <span>最大并行任务</span>
-        <input id="max-teams" type="number" min="1" max="8" />
-        <small class="muted">当前 GUI 进程内生效；重启后按启动参数重新创建。</small>
-      </label>
-      <div class="modal-actions">
-        <button class="icon-btn" id="settings-cancel">取消</button>
-        <button class="primary" id="settings-save">保存</button>
+
+      <div class="settings-body">
+        <nav class="settings-nav" id="settings-nav">
+          <div class="settings-group">系统设置</div>
+          <button type="button" data-pane="system-providers">服务商</button>
+          <button type="button" data-pane="system-models">模型</button>
+          <button type="button" data-pane="system-credentials">API 凭据</button>
+          <button type="button" data-pane="system-info">系统信息</button>
+          <div class="settings-group">常规设置</div>
+          <button type="button" data-pane="regular-runtime">运行</button>
+          <button type="button" data-pane="regular-agents">Agent</button>
+          <button type="button" data-pane="regular-roles">Worker Roles</button>
+        </nav>
+
+        <div class="settings-content">
+          <div class="settings-alert" id="system-restart-banner" hidden>
+            系统配置已修改，重启 UI 进程后生效。
+          </div>
+
+          <section class="settings-pane" data-pane="system-providers">
+            <div class="settings-pane-head">
+              <h3>服务商</h3>
+              <button type="button" class="icon-btn" id="provider-new">+ 新建</button>
+            </div>
+            <div class="settings-list" id="provider-list"></div>
+            <div class="settings-form">
+              <div class="form-grid">
+                <label class="field"><span>服务商 ID</span>
+                  <input id="provider-name" placeholder="deepseek" /></label>
+                <label class="field"><span>Adapter</span>
+                  <select id="provider-adapter"></select></label>
+                <label class="field"><span>Base URL</span>
+                  <input id="provider-base-url" placeholder="https://api.example.com" /></label>
+                <label class="field"><span>Timeout（秒）</span>
+                  <input id="provider-timeout" type="number" min="1" value="300" /></label>
+                <label class="field"><span>默认模型</span>
+                  <select id="provider-default-model"></select></label>
+                <label class="field wide"><span>高级 request（JSON，可空）</span>
+                  <textarea id="provider-request" rows="3" placeholder='{"max_tokens_field":"max_completion_tokens"}'></textarea></label>
+              </div>
+              <div class="form-actions">
+                <button type="button" class="primary" id="provider-save">保存服务商</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="settings-pane" data-pane="system-models" hidden>
+            <div class="settings-pane-head">
+              <h3>模型</h3>
+              <button type="button" class="icon-btn" id="model-new">+ 新建</button>
+            </div>
+            <div class="settings-list" id="model-list"></div>
+            <div class="settings-form">
+              <div class="form-grid">
+                <label class="field"><span>Model Profile</span>
+                  <input id="model-profile" placeholder="deepseek_chat" /></label>
+                <label class="field"><span>服务商</span>
+                  <select id="model-provider"></select></label>
+                <label class="field"><span>真实 Model ID</span>
+                  <input id="model-id" placeholder="deepseek-chat" /></label>
+                <label class="field"><span>上下文窗口</span>
+                  <input id="model-context" type="number" min="1" value="128000" /></label>
+                <label class="field"><span>最大输出 tokens</span>
+                  <input id="model-output" type="number" min="1" value="16384" /></label>
+                <label class="field check"><span>支持 reasoning</span>
+                  <input id="model-reasoning" type="checkbox" /></label>
+              </div>
+              <div class="form-actions">
+                <button type="button" class="primary" id="model-save">保存模型</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="settings-pane" data-pane="system-credentials" hidden>
+            <div class="settings-pane-head">
+              <h3>API 凭据</h3>
+              <button type="button" class="icon-btn" id="credential-new">+ 新建</button>
+            </div>
+            <div class="settings-list" id="credential-list"></div>
+            <div class="settings-form">
+              <div class="form-grid">
+                <label class="field"><span>凭据 Profile</span>
+                  <input id="credential-profile" placeholder="deepseek_key_c" /></label>
+                <label class="field"><span>环境变量名</span>
+                  <input id="credential-env" placeholder="DEEPSEEK_KEY_AGENT_C" /></label>
+                <label class="field wide"><span>API Key（只写，不回显）</span>
+                  <input id="credential-key" type="password" autocomplete="off"
+                    placeholder="留空表示不替换已有值" /></label>
+              </div>
+              <p class="muted">密钥只写入 .env；配置里只保存环境变量名。</p>
+              <div class="form-actions">
+                <button type="button" class="primary" id="credential-save">保存凭据</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="settings-pane" data-pane="system-info" hidden>
+            <div class="settings-pane-head"><h3>系统信息（只读）</h3></div>
+            <div class="settings-list" id="system-info"></div>
+          </section>
+
+          <section class="settings-pane" data-pane="regular-runtime" hidden>
+            <div class="settings-pane-head"><h3>运行</h3></div>
+            <div class="settings-form">
+              <div class="form-grid">
+                <label class="field"><span>Front Agent</span>
+                  <select id="front-select"></select></label>
+                <label class="field"><span>最大并行任务</span>
+                  <input id="max-teams" type="number" min="1" max="8" /></label>
+                <label class="field"><span>单任务最大轮次</span>
+                  <input id="max-solo-turns" type="number" min="1" max="200" /></label>
+              </div>
+              <div class="form-actions">
+                <button type="button" class="primary" id="runtime-save">保存运行设置</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="settings-pane" data-pane="regular-agents" hidden>
+            <div class="settings-pane-head"><h3>Agent</h3></div>
+            <p class="muted">引擎与启停对新任务生效；运行中的任务不受影响。
+              模型 / 凭据来自系统设置，此处只读。</p>
+            <div class="settings-list" id="agent-settings-list"></div>
+            <div class="form-actions">
+              <button type="button" class="primary" id="agents-save">保存 Agent 设置</button>
+            </div>
+          </section>
+
+          <section class="settings-pane" data-pane="regular-roles" hidden>
+            <div class="settings-pane-head">
+              <h3>Worker Roles</h3>
+              <button type="button" class="icon-btn" id="role-new">+ 新建角色</button>
+            </div>
+            <div class="settings-list" id="role-list"></div>
+            <div class="settings-form">
+              <div class="form-grid">
+                <label class="field"><span>Role ID</span>
+                  <input id="role-id" placeholder="game_developer" /></label>
+                <label class="field"><span>名称</span>
+                  <input id="role-name" placeholder="游戏开发者" /></label>
+                <label class="field"><span>Front 可见描述</span>
+                  <input id="role-description" placeholder="一句话说明这个角色适合什么任务" /></label>
+                <label class="field wide"><span>Worker Prompt</span>
+                  <textarea id="role-prompt" rows="6"></textarea></label>
+                <label class="field wide"><span>额外总结项（每行一项）</span>
+                  <textarea id="role-summary" rows="3"></textarea></label>
+              </div>
+              <div class="form-actions">
+                <button type="button" class="primary" id="role-save">保存角色</button>
+                <button type="button" class="icon-btn" id="role-preview-btn">预览 Prompt</button>
+              </div>
+              <pre class="role-preview" id="role-preview" hidden></pre>
+            </div>
+          </section>
+        </div>
       </div>
     </div>
   </div>
 
   <script src="/static/app.js"></script>
+  <script src="/static/settings.js"></script>
 </body>
 </html>

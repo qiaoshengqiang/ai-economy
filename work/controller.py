@@ -60,9 +60,7 @@ from work.front_actions import (
 )
 from work.pi_runtime import PiWorkRuntime
 from work.task_directory import TaskDirectoryManager
-from work.worker_roles import (
-    render_role_prompt, resolve_role, role_catalog,
-)
+from work.worker_roles import WorkerRoleError, WorkerRoleStore
 from work.plan import WorkPlan, parse_work_plan
 from work.prompt import WORK_SYSTEM_PROMPT, build_lead_plan_prompt
 from work.roles import WorkContext, WorkRole
@@ -200,6 +198,9 @@ class AIEOSController:
         log_dir: Optional[Path] = None,
         round_log: Any = None,
         export_root: Optional[Path] = None,
+        worker_roles_path: Optional[Path] = None,
+        worker_roles_backup_dir: Optional[Path] = None,
+        system_settings: Any = None,
     ) -> None:
         self.rt = runtime
         self.front_agent = str(front_agent)
@@ -215,6 +216,8 @@ class AIEOSController:
             str(item).strip() for item in (pi_work_agents or ())
             if str(item).strip()
         }
+        #: 停用的 Agent 不再接新任务；运行中的任务继续完成。
+        self.disabled_agents: set[str] = set()
         self.pi_cli_path = str(pi_cli_path or "pi")
         self.pi_provider = str(pi_provider or "")
         self.pi_model = str(pi_model or "")
@@ -228,6 +231,11 @@ class AIEOSController:
             Path(export_root).expanduser().resolve()
             if export_root else Path("runs/exports").resolve()
         )
+        self.worker_roles = WorkerRoleStore(
+            worker_roles_path, backup_dir=worker_roles_backup_dir)
+        #: 系统设置（providers/models/credentials）的写入口。
+        #: 由组合根注入；测试不注入时系统设置页只读。
+        self.system_settings = system_settings
         if self.log_dir is not None:
             self.log_dir.mkdir(parents=True, exist_ok=True)
 
@@ -291,12 +299,31 @@ class AIEOSController:
         max_teams = data.get("max_parallel_teams")
         if isinstance(max_teams, int) and max_teams > 0:
             self.max_parallel_teams = max_teams
+        max_turns = data.get("max_solo_turns")
+        if isinstance(max_turns, int) and max_turns > 0:
+            self.max_solo_turns = max_turns
+        pi_agents = data.get("pi_work_agents")
+        if isinstance(pi_agents, list):
+            self.pi_work_agents = {
+                str(item).strip() for item in pi_agents
+                if str(item).strip() in self._agent_ids
+            }
+        disabled = data.get("disabled_agents")
+        if isinstance(disabled, list):
+            self.disabled_agents = {
+                str(item).strip() for item in disabled
+                if str(item).strip() in self._agent_ids
+                and str(item).strip() != self.front_agent
+            }
 
     def update_settings(
         self,
         *,
         front_agent: Optional[str] = None,
         max_parallel_teams: Optional[int] = None,
+        max_solo_turns: Optional[int] = None,
+        pi_work_agents: Optional[List[str]] = None,
+        disabled_agents: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         with self._lock:
             if front_agent is not None:
@@ -315,6 +342,32 @@ class AIEOSController:
                 if value < 1 or value > 8:
                     raise ValueError("max_parallel_teams 必须在 1..8")
                 self.max_parallel_teams = value
+            if max_solo_turns is not None:
+                value = int(max_solo_turns)
+                if value < 1 or value > 200:
+                    raise ValueError("max_solo_turns 必须在 1..200")
+                self.max_solo_turns = value
+            if pi_work_agents is not None:
+                wanted = {
+                    str(item).strip() for item in pi_work_agents
+                    if str(item).strip()
+                }
+                unknown = wanted - set(self._agent_ids)
+                if unknown:
+                    raise ValueError(
+                        f"未知 Agent：{sorted(unknown)}")
+                self.pi_work_agents = wanted
+            if disabled_agents is not None:
+                wanted = {
+                    str(item).strip() for item in disabled_agents
+                    if str(item).strip()
+                }
+                unknown = wanted - set(self._agent_ids)
+                if unknown:
+                    raise ValueError(f"未知 Agent：{sorted(unknown)}")
+                if self.front_agent in wanted:
+                    raise ValueError("Front Agent 不能被停用")
+                self.disabled_agents = wanted
             self._persist_settings()
             self._configure_front_brain()
             self._notify()
@@ -325,7 +378,82 @@ class AIEOSController:
             "front_agent": self.front_agent,
             "max_parallel_teams": self.max_parallel_teams,
             "max_agents_per_team": self.max_agents_per_team,
+            "max_solo_turns": self.max_solo_turns,
+            "pi_work_agents": sorted(self.pi_work_agents),
+            "disabled_agents": sorted(self.disabled_agents),
         }
+
+    # ------------------------------------------------------------
+    # 设置页：系统设置 / Worker Roles
+    # ------------------------------------------------------------
+    def settings_snapshot(self) -> Dict[str, Any]:
+        system = {}
+        if self.system_settings is not None:
+            try:
+                system = self.system_settings.snapshot()
+            except Exception as exc:                          # noqa: BLE001
+                system = {"error": f"{type(exc).__name__}: {exc}"}
+        return {
+            "regular": self.settings_dict(),
+            "system": system,
+            "roles": self.worker_roles.to_dict(),
+            "agents": self._agent_settings_facts(),
+        }
+
+    def _agent_settings_facts(self) -> List[Dict[str, Any]]:
+        facts: List[Dict[str, Any]] = []
+        from core.config_resolver import ConfigLoader
+        from core.paths import GLOBAL_CONFIG_FILE
+        resolved_agents = {}
+        try:
+            config = ConfigLoader.from_file(GLOBAL_CONFIG_FILE).canonical
+            for aid, raw in (config.get("agents") or {}).items():
+                brain = (raw or {}).get("brain") or {}
+                resolved_agents[aid] = {
+                    "model": str(brain.get("model") or ""),
+                    "credential": str(brain.get("credential") or ""),
+                }
+        except Exception:                                     # noqa: BLE001
+            resolved_agents = {}
+        for aid in self._agent_ids:
+            info = resolved_agents.get(aid, {})
+            facts.append({
+                "agent_id": aid,
+                "enabled": aid not in self.disabled_agents,
+                "is_front": aid == self.front_agent,
+                "engine": "pi" if self._pi_enabled(aid) else "solo",
+                "model": info.get("model", ""),
+                "credential": info.get("credential", ""),
+                "status": self.availability.state(aid),
+                "has_brain": self._agent_has_brain(aid),
+            })
+        return facts
+
+    def apply_system_settings(
+        self, action: str, payload: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        if self.system_settings is None:
+            raise ValueError("系统设置写入未启用")
+        with self._lock:
+            result = self.system_settings.apply(action, payload or {})
+        self._notify()
+        return result
+
+    def apply_worker_roles(
+        self, action: str, payload: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        payload = dict(payload or {})
+        with self._lock:
+            if action == "upsert":
+                self.worker_roles.upsert(payload)
+            elif action == "archive":
+                self.worker_roles.archive(str(payload.get("role_id") or ""))
+            elif action == "reset":
+                self.worker_roles.reset(str(payload.get("role_id") or ""))
+            else:
+                raise WorkerRoleError(f"未知角色动作：{action!r}")
+        self._notify()
+        return self.worker_roles.to_dict()
 
     def _persist_settings(self) -> None:
         if self.settings_path is None:
@@ -600,7 +728,7 @@ class AIEOSController:
         return FrontAgentRuntime(
             self.front_agent, _front_think,
             inspect_fn=self._front_inspect_facts,
-            roles=role_catalog(),
+            roles=self.worker_roles.catalog(),
             execute_actions=_execute,
             action_types=dispatcher.action_types)
 
@@ -687,7 +815,9 @@ class AIEOSController:
     def _acquire_leader(self, job: WorkJob) -> Optional[str]:
         candidates = [
             aid for aid in self._agent_ids
-            if aid != self.front_agent and self._agent_has_brain(aid)
+            if aid != self.front_agent
+            and aid not in self.disabled_agents
+            and self._agent_has_brain(aid)
         ]
         with self._condition:
             while not self._closed:
@@ -703,7 +833,9 @@ class AIEOSController:
         """Solo 模式：等待一个空闲 Agent 承接整个 Task。"""
         candidates = [
             aid for aid in self._agent_ids
-            if aid != self.front_agent and self._agent_has_brain(aid)
+            if aid != self.front_agent
+            and aid not in self.disabled_agents
+            and self._agent_has_brain(aid)
         ]
         with self._condition:
             while not self._closed:
@@ -723,6 +855,7 @@ class AIEOSController:
                 job, f"preferred_agent_is_front: {agent_id}")
             return None
         if (agent_id not in self._agent_ids
+                or agent_id in self.disabled_agents
                 or not self._agent_has_brain(agent_id)):
             self._fail(
                 job, f"preferred_agent_unavailable: {agent_id}")
@@ -744,6 +877,7 @@ class AIEOSController:
                     "FRONT" if aid == self.front_agent else "WORKER"),
                 "can_work": (
                     aid != self.front_agent
+                    and aid not in self.disabled_agents
                     and self._agent_has_brain(aid)),
             })
         return facts
@@ -794,7 +928,7 @@ class AIEOSController:
         front: Any,
     ) -> tuple[str, List[str]]:
         """Front handoff → 一个 Agent → SOLO Task → SoloWorkRuntime。"""
-        role = resolve_role(getattr(decision, "role", ""))
+        role = self.worker_roles.resolve(getattr(decision, "role", ""))
         if role is None:
             self._fail(
                 job,
@@ -804,7 +938,7 @@ class AIEOSController:
         decision.role = role.role_id
         if isinstance(job.front_decision, dict):
             job.front_decision["role"] = role.role_id
-        role_prompt = render_role_prompt(role)
+        role_prompt = self.worker_roles.render(role)
         preferred = str(
             getattr(decision, "preferred_agent", "") or "").strip()
         if preferred:
@@ -1142,7 +1276,7 @@ class AIEOSController:
             acceptance = getattr(task, "acceptance", None) or {}
             if isinstance(acceptance, dict):
                 role_id = str(acceptance.get("role") or "").strip()
-        role = resolve_role(role_id)
+        role = self.worker_roles.resolve(role_id, include_archived=True)
         if role is None:
             self._fail(
                 job,
@@ -1151,7 +1285,7 @@ class AIEOSController:
         decision.role = role.role_id
         if isinstance(job.front_decision, dict):
             job.front_decision["role"] = role.role_id
-        role_prompt = render_role_prompt(role)
+        role_prompt = self.worker_roles.render(role)
 
         if self.solo_only and task.mode != TaskMode.SOLO:
             self._reply_direct(
@@ -1587,6 +1721,7 @@ class AIEOSController:
                     "role": role,
                     "task_id": task.get("task_id", ""),
                     "has_brain": self._agent_has_brain(aid),
+                    "enabled": aid not in self.disabled_agents,
                 })
             jobs = [
                 self._jobs[jid].to_dict()
