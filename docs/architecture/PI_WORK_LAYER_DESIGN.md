@@ -53,6 +53,9 @@ tasks/<task_id>/
 - 每个 Task 一个 Pi RPC 进程；
 - `--provider` / `--model` 来自 Agent Brain（可覆盖）；
 - 原生 `read/write/edit/bash`，`--tools read,write,edit,bash,grep,find,ls`；
+- `--no-skills`：不加载用户全局 skills（网文/写作等与 Work 无关的技能）；
+- `--no-context-files`：不加载项目 `AGENTS.md` / `CLAUDE.md`；
+  只保留 Pi 基础提示 + AIEOS Work addendum；
 - `--session-dir tasks/<id>/.aieos/pi-session` + `--session-id`；
 - Agent credential 只通过子进程环境变量传入，不写日志；
 - `agent_settled` 视为本次 Pi run 结束；

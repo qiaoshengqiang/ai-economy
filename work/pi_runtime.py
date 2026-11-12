@@ -54,6 +54,7 @@ class PiWorkRuntime:
         use_llm_proxy: bool = True,
         upstream_base_url: str = "",
         role_prompt: str = "",
+        extra_args: Optional[List[str]] = None,
     ) -> None:
         if task.mode != TaskMode.SOLO:
             raise ValueError(
@@ -72,6 +73,12 @@ class PiWorkRuntime:
         self.use_llm_proxy = bool(use_llm_proxy)
         self.upstream_base_url = str(upstream_base_url or "")
         self.role_prompt = str(role_prompt or "").strip()
+        # Work 只加载 AIEOS 自己的角色/任务上下文：
+        #   --no-skills        不加载用户全局 skills（网文/写作等与任务无关）
+        #   --no-context-files 不加载项目 AGENTS.md / CLAUDE.md
+        self.extra_args = list(
+            extra_args if extra_args is not None
+            else ["--no-skills", "--no-context-files"])
         self.lifecycle = WorkLifecycle(runtime.tasks)
         self.memory = PiMemoryBridge(
             runtime,
@@ -274,6 +281,7 @@ class PiWorkRuntime:
                     system_prompt=system_prompt,
                     session_dir=self.task_directory.session_dir,
                     session_id=task.task_id,
+                    extra_args=self.extra_args,
                 )
                 run = client.run(
                     task.description or f"Task {task.task_id}",

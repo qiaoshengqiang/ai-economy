@@ -190,6 +190,7 @@ def test_pi_work_runtime_completes_and_ingests_memory(db, monkeypatch, tmp_path)
     assert result.actions == 1
     assert result.summary == "已写出 hello.txt"
     assert "ROLE-MARKER" in runner._system_prompt("")
+    assert runner.extra_args == ["--no-skills", "--no-context-files"]
     assert "hello.txt" in result.artifacts
     assert directory.manifest()
     assert working.updated is not None

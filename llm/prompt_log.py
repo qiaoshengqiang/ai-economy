@@ -74,15 +74,18 @@ def _normalize_messages(messages: Any) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     for item in items:
         if isinstance(item, dict):
-            out.append({
-                "role": str(item.get("role") or "user"),
-                "content": item.get("content"),
-            })
+            # 保留完整消息：assistant.tool_calls / tool.tool_call_id /
+            # name / content blocks 都是「它到底做了什么」的证据。
+            out.append(dict(item))
             continue
-        out.append({
-            "role": str(getattr(item, "role", "") or "user"),
-            "content": getattr(item, "content", None),
-        })
+        data: Dict[str, Any] = {}
+        for attr in ("role", "content", "tool_calls", "tool_call_id",
+                     "name", "sections"):
+            if hasattr(item, attr):
+                data[attr] = getattr(item, attr)
+        if not data:
+            data = {"role": "user", "content": str(item)}
+        out.append(data)
     return out
 
 

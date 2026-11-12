@@ -83,3 +83,32 @@ def test_brain_logs_final_messages_and_system(tmp_path):
     assert record["phase"] == "work"
     assert record["system"] == "SYSTEM-MARKER"
     assert record["messages"][0]["content"] == "USER-MARKER"
+
+
+def test_prompt_log_preserves_tool_calls(tmp_path):
+    prompt_log.configure(True, tmp_path)
+    try:
+        prompt_log.record(
+            "agent_c",
+            phase="pi",
+            messages=[
+                {"role": "assistant", "content": None,
+                 "tool_calls": [{
+                     "id": "call_1",
+                     "type": "function",
+                     "function": {"name": "write", "arguments": "{}"},
+                 }]},
+                {"role": "tool", "tool_call_id": "call_1",
+                 "name": "write", "content": "ok"},
+            ],
+            task_id="task_1",
+        )
+    finally:
+        prompt_log.configure(False, None)
+
+    record = json.loads(
+        next(tmp_path.glob("prompts-*.jsonl")).read_text(
+            "utf-8").splitlines()[0])
+    assistant = record["messages"][0]
+    assert assistant["tool_calls"][0]["function"]["name"] == "write"
+    assert record["messages"][1]["tool_call_id"] == "call_1"

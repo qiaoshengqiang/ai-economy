@@ -141,6 +141,8 @@ runs/ui/prompts/prompts-YYYY-MM-DD.jsonl
 ```
 
 - 只记录输入，不记录响应；
+- 保留完整消息结构：`content`、`tool_calls`、`tool_call_id`、`name`；
+  因此能看到 assistant 到底调用了什么工具，而不只是 tool result；
 - 不记录 API key / Authorization；
 - 默认关闭；测试完应在设置页关闭；
 - 写日志失败不影响模型调用。
