@@ -353,6 +353,13 @@ handoff 可以携带你在 `brief.files` 里准备好的文件：
 ========== 其他上下文 ==========
 {context or "（无）"}
 {error_text}
+========== 交付模式（work_profile） ==========
+- direct：单文件 / 单次操作，不需要运行程序或浏览器验证；
+- standard：一个可运行或可检查的交付物，需要一次工程验证；
+- creative_product：可交互产品、多文件、多模块、玩法/视觉/交互，需要真实运行验证。
+无法判断时选 standard，不要默认 direct。
+Role 只是弱信号，不要仅凭 role 判断。
+
 ========== 意图 ==========
 1. direct_reply —— 直接回答。
    {{"intent":"direct_reply","reply":"...","reason":"..."}}
@@ -365,6 +372,7 @@ handoff 可以携带你在 `brief.files` 里准备好的文件：
    {{"intent":"handoff",
      "task_text":"...",
      "role":"worker 角色 id 之一",
+     "work_profile":"direct|standard|creative_product",
      "preferred_agent":"optional agent_id",
      "brief":{{"goal":"...","deliverables":["..."],
               "constraints":["..."],"acceptance_expectations":["..."],
@@ -373,7 +381,9 @@ handoff 可以携带你在 `brief.files` 里准备好的文件：
      "reply_style":"...","reason":"..."}}
 
 3. rework —— 修改一个已完成的 Task。
-   {{"intent":"rework","task_id":"...","reply":"...","reason":"..."}}
+   rework_scope：fix / enhance / redesign。
+   {{"intent":"rework","task_id":"...","rework_scope":"enhance",
+     "reply":"...","reason":"..."}}
 
 4. follow_up —— 继续一个进行中 / 已中断的 Task。
    {{"intent":"follow_up","task_id":"...","reply":"...","reason":"..."}}

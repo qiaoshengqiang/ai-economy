@@ -156,6 +156,10 @@ class FrontDecision:
     preferred_agent: str = ""
     #: handoff：任务级专业角色（见 work.worker_roles）。
     role: str = ""
+    #: handoff：交付模式 direct / standard / creative_product。
+    work_profile: str = "standard"
+    #: rework：返工范围 fix / enhance / redesign。
+    rework_scope: str = ""
     confidence: float = 1.0
     reason: str = ""
     #: 产生这个决定的模型原始输出（可审计，不参与逻辑）。
@@ -191,6 +195,8 @@ class FrontDecision:
             "reply_style": self.reply_style,
             "preferred_agent": self.preferred_agent,
             "role": self.role,
+            "work_profile": self.work_profile,
+            "rework_scope": self.rework_scope,
             "confidence": self.confidence,
             "reason": self.reason,
             "raw_output": self.raw_output,

@@ -58,6 +58,8 @@ class PiWorkRuntime:
         extra_args: Optional[List[str]] = None,
         phase_plan: Optional[List[str]] = None,
         thinking: str = "auto",
+        work_profile: str = "",
+        rework_scope: str = "",
     ) -> None:
         if task.mode != TaskMode.SOLO:
             raise ValueError(
@@ -84,8 +86,16 @@ class PiWorkRuntime:
             else ["--no-skills", "--no-context-files"])
         self.phase_plan = list(
             phase_plan or ["prototype", "engineering", "evolution"])
+        acceptance = getattr(task, "acceptance", None) or {}
+        self.work_profile = str(
+            work_profile
+            or (acceptance.get("work_profile") if isinstance(acceptance, dict) else "")
+            or "standard").strip().lower()
+        self.rework_scope = str(rework_scope or "").strip().lower()
         self.thinking = str(thinking or "auto").strip().lower()
         self._work_state: Dict[str, Any] = {}
+        self._resumed = False
+        self._resume_reason = ""
         self.lifecycle = WorkLifecycle(runtime.tasks)
         self.memory = PiMemoryBridge(
             runtime,
@@ -217,12 +227,42 @@ class PiWorkRuntime:
     # Work phases
     # ------------------------------------------------------------
     _PHASE_LABELS = {
+        "direct": "直接完成",
         "prototype": "原型生成",
         "engineering": "实现验证",
         "evolution": "持续迭代",
     }
     _THINKING_ORDER = (
         "max", "xhigh", "high", "medium", "low", "minimal", "off")
+
+    def _phase_plan_for_run(
+        self, state: Dict[str, Any],
+    ) -> tuple[List[str], bool, str]:
+        """返回 (phase_plan, resumed, resume_reason)。"""
+        phases = list(self.phase_plan)
+        known = ["direct"] + [p for p in phases if p != "direct"]
+        phase = str(state.get("phase") or "")
+        status = str(state.get("phase_status") or state.get("status") or "")
+        state_iter = int(state.get("iteration") or 0)
+        if (phase in known and status != "complete"
+                and state_iter == int(self.task.iteration or 1)):
+            return known[known.index(phase):], True, (
+                str(state.get("resume_reason") or "task_resume"))
+        if state_iter and int(self.task.iteration or 1) > state_iter:
+            scope = self.rework_scope or "enhance"
+            plan = {
+                "fix": ["direct"],
+                "enhance": ["engineering", "evolution"],
+                "redesign": ["prototype", "engineering", "evolution"],
+            }.get(scope, ["engineering", "evolution"])
+            return plan, True, f"rework:{scope}"
+        profile = self.work_profile or "standard"
+        plan = {
+            "direct": ["direct"],
+            "standard": ["prototype", "engineering"],
+            "creative_product": ["prototype", "engineering", "evolution"],
+        }.get(profile, ["prototype", "engineering"])
+        return plan, False, ""
 
     def _phase_thinking(self, phase: str) -> str:
         levels = tuple(self._model_limits()[3])
@@ -253,7 +293,9 @@ class PiWorkRuntime:
             return pick("max")
         if self.thinking and self.thinking != "auto":
             return pick(self.thinking)
-        defaults = {"engineering": "high", "evolution": "medium"}
+        defaults = {
+            "direct": "high", "engineering": "high", "evolution": "medium",
+        }
         return pick(defaults.get(phase, "medium"))
 
     def _minimal_system_prompt(self) -> str:
@@ -283,6 +325,50 @@ Task Workspace。不要使用 AIEOS Shared Context；本 Work 任务不提供它
             return text[:limit] + "\n…（已截断）"
         return text
 
+    def _write_task_doc(self) -> None:
+        """维护跨阶段 / 跨迭代的任务文档。"""
+        state = self._work_state or {}
+        files = self.task_directory.list_files()
+        history = state.get("history") or []
+        history_lines = [
+            f"- {item.get('phase')}: {item.get('status')} "
+            f"(thinking={item.get('thinking')})"
+            for item in history[-12:]
+        ] or ["- （还没有阶段历史）"]
+        prototype = self._bounded_text("PROTOTYPE.md", 2500)
+        engineering = self._bounded_text("ENGINEERING.md", 2500)
+        open_issues = state.get("open_issues") or []
+        issue_lines = [f"- {item}" for item in open_issues] or ["- （暂无）"]
+        file_lines = [f"- {item['path']}" for item in files] or ["- （空）"]
+        content = f"""# 任务文档
+
+## 任务目标
+{self.task.description or ''}
+
+## 当前状态
+- iteration: {state.get('iteration', self.task.iteration)}
+- phase: {state.get('phase', '')}（{state.get('phase_label', '')}）
+- status: {state.get('status', '')}
+- thinking: {state.get('thinking', '')}
+- updated_at: {state.get('updated_at', '')}
+
+## 迭代 / 阶段历史
+{chr(10).join(history_lines)}
+
+## 设计意图
+{prototype or '（还没有 PROTOTYPE.md）'}
+
+## 工程记录
+{engineering or '（还没有 ENGINEERING.md）'}
+
+## 未解决问题
+{chr(10).join(issue_lines)}
+
+## 当前文件
+{chr(10).join(file_lines)}
+"""
+        self.task_directory.write_text("TASK_DOC.md", content)
+
     def _environment_facts(self, phase: str) -> str:
         files = self.task_directory.list_files()
         lines = [f"workspace: {self.task_directory.workspace}"]
@@ -297,6 +383,20 @@ Task Workspace。不要使用 AIEOS Shared Context；本 Work 任务不提供它
         else:
             lines.append("当前 Workspace 为空。")
         lines.append("可用工具：read / write / edit / bash / grep / find / ls。")
+        if self._resumed:
+            history = self._work_state.get("history") or []
+            latest = history[-1] if history else {}
+            lines.append("\n========== 恢复简报 ==========")
+            lines.append(
+                f"当前不是从头开始。resume_reason={self._resume_reason}；"
+                f"上次阶段={latest.get('phase', '?')}；"
+                f"上次状态={latest.get('status', '?')}。")
+            lines.append(
+                "先确认当前文件和运行状态，再从现有成果继续；"
+                "不要重建已经存在的原型或重复已完成的工作。")
+        task_doc = self._bounded_text("TASK_DOC.md", 4000)
+        if task_doc:
+            lines.append("\n========== TASK_DOC.md ==========\n" + task_doc)
         if phase in ("engineering", "evolution"):
             prototype = self._bounded_text("PROTOTYPE.md")
             if prototype:
@@ -310,6 +410,17 @@ Task Workspace。不要使用 AIEOS Shared Context；本 Work 任务不提供它
     def _phase_prompt(self, phase: str, memory_context: str) -> str:
         task_text = self.task.description or f"Task {self.task.task_id}"
         env = self._environment_facts(phase)
+        if phase == "direct":
+            return f"""========== 任务 ==========
+{task_text}
+
+========== 环境事实 ==========
+{env}
+
+直接完成这个任务。不要引入不必要的阶段产出或额外文件。
+完成时在 Task Workspace 写 `RESULT.md`，说明交付内容、文件路径和验证情况。
+最后一行输出 `TASK_COMPLETE`。
+"""
         if phase == "prototype":
             return f"""========== 任务 ==========
 {task_text}
@@ -385,16 +496,28 @@ Task Workspace。不要使用 AIEOS Shared Context；本 Work 任务不提供它
                 "at": datetime.now(timezone.utc).isoformat(),
             })
             history = history[-20:]
+        attempt = int(self._work_state.get("attempt") or 0)
+        if status == "running":
+            attempt += 1
         self._work_state = {
+            "iteration": int(self.task.iteration or 1),
             "phase": phase,
             "phase_label": self._PHASE_LABELS.get(phase, phase),
             "status": status,
+            "phase_status": status,
+            "attempt": attempt,
             "thinking": thinking,
+            "resume_reason": self._resume_reason,
+            "last_error": (
+                self._work_state.get("last_error") or ""
+                if status != "failed"
+                else str(self._work_state.get("last_error") or "")),
             "open_issues": list(self._work_state.get("open_issues") or []),
             "history": history,
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
         self.task_directory.write_json("work_state.json", self._work_state)
+        self._write_task_doc()
 
     def _ensure_phase_artifact(
         self, name: str, events: List[Dict[str, Any]], title: str,
@@ -416,7 +539,8 @@ Task Workspace。不要使用 AIEOS Shared Context；本 Work 任务不提供它
     def _prototype_ready(self, events: List[Dict[str, Any]]) -> bool:
         artifacts = [
             item for item in self.task_directory.list_files()
-            if item.get("path") not in ("PROTOTYPE.md", "RESULT.md")
+            if item.get("path") not in (
+                "TASK_DOC.md", "PROTOTYPE.md", "ENGINEERING.md", "RESULT.md")
         ]
         if artifacts:
             return True
@@ -465,6 +589,11 @@ Task Workspace。不要使用 AIEOS Shared Context；本 Work 任务不提供它
                         self._work_state = loaded
                 except (OSError, ValueError):
                     self._work_state = {}
+            phase_plan, resumed, resume_reason = self._phase_plan_for_run(
+                self._work_state)
+            self._resume_reason = resume_reason
+            self._resumed = resumed
+            self._write_task_doc()
             all_events: List[Dict[str, Any]] = []
             phase_runs: List[Dict[str, Any]] = []
             all_stderr: List[str] = []
@@ -508,7 +637,7 @@ Task Workspace。不要使用 AIEOS Shared Context；本 Work 任务不提供它
                     client_provider = provider
                     client_model = model
 
-                for phase in self.phase_plan:
+                for phase in phase_plan:
                     thinking = self._phase_thinking(phase)
                     prompt = self._phase_prompt(phase, memory_context)
                     self._write_work_state(
@@ -581,10 +710,12 @@ Task Workspace。不要使用 AIEOS Shared Context；本 Work 任务不提供它
                 "phase": "complete",
                 "phase_label": "已完成",
                 "status": "completed",
+                "phase_status": "complete",
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }
             self.task_directory.write_json(
                 "work_state.json", self._work_state)
+            self._write_task_doc()
             manifest = self.task_directory.write_manifest()
             if all_stderr:
                 self.task_directory.write_meta(
@@ -643,8 +774,11 @@ Task Workspace。不要使用 AIEOS Shared Context；本 Work 任务不提供它
             result.status = task.status
             return result
 
-    def reopen_and_run(self, *, reason: str = "") -> WorkResult:
+    def reopen_and_run(
+        self, *, reason: str = "", rework_scope: str = "",
+    ) -> WorkResult:
         actor = self.task.creator
+        self.rework_scope = str(rework_scope or "enhance").strip().lower()
         self.lifecycle.reopen(self.task, actor=actor, reason=reason)
         return self.run()
 

@@ -96,6 +96,7 @@ def test_pi_work_runtime_completes_and_ingests_memory(db, monkeypatch, tmp_path)
         task_id="T-PI-WORK", creator="agent_c",
         description="写一个 hello.txt",
         workspace_id="WS-PI", participants=["agent_c"],
+        acceptance={"work_profile": "creative_product"},
         mode=TaskMode.SOLO)
     task.claim_producer("agent_c")
     store = TaskStore(db)
@@ -208,6 +209,13 @@ def test_pi_work_runtime_completes_and_ingests_memory(db, monkeypatch, tmp_path)
     assert runner._phase_thinking("engineering") == "high"
     assert runner._phase_thinking("evolution") == "high"
     assert runner.extra_args == ["--no-skills", "--no-context-files"]
+    assert (directory.workspace / "TASK_DOC.md").exists()
+    plan, resumed, reason = runner._phase_plan_for_run({
+        "iteration": 1, "phase": "engineering",
+        "phase_status": "running"})
+    assert plan == ["engineering", "evolution"]
+    assert resumed is True
+    assert reason == "task_resume"
     assert "hello.txt" in result.artifacts
     assert directory.manifest()
     assert working.updated is not None

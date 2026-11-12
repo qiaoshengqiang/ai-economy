@@ -1000,6 +1000,14 @@ class AIEOSController:
         decision.role = role.role_id
         if isinstance(job.front_decision, dict):
             job.front_decision["role"] = role.role_id
+        profile = str(
+            getattr(decision, "work_profile", "") or "standard").strip()
+        if profile not in ("direct", "standard", "creative_product"):
+            self._fail(job, f"未知 work_profile：{profile!r}")
+            return "", []
+        decision.work_profile = profile
+        if isinstance(job.front_decision, dict):
+            job.front_decision["work_profile"] = profile
         role_prompt = self.worker_roles.render(role)
         preferred = str(
             getattr(decision, "preferred_agent", "") or "").strip()
@@ -1169,6 +1177,8 @@ class AIEOSController:
                 acceptance={
                     "criteria": list(criteria),
                     "role": str(getattr(decision, "role", "") or "generalist"),
+                    "work_profile": str(
+                        getattr(decision, "work_profile", "") or "standard"),
                 },
                 note=f"demand_run:aieos_{job.job_id}",
                 mode=TaskMode.SOLO,
@@ -1424,6 +1434,10 @@ class AIEOSController:
                 job_id=job.job_id, task_id=task.task_id,
                 duration_ms=self._job_duration_ms(job),
                 thinking=job.front_thinking)
+        rework_scope = str(
+            getattr(decision, "rework_scope", "") or "enhance").strip().lower()
+        if rework_scope not in ("fix", "enhance", "redesign"):
+            rework_scope = "enhance"
         if action == "rework":
             turn = int(getattr(task, "iteration", 1) or 1) + 1
             # Reopen 不覆盖旧历史；把本轮要求追加到 Task 描述，
@@ -1483,9 +1497,14 @@ class AIEOSController:
                     round_sink=lambda payload: self._record_round(
                         task.task_id, payload),
                 )
-        result = (
-            runner.reopen_and_run(reason=reason)
-            if action == "rework" else runner.run())
+        if action == "rework":
+            if isinstance(runner, PiWorkRuntime):
+                result = runner.reopen_and_run(
+                    reason=reason, rework_scope=rework_scope)
+            else:
+                result = runner.reopen_and_run(reason=reason)
+        else:
+            result = runner.run()
         if job.cancelled:
             self._finish_cancelled(job, task.task_id)
         else:

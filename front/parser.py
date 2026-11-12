@@ -222,6 +222,8 @@ def parse_front_decision(
                 preferred_agent=str(
                     payload.get("preferred_agent") or "").strip(),
                 role=str(payload.get("role") or "").strip(),
+                work_profile=str(
+                    payload.get("work_profile") or "standard").strip(),
                 confidence=confidence,
                 reason=str(payload.get("reason") or "")), ""
 
@@ -232,6 +234,8 @@ def parse_front_decision(
             return FrontDecision(
                 intent=raw_intent, task_id=task_id,
                 reply=str(payload.get("reply") or "").strip(),
+                rework_scope=str(
+                    payload.get("rework_scope") or "enhance").strip(),
                 confidence=confidence,
                 reason=str(payload.get("reason") or "")), ""
 

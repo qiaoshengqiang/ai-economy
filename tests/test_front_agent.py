@@ -695,3 +695,34 @@ def test_prompt_lists_worker_roles():
     assert "game_developer" in prompt
     assert "小游戏与 Canvas" in prompt
     assert "frontend_engineer" in prompt
+
+
+def test_handoff_parses_work_profile():
+    runtime = FrontAgentRuntime(
+        "front", _think_returning({
+            "intent": "handoff",
+            "task_text": "做一个赛车游戏",
+            "role": "game_developer",
+            "work_profile": "creative_product",
+            "reply": "好",
+        }))
+    decision = runtime.decide("做一个赛车游戏")
+
+    assert decision.work_profile == "creative_product"
+    assert decision.to_dict()["work_profile"] == "creative_product"
+
+
+def test_rework_parses_rework_scope():
+    runtime = FrontAgentRuntime(
+        "front", _think_returning({
+            "intent": "rework",
+            "task_id": "task_1",
+            "rework_scope": "redesign",
+            "reply": "好",
+        }))
+    decision = runtime.decide(
+        "重新设计", completed_tasks=[{"task_id": "task_1",
+                                      "status": "COMPLETED"}])
+
+    assert decision.rework_scope == "redesign"
+    assert decision.to_dict()["rework_scope"] == "redesign"

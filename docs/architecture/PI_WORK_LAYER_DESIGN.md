@@ -100,6 +100,29 @@ Prototype 原型生成
 - Phase 3 产出 `RESULT.md`；
 - 阶段记录写入 round log 的 `phase` 字段。
 
+### 任务文档与恢复
+
+Workspace 根目录维护 `TASK_DOC.md`：
+
+- 任务目标；
+- 当前 iteration / phase / status / thinking；
+- 阶段历史；
+- 设计意图；
+- 工程记录；
+- 未解决问题；
+- 当前文件。
+
+`work_state.json` 保存 `iteration / phase / phase_status / attempt /
+resume_reason / history`。恢复时不再重跑三阶段：
+
+- 中断在哪个阶段，就从该阶段继续；
+- 恢复 prompt 注入 `Recovery Brief`：上次阶段、状态、文件、TASK_DOC、
+  未解决问题；
+- 已完成任务的 rework 按 `rework_scope` 选择起点：
+  `fix → direct`、`enhance → engineering`、`redesign → prototype`；
+- 中断恢复复用同一个 Pi session；新 iteration 建议使用新 session +
+  旧 RESULT/ENGINEERING/TASK_DOC 作为交接。
+
 环境事实分层：
 
 | 阶段 | 环境上下文 |
