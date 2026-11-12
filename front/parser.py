@@ -256,3 +256,66 @@ def parse_front_decision(
                 reason=str(payload.get("reason") or "")), ""
 
     return None, "front_decision_not_found"
+
+
+def parse_front_decisions(
+    text: str,
+    *,
+    human_text: str = "",
+    active_task_ids: Iterable[str] = (),
+    completed_task_ids: Iterable[str] = (),
+) -> Tuple[List[FrontDecision], str]:
+    """解析**多个最终动作**。
+
+    支持的形状：
+
+        {"decisions":[{...}, {...}]}
+        {"intents":[{...}, {...}]}
+        {"actions":[{...}, {...}]}   // 仅当元素带 intent/decision 时
+
+    单动作仍走 parse_front_decision；这里返回它的单元素列表。
+    """
+    active = {str(item) for item in active_task_ids}
+    completed = {str(item) for item in completed_task_ids}
+
+    for payload in _iter_json_objects(str(text or "")):
+        raw = payload.get("decisions")
+        if raw is None:
+            raw = payload.get("intents")
+        if raw is None:
+            acts = payload.get("actions")
+            if isinstance(acts, list) and any(
+                    isinstance(item, dict)
+                    and ("intent" in item or "decision" in item)
+                    for item in acts):
+                raw = acts
+        if raw is None:
+            continue
+        if isinstance(raw, dict):
+            raw = [raw]
+        if not isinstance(raw, list) or not raw:
+            return [], "front_decisions_empty"
+        decisions: List[FrontDecision] = []
+        for index, item in enumerate(raw):
+            if not isinstance(item, dict):
+                return [], f"front_decision_{index}_not_object"
+            decision, error = parse_front_decision(
+                json.dumps(item, ensure_ascii=False),
+                human_text=human_text,
+                active_task_ids=active,
+                completed_task_ids=completed,
+            )
+            if decision is None:
+                return [], f"front_decision_{index}:{error}"
+            decisions.append(decision)
+        return decisions, ""
+
+    decision, error = parse_front_decision(
+        text,
+        human_text=human_text,
+        active_task_ids=active,
+        completed_task_ids=completed,
+    )
+    if decision is None:
+        return [], error
+    return [decision], ""

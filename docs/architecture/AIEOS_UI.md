@@ -91,6 +91,17 @@ LLM → 动作（private_* / draft_*）→ 真实结果回喂
 - 动作只碰 Front 自己的私有空间与草稿，不写 Task Workspace。
 - 最终 handoff 的 `brief.files` 把文件交给 Work Agent；Work prompt
   会看到文件内容。
+- Front 一次可以给出多个最终动作：
+  ```json
+  {"decisions":[
+    {"intent":"cancel","task_id":"task_a","reply":"task_a 已停"},
+    {"intent":"cancel","task_id":"task_b","reply":"task_b 已停"}
+  ]}
+  ```
+  控制类动作（direct_reply / clarify / cancel / artifacts）按顺序执行；
+  handoff / rework / follow_up 每回合最多一个，并在控制动作之后执行。
+- 每个最终动作自己的 `decision.reply` 都会显示为 Front 消息；
+  cancel 失败时用控制面事实纠正，不照抄可能错误的回复。
 - 每次 decide 的 `FrontDecision`（含 `raw_output`）和动作结果写入
   `runs/ui/jobs/<job_id>.json` 的 `front_decision` / `front_actions`。
 - Front LLM 调用失败或输出无法解析时，Job 标记 `INTERRUPTED` +

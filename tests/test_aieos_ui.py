@@ -1423,3 +1423,108 @@ def test_main_layout_keeps_messages_scrollable_and_composer_visible():
     assert "resize: none" in css
     # 移动端必须让聊天面板占满首屏，而不是和侧栏平分高度。
     assert "flex: 0 0 100%" in css
+
+
+def test_multiple_cancel_actions_in_one_turn(monkeypatch):
+    from front import FrontDecision, FrontIntent, FrontTurn
+    from work.controller import WorkJob
+
+    tasks = {
+        "task_a": SimpleNamespace(
+            task_id="task_a", status="IN_PROGRESS", is_open=True),
+        "task_b": SimpleNamespace(
+            task_id="task_b", status="IN_PROGRESS", is_open=True),
+    }
+    runtime = SimpleNamespace(
+        directory=_Directory(["agent_a"]),
+        economy=SimpleNamespace(agent=lambda aid: SimpleNamespace(
+            has_brain=True, brain=None)),
+        tasks=SimpleNamespace(
+            get=lambda tid: tasks.get(tid),
+            list_tasks=lambda limit=50: [],
+        ),
+    )
+    controller = AIEOSController(runtime, front_agent="agent_a")
+    controller._mark_task_cancelled = lambda task, reason: True
+
+    class _Front:
+        def decide_turn(self, _text, **_kwargs):
+            return FrontTurn(decisions=[
+                FrontDecision(
+                    intent=FrontIntent.CANCEL, task_id="task_a",
+                    reply="A 已停"),
+                FrontDecision(
+                    intent=FrontIntent.CANCEL, task_id="task_b",
+                    reply="B 已停"),
+            ])
+
+    monkeypatch.setattr(controller, "_front_runtime", lambda: _Front())
+    job = WorkJob(job_id="job_multi_cancel", human_text="两个都停掉")
+    controller._jobs[job.job_id] = job
+    try:
+        controller._run_job(job)
+        messages = controller.state()["messages"]
+    finally:
+        controller.close()
+
+    front_texts = [
+        item["text"] for item in messages if item["role"] == "front"]
+    assert front_texts == ["A 已停", "B 已停"]
+    assert job.front_decision["decisions"][0]["intent"] == "cancel"
+    assert len(job.front_decision["decisions"]) == 2
+
+
+def test_follow_up_sends_front_reply(monkeypatch):
+    from front import FrontDecision, FrontIntent
+    from work.controller import WorkJob
+    import work.controller as controller_module
+
+    class _FakeRunner:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def run(self):
+            return SimpleNamespace(
+                ok=True, tokens=1, turns=1, status="COMPLETED",
+                summary="done", error="")
+
+    monkeypatch.setattr(controller_module, "SoloWorkRuntime", _FakeRunner)
+    task = SimpleNamespace(
+        task_id="task_follow", status="IN_PROGRESS", mode="SOLO",
+        is_open=True, creator="agent_b", participants=["agent_b"],
+        workspace_id="WS", iteration=1, description="d")
+    runtime = SimpleNamespace(
+        directory=_Directory(["agent_a", "agent_b"]),
+        economy=SimpleNamespace(agent=lambda aid: SimpleNamespace(
+            has_brain=True, brain=None)),
+        tasks=SimpleNamespace(
+            get=lambda tid: task,
+            list_tasks=lambda limit=50: [],
+        ),
+    )
+    controller = AIEOSController(runtime, front_agent="agent_a")
+    job = WorkJob(job_id="job_follow", human_text="继续")
+    controller._jobs[job.job_id] = job
+
+    class _Front:
+        def result_from_work(self, _result):
+            return SimpleNamespace(summary="done", status="COMPLETED")
+
+        def format_result(self, _result):
+            return "result"
+
+    decision = FrontDecision(
+        intent=FrontIntent.FOLLOW_UP,
+        task_id="task_follow",
+        reply="我继续把它做完。",
+    )
+    try:
+        controller._resume_or_rework(job, decision, _Front())
+        messages = controller.state()["messages"]
+    finally:
+        controller.close()
+
+    assert any(
+        item["role"] == "front"
+        and item["text"] == "我继续把它做完。"
+        for item in messages)

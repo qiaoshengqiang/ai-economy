@@ -195,6 +195,28 @@ class FrontDecision:
 
 
 @dataclass
+class FrontTurn:
+    """一次 Front 决策回合：可以包含多个最终动作。"""
+
+    decisions: List[FrontDecision] = field(default_factory=list)
+    raw_output: str = ""
+    action_history: List[Dict[str, Any]] = field(default_factory=list)
+
+    @property
+    def primary(self) -> FrontDecision:
+        if not self.decisions:
+            raise ValueError("FrontTurn 没有任何 decision")
+        return self.decisions[0]
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "decisions": [item.to_dict() for item in self.decisions],
+            "raw_output": self.raw_output,
+            "actions": list(self.action_history),
+        }
+
+
+@dataclass
 class FrontResult:
     """
     Work → Front 的结果。

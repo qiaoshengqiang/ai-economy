@@ -23,8 +23,12 @@ from __future__ import annotations
 import json
 from typing import Any, Callable, Dict, Iterable, List, Optional
 
-from front.contracts import FrontDecision, FrontIntent, FrontResult
-from front.parser import parse_front_actions, parse_front_decision
+from front.contracts import (
+    FrontDecision, FrontIntent, FrontResult, FrontTurn,
+)
+from front.parser import (
+    parse_front_actions, parse_front_decision, parse_front_decisions,
+)
 
 
 #: Front 调用的 system prompt —— 只描述入口职责。
@@ -76,7 +80,11 @@ class FrontAgentRuntime:
     # ------------------------------------------------------------
     # 决策
     # ------------------------------------------------------------
-    def decide(
+    def decide(self, human_text: str, **kwargs: Any) -> FrontDecision:
+        """兼容旧调用：返回本回合的第一个 decision。"""
+        return self.decide_turn(human_text, **kwargs).primary
+
+    def decide_turn(
         self,
         human_text: str,
         *,
@@ -86,7 +94,7 @@ class FrontAgentRuntime:
         agents: Iterable[Dict[str, Any]] = (),
         context: str = "",
         max_inspect: int = 2,
-    ) -> FrontDecision:
+    ) -> FrontTurn:
         """
         识别 Human 意图。
 
@@ -129,7 +137,7 @@ class FrontAgentRuntime:
             raw = self._think_with_retry(prompt)
             self.last_raw_output = str(raw or "")
 
-            decision, error = parse_front_decision(
+            decisions, error = parse_front_decisions(
                 raw,
                 human_text=human_text,
                 active_task_ids=active_ids,
@@ -152,11 +160,16 @@ class FrontAgentRuntime:
                 self.last_action_history = list(action_history)
                 parse_failures = 0
                 last_error = ""
-                if decision is None:
+                if not decisions:
                     continue
 
-            if decision is not None:
-                if decision.intent == FrontIntent.INSPECT:
+            if decisions:
+                if any(item.intent == FrontIntent.INSPECT
+                       for item in decisions):
+                    if len(decisions) != 1:
+                        raise FrontUnavailableError(
+                            "inspect 不能和其他最终动作放在同一回合")
+                    decision = decisions[0]
                     if self._inspect_fn is None:
                         raise FrontUnavailableError(
                             "inspect_unavailable：Front 需要读取任务事实，"
@@ -176,9 +189,14 @@ class FrontAgentRuntime:
                     inspect_count += 1
                     continue
 
-                decision.raw_output = str(raw or "")
+                for item in decisions:
+                    item.raw_output = str(raw or "")
                 self.last_action_history = list(action_history)
-                return decision
+                return FrontTurn(
+                    decisions=decisions,
+                    raw_output=str(raw or ""),
+                    action_history=list(action_history),
+                )
 
             last_error = action_error or error or "front_decision_not_found"
             parse_failures += 1
@@ -349,6 +367,15 @@ A handoff can carry files you prepared in `brief.files`:
 
 8. inspect — read-only task facts; at most 2 per input.
    {{"intent":"inspect","task_id":"...","reason":"..."}}
+
+Multiple actions in one turn:
+{{"decisions":[
+  {{"intent":"cancel","task_id":"task_a","reply":"task_a 已停"}},
+  {{"intent":"cancel","task_id":"task_b","reply":"task_b 已停"}}
+]}}
+Control actions (direct_reply / clarify / cancel / artifacts) run in the
+order you give. At most one execution action (handoff / rework / follow_up)
+per turn; it runs after the control actions.
 
 Routing facts:
 - preferred_agent IDLE + can_work → assigned to it.

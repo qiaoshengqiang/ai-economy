@@ -21,6 +21,7 @@ import pytest
 from front import (
     FrontAgentRuntime, FrontBrief, FrontDecision, FrontIntent, FrontResult,
     FrontUnavailableError, parse_front_actions, parse_front_decision,
+    parse_front_decisions,
 )
 from front.runtime import FrontAgentRuntime as RuntimeClass
 
@@ -226,6 +227,7 @@ def test_front_prompt_is_human_facing_and_does_not_invent_constraints():
     assert "INTERRUPTED" in prompt
     assert "follow_up can resume it" in prompt
     assert "artifacts" in prompt
+    assert "Multiple actions in one turn" in prompt
     # 旧版的强行为约束不应再出现。
     assert "Do not replace the Work Agent" not in prompt
     assert "not the task planner" not in prompt
@@ -599,3 +601,32 @@ def test_action_and_final_intent_in_one_output():
         {"path": "code.js", "from_private": "code.js"}]
     assert len(seen) == 1
     assert runtime.last_action_history
+
+
+
+def test_parse_multiple_final_decisions():
+    text = json.dumps({"decisions": [
+        {"intent": "cancel", "task_id": "task_a", "reply": "A 已停"},
+        {"intent": "cancel", "task_id": "task_b", "reply": "B 已停"},
+    ]})
+    decisions, error = parse_front_decisions(
+        text, active_task_ids={"task_a", "task_b"})
+
+    assert error == ""
+    assert [item.task_id for item in decisions] == ["task_a", "task_b"]
+    assert [item.reply for item in decisions] == ["A 已停", "B 已停"]
+
+
+def test_decide_turn_returns_multiple_decisions():
+    runtime = FrontAgentRuntime(
+        "front", _think_returning({"decisions": [
+            {"intent": "cancel", "task_id": "task_a", "reply": "A"},
+            {"intent": "cancel", "task_id": "task_b", "reply": "B"},
+        ]}))
+    turn = runtime.decide_turn(
+        "两个都停掉", active_tasks=[
+            {"task_id": "task_a"}, {"task_id": "task_b"}])
+
+    assert [item.task_id for item in turn.decisions] == [
+        "task_a", "task_b"]
+    assert turn.raw_output

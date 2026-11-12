@@ -16,9 +16,11 @@ Front 层 —— Human 的唯一入口
 """
 
 from front.contracts import (
-    FrontBrief, FrontDecision, FrontIntent, FrontResult,
+    FrontBrief, FrontDecision, FrontIntent, FrontResult, FrontTurn,
 )
-from front.parser import parse_front_actions, parse_front_decision
+from front.parser import (
+    parse_front_actions, parse_front_decision, parse_front_decisions,
+)
 from front.runtime import (
     FRONT_SYSTEM_PROMPT, FrontAgentRuntime, FrontUnavailableError,
 )
@@ -26,6 +28,8 @@ from front.runtime import (
 __all__ = [
     "FRONT_SYSTEM_PROMPT",
     "FrontBrief", "FrontDecision", "FrontIntent", "FrontResult",
+    "FrontTurn",
     "FrontAgentRuntime", "FrontUnavailableError",
     "parse_front_actions", "parse_front_decision",
+    "parse_front_decisions",
 ]

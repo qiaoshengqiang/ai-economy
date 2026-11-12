@@ -46,7 +46,7 @@ from work.artifact_export import (
 )
 from front import (
     FRONT_SYSTEM_PROMPT, FrontAgentRuntime, FrontIntent, FrontResult,
-    FrontUnavailableError,
+    FrontTurn, FrontUnavailableError,
 )
 from work.availability import AgentAvailability
 from work.checkpoint import (
@@ -365,13 +365,8 @@ class AIEOSController:
             with self._front_lock:
                 front_started = time.perf_counter()
                 try:
-                    decision = front.decide(
-                        job.human_text,
-                        active_tasks=active,
-                        completed_tasks=completed,
-                        conversation=self._conversation(job),
-                        agents=self._agent_facts(),
-                    )
+                    turn = self._front_turn(
+                        front, job, active, completed)
                 except FrontUnavailableError as exc:
                     job.front_ms = max(0, int(
                         (time.perf_counter() - front_started) * 1000))
@@ -388,36 +383,52 @@ class AIEOSController:
                     (time.perf_counter() - front_started) * 1000))
                 job.front_thinking = self._thinking_for(
                     self.front_agent, "decision")
-            job.front_intent = decision.intent
-            job.front_decision = decision.to_dict()
+
+            decisions = [item for item in (turn.decisions or [])]
+            if not decisions:
+                self._fail(job, "Front 没有给出任何决定")
+                return
+            control = [
+                item for item in decisions
+                if item.intent not in (
+                    FrontIntent.HANDOFF, FrontIntent.REWORK,
+                    FrontIntent.FOLLOW_UP,
+                )
+            ]
+            work = [
+                item for item in decisions
+                if item.intent in (
+                    FrontIntent.HANDOFF, FrontIntent.REWORK,
+                    FrontIntent.FOLLOW_UP,
+                )
+            ]
+            headline = work[0] if work else decisions[0]
+            job.front_intent = headline.intent
+            front_data = headline.to_dict()
+            front_data["decisions"] = [
+                item.to_dict() for item in decisions]
+            front_data["raw_output"] = (
+                str(getattr(turn, "raw_output", "") or "")
+                or headline.raw_output)
+            job.front_decision = front_data
             job.front_actions = list(
-                getattr(front, "last_action_history", []) or [])
+                getattr(turn, "action_history", None)
+                or getattr(front, "last_action_history", [])
+                or [])
             self._set_job(job, job.status)
 
-            if decision.intent == FrontIntent.DIRECT_REPLY:
-                self._message(
-                    "front", decision.reply, job_id=job.job_id,
-                    duration_ms=job.front_ms,
-                    thinking=job.front_thinking)
-                job.status = JobStatus.DIRECT_REPLY
-                job.summary = decision.reply
-                self._touch(job)
+            # 控制类动作可以先执行多个；执行类动作最多一个。
+            for item in control:
+                self._apply_control_decision(job, item)
+            if len(work) > 1:
+                self._fail(
+                    job, "一次最多只能有一个执行类动作"
+                    "（handoff / rework / follow_up）")
                 return
-            if decision.intent == FrontIntent.CLARIFY:
-                self._message(
-                    "front", decision.question, job_id=job.job_id,
-                    duration_ms=job.front_ms,
-                    thinking=job.front_thinking)
-                job.status = JobStatus.CLARIFY
-                job.summary = decision.question
-                self._touch(job)
+            if not work:
                 return
-            if decision.intent == FrontIntent.CANCEL:
-                self._cancel_work(job, decision)
-                return
-            if decision.intent == FrontIntent.ARTIFACTS:
-                self._export_artifacts(job, decision)
-                return
+            decision = work[0]
+
             if decision.intent in (
                 FrontIntent.REWORK, FrontIntent.FOLLOW_UP,
             ):
@@ -566,6 +577,62 @@ class AIEOSController:
             inspect_fn=self._front_inspect_facts,
             execute_actions=_execute,
             action_types=dispatcher.action_types)
+
+    def _front_turn(
+        self,
+        front: Any,
+        job: WorkJob,
+        active: List[Dict[str, Any]],
+        completed: List[Dict[str, Any]],
+    ) -> FrontTurn:
+        """优先走多动作接口；旧 Front 实现仍按单动作兼容。"""
+        method = getattr(front, "decide_turn", None)
+        kwargs = {
+            "active_tasks": active,
+            "completed_tasks": completed,
+            "conversation": self._conversation(job),
+            "agents": self._agent_facts(),
+        }
+        if callable(method):
+            return method(job.human_text, **kwargs)
+        decision = front.decide(job.human_text, **kwargs)
+        return FrontTurn(
+            decisions=[decision],
+            raw_output=str(getattr(decision, "raw_output", "") or ""),
+        )
+
+    def _apply_control_decision(
+        self, job: WorkJob, decision: Any,
+    ) -> None:
+        """执行不启动 Task 的 Front 动作。"""
+        intent = str(getattr(decision, "intent", "") or "")
+        if intent == FrontIntent.DIRECT_REPLY:
+            text = str(getattr(decision, "reply", "") or "")
+            self._message(
+                "front", text, job_id=job.job_id,
+                duration_ms=job.front_ms,
+                thinking=job.front_thinking)
+            job.status = JobStatus.DIRECT_REPLY
+            job.summary = text
+            self._touch(job)
+            return
+        if intent == FrontIntent.CLARIFY:
+            text = str(getattr(decision, "question", "") or "")
+            self._message(
+                "front", text, job_id=job.job_id,
+                duration_ms=job.front_ms,
+                thinking=job.front_thinking)
+            job.status = JobStatus.CLARIFY
+            job.summary = text
+            self._touch(job)
+            return
+        if intent == FrontIntent.CANCEL:
+            self._cancel_work(job, decision)
+            return
+        if intent == FrontIntent.ARTIFACTS:
+            self._export_artifacts(job, decision)
+            return
+        raise ValueError(f"不支持的 Front 控制动作：{intent!r}")
 
     def _acquire_leader(self, job: WorkJob) -> Optional[str]:
         candidates = [
@@ -1026,14 +1093,14 @@ class AIEOSController:
         self._bind_task_to_agents([leader, *members], task.task_id)
         self._set_job(job, JobStatus.RUNNING)
 
+        if decision.reply:
+            self._message(
+                "front", decision.reply,
+                job_id=job.job_id, task_id=task.task_id,
+                duration_ms=self._job_duration_ms(job),
+                thinking=job.front_thinking)
         if action == "rework":
             turn = int(getattr(task, "iteration", 1) or 1) + 1
-            if decision.reply:
-                self._message(
-                    "front", decision.reply,
-                    job_id=job.job_id, task_id=task.task_id,
-                    duration_ms=self._job_duration_ms(job),
-                    thinking=job.front_thinking)
             # Reopen 不覆盖旧历史；把本轮要求追加到 Task 描述，
             # 让 Leader / 成员都能看到 Human 这次改了什么。
             task.description = (
@@ -1172,7 +1239,11 @@ class AIEOSController:
             if self._mark_task_cancelled(
                     task, reason=f"Human: {job.human_text}"):
                 self._reply_direct(
-                    job, f"任务 {task.task_id} 已停止。", task.task_id)
+                    job,
+                    self._front_reply_text(
+                        decision, f"任务 {task.task_id} 已停止。"),
+                    task.task_id,
+                )
             else:
                 self._reply_direct(
                     job,
@@ -1187,8 +1258,10 @@ class AIEOSController:
             task, reason=f"Human: {job.human_text}")
         self._reply_direct(
             job,
-            f"正在停止任务 {task.task_id}。已经通知执行中的团队，"
-            "他们会在当前步骤结束后停下。",
+            self._front_reply_text(
+                decision,
+                f"正在停止任务 {task.task_id}。已经通知执行中的团队，"
+                "他们会在当前步骤结束后停下。"),
             task.task_id,
         )
 
@@ -1234,6 +1307,13 @@ class AIEOSController:
             )
             return
 
+        reply = str(getattr(decision, "reply", "") or "").strip()
+        if reply:
+            self._message(
+                "front", reply,
+                job_id=job.job_id, task_id=task.task_id,
+                duration_ms=self._job_duration_ms(job),
+                thinking=job.front_thinking)
         lines = [
             f"产物已从数据库导出到宿主机目录：\n{exported['path']}",
             "",
@@ -1677,6 +1757,12 @@ class AIEOSController:
                 "retryable": bool(retryable),
                 "at": _now(),
             })
+
+    @staticmethod
+    def _front_reply_text(decision: Any, fallback: str) -> str:
+        """有 Front 自己的回复就用它；没有才用控制面事实。"""
+        text = str(getattr(decision, "reply", "") or "").strip()
+        return text or fallback
 
     @staticmethod
     def _job_duration_ms(job: WorkJob) -> int:
