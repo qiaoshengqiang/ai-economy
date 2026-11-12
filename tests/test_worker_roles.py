@@ -33,3 +33,34 @@ def test_role_prompt_includes_identity_and_summary_additions():
     assert "game_developer" in prompt
     assert "角色额外总结项" in prompt
     assert "操作方式与玩法" in prompt
+
+
+def test_role_renders_only_current_phase_requirements():
+    from work.worker_roles import render_role_prompt
+
+    prompt = render_role_prompt(ROLES["game_developer"], phase="prototype")
+    assert "prototype" in prompt
+    assert "核心玩法必须可操作" in prompt
+    assert "检查核心交互" not in prompt
+
+
+def test_role_store_round_trips_phase_requirements(tmp_path):
+    from work.worker_roles import WorkerRoleStore
+
+    path = tmp_path / "worker_roles.yaml"
+    store = WorkerRoleStore(path)
+    store.upsert({
+        "role_id": "phase_role",
+        "name": "阶段角色",
+        "description": "test",
+        "system_prompt": "",
+        "phase_requirements": {
+            "prototype": ["先产出原型"],
+            "engineering": ["再检查效果"],
+            "evolution": ["最后持续迭代"],
+        },
+    })
+    reloaded = WorkerRoleStore(path)
+    role = reloaded.resolve("phase_role")
+    assert role.phase_requirements["prototype"] == ["先产出原型"]
+    assert role.phase_requirements["engineering"] == ["再检查效果"]

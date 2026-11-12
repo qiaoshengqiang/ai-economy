@@ -34,6 +34,7 @@ from work.lifecycle import WorkLifecycle
 from work.pi_memory import PiMemoryBridge
 from work.pi_rpc import PiRpcClient, PiRunResult
 from work.roles import WorkResult
+from work.worker_roles import render_role_prompt
 from work.task_directory import TaskDirectory
 
 
@@ -56,6 +57,7 @@ class PiWorkRuntime:
         use_llm_proxy: bool = True,
         upstream_base_url: str = "",
         role_prompt: str = "",
+        role: Any = None,
         extra_args: Optional[List[str]] = None,
         phase_plan: Optional[List[str]] = None,
         thinking: str = "auto",
@@ -80,6 +82,7 @@ class PiWorkRuntime:
         self.use_llm_proxy = bool(use_llm_proxy)
         self.upstream_base_url = str(upstream_base_url or "")
         self.role_prompt = str(role_prompt or "").strip()
+        self.role = role
         # Work 只加载 AIEOS 自己的角色/任务上下文：
         #   --no-skills        不加载用户全局 skills（网文/写作等与任务无关）
         #   --no-context-files 不加载项目 AGENTS.md / CLAUDE.md
@@ -99,6 +102,7 @@ class PiWorkRuntime:
         self.rework_scope = str(rework_scope or "").strip().lower()
         self.thinking = str(thinking or "auto").strip().lower()
         self._work_state: Dict[str, Any] = {}
+        self._recent_tool_results: List[str] = []
         self._resumed = False
         self._resume_reason = ""
         self.lifecycle = WorkLifecycle(runtime.tasks)
@@ -474,6 +478,28 @@ Task Workspace。不要使用 AIEOS Shared Context；本 Work 任务不提供它
             return str(data.get("answer") or "").strip()
         return str(data).strip()
 
+    def _remember_tool_results(self, events: List[Dict[str, Any]]) -> None:
+        items: List[str] = []
+        for event in events:
+            if event.get("type") != "tool_execution_end":
+                continue
+            name = str(event.get("toolName") or "tool")
+            result = event.get("result")
+            if isinstance(result, list):
+                text = " ".join(
+                    str(block.get("text") or "")
+                    for block in result
+                    if isinstance(block, dict) and block.get("type") == "text"
+                )
+            else:
+                text = str(result or "")
+            text = " ".join(text.split())
+            if text:
+                items.append(f"- {name}: {text[:400]}")
+        if items:
+            self._recent_tool_results = (
+                self._recent_tool_results + items)[-12:]
+
     def _environment_facts(self, phase: str) -> str:
         files = self.task_directory.list_files()
         lines = [f"workspace: {self.task_directory.workspace}"]
@@ -502,6 +528,9 @@ Task Workspace。不要使用 AIEOS Shared Context；本 Work 任务不提供它
         task_doc = self._bounded_text("TASK_DOC.md", 4000)
         if task_doc:
             lines.append("\n========== TASK_DOC.md ==========\n" + task_doc)
+        if self._recent_tool_results:
+            lines.append("\n========== 最近工具结果 ==========")
+            lines.extend(self._recent_tool_results)
         answer = self._answer_text()
         if answer:
             lines.append("\n========== 人类回答 ==========\n" + answer)
@@ -515,9 +544,24 @@ Task Workspace。不要使用 AIEOS Shared Context；本 Work 任务不提供它
                 lines.append("\n========== ENGINEERING.md ==========\n" + engineering)
         return "\n".join(lines)
 
+    def _role_phase_section(self, phase: str) -> str:
+        if self.role is not None:
+            return render_role_prompt(self.role, phase=phase).strip()
+        if self.role_prompt:
+            return (
+                "========== Worker 角色 ==========\n"
+                + self.role_prompt
+            ).strip()
+        return ""
+
     def _phase_prompt(self, phase: str, memory_context: str) -> str:
         task_text = self.task.description or f"Task {self.task.task_id}"
         env = self._environment_facts(phase)
+        role_section = self._role_phase_section(phase)
+        role_block = (
+            f"\n========== Worker 角色（本阶段要求） ==========\n{role_section}\n"
+            if role_section else ""
+        )
         if phase == "direct":
             return f"""========== 任务 ==========
 {task_text}
@@ -535,37 +579,39 @@ Task Workspace。不要使用 AIEOS Shared Context；本 Work 任务不提供它
 
 ========== 环境事实 ==========
 {env}
-
+{role_block}
 这是原型阶段。不要先写计划，直接把想法变成实际成果。
 
-请尽可能构建一个完整、可运行、有实际体验的初始原型。你可以自主决定
-结构、交互、视觉和实现方式；优先让核心体验真正可玩、可用。
+请尽可能构建一个完整、有实际体验的初始原型。你可以自主决定成果的
+形式、结构、内容、交互或实现方式；优先让核心体验真正成立。
 
 完成时：
-1. 确保 Workspace 中至少有可运行产物；
-2. 写 `PROTOTYPE.md`，说明设计意图、关键取舍、运行方式和已知缺口；
+1. 确保 Workspace 中有具体、可检查、可交付的产物
+   （代码、页面、文档、报告、设计或其他符合任务的形式）；
+2. 建议写一份简短的 `PROTOTYPE.md`，记录设计意图和关键取舍；
+   如果任务不适合阶段文档，可以省略；
 3. 最后一行输出 `PROTOTYPE_READY`。
 """
-        role = self.role_prompt.strip()
         if phase == "engineering":
             return f"""========== 任务 ==========
 {task_text}
-
-========== Worker 角色 ==========
-{role or "（无额外角色约束）"}
-
+{role_block}
 ========== 环境事实 ==========
 {env}
 
 原型阶段已经结束。现在进入工程阶段。
 
-请先理解 `PROTOTYPE.md` 记录的设计意图，然后检查现有代码和运行状态，
-实际运行/验证原型，发现问题并修复、补测试、必要时重构。
-这不是重新设计游戏；只有发现根本性问题时，才允许推翻部分设计，并在
-`ENGINEERING.md` 中说明理由。
+请先理解上一阶段记录的设计意图，然后检查现有产物的内容、结构和实际效果。
+实际运行、使用或检查产物，发现问题并修复；必要时调整结构。
+不要重新设计；只有发现根本性问题时，才允许推翻部分设计。
+不默认补测试；只有任务明确要求，或确有风险需要验证时才补。
 
-完成时：
-1. 写 `ENGINEERING.md`：验证了什么、发现了什么、改了什么、还剩什么；
+第一阶段完整会话在 `.aieos/pi-session/`。需要理解原型阶段的设计意图和
+关键取舍时，可以读取该会话；不要把整份 transcript 重新抄进上下文。
+
+完成时（建议）：
+1. 写一份简短的 `ENGINEERING.md`，记录检查了什么、发现了什么、改了什么、
+   还剩什么；不规定长度，也不要求完整测试报告；
 2. 最后一行输出 `ENGINEERING_READY`。
 """
         if phase == "evolution":
@@ -573,19 +619,18 @@ Task Workspace。不要使用 AIEOS Shared Context；本 Work 任务不提供它
             issue_text = "\n".join(f"- {item}" for item in issues) or "（暂无记录）"
             return f"""========== 任务 ==========
 {task_text}
-
-========== Worker 角色 ==========
-{role or "（无额外角色约束）"}
-
+{role_block}
 ========== 环境事实 ==========
 {env}
 
 ========== 未解决问题 ==========
 {issue_text}
 
-进入持续迭代阶段。继续基于当前代码和运行结果工作，直到原始目标满足。
-每次修改后尽量验证实际效果；发现新问题时记录到 `ENGINEERING.md` 或
-`RESULT.md` 的“已知限制”中。
+进入持续迭代阶段。继续基于当前产物、设计记录、最近工具结果和未解决问题
+工作，自主决定下一步，直到原始目标满足。
+
+在阶段性修改后做整体验证，而不是每次改动都跑完整回归。
+发现新问题时记录到 `ENGINEERING.md` 或 `RESULT.md` 的“已知限制”中。
 
 完成时：
 1. 在 Task Workspace 写 `RESULT.md`，作为给人类的最终总结；
@@ -769,6 +814,7 @@ Task Workspace。不要使用 AIEOS Shared Context；本 Work 任务不提供它
                         event_sink=self.event_sink,
                     )
                     all_events.extend(run.events)
+                    self._remember_tool_results(run.events)
                     self._clear_answer()
                     if run.stderr:
                         all_stderr.append(run.stderr)

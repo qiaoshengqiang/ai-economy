@@ -724,6 +724,7 @@ class AIEOSController:
                     task.task_id, payload),
                 should_stop=lambda: job.cancelled,
                 role_prompt=role_prompt,
+                role=role,
             )
             result = runner.run()
             if job.cancelled:
@@ -1005,6 +1006,7 @@ class AIEOSController:
         round_sink: Any = None,
         should_stop: Any = None,
         role_prompt: str = "",
+        role: Any = None,
     ) -> PiWorkRuntime:
         return PiWorkRuntime(
             self.rt, task,
@@ -1020,6 +1022,7 @@ class AIEOSController:
             round_sink=round_sink,
             pi_agent_dir=self.pi_agent_dir,
             role_prompt=role_prompt,
+            role=role,
             thinking=self._thinking_for_agent(
                 task.contractor or task.creator),
         )
@@ -1264,7 +1267,8 @@ class AIEOSController:
                 round_sink=lambda payload: self._record_round(
                     task_id, payload),
                 should_stop=lambda: job.cancelled,
-                role_prompt=role_prompt)
+                role_prompt=role_prompt,
+                role=role)
         else:
             runner = SoloWorkRuntime(
                 self.rt, task,
@@ -1691,7 +1695,8 @@ class AIEOSController:
                     round_sink=lambda payload: self._record_round(
                         task.task_id, payload),
                     should_stop=lambda: job.cancelled,
-                    role_prompt=role_prompt)
+                    role_prompt=role_prompt,
+                    role=role)
             else:
                 runner = SoloWorkRuntime(
                     self.rt, task,

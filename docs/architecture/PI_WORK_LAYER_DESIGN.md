@@ -174,15 +174,18 @@ Budget     花多少
 - 角色注册表在 `work/worker_roles.py`，V1 有 7 个：
   `generalist` · `frontend_engineer` · `game_developer` ·
   `backend_engineer` · `researcher` · `writer` · `qa_verifier`；
-- Worker 的 system prompt 由三部分拼成：
+- Phase prompt 只定义阶段责任；角色要求在对应阶段追加：
 
 ```text
-全局 Work 契约（工具 / 落盘 / RESULT.md）
-  + 角色 prompt（专业视角 + 额外总结项）
-  + 具体 Task
+Phase 责任
+  + Role 的本阶段专业要求
+  + 环境事实 / 当前任务
 ```
 
-- 角色 prompt 只**追加**，不覆盖全局规则；
+- Role 不再是一整段固定 prompt，而是 `phase_requirements`：
+  Prototype / Engineering / Evolution 分别提供本阶段的专业要求；
+- 角色要求只**追加**，不覆盖 Phase 责任和人类原话；
+- 旧 `system_prompt` 作为通用专业要求保留，兼容用户已有角色；
 - Pi Task 把角色写入 `task.acceptance["role"]`，resume 时回退读取；
 - 全局总结契约固定 `RESULT.md` 的章节，角色只追加专业总结项。
 - 系统提供的 Front / Work / Worker 角色 prompt 使用中文；

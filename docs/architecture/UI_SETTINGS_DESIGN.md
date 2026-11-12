@@ -174,7 +174,9 @@ runs/ui/prompts/prompts-YYYY-MM-DD.jsonl
 - 归档角色不出现在 Front 目录里，但历史 Task resume 仍可读取；
 - `generalist` 不能归档，且至少保留一个可用角色；
 - 内置角色可编辑，也可恢复默认；
-- 保存前校验：ID、名称、描述、prompt、summary sections；
+- 角色按阶段保存 `phase_requirements`（Prototype / Engineering / Evolution），
+  旧 `system_prompt` 作为通用要求保留；
+- 保存前校验：ID、名称、描述、阶段要求、summary sections；
 - UI 提供 Front 目录与实际 Worker prompt 的预览。
 
 角色仍然是**任务级专业视角**，不是 Agent 身份、权限、能力或预算。

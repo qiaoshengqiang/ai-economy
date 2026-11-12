@@ -230,6 +230,19 @@ def test_pi_work_runtime_completes_and_ingests_memory(db, monkeypatch, tmp_path)
     assert rounds[0]["segments"][0]["actions"][0]["action_type"] == "write"
     assert rounds[0]["segments"][0]["results"][0]["success"] is True
 
+    from work.worker_roles import ROLES
+    role_runner = PiWorkRuntime(
+        runtime, task,
+        task_directory=directory,
+        pi_cli_path="fake-pi",
+        use_llm_proxy=False,
+        role=ROLES["game_developer"],
+    )
+    assert "核心玩法必须可操作" in role_runner._phase_prompt(
+        "prototype", "")
+    assert "检查核心交互" in role_runner._phase_prompt(
+        "engineering", "")
+
     pi_agent_dir = runner._write_pi_models("http://127.0.0.1:1", "m")
     model_cfg = (pi_agent_dir / "models.json").read_text("utf-8")
     assert '"maxTokens": 16384' in model_cfg

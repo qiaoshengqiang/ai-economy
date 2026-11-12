@@ -568,6 +568,10 @@
     $("role-name").value = role.name || "";
     $("role-description").value = role.description || "";
     $("role-prompt").value = role.system_prompt || "";
+    const phase = role.phase_requirements || {};
+    $("role-prototype").value = (phase.prototype || []).join("\n");
+    $("role-engineering").value = (phase.engineering || []).join("\n");
+    $("role-evolution").value = (phase.evolution || []).join("\n");
     $("role-summary").value = (role.summary_sections || []).join("\n");
     $("role-preview").hidden = true;
   }
@@ -579,6 +583,9 @@
     $("role-name").value = "";
     $("role-description").value = "";
     $("role-prompt").value = "";
+    $("role-prototype").value = "";
+    $("role-engineering").value = "";
+    $("role-evolution").value = "";
     $("role-summary").value = "";
     $("role-preview").hidden = true;
   }
@@ -589,6 +596,14 @@
       name: $("role-name").value.trim(),
       description: $("role-description").value.trim(),
       system_prompt: $("role-prompt").value.trim(),
+      phase_requirements: {
+        prototype: $("role-prototype").value.split("\n")
+          .map((item) => item.trim()).filter(Boolean),
+        engineering: $("role-engineering").value.split("\n")
+          .map((item) => item.trim()).filter(Boolean),
+        evolution: $("role-evolution").value.split("\n")
+          .map((item) => item.trim()).filter(Boolean),
+      },
       summary_sections: $("role-summary").value.split("\n")
         .map((item) => item.trim()).filter(Boolean),
     };
@@ -639,13 +654,20 @@
     const summary = $("role-summary").value.split("\n")
       .map((item) => item.trim()).filter(Boolean);
     const lines = [
-      "========== WORKER ROLE ==========",
+      "========== Worker 角色 ==========",
       `role_id: ${id}`,
       `role_name: ${name}`,
-      prompt,
     ];
+    if (prompt) lines.push("通用专业要求：", prompt);
+    ["prototype", "engineering", "evolution"].forEach((phase) => {
+      const items = $(`role-${phase}`).value.split("\n")
+        .map((item) => item.trim()).filter(Boolean);
+      if (!items.length) return;
+      lines.push(`${phase} 阶段：`);
+      items.forEach((item) => lines.push(`- ${item}`));
+    });
     if (summary.length) {
-      lines.push("Role-specific summary additions:");
+      lines.push("角色额外总结项：");
       summary.forEach((item) => lines.push(`- ${item}`));
     }
     const box = $("role-preview");
