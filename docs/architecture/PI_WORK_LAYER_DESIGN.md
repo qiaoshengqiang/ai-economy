@@ -193,6 +193,9 @@ Phase 责任
 - Role 不再是一整段固定 prompt，而是 `phase_requirements`：
   Prototype / Engineering / Evolution 分别提供本阶段的专业要求；
 - 角色要求只**追加**，不覆盖 Phase 责任和人类原话；
+- Role 注入条件：Work 模式为 `workflow` 且阶段是
+  `prototype` / `engineering` / `evolution`；`autonomous` 模式不注入 Role，
+  `workflow` 的 `direct` 阶段也不注入；
 - 旧 `system_prompt` 作为通用专业要求保留，兼容用户已有角色；
 - Pi Task 把角色写入 `task.acceptance["role"]`，resume 时回退读取；
 - 全局总结契约固定 `RESULT.md` 的章节，角色只追加专业总结项。

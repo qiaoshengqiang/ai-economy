@@ -384,6 +384,15 @@ handoff 可以携带你在 `brief.files` 里准备好的文件：
 - creative_product：可交互产品、多文件、多模块、玩法/视觉/交互，需要真实运行验证。
 无法判断时选 standard，不要默认 direct。
 Role 只是弱信号，不要仅凭 role 判断。
+
+========== Role 注入条件 ==========
+- Role 是任务元数据，不等于 Worker 已经收到角色提示词。
+- 只有 Work 模式 = workflow，且阶段为 prototype / engineering / evolution
+  时，才会把角色的 system_prompt + phase_requirements 注入 Worker prompt。
+- Work 模式 = autonomous 时，Worker 只收到 task_text + 最小系统提示，
+  Role 信息不会注入。
+- 即使 Work 模式是 workflow，direct 阶段也不注入 Role。
+- 不要在回复中声称某个 Role 的要求已经在 autonomous 任务中生效。
 {mode_section}
 ========== 意图 ==========
 1. direct_reply —— 直接回答。

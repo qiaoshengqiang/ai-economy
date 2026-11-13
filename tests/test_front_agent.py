@@ -761,3 +761,21 @@ def test_set_mode_decision_parses_both_modes():
     assert decision.front_mode == "relay"
     assert decision.work_mode == "autonomous"
     assert decision.reply == "已切换"
+
+
+def test_front_prompt_explains_role_injection_scope():
+    prompts = []
+
+    def think(prompt):
+        prompts.append(prompt)
+        return json.dumps(
+            {"intent": "direct_reply", "reply": "好"},
+            ensure_ascii=False)
+
+    runtime = FrontAgentRuntime("front", think)
+    runtime.decide("这个任务用 game_developer 角色")
+
+    prompt = prompts[0]
+    assert "只有 Work 模式 = workflow" in prompt
+    assert "Work 模式 = autonomous 时" in prompt
+    assert "direct 阶段也不注入 Role" in prompt
