@@ -323,6 +323,8 @@ Worker 私有记忆。新任务可以在任务输入区选择默认仓库或其�
 
 Project 模式下 `TASK_DOC.md` / `RESULT.md` / `QUESTION.json` 写入
 `tasks/<task_id>/.aieos`，不污染用户项目。
+Phase 2（Git worktree + 预览 + 分支合并）已写入设计文档，状态为
+`DESIGNED` / `FUTURE`；预览是 Phase 2 能否被人类接受的关键。
 详见 [`PROJECT_WORKDIR.md`](architecture/PROJECT_WORKDIR.md)。
 
 ---

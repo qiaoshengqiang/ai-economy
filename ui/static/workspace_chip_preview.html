@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AIEOS · 工作区 UI 预览</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <style>
+    body { overflow: auto; }
+    .preview-banner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin: 10px 22px 0;
+      padding: 8px 12px;
+      border: 1px dashed rgba(94, 224, 255, .35);
+      border-radius: 10px;
+      color: #c7e8f2;
+      background: rgba(94, 224, 255, .06);
+      font-size: 12px;
+    }
+    .preview-banner b { color: #5ee0ff; }
+    .preview-layout {
+      height: calc(100vh - 128px);
+      min-height: 520px;
+    }
+    .composer-actions {
+      align-items: flex-end;
+      position: relative;
+    }
+    .composer-targets {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-left: auto;
+      flex-wrap: wrap;
+      position: relative;
+    }
+    .target-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      max-width: 230px;
+      min-width: 0;
+      padding: 7px 10px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--panel-2);
+      color: var(--text);
+      cursor: pointer;
+      font-size: 12px;
+    }
+    .target-chip:hover { border-color: rgba(94, 224, 255, .45); }
+    .target-chip .chip-icon {
+      color: #5ee0ff;
+      font-size: 12px;
+      flex: 0 0 auto;
+    }
+    .target-chip .chip-name {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .target-chip .chip-caret { color: var(--muted); font-size: 10px; }
+    .target-chip.muted-chip { color: var(--muted); }
+    .target-chip .chip-label {
+      color: var(--muted);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      flex: 0 0 auto;
+    }
+    .workspace-menu {
+      position: absolute;
+      right: 0;
+      bottom: calc(100% + 8px);
+      width: min(360px, 86vw);
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #0f1722;
+      box-shadow: 0 18px 50px rgba(0, 0, 0, .45);
+      z-index: 20;
+    }
+    .workspace-menu[hidden] { display: none !important; }
+    .workspace-menu .menu-path {
+      font: 11px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+      color: var(--muted);
+      word-break: break-all;
+      padding: 4px 6px 8px;
+      border-bottom: 1px solid var(--line);
+      margin-bottom: 6px;
+    }
+    .workspace-menu button {
+      display: block;
+      width: 100%;
+      text-align: left;
+      border: 0;
+      border-radius: 8px;
+      padding: 8px 9px;
+      background: transparent;
+      color: var(--text);
+      cursor: pointer;
+      font-size: 12px;
+    }
+    .workspace-menu button:hover { background: rgba(94, 224, 255, .08); }
+    .workspace-menu .menu-note {
+      padding: 7px 8px 2px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .preview-note {
+      margin: 8px 22px 20px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.7;
+    }
+    .preview-note code {
+      color: #c7e8f2;
+      background: rgba(94, 224, 255, .06);
+      padding: 1px 5px;
+      border-radius: 5px;
+    }
+    .variant-switch {
+      display: inline-flex;
+      gap: 4px;
+      padding: 3px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel-2);
+    }
+    .variant-switch button {
+      border: 0;
+      border-radius: 6px;
+      padding: 4px 8px;
+      color: var(--muted);
+      background: transparent;
+      font-size: 11px;
+      cursor: pointer;
+    }
+    .variant-switch button.active {
+      color: #081018;
+      background: #5ee0ff;
+      font-weight: 600;
+    }
+    @media (max-width: 700px) {
+      .target-chip { max-width: 150px; }
+      .target-chip .chip-label { display: none; }
+      .preview-layout { height: auto; }
+    }
+  </style>
+</head>
+<body>
+  <div class="preview-banner">
+    <span><b>布局预览</b> · 工作区收进提交按钮左侧，只显示最后一级目录</span>
+    <span class="variant-switch" role="group" aria-label="预览状态">
+      <button type="button" id="variant-project" class="active">项目目录</button>
+      <button type="button" id="variant-task">Task Workspace</button>
+    </span>
+  </div>
+
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">AIEOS</div>
+      <div class="subtitle">Human ↔ Front Agent ↔ Solo Agent</div>
+    </div>
+    <div class="top-status">
+      <span class="pill front">Front: agent_a · 自主</span>
+      <span class="pill work-auto">Work: 自主</span>
+      <span class="pill">Running: 0</span>
+      <button class="icon-btn">⚙ 设置</button>
+    </div>
+  </header>
+
+  <main class="layout preview-layout">
+    <section class="panel chat-panel">
+      <div class="panel-head chat-head">
+        <div class="chat-title">
+          <h2>与 Front 对话</h2>
+          <span class="front-timing idle">
+            <span class="timing-dots"><i></i><i></i><i></i></span>
+            <span class="timing-text">就绪</span>
+          </span>
+        </div>
+        <span class="hint">Ctrl/Cmd + Enter 提交</span>
+      </div>
+
+      <div class="messages">
+        <div class="msg human">
+          <span class="meta">你</span>
+          <div>把 project-demo 里的 app.py 改成 value = 2。</div>
+        </div>
+        <div class="msg front">
+          <span class="meta">Front Agent</span>
+          <div>好，我让 Work Agent 在项目目录里修改，只动这一处。</div>
+        </div>
+      </div>
+
+      <div class="composer">
+        <textarea rows="3"
+          placeholder="告诉 Front Agent 你想做什么，例如：做一个简单的打飞机游戏……"></textarea>
+        <div class="composer-actions">
+          <span class="muted" id="composer-hint">
+            提交后 Front 会判断：直接回复，或交给一个空闲 Agent 独立完成。
+          </span>
+          <div class="composer-targets">
+            <button type="button" class="target-chip" id="workspace-chip"
+              title="/Users/qiaoshengqiang/Documents/deepseek-harness/default-workspace/ai-economy/runs/project-demo">
+              <span class="chip-icon">▰</span>
+              <span class="chip-name" id="workspace-name">project-demo</span>
+              <span class="chip-caret">▾</span>
+            </button>
+            <button type="button" class="target-chip muted-chip"
+              title="输出仓库：/Users/qiaoshengqiang/Documents/deepseek-harness/default-workspace/ai-economy/runs/output-test">
+              <span class="chip-label">提交</span>
+              <span class="chip-icon">↗</span>
+              <span class="chip-name">output-test</span>
+            </button>
+            <button type="button" class="primary">提交</button>
+            <div class="workspace-menu" id="workspace-menu" hidden>
+              <div class="menu-path" id="workspace-path">
+                /Users/qiaoshengqiang/Documents/deepseek-harness/default-workspace/ai-economy/runs/project-demo
+              </div>
+              <button type="button">更换工作目录…</button>
+              <button type="button" id="use-task-workspace">使用 Task Workspace</button>
+              <div class="menu-note">只影响新任务；运行中的任务保持创建时的目录。</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <aside class="side">
+      <section class="panel">
+        <div class="panel-head"><h2>Agents</h2><span class="muted">4 个</span></div>
+        <div class="agent-list">
+          <div class="agent-row"><span>agent_a</span><span class="muted">FRONT · IDLE</span></div>
+          <div class="agent-row"><span>agent_b</span><span class="muted">WORKER · IDLE</span></div>
+        </div>
+      </section>
+      <section class="panel">
+        <div class="panel-head"><h2>Task 卡片</h2><span class="muted">1 个</span></div>
+        <div class="task-list">
+          <div class="task-card">
+            <div class="task-top"><span class="task-id">task_d077d18c</span><span class="task-status">COMPLETED</span></div>
+            <div class="task-modes"><span class="tag">项目目录</span><span class="tag">迭代 1</span></div>
+            <div class="task-desc">修改 project-demo/app.py</div>
+          </div>
+        </div>
+      </section>
+    </aside>
+  </main>
+
+  <div class="preview-note">
+    预览说明：工作区 chip 只显示最后一级目录 <code>project-demo</code>；
+    悬停查看完整路径，点击打开目录菜单。当前是静态 mock，不代表已经改正式 UI。
+  </div>
+
+  <script>
+    (() => {
+      const chip = document.getElementById("workspace-chip");
+      const menu = document.getElementById("workspace-menu");
+      const name = document.getElementById("workspace-name");
+      const path = document.getElementById("workspace-path");
+      const projectBtn = document.getElementById("variant-project");
+      const taskBtn = document.getElementById("variant-task");
+      const useTask = document.getElementById("use-task-workspace");
+      const projectPath = "/Users/qiaoshengqiang/Documents/deepseek-harness/default-workspace/ai-economy/runs/project-demo";
+      const taskPath = "AIEOS Task Workspace";
+
+      function setVariant(kind) {
+        const isProject = kind === "project";
+        name.textContent = isProject ? "project-demo" : "Task Workspace";
+        path.textContent = isProject ? projectPath : taskPath;
+        chip.title = isProject ? projectPath : "AIEOS Task Workspace";
+        projectBtn.classList.toggle("active", isProject);
+        taskBtn.classList.toggle("active", !isProject);
+        menu.hidden = true;
+      }
+
+      chip.addEventListener("click", () => {
+        menu.hidden = !menu.hidden;
+      });
+      projectBtn.addEventListener("click", () => setVariant("project"));
+      taskBtn.addEventListener("click", () => setVariant("task"));
+      useTask.addEventListener("click", () => setVariant("task"));
+      document.addEventListener("click", (event) => {
+        if (!menu.hidden && !menu.contains(event.target) && !chip.contains(event.target)) {
+          menu.hidden = true;
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

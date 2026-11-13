@@ -139,13 +139,126 @@ runs/project_locks/<sha256(project_path)>.lock
 
 ---
 
-## 8. 未来
+## 8. Phase 2 / 后续规划（`DESIGNED` / `FUTURE`）
 
-- Git worktree：从项目 base_ref 创建隔离 worktree；
-- 项目分支提交与 Human merge；
-- 测试门禁；
-- 自动 commit / push；
-- 多任务并行与冲突处理。
+> Phase 1 已经能直接修改项目；Phase 2 解决**隔离、预览、提交、合并**。
+> Phase 2 的核心价值不是“多一个 commit”，而是让项目修改可以
+> **先做、先看、再提交**。
+
+### 8.1 Phase 2：Git Worktree
+
+```text
+project repo
+  base_ref = main
+      ↓
+git worktree add .worktrees/task-<id> main
+      ↓
+Pi cwd = .worktrees/task-<id>
+      ↓
+修改 / 测试
+      ↓
+commit 到 aieos/task-<id>
+      ↓
+Human 预览 + 合并
+```
+
+能力：
+
+- 从 `base_ref` 创建隔离 worktree；
+- 任务分支 `aieos/task-<id>`；
+- 用户当前工作区不被修改；
+- 记录 `base_commit`；
+- 可丢弃分支 / worktree；
+- 需要 Git 仓库；非 Git 项目继续 Phase 1 直接模式。
+
+待决问题：
+
+- 用户当前有未提交修改时，worktree 从 HEAD 创建会丢失这些修改；
+  需要选择“要求 clean / 复制 dirty patch / 直接模式”；
+- worktree 依赖目录（`node_modules` / `.venv`）不随 Git 复制；
+- physical worktree path 是否对 Agent 可见（现有 Worktree 设计倾向于隐藏）；
+- 同一项目多 worktree 的合并冲突策略。
+
+### 8.2 预览：未提交也能看效果
+
+Worktree 是真实目录，**不 commit 也可以运行**：
+
+```text
+Agent 改完 worktree
+  → 用户预览
+  → 满意
+  → commit / merge
+```
+
+建议新增 `PreviewManager`：
+
+| 项目类型 | 预览方式 |
+|---|---|
+| 静态 HTML | `python -m http.server` 指向 worktree |
+| Node 前端 | `npm run dev` / `start` / `preview` |
+| 构建产物 | build 后静态服务 `dist/` |
+| Python Web | 项目配置的启动命令 |
+| 无法识别 | 显示 worktree 路径 + 手动命令 |
+
+要求：
+
+- 只绑定 `127.0.0.1`；
+- 自动分配空闲端口；
+- 显示 URL、PID、日志；
+- 支持停止 / 超时清理；
+- 依赖缺失时提示安装，不静默失败；
+- Human 点击启动，不自动执行。
+
+UI：
+
+```text
+任务 task_xxx 已完成，尚未提交。
+工作目录：.worktrees/task_xxx
+[启动预览] [打开目录] [查看 diff]
+[提交到任务分支]
+```
+
+这是 Phase 2 能否被人类接受的关键：
+**worktree 不能只是把文件藏起来，必须提供可预览的入口。**
+
+### 8.3 项目提交 / 合并
+
+- 预览满意后 commit 到 `aieos/task-<id>`；
+- 测试门禁（代码任务）；
+- Human 确认后 merge 到 `base_ref`；
+- `auto` 只做 fast-forward，复杂冲突交给 Human；
+- 自动 push 仍为 `FUTURE`。
+
+### 8.4 多任务 / 并行
+
+- Worktree 允许每个任务独立工作；
+- 但多个任务改同一项目时，合并冲突后置；
+- 初期建议按项目串行，后续再开放并行；
+- 需要项目级“任务队列 / 占用”显示。
+
+### 8.5 人类直观性
+
+Phase 1 直接改当前目录，用户天然能看到效果；
+Phase 2 隔离到 worktree 后，直观性下降，预览工作量增加。
+
+因此 Phase 2 的优先级取决于：
+
+1. 是否需要“不影响当前工作区”；
+2. 是否需要分支审查 / 合并；
+3. 是否愿意维护 PreviewManager；
+4. 是否有多任务并行需求。
+
+如果只是单用户、本地、改完马上看，Phase 1 更顺手；
+如果要做 Agent 团队 / 多任务 / 审查合并，Phase 2 更合适。
+
+### 8.6 后续候选
+
+- Project Commit（Phase 1.5）：直接提交当前项目本次任务变更；
+- 测试门禁 / 项目级测试命令；
+- 预览截图 / 自动可访问性检查；
+- 项目级任务队列；
+- 自动 push / PR；
+- 非 Git 项目的可选 `git init`。
 
 ---
 
