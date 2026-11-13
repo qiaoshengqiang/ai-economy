@@ -114,6 +114,52 @@
   .hint { color: var(--muted); font-size: 11px; }
 
   .chat-panel { display: flex; flex-direction: column; }
+  .chat-head { gap: 10px; }
+  .chat-title { display: flex; align-items: center; gap: 9px; min-width: 0; }
+  .chat-title h2 { white-space: nowrap; }
+  .chat-head-actions { display: flex; align-items: center; gap: 9px; flex: 0 0 auto; }
+  .front-timing {
+    display: inline-flex; align-items: center; gap: 5px;
+    min-height: 22px; padding: 2px 7px; border-radius: 999px;
+    border: 1px solid transparent; color: var(--muted);
+    font-size: 10.5px; white-space: nowrap;
+    transition: color .2s, border-color .2s, background .2s;
+  }
+  .front-timing.waiting {
+    color: var(--warn);
+    border-color: rgba(255,200,87,.32);
+    background: rgba(255,200,87,.08);
+  }
+  .front-timing.done {
+    color: var(--good);
+    border-color: rgba(80,216,144,.3);
+    background: rgba(80,216,144,.07);
+  }
+  .timing-text { font-variant-numeric: tabular-nums; }
+  .timing-dots { display: none; align-items: center; gap: 2px; }
+  .front-timing.waiting .timing-dots { display: inline-flex; }
+  .timing-dots i {
+    display: block; width: 3px; height: 3px; border-radius: 50%;
+    background: currentColor; animation: timing-dot .9s ease-in-out infinite;
+  }
+  .timing-dots i:nth-child(2) { animation-delay: .14s; }
+  .timing-dots i:nth-child(3) { animation-delay: .28s; }
+  @keyframes timing-dot {
+    0%, 60%, 100% { transform: translateY(0); opacity: .35; }
+    30% { transform: translateY(-3px); opacity: 1; }
+  }
+  .preview-demo {
+    border: 1px solid rgba(94,224,255,.24);
+    background: rgba(94,224,255,.06);
+    color: var(--accent); border-radius: 8px;
+    padding: 4px 8px; font-size: 10px;
+  }
+  .preview-demo:hover { background: rgba(94,224,255,.12); }
+  .preview-demo:disabled { opacity: .45; cursor: wait; }
+  @media (prefers-reduced-motion: reduce) {
+    .timing-dots i { animation: none !important; }
+  }
+
   .messages {
     flex: 1 1 auto; min-height: 0; overflow: auto;
     padding: 16px 18px; display: flex; flex-direction: column; gap: 12px;
@@ -325,9 +371,18 @@
 
   <main class="layout">
     <section class="panel chat-panel">
-      <div class="panel-head">
-        <h2>与 Front 对话</h2>
-        <span class="hint">Ctrl/Cmd + Enter 提交</span>
+      <div class="panel-head chat-head">
+        <div class="chat-title">
+          <h2>与 Front 对话</h2>
+          <span class="front-timing idle" id="front-timing" role="status" aria-live="polite">
+            <span class="timing-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+            <span class="timing-text">上次回复 3.4s</span>
+          </span>
+        </div>
+        <div class="chat-head-actions">
+          <button class="preview-demo" id="demo-reply" type="button">模拟一次回复</button>
+          <span class="hint">Ctrl/Cmd + Enter 提交</span>
+        </div>
       </div>
       <div class="messages">
         <div class="msg human">
@@ -637,5 +692,72 @@
       </section>
     </aside>
   </main>
+  <script>
+    (() => {
+      const timing = document.getElementById("front-timing");
+      const timingText = timing.querySelector(".timing-text");
+      const demo = document.getElementById("demo-reply");
+      const messages = document.querySelector(".messages");
+      let timer = 0;
+      let busy = false;
+
+      function addMessage(role, text, duration) {
+        const item = document.createElement("div");
+        item.className = `msg ${role}`;
+        const who = document.createElement("span");
+        who.className = "who";
+        who.textContent = role === "human" ? "Human" : "Front Agent";
+        const bubble = document.createElement("div");
+        bubble.className = "bubble";
+        bubble.textContent = text;
+        item.appendChild(who);
+        item.appendChild(bubble);
+        if (duration) {
+          const footer = document.createElement("div");
+          footer.className = "msg-duration";
+          footer.textContent = `耗时 ${duration.toFixed(1)}s`;
+          item.appendChild(footer);
+        }
+        messages.appendChild(item);
+        messages.scrollTop = messages.scrollHeight;
+      }
+
+      function startTimer() {
+        busy = true;
+        demo.disabled = true;
+        timing.className = "front-timing waiting";
+        timingText.textContent = "Front 正在思考 · 0.0s";
+        const started = performance.now();
+        timer = window.setInterval(() => {
+          const seconds = (performance.now() - started) / 1000;
+          timingText.textContent = `Front 正在思考 · ${seconds.toFixed(1)}s`;
+        }, 100);
+      }
+
+      function finishTimer(seconds) {
+        window.clearInterval(timer);
+        timing.className = "front-timing done";
+        timingText.textContent = `已回复 · ${seconds.toFixed(1)}s`;
+        window.setTimeout(() => {
+          timing.className = "front-timing idle";
+          timingText.textContent = `上次回复 ${seconds.toFixed(1)}s`;
+          demo.disabled = false;
+          busy = false;
+        }, 2400);
+      }
+
+      demo.addEventListener("click", () => {
+        if (busy) return;
+        addMessage("human", "帮我看一下刚才的打飞机任务。");
+        startTimer();
+        const started = performance.now();
+        window.setTimeout(() => {
+          const seconds = (performance.now() - started) / 1000;
+          addMessage("front", "收到，我正在查这个任务的状态和最近一次执行结果。", seconds);
+          finishTimer(seconds);
+        }, 3400);
+      });
+    })();
+  </script>
 </body>
 </html>
