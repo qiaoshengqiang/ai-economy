@@ -246,7 +246,7 @@
     $("front-mode").value = regular.front_mode || "autonomous";
     $("pi-timeout-enabled").checked = regular.pi_timeout_enabled !== false;
     $("pi-timeout-seconds").value = String(
-      regular.pi_timeout_seconds || 1800);
+      regular.pi_timeout_seconds || 7200);
     $("pi-timeout-seconds").disabled = !$("pi-timeout-enabled").checked;
     $("prompt-log-enabled").checked = !!regular.prompt_log_enabled;
   }
@@ -391,7 +391,7 @@
     $("model-profile").disabled = true;
     $("model-provider").value = raw.provider || "";
     $("model-id").value = raw.model_id || "";
-    $("model-context").value = String(raw.context_window || 128000);
+    $("model-context").value = String(raw.context_window || 600000);
     $("model-output").value = String(raw.max_output_tokens || 16384);
     $("model-reasoning").checked = !!raw.supports_reasoning;
     const levels = new Set(raw.thinking_levels || []);
@@ -406,7 +406,7 @@
     $("model-profile").value = "";
     $("model-provider").selectedIndex = 0;
     $("model-id").value = "";
-    $("model-context").value = "128000";
+    $("model-context").value = "600000";
     $("model-output").value = "16384";
     $("model-reasoning").checked = true;
     document.querySelectorAll("#model-thinking-levels input").forEach((box) => {
@@ -419,7 +419,7 @@
       profile: $("model-profile").value.trim(),
       provider: $("model-provider").value,
       model_id: $("model-id").value.trim(),
-      context_window: Number($("model-context").value || 128000),
+      context_window: Number($("model-context").value || 600000),
       max_output_tokens: Number($("model-output").value || 16384),
       supports_reasoning: $("model-reasoning").checked,
       thinking_levels: [...document.querySelectorAll(
@@ -524,7 +524,7 @@
           work_mode: $("work-mode").value,
           front_mode: $("front-mode").value,
           pi_timeout_enabled: $("pi-timeout-enabled").checked,
-          pi_timeout_seconds: Number($("pi-timeout-seconds").value || 1800),
+          pi_timeout_seconds: Number($("pi-timeout-seconds").value || 7200),
           prompt_log_enabled: $("prompt-log-enabled").checked,
         }),
       });

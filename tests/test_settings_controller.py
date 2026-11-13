@@ -110,17 +110,17 @@ def test_work_mode_round_trip(tmp_path):
     path = tmp_path / "ui_settings.json"
     controller = _controller(tmp_path)
     try:
-        assert controller.settings_dict()["work_mode"] == "workflow"
-        controller.update_settings(work_mode="autonomous")
         assert controller.settings_dict()["work_mode"] == "autonomous"
+        controller.update_settings(work_mode="workflow")
+        assert controller.settings_dict()["work_mode"] == "workflow"
     finally:
         controller.close()
 
     data = json.loads(path.read_text("utf-8"))
-    assert data["work_mode"] == "autonomous"
+    assert data["work_mode"] == "workflow"
     reloaded = _controller(tmp_path)
     try:
-        assert reloaded.settings_dict()["work_mode"] == "autonomous"
+        assert reloaded.settings_dict()["work_mode"] == "workflow"
         try:
             reloaded.update_settings(work_mode="unknown")
         except ValueError as exc:

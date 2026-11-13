@@ -189,7 +189,7 @@ class PiWorkRuntime:
         agent = self._agent()
         settings = getattr(getattr(agent, "brain", None), "settings", None)
         context_window = int(
-            getattr(settings, "context_window", None) or 128000)
+            getattr(settings, "context_window", None) or 600000)
         # Pi Work 统一使用模型的最大输出上限；Agent 的较低 max_tokens
         # 不在这里二次截断。阶段可以通过 prompt 自行输出更短。
         max_output = int(

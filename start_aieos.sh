@@ -11,7 +11,7 @@
 #
 # 默认：
 #   port      8000
-#   pi agents agent_c
+#   pi agents agent_b,agent_c,agent_d,agent_e
 #   pi CLI     experiments/pi_compare/pi_node/node_modules/.bin/pi
 #
 # 可用环境变量覆盖：
@@ -25,7 +25,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
 
 PORT="${AIEOS_PORT:-8000}"
-PI_AGENTS="${AIEOS_PI_AGENTS:-agent_c}"
+PI_AGENTS="${AIEOS_PI_AGENTS:-agent_b,agent_c,agent_d,agent_e}"
 PI_CLI="${AIEOS_PI_CLI:-$ROOT/experiments/pi_compare/pi_node/node_modules/.bin/pi}"
 LOG="${AIEOS_LOG:-$ROOT/runs/ui/server.log}"
 PID_FILE="${AIEOS_PID_FILE:-$ROOT/runs/ui/aieos.pid}"

@@ -198,7 +198,7 @@ class AIEOSController:
         pi_provider: str = "",
         pi_model: str = "",
         pi_agent_dir: Optional[Path] = None,
-        pi_timeout_seconds: float = 1800.0,
+        pi_timeout_seconds: float = 7200.0,
         pi_timeout_enabled: bool = True,
         task_root: Optional[Path] = None,
         settings_path: Optional[Path] = None,
@@ -229,7 +229,7 @@ class AIEOSController:
         #: Agent 卡片选择的思考强度；"auto" = 阶段策略。
         self.agent_thinking: Dict[str, str] = {}
         #: Work 模式：workflow = 阶段化；autonomous = 单阶段自主工作。
-        self.work_mode = "workflow"
+        self.work_mode = "autonomous"
         #: Front 模式：autonomous = 当前会补全 brief；relay = 只传达。
         self.front_mode = "autonomous"
         self.pi_cli_path = str(pi_cli_path or "pi")

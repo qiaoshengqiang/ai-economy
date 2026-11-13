@@ -231,17 +231,20 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--solo-turns", type=int, default=24)
     ap.add_argument("--cognitive-budget", type=int, default=65536)
     ap.add_argument(
-        "--pi-agents", default="",
+        "--pi-agents", default="agent_b,agent_c,agent_d,agent_e",
         help="逗号分隔：这些 Agent 的 Solo Task 使用 Pi Work 引擎")
-    ap.add_argument("--pi-cli", default="pi",
-                    help="Pi CLI 路径（默认从 PATH 找 pi）")
+    ap.add_argument(
+        "--pi-cli",
+        default=str(ROOT / "experiments" / "pi_compare" / "pi_node"
+                    / "node_modules" / ".bin" / "pi"),
+        help="Pi CLI 路径")
     ap.add_argument("--pi-provider", default="",
                     help="覆盖 Pi provider；空 = 用 Agent Brain 的 provider")
     ap.add_argument("--pi-model", default="",
                     help="覆盖 Pi model；空 = 用 Agent Brain 的 model")
     ap.add_argument("--pi-agent-dir", default=None,
                     help="PI_CODING_AGENT_DIR（Pi 配置目录）")
-    ap.add_argument("--pi-timeout", type=float, default=1800.0)
+    ap.add_argument("--pi-timeout", type=float, default=7200.0)
     ap.add_argument("--task-root", default=None,
                     help="真实 Task 目录根；默认 <repo>/tasks")
     # 保留旧参数兼容

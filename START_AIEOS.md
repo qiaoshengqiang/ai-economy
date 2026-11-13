@@ -37,7 +37,7 @@ http://127.0.0.1:8000/
 ```text
 端口：      8000
 Front：     agent_a
-Pi Agent：  agent_c
+Pi Agent：  agent_b,agent_c,agent_d,agent_e
 Pi CLI：    experiments/pi_compare/pi_node/node_modules/.bin/pi
 日志：      runs/ui/server.log
 PID 文件：  runs/ui/aieos.pid
@@ -91,7 +91,7 @@ AIEOS_PI_CLI=/path/to/pi \
 如果需要在终端前台运行、直接看日志：
 
 ```bash
-./dev.sh ui --port 8000 --pi-agents agent_c \
+./dev.sh ui --port 8000 --pi-agents agent_b,agent_c,agent_d,agent_e \
   --pi-cli experiments/pi_compare/pi_node/node_modules/.bin/pi
 ```
 

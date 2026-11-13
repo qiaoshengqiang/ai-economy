@@ -60,7 +60,18 @@ RESULT.md / 文件产物
 ```text
 Front 模式：自主 或 只传达
 Work 模式：自主
-Pi Agent：agent_b / agent_c / agent_d / agent_e 中已启用 Pi 的 Agent
+Pi Agent：agent_b / agent_c / agent_d / agent_e（默认全部启用 Pi）
+```
+
+默认配置（`v0.2.0`）：
+
+```text
+Front 模式：autonomous
+Work 模式：autonomous
+Pi Agents：agent_b, agent_c, agent_d, agent_e
+Pi 超时：7200 秒
+DeepSeek context：600000
+DeepSeek 单次输出：32768
 ```
 
 其中：
@@ -324,7 +335,7 @@ Pi workflow 的 Evolution 阶段容易：
 
 Pi 自主任务仍然可能消耗较多 token：
 
-- 1M context 降低了压缩频率，但每次调用可能携带较长上下文；
+- 600k context 降低了压缩频率，但每次调用仍可能携带较长上下文；
 - 当前没有按任务的 token 硬预算；
 - 观察到复杂任务可达 10M–18M input tokens；
 - 后续需要低成本模式 / 任务级预算 / 更细的上下文策略。
@@ -340,7 +351,7 @@ Pi 自主任务仍然可能消耗较多 token：
 - 新增 Web Search / Fetch（Front action + Pi CLI + 内部端点）；
 - 新增 UI 模式显示、紧凑 Agent 列表、机器人动画、工作中虚线边框、Front 回复计时；
 - 修复 Pi 超时被标成 FAILED、返工 session 复用、role 未持久化、`last_error` 不更新；
-- DeepSeek context 提升到 1M，单次输出上限 32K；
+- DeepSeek context 默认 600K，单次输出上限 32K；
 - Team 仍然暂停，非 Pi Solo 仍然只有工作流式循环。
 
 ---

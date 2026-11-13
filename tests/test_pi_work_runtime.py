@@ -25,7 +25,7 @@ class _FakeBrain:
     provider = "deepseek"
     model = "deepseek-flash"
     settings = SimpleNamespace(
-        context_window=1000000,
+        context_window=600000,
         max_output_tokens=32768,
         supports_reasoning=True,
         thinking_levels=("off", "low", "high", "max"),
@@ -259,7 +259,7 @@ def test_pi_work_runtime_completes_and_ingests_memory(db, monkeypatch, tmp_path)
     pi_agent_dir = runner._write_pi_models("http://127.0.0.1:1", "m")
     model_cfg = (pi_agent_dir / "models.json").read_text("utf-8")
     assert '"maxTokens": 32768' in model_cfg
-    assert '"contextWindow": 1000000' in model_cfg
+    assert '"contextWindow": 600000' in model_cfg
     assert '"max": "max"' in model_cfg
     assert '"medium": null' in model_cfg
     pi_settings = json.loads(
