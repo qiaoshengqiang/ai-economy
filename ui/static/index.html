@@ -34,20 +34,29 @@
       </div>
       <div class="messages" id="messages"></div>
       <div class="composer">
+        <div class="task-setup">
+          <div class="commit-bar">
+            <span class="commit-label">工作目录</span>
+            <input id="workdir-input" type="text"
+              placeholder="留空 = 使用 AIEOS Task Workspace" />
+            <button type="button" class="icon-btn" id="workdir-browse">选择目录</button>
+            <span id="workdir-status" class="muted">Task Workspace</span>
+          </div>
+          <div class="commit-bar" title="产物提交到该仓库的 tasks/<task_id> 子目录">
+            <span class="commit-label">提交仓库</span>
+            <input id="commit-repo-input" type="text"
+              title="产物提交到该仓库的 tasks/<task_id> 子目录"
+              placeholder="未配置默认仓库；可选择其他目录" />
+            <button type="button" class="icon-btn" id="commit-repo-browse">选择目录</button>
+            <button type="button" class="icon-btn" id="commit-repo-default">默认</button>
+            <span id="commit-repo-status" class="muted">未配置</span>
+          </div>
+        </div>
         <textarea id="prompt" rows="3"
           placeholder="告诉 Front Agent 你想做什么，例如：做一个简单的打飞机游戏……"></textarea>
         <div class="composer-actions">
           <span class="muted" id="composer-hint">提交后 Front 会判断：直接回复，或交给一个空闲 Agent 独立完成。</span>
           <button class="primary" id="submit-btn">提交</button>
-        </div>
-        <div class="commit-bar" title="任务产物会提交到该仓库的 tasks/<task_id> 子目录">
-          <span class="commit-label">提交仓库</span>
-          <input id="commit-repo-input" type="text"
-            title="任务产物会提交到该仓库的 tasks/<task_id> 子目录"
-            placeholder="未配置默认仓库；可选择其他目录" />
-          <button type="button" class="icon-btn" id="commit-repo-browse">选择目录</button>
-          <button type="button" class="icon-btn" id="commit-repo-default">默认</button>
-          <span id="commit-repo-status" class="muted">未配置</span>
         </div>
       </div>
     </section>
@@ -102,7 +111,7 @@
     <div class="modal repo-picker-modal">
       <div class="settings-head">
         <div>
-          <h2>选择仓库目录</h2>
+          <h2 id="repo-picker-title">选择仓库目录</h2>
           <span class="muted" id="repo-picker-status"></span>
         </div>
         <button class="icon-btn" id="repo-picker-close">✕</button>

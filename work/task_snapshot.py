@@ -114,7 +114,8 @@ class TaskSnapshotStore:
         enabled: bool = True,
     ) -> None:
         self.directory = directory
-        self.workspace = Path(directory.workspace)
+        #: project 模式下是用户项目目录；否则是 Task Workspace。
+        self.workspace = Path(directory.workdir)
         self.git_dir = Path(directory.aieos) / "snapshot.git"
         self.index_path = Path(directory.aieos) / "snapshot.index"
         self.records_path = Path(directory.aieos) / "snapshots.json"
@@ -493,7 +494,7 @@ class TaskSnapshotStore:
         return skipped
 
     def _restore_one(self, record: SnapshotRecord, rel: str) -> None:
-        target = self.directory.resolve(rel)
+        target = self._resolve(rel)
         mode = self._tree_entry(record.tree, rel)
         if mode is None:
             self._remove(rel)
@@ -522,7 +523,7 @@ class TaskSnapshotStore:
             os.chmod(target, 0o755 if mode == "100755" else 0o644)
 
     def _remove(self, rel: str) -> None:
-        target = self.directory.resolve(rel)
+        target = self._resolve(rel)
         if target.is_symlink() or target.is_file():
             target.unlink(missing_ok=True)
         elif target.is_dir():
@@ -539,8 +540,15 @@ class TaskSnapshotStore:
         if pure.parts and pure.parts[0] in (".aieos", ".git"):
             raise ValueError(f"不能恢复元数据目录：{path!r}")
         # 复用 TaskDirectory 的越界检查（包含 symlink 逃逸）。
-        self.directory.resolve(raw)
+        self._resolve(raw)
         return pure.as_posix()
+
+    def _resolve(self, rel: str) -> Path:
+        raw = str(rel or "").strip().lstrip("/")
+        candidate = (self.workspace / raw).resolve()
+        if candidate != self.workspace and self.workspace not in candidate.parents:
+            raise ValueError(f"路径超出工作目录：{rel!r}")
+        return candidate
 
     @staticmethod
     def _path_list(

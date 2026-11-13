@@ -18,7 +18,9 @@ from core.task import Task, TaskMode, TaskStatus
 from core.task_store import TaskStore
 from work.pi_runtime import PiWorkRuntime
 from work.pi_rpc import PiRunResult
+from work.project_lock import ProjectLockManager
 from work.task_directory import TaskDirectoryManager
+from work.task_snapshot import TaskSnapshotStore
 
 
 class _FakeBrain:
@@ -399,3 +401,99 @@ def test_autonomous_mode_uses_single_minimal_run(db, monkeypatch, tmp_path):
         (directory.aieos / "work_state.json").read_text("utf-8"))
     assert state["phase"] == "complete"
     assert state["history"][-1]["phase"] == "autonomous"
+
+
+def test_pi_project_workdir_modifies_existing_project(db, monkeypatch, tmp_path):
+    project = tmp_path / "existing-project"
+    project.mkdir()
+    (project / "app.py").write_text("value = 1\n", encoding="utf-8")
+    (project / "README.md").write_text("old project\n", encoding="utf-8")
+
+    task = Task.create(
+        task_id="T-PI-PROJECT", creator="agent_c",
+        description="把 app.py 的值改成 2",
+        workspace_id="WS-PROJECT", participants=["agent_c"],
+        acceptance={
+            "workspace_mode": "project",
+            "project_path": str(project),
+            "work_mode": "autonomous",
+        },
+        mode=TaskMode.SOLO)
+    task.claim_producer("agent_c")
+    store = TaskStore(db)
+    store.save(task)
+
+    workspace = _FakeWorkspace(tmp_path / "agent_c")
+    runtime = SimpleNamespace(
+        tasks=store,
+        economy=SimpleNamespace(agent=lambda aid: SimpleNamespace(
+            has_brain=True, brain=_FakeBrain(), workspace=workspace)),
+        private_working_memory=_FakeWorkingMemory(),
+        private_short_term_memory=_FakeShortMemory(),
+        private_long_term_memory=_FakeLongMemory(),
+        recorder=_Recorder(),
+        experiment_run_id="exp-project",
+    )
+    directory = TaskDirectoryManager(
+        tmp_path / "tasks").for_task(task.task_id, workdir=project)
+    seen = {}
+
+    class _FakePiClient:
+        def __init__(self, **kwargs):
+            seen["cwd"] = Path(kwargs["cwd"])
+
+        def run(self, prompt, *, timeout_seconds, should_stop, event_sink):
+            (self_cwd := seen["cwd"])
+            (self_cwd / "app.py").write_text(
+                "value = 2\n", encoding="utf-8")
+            (self_cwd / "new_module.py").write_text(
+                "added = True\n", encoding="utf-8")
+            events = [
+                {"type": "turn_start", "_received_at": 1.0},
+                {
+                    "type": "message_end", "_received_at": 2.0,
+                    "message": {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "项目已修改"}],
+                    },
+                },
+                {"type": "turn_end", "_received_at": 3.0},
+                {"type": "agent_settled", "_received_at": 3.1},
+            ]
+            if event_sink is not None:
+                for event in events:
+                    event_sink(event)
+            return PiRunResult(events=events, exit_code=0)
+
+    monkeypatch.setattr(
+        "work.pi_runtime.PiRpcClient", _FakePiClient, raising=True)
+    runner = PiWorkRuntime(
+        runtime, task,
+        task_directory=directory,
+        pi_cli_path="fake-pi",
+        use_llm_proxy=False,
+        work_mode="autonomous",
+        phase_plan=["autonomous"],
+        project_lock_manager=ProjectLockManager(tmp_path / "locks"),
+    )
+    result = runner.run()
+
+    assert result.ok is True, result.error
+    assert seen["cwd"] == project.resolve()
+    assert (project / "app.py").read_text(encoding="utf-8") == "value = 2\n"
+    assert (project / "new_module.py").exists()
+    assert not (project / "TASK_DOC.md").exists()
+    assert (directory.aieos / "TASK_DOC.md").exists()
+    assert directory.workspace.exists() is False
+
+    manifest = json.loads(
+        (directory.aieos / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["workspace_mode"] == "project"
+    assert manifest["workdir"] == str(project.resolve())
+    paths = {item["path"] for item in manifest["files"]}
+    assert paths == {"app.py", "new_module.py"}
+
+    snapshots = TaskSnapshotStore(directory).list()
+    assert [item.label for item in snapshots] == [
+        "baseline", "phase:autonomous:end", "final"]
+    assert snapshots[-1].files == 3

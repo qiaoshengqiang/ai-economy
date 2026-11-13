@@ -4,7 +4,7 @@
 > **日期：2026-11-13**
 > **阶段：开发中 / 观察实验**
 > **协议版本：`1`**
-> **测试基线：`5581 passed, 2 skipped, 30 deselected`**
+> **测试基线：`5590 passed, 2 skipped, 30 deselected`**
 
 本文记录**当前真实可用能力、推荐工作方式、已知限制和版本变化**。
 架构的长期权威仍然是
@@ -307,8 +307,23 @@ task_text
 | UI 提交列表 / 历史 | 待接入 |
 
 提交时机是 Task COMPLETED 之后；提交结果不改变 Task 状态，也不进入
-Worker 私有记忆。新任务可以在聊天框下方选择默认仓库或其他绝对路径。
+Worker 私有记忆。新任务可以在任务输入区选择默认仓库或其他绝对路径。
 详见 [`OUTPUT_COMMIT.md`](architecture/OUTPUT_COMMIT.md)。
+
+### 7.6 Project Workdir
+
+| 能力 | 状态 |
+|---|---|
+| 选择已有项目目录作为 Pi cwd | `CURRENT`（Phase 1） |
+| 直接修改项目代码（不要求 Git） | `CURRENT` |
+| Shadow snapshot（项目内不出现 `.git`） | `CURRENT` |
+| 项目级锁（同一项目串行） | `CURRENT` |
+| manifest 只记录变更文件 | `CURRENT` |
+| Git worktree / 项目分支 / 自动提交 | `FUTURE` |
+
+Project 模式下 `TASK_DOC.md` / `RESULT.md` / `QUESTION.json` 写入
+`tasks/<task_id>/.aieos`，不污染用户项目。
+详见 [`PROJECT_WORKDIR.md`](architecture/PROJECT_WORKDIR.md)。
 
 ---
 
@@ -390,6 +405,14 @@ Pi 自主任务仍然可能消耗较多 token：
 - 观察到复杂任务可达 10M–18M input tokens；
 - 后续需要低成本模式 / 任务级预算 / 更细的上下文策略。
 
+### 8.10 Project Workdir 限制
+
+- Agent 直接写用户项目，没有 OS 沙箱；
+- 同一项目同时只允许一个任务；
+- 非 Pi 引擎暂不支持 project 模式；
+- 还没有 Git worktree 隔离、项目分支提交、自动 merge；
+- 项目任务删除的文件只体现在 snapshot diff，不进入 artifacts。
+
 ---
 
 ## 9. v0.2.0 版本变化摘要
@@ -402,6 +425,7 @@ Pi 自主任务仍然可能消耗较多 token：
 - 新增 UI 模式显示、紧凑 Agent 列表、机器人动画、工作中虚线边框、Front 回复计时；
 - 新增 Pi Task Snapshot：任务私有 Git 历史，不污染主仓库，支持 diff / restore；
 - 新增 Output Commit：Task 完成后提交到独立输出仓库，支持 manual / limited / auto；
+- 新增 Project Workdir：选择已有项目目录，Pi 直接修改，shadow snapshot + 项目锁；
 - 修复 Pi 超时被标成 FAILED、返工 session 复用、role 未持久化、`last_error` 不更新；
 - DeepSeek context 默认 600K，单次输出上限 32K；
 - Team 仍然暂停，非 Pi Solo 仍然只有工作流式循环。
@@ -466,7 +490,7 @@ Team 协作
 当前基线：
 
 ```text
-5581 passed, 2 skipped, 30 deselected
+5590 passed, 2 skipped, 30 deselected
 ```
 
 启动说明见 [`../START_AIEOS.md`](../START_AIEOS.md)。

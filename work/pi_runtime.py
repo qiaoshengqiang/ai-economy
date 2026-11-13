@@ -20,6 +20,7 @@ PiWorkRuntime —— Pi 作为 Work 层执行底座
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from datetime import datetime, timezone
@@ -65,6 +66,7 @@ class PiWorkRuntime:
         work_profile: str = "",
         work_mode: str = "workflow",
         rework_scope: str = "",
+        project_lock_manager: Any = None,
     ) -> None:
         if task.mode != TaskMode.SOLO:
             raise ValueError(
@@ -72,6 +74,10 @@ class PiWorkRuntime:
         self.rt = runtime
         self.task = task
         self.task_directory = task_directory
+        #: project 模式 = 用户项目目录；否则 = Task Workspace。
+        self.workdir = Path(task_directory.workdir)
+        self.project_mode = bool(task_directory.project_mode)
+        self.project_lock_manager = project_lock_manager
         self.pi_cli_path = str(pi_cli_path or "pi")
         self.pi_provider = str(pi_provider or "")
         self.pi_model = str(pi_model or "")
@@ -117,7 +123,7 @@ class PiWorkRuntime:
             runtime,
             agent_id=task.contractor or task.creator,
             task=task,
-            task_workspace=task_directory.workspace,
+            task_workspace=self.workdir,
         )
         # Task 私有快照仓库：不写 AIEOS 主仓库，也不在 workspace 里放 .git。
         self.snapshots = TaskSnapshotStore(task_directory)
@@ -145,7 +151,7 @@ class PiWorkRuntime:
     ) -> Dict[str, str]:
         env = dict(os.environ)
         env.update({
-            "AIEOS_TASK_WORKSPACE": str(self.task_directory.workspace),
+            "AIEOS_TASK_WORKSPACE": str(self.workdir),
             "AIEOS_PRIVATE_WORKSPACE": str(
                 self.memory.private_workspace or ""),
             "AIEOS_MEMORY_DIR": str(self.memory.memory_dir or ""),
@@ -382,8 +388,23 @@ class PiWorkRuntime:
         return pick(defaults.get(phase, "medium"))
 
     def _workspace_brief(self) -> str:
-        """Task Workspace / 私有 workspace / 记忆目录的用途（正向表述）。"""
+        """工作目录 / 私有 workspace / 记忆目录的用途（正向表述）。"""
         paths = self.memory.paths()
+        if self.project_mode:
+            return f"""你的工作目录是用户已有的项目目录：
+{self.workdir}
+
+这是用户提供的现有项目。直接读取、修改、运行其中的代码；
+在项目原有结构、依赖和约定上增量修改。
+你的私有 workspace 是：
+{paths['private_workspace']}
+你的记忆目录是：
+{paths['memory_dir']}
+
+项目目录用于真实的代码与交付物；私有 workspace 放你自己的草稿、笔记、
+中间产物和可复用的小脚本，可以按 notes/、scratch/、tools/ 分目录。
+操作范围：当前项目目录和自己的私有 workspace。
+"""
         return f"""你的工作目录是 Task Workspace：
 {paths['task_workspace']}
 
@@ -399,6 +420,17 @@ Task Workspace 放本次任务的交付物和验收产物。
 操作范围：当前 Task Workspace 和自己的私有 workspace。
 """
 
+    def _document_path(self, name: str) -> Path:
+        """Task 文档位置：project 模式写 AIEOS 元数据，避免污染项目。"""
+        if self.project_mode:
+            return self.task_directory.aieos / Path(name).name
+        return self.task_directory.workspace / Path(name).name
+
+    def _write_document(self, name: str, content: str) -> None:
+        target = self._document_path(name)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(str(content), encoding="utf-8")
+
     def _autonomous_system_prompt(self) -> str:
         """自主模式的最小系统提示：环境边界、私有空间用途与工具使用。"""
         paths = self.memory.paths()
@@ -411,10 +443,11 @@ Task Workspace 放本次任务的交付物和验收产物。
 需要读取具体公开网页正文时，可以运行：
 {search_cmd} fetch "https://example.com/page"
 """
+        scope = "项目目录" if self.project_mode else "Task Workspace"
         return f"""你是 {self.task.contractor or self.task.creator}，AIEOS 中的 Work 执行 Agent。
 
 {self._workspace_brief()}
-直接使用原生 read/write/edit/bash/grep/find/ls 工具在 Task Workspace 中完成工作。
+直接使用原生 read/write/edit/bash/grep/find/ls 工具在{scope}中完成工作。
 读取 `{paths['memory_dir']}/context.md` 获取记忆快照。
 {search_section}
 """
@@ -423,6 +456,9 @@ Task Workspace 放本次任务的交付物和验收产物。
         if self.work_mode == "autonomous":
             return self._autonomous_system_prompt()
         paths = self.memory.paths()
+        scope = "项目目录" if self.project_mode else "Task Workspace"
+        question_path = self._document_path("QUESTION.json")
+        result_path = self._document_path("RESULT.md")
         search_cmd = os.environ.get("AIEOS_WEB_SEARCH_CMD", "").strip()
         search_section = ""
         if search_cmd:
@@ -431,29 +467,30 @@ Task Workspace 放本次任务的交付物和验收产物。
 {search_cmd} search "query" --count 5
 需要读取某个具体公开网页的 Markdown 正文时，运行：
 {search_cmd} fetch "https://example.com/page"
-搜索与抓取结果作为外部证据；引用 URL，并以 Task Workspace 的实际状态为准。
+搜索与抓取结果作为外部证据；引用 URL，并以{scope}的实际状态为准。
 """
         return f"""你是 {self.task.contractor or self.task.creator}，AIEOS 中的 Work 执行 Agent。
 
 {self._workspace_brief()}
-请直接使用原生 read/write/edit/bash/grep/find/ls 工具把交付物写入
-Task Workspace。本 Work 任务以 Task Workspace 作为唯一协作面。
+请直接使用原生 read/write/edit/bash/grep/find/ls 工具在{scope}中完成工作。
 读取 `{paths['memory_dir']}/context.md` 获取记忆快照。
 {search_section}
 
 如果任务中确实需要人类确认（需求歧义、关键设计选择、不可逆操作），
-请在 Task Workspace 根目录写 `QUESTION.json`，格式：
+请写 `{question_path}`，格式：
 
 {{"question":"需要确认的问题","options":["选项 A","选项 B"],
   "allow_free_text":true}}
 
 写完结束本轮，AIEOS 会暂停任务，等待人类回答后从当前
 阶段继续。把问题留给真正的分歧点，能自主推进的工作直接推进。
+任务完成后，把总结写入 `{result_path}`。
 """
 
     def _bounded_text(self, relative_path: str, limit: int = 6000) -> str:
         try:
-            text = self.task_directory.read_text(relative_path).strip()
+            text = self._document_path(relative_path).read_text(
+                encoding="utf-8").strip()
         except (OSError, ValueError):
             return ""
         if len(text) > limit:
@@ -463,7 +500,7 @@ Task Workspace。本 Work 任务以 Task Workspace 作为唯一协作面。
     def _write_task_doc(self) -> None:
         """维护跨阶段 / 跨迭代的任务文档。"""
         state = self._work_state or {}
-        files = self.task_directory.list_files()
+        files = [] if self.project_mode else self.task_directory.list_files()
         history = state.get("history") or []
         history_lines = [
             f"- {item.get('phase')}: {item.get('status')} "
@@ -484,7 +521,10 @@ Task Workspace。本 Work 任务以 Task Workspace 作为唯一协作面。
                         0, f"- 等待人类回答：{pending.get('question', '')}")
             except (OSError, ValueError):
                 pass
-        file_lines = [f"- {item['path']}" for item in files] or ["- （空）"]
+        file_lines = [f"- {item['path']}" for item in files] or [
+            "- （项目目录：变更见 final snapshot）"
+            if self.project_mode else "- （空）"
+        ]
         content = f"""# 任务文档
 
 ## 任务目标
@@ -514,10 +554,10 @@ Task Workspace。本 Work 任务以 Task Workspace 作为唯一协作面。
 ## 当前文件
 {chr(10).join(file_lines)}
 """
-        self.task_directory.write_text("TASK_DOC.md", content)
+        self._write_document("TASK_DOC.md", content)
 
     def _read_question(self) -> Optional[Dict[str, Any]]:
-        path = self.task_directory.workspace / "QUESTION.json"
+        path = self._document_path("QUESTION.json")
         if not path.is_file():
             return None
         try:
@@ -610,18 +650,25 @@ Task Workspace。本 Work 任务以 Task Workspace 作为唯一协作面。
                 self._recent_tool_results + items)[-12:]
 
     def _environment_facts(self, phase: str) -> str:
-        files = self.task_directory.list_files()
-        lines = [f"workspace: {self.task_directory.workspace}"]
-        if files:
-            lines.append("当前文件：")
-            for item in files[:80]:
-                chars = item.get("chars")
-                suffix = f" ({chars} chars)" if chars is not None else ""
-                lines.append(f"- {item['path']}{suffix}")
-            if len(files) > 80:
-                lines.append(f"- …（还有 {len(files) - 80} 个文件）")
+        if self.project_mode:
+            lines = [
+                f"项目目录: {self.workdir}",
+                "这是已有项目；用 ls / grep / find / read 了解现有结构。",
+                "代码和交付物直接修改项目目录；阶段变更记录在 AIEOS 元数据目录。",
+            ]
         else:
-            lines.append("当前 Workspace 为空。")
+            files = self.task_directory.list_files()
+            lines = [f"workspace: {self.task_directory.workspace}"]
+            if files:
+                lines.append("当前文件：")
+                for item in files[:80]:
+                    chars = item.get("chars")
+                    suffix = f" ({chars} chars)" if chars is not None else ""
+                    lines.append(f"- {item['path']}{suffix}")
+                if len(files) > 80:
+                    lines.append(f"- …（还有 {len(files) - 80} 个文件）")
+            else:
+                lines.append("当前 Workspace 为空。")
         lines.append("可用工具：read / write / edit / bash / grep / find / ls。")
         if self._resumed:
             history = self._work_state.get("history") or []
@@ -677,6 +724,8 @@ Task Workspace。本 Work 任务以 Task Workspace 作为唯一协作面。
                     f"========== 人类回答 ==========\n{answer}")
             return text
         env = self._environment_facts(phase)
+        scope = "项目目录" if self.project_mode else "Task Workspace"
+        result_path = self._document_path("RESULT.md")
         role_section = self._role_phase_section(phase)
         role_block = (
             f"\n========== Worker 角色（本阶段要求） ==========\n{role_section}\n"
@@ -690,7 +739,7 @@ Task Workspace。本 Work 任务以 Task Workspace 作为唯一协作面。
 {env}
 
 直接完成这个任务，产出集中在任务需要的阶段成果上。
-完成时在 Task Workspace 写 `RESULT.md`，说明交付内容、文件路径和验证情况。
+完成时在 `{result_path}` 写总结，说明交付内容、文件路径和验证情况。
 最后一行输出 `TASK_COMPLETE`。
 """
         if phase == "prototype":
@@ -706,7 +755,7 @@ Task Workspace。本 Work 任务以 Task Workspace 作为唯一协作面。
 形式、结构、内容、交互或实现方式；优先让核心体验真正成立。
 
 完成时：
-1. 确保 Workspace 中有具体、可检查、可交付的产物
+1. 确保{scope}中有具体、可检查、可交付的产物
    （代码、页面、文档、报告、设计或其他符合任务的形式）；
 2. 建议写一份简短的 `PROTOTYPE.md`，记录设计意图和关键取舍；
    如果任务不适合阶段文档，可以省略；
@@ -753,7 +802,7 @@ Task Workspace。本 Work 任务以 Task Workspace 作为唯一协作面。
 发现新问题时记录到 `ENGINEERING.md` 或 `RESULT.md` 的“已知限制”中。
 
 完成时：
-1. 在 Task Workspace 写 `RESULT.md`，作为给人类的最终总结；
+1. 在 `{result_path}` 写最终总结；
 2. 最后一行输出 `TASK_COMPLETE`。
 """
         raise ValueError(f"未知 Work phase：{phase!r}")
@@ -802,13 +851,13 @@ Task Workspace。本 Work 任务以 Task Workspace 作为唯一协作面。
         self, name: str, events: List[Dict[str, Any]], title: str,
     ) -> None:
         """阶段产物缺失时，用该阶段模型最后输出补一个可追溯的交接文件。"""
-        target = self.task_directory.workspace / name
+        target = self._document_path(name)
         if target.is_file():
             return
         text = self._last_assistant_text(events).strip()
         if not text:
             return
-        self.task_directory.write_text(
+        self._write_document(
             name,
             f"# {title}\n\n"
             "> 该文件由 AIEOS 从本阶段模型最后输出提取；"
@@ -816,6 +865,10 @@ Task Workspace。本 Work 任务以 Task Workspace 作为唯一协作面。
             + text[:6000] + "\n")
 
     def _prototype_ready(self, events: List[Dict[str, Any]]) -> bool:
+        text = self._last_assistant_text(events)
+        if self.project_mode:
+            # 项目里本来就有大量文件；用结束标记，而不是“有没有文件”。
+            return "PROTOTYPE_READY" in text
         artifacts = [
             item for item in self.task_directory.list_files()
             if item.get("path") not in (
@@ -823,8 +876,45 @@ Task Workspace。本 Work 任务以 Task Workspace 作为唯一协作面。
         ]
         if artifacts:
             return True
-        text = self._last_assistant_text(events)
         return "PROTOTYPE_READY" in text
+
+    def _manifest_entries(self) -> List[Dict[str, Any]]:
+        """交付清单。
+
+        Task Workspace：完整文件清单。
+        Project：baseline → final 的变更文件，避免扫描整个项目。
+        """
+        if not self.project_mode:
+            return self.task_directory.manifest()
+        records = self.snapshots.list()
+        if not records:
+            return []
+        baseline = next(
+            (item for item in records if item.label == "baseline"),
+            records[0],
+        )
+        final = records[-1]
+        changed = self.snapshots.changed_files(
+            baseline.seq, final.seq)
+        entries: List[Dict[str, Any]] = []
+        for item in changed:
+            if str(item.get("status") or "") == "D":
+                continue
+            path = str(item.get("path") or "")
+            if not path:
+                continue
+            target = self.workdir / path
+            try:
+                data = target.read_bytes()
+            except OSError:
+                continue
+            entries.append({
+                "path": path,
+                "bytes": len(data),
+                "sha256": hashlib.sha256(data).hexdigest(),
+                "status": item.get("status") or "M",
+            })
+        return entries
 
     def _capture_snapshot(
         self, label: str, *, phase: str = "", turn: int = 0,
@@ -851,6 +941,13 @@ Task Workspace。本 Work 任务以 Task Workspace 作为唯一协作面。
             status=task.status,
             iteration=task.iteration,
         )
+        lock = None
+        if self.project_mode and self.project_lock_manager is not None:
+            try:
+                lock = self.project_lock_manager.acquire(self.workdir)
+            except Exception as exc:                          # noqa: BLE001
+                result.error = str(exc)
+                return result
         try:
             if self.should_stop():
                 result.error = "任务已被停止"
@@ -952,7 +1049,7 @@ Task Workspace。本 Work 任务以 Task Workspace 作为唯一协作面。
                         phase, status="running", thinking=thinking)
                     client = PiRpcClient(
                         cli_path=self.pi_cli_path,
-                        cwd=self.task_directory.workspace,
+                        cwd=self.workdir,
                         env=env,
                         provider=client_provider,
                         model=client_model,
@@ -1078,12 +1175,15 @@ Task Workspace。本 Work 任务以 Task Workspace 作为唯一协作面。
             snapshot = self._capture_snapshot("final")
             snapshot_info = snapshot.to_dict() if snapshot else None
             manifest = self.task_directory.write_manifest(
-                snapshot=snapshot_info)
+                snapshot=snapshot_info, files=self._manifest_entries())
             if all_stderr:
                 self.task_directory.write_meta(
                     "pi-stderr.log", "\n".join(all_stderr))
             if not manifest:
-                result.error = "Pi 已结束，但 Task Workspace 没有任何文件"
+                result.error = (
+                    "Pi 已结束，但项目目录没有任何变更"
+                    if self.project_mode
+                    else "Pi 已结束，但 Task Workspace 没有任何文件")
                 result.status = task.status
                 return result
 
@@ -1140,6 +1240,9 @@ Task Workspace。本 Work 任务以 Task Workspace 作为唯一协作面。
             result.error = f"{type(exc).__name__}: {exc}"
             result.status = task.status
             return result
+        finally:
+            if lock is not None:
+                lock.release()
 
     def reopen_and_run(
         self, *, reason: str = "", rework_scope: str = "",
@@ -1152,19 +1255,21 @@ Task Workspace。本 Work 任务以 Task Workspace 作为唯一协作面。
     # ------------------------------------------------------------
     def _system_prompt(self, memory_context: str) -> str:
         paths = self.memory.paths()
+        scope = "项目目录" if self.project_mode else "Task Workspace"
+        result_path = self._document_path("RESULT.md")
         role_section = (
             "\n" + self.role_prompt + "\n" if self.role_prompt else "")
         return f"""你是 {self.task.contractor or self.task.creator}，AIEOS 中的 Work 执行 Agent。
 {role_section}
 {self._workspace_brief()}
-请直接把交付物写入 Task Workspace，使用原生 read/write/edit/bash 工具。
-本 Work 任务以 Task Workspace 作为唯一协作面。
+请直接把交付物写入{scope}，使用原生 read/write/edit/bash 工具。
+本 Work 任务以{scope}作为唯一协作面。
 
 读取 `{paths['memory_dir']}/context.md` 获取记忆快照。
 你可以更新 `{paths['memory_dir']}/working.md`，并把候选记忆写入
 `{paths['memory_dir']}/inbox/*.md`。
 
-任务完成后，在 Task Workspace 写 `RESULT.md`，作为给人类的总结。
+任务完成后，在 `{result_path}` 写总结，作为给人类的总结。
 使用以下章节：
 - 交付内容
 - 文件与路径
@@ -1178,7 +1283,7 @@ Task Workspace。本 Work 任务以 Task Workspace 作为唯一协作面。
 """
 
     def _summary(self, events: List[Dict[str, Any]]) -> str:
-        result_path = self.task_directory.workspace / "RESULT.md"
+        result_path = self._document_path("RESULT.md")
         if result_path.is_file():
             try:
                 text = result_path.read_text(encoding="utf-8").strip()

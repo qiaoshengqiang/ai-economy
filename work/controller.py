@@ -65,7 +65,9 @@ from work.front_actions import (
     build_front_dispatcher, execute_front_actions,
 )
 from work.pi_runtime import PiWorkRuntime
+from work.project_lock import ProjectLockManager
 from work.task_directory import TaskDirectoryManager
+from work.task_snapshot import TaskSnapshotStore
 from work.worker_roles import WorkerRoleError, WorkerRoleStore
 from work.plan import WorkPlan, parse_work_plan
 from work.prompt import WORK_SYSTEM_PROMPT, build_lead_plan_prompt
@@ -127,6 +129,8 @@ class WorkJob:
     leader: str = ""
     members: List[str] = field(default_factory=list)
     task_id: str = ""
+    #: project 模式：Agent 直接编辑的用户项目目录；空 = Task Workspace。
+    workdir: str = ""
     #: 本次 Task 选定的输出仓库；空 = 使用全局默认。
     commit_repo: str = ""
     summary: str = ""
@@ -157,6 +161,7 @@ class WorkJob:
             "leader": self.leader,
             "members": list(self.members),
             "task_id": self.task_id,
+            "workdir": self.workdir,
             "commit_repo": self.commit_repo,
             "summary": self.summary,
             "error": self.error,
@@ -262,6 +267,8 @@ class AIEOSController:
         self.commit_max_file_bytes = max(1, int(commit_max_file_bytes))
         self.commit_max_total_bytes = max(1, int(commit_max_total_bytes))
         self.task_directories = TaskDirectoryManager(task_root)
+        self.project_locks = ProjectLockManager(
+            self.task_directories.root.parent / "runs" / "project_locks")
         self.settings_path = Path(settings_path) if settings_path else None
         self.log_dir = Path(log_dir) if log_dir else None
         self.round_log = round_log
@@ -608,6 +615,72 @@ class AIEOSController:
             settings=self._commit_settings,
         )
 
+    def _task_directory(self, task: Any) -> Any:
+        """按 Task 的 acceptance 选择 Task Workspace 或用户项目目录。"""
+        acceptance = getattr(task, "acceptance", None) or {}
+        if not isinstance(acceptance, dict):
+            acceptance = {}
+        if str(acceptance.get("workspace_mode") or "") == "project":
+            project_path = str(acceptance.get("project_path") or "").strip()
+            if project_path:
+                return self.task_directories.for_task(
+                    task.task_id, workdir=Path(project_path))
+        return self.task_directories.for_task(task.task_id)
+
+    def _open_project_task(self, path: str) -> Optional[Any]:
+        target = str(Path(path).expanduser().resolve())
+        try:
+            tasks = self.rt.tasks.list_tasks(limit=200)
+        except Exception:                                     # noqa: BLE001
+            return None
+        for task in tasks:
+            if not getattr(task, "is_open", False):
+                continue
+            acceptance = getattr(task, "acceptance", None) or {}
+            if not isinstance(acceptance, dict):
+                continue
+            if str(acceptance.get("workspace_mode") or "") != "project":
+                continue
+            project = str(acceptance.get("project_path") or "").strip()
+            if project and str(Path(project).expanduser().resolve()) == target:
+                return task
+        return None
+
+    def workdir_info(self, path: str = "") -> Dict[str, Any]:
+        raw = str(path or "").strip()
+        if not raw:
+            return {
+                "path": "", "exists": False, "is_dir": False,
+                "error": "",
+            }
+        target = Path(raw).expanduser().resolve()
+        return {
+            "path": str(target),
+            "exists": target.exists(),
+            "is_dir": target.is_dir(),
+            "error": (
+                "" if target.is_dir()
+                else ("目录不存在" if not target.exists() else "不是目录")
+            ),
+        }
+
+    def _validate_workdir(self, path: str) -> str:
+        raw = str(path or "").strip()
+        if not raw:
+            return ""
+        if not Path(raw).is_absolute():
+            raise ValueError("工作目录需要绝对路径")
+        target = Path(raw).expanduser().resolve()
+        if not target.is_dir():
+            raise ValueError(f"工作目录不存在或不是目录：{target}")
+        if target == self.task_directories.root or (
+            self.task_directories.root in target.parents
+        ):
+            raise ValueError("工作目录不能位于 AIEOS 的 tasks/ 目录内")
+        if target == self.task_directories.root.parent:
+            raise ValueError("工作目录不能是 AIEOS 主仓库根目录")
+        return str(target)
+
     def commit_repo_info(self, path: str = "") -> Dict[str, Any]:
         """给 UI 的仓库事实：默认仓库 / 用户输入路径。"""
         if self.commit_service is None:
@@ -738,16 +811,30 @@ class AIEOSController:
     # ------------------------------------------------------------
     # 提交
     # ------------------------------------------------------------
-    def submit(self, human_text: str, *, commit_repo: str = "") -> str:
+    def submit(
+        self,
+        human_text: str,
+        *,
+        commit_repo: str = "",
+        workdir: str = "",
+    ) -> str:
         text = str(human_text or "").strip()
         if not text:
             raise ValueError("输入不能为空")
+        target_workdir = self._validate_workdir(workdir)
+        if target_workdir:
+            busy = self._open_project_task(target_workdir)
+            if busy is not None:
+                raise ValueError(
+                    f"项目还有未完成的任务：{busy.task_id}；"
+                    "请先完成或停止它")
         target_repo = str(commit_repo or "").strip()
         if target_repo:
             target_repo = self._validate_commit_repo(target_repo)
         job = WorkJob(
             job_id=f"job_{uuid.uuid4().hex[:10]}",
             human_text=text,
+            workdir=target_workdir,
             commit_repo=target_repo,
             created_at=_now(),
             updated_at=_now(),
@@ -1230,7 +1317,7 @@ class AIEOSController:
             if isinstance(acceptance, dict) else "workflow")
         return PiWorkRuntime(
             self.rt, task,
-            task_directory=self.task_directories.for_task(task.task_id),
+            task_directory=self._task_directory(task),
             pi_cli_path=self.pi_cli_path,
             pi_provider=self.pi_provider,
             pi_model=self.pi_model,
@@ -1246,6 +1333,7 @@ class AIEOSController:
             thinking=self._thinking_for_agent(
                 task.contractor or task.creator),
             work_mode=str(work_mode or "workflow"),
+            project_lock_manager=self.project_locks,
         )
 
     def _front_turn(
@@ -1479,9 +1567,19 @@ class AIEOSController:
         # Inspect 是只读事实入口：把 Task Workspace 的真实宿主机路径
         # 一并交给 Front，避免它为了回答“文件在哪”去走 artifacts 导出。
         try:
-            task_dir = self.task_directories.for_task(task_id)
+            try:
+                task_obj = self.rt.tasks.get(task_id)
+                task_dir = self._task_directory(task_obj)
+            except Exception:                                 # noqa: BLE001
+                task_dir = self.task_directories.for_task(task_id)
             if task_dir is not None and task_dir.exists():
-                task["workspace_path"] = str(task_dir.workspace)
+                workdir = getattr(task_dir, "workdir", None)
+                if workdir is None:
+                    workdir = task_dir.workspace
+                task["workspace_path"] = str(workdir)
+                task["workspace_mode"] = (
+                    "project"
+                    if getattr(task_dir, "project_mode", False) else "task")
         except Exception:                                     # noqa: BLE001
             pass
         job = dict(detail.get("job") or {})
@@ -1599,6 +1697,10 @@ class AIEOSController:
             self._resolve_brief_files(decision.brief)
         except ValueError as exc:
             self._fail(job, str(exc))
+            return worker, []
+
+        if getattr(job, "workdir", "") and not self._pi_enabled(worker):
+            self._fail(job, "项目目录模式只支持 Pi Work")
             return worker, []
 
         created = self._create_solo_task(job, worker, decision)
@@ -1755,6 +1857,11 @@ class AIEOSController:
                         getattr(decision, "work_profile", "") or "standard"),
                     "work_mode": str(self.work_mode),
                     "front_mode": str(self.front_mode),
+                    "workspace_mode": (
+                        "project"
+                        if getattr(job, "workdir", "") else "task"),
+                    "project_path": str(
+                        getattr(job, "workdir", "") or ""),
                     "commit_mode": str(self.commit_mode),
                     "commit_output_repo": str(
                         getattr(job, "commit_repo", "") or ""),
@@ -2313,17 +2420,25 @@ class AIEOSController:
                 job, "找不到这个任务，无法导出产物。", task_id)
             return
         job.task_id = task.task_id
-        # Pi Work 的真实目录：直接复制 workspace 到 export 根。
+        # Pi Work 的真实目录：直接复制 workspace / 变更文件到 export 根。
         try:
-            task_dir = self.task_directories.for_task(task.task_id)
+            task_dir = self._task_directory(task)
         except Exception:                                     # noqa: BLE001
             task_dir = None
         if task_dir is not None and task_dir.exists():
             destination = self.export_root / task.task_id
             try:
-                shutil.copytree(
-                    task_dir.workspace, destination, dirs_exist_ok=True)
-                files = task_dir.list_files()
+                if task_dir.project_mode:
+                    files = self._project_changed_files(task_dir)
+                    for item in files:
+                        source = task_dir.workdir / item["path"]
+                        target = destination / item["path"]
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(source, target)
+                else:
+                    shutil.copytree(
+                        task_dir.workspace, destination, dirs_exist_ok=True)
+                    files = task_dir.list_files()
             except Exception as exc:                          # noqa: BLE001
                 self._reply_direct(
                     job, f"产物导出失败：{type(exc).__name__}: {exc}",
@@ -2561,6 +2676,12 @@ class AIEOSController:
                 "contractor": task.contractor,
                 "participants": list(task.participants or []),
                 "workspace_id": task.workspace_id,
+                "workspace_mode": str(
+                    (getattr(task, "acceptance", None) or {}).get(
+                        "workspace_mode") or "task"),
+                "project_path": str(
+                    (getattr(task, "acceptance", None) or {}).get(
+                        "project_path") or ""),
                 "description": task.description,
                 "created_at": task.created_at,
                 "updated_at": task.updated_at,
@@ -2676,10 +2797,50 @@ class AIEOSController:
             "cost_ai": round(float(row["cost_ai"] or 0), 4),
         }
 
+    def _project_changed_files(
+        self, task_dir: Any,
+    ) -> List[Dict[str, Any]]:
+        """project 模式只返回 baseline → final 的变更文件。"""
+        try:
+            snapshots = TaskSnapshotStore(task_dir)
+            records = snapshots.list()
+            if len(records) < 2:
+                return []
+            changed = snapshots.changed_files(
+                records[0].seq, records[-1].seq)
+        except Exception:                                     # noqa: BLE001
+            return []
+        files: List[Dict[str, Any]] = []
+        for item in changed:
+            if str(item.get("status") or "") == "D":
+                continue
+            path = str(item.get("path") or "")
+            if not path:
+                continue
+            target = task_dir.workdir / path
+            try:
+                stat = target.stat()
+            except OSError:
+                continue
+            try:
+                chars: Optional[int] = len(
+                    target.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError):
+                chars = None
+            files.append({
+                "path": path,
+                "chars": chars,
+                "bytes": stat.st_size,
+                "status": item.get("status") or "M",
+            })
+        return files
+
     def _workspace_files(self, task: Any) -> List[Dict[str, Any]]:
         # Pi Work 的真实目录优先；旧 Task 继续走逻辑 Workspace。
         try:
-            task_dir = self.task_directories.for_task(task.task_id)
+            task_dir = self._task_directory(task)
+            if task_dir.project_mode:
+                return self._project_changed_files(task_dir)
             if task_dir.exists():
                 return task_dir.list_files()
         except Exception:                                     # noqa: BLE001
@@ -2761,6 +2922,10 @@ class AIEOSController:
                 "members": list(task.participants or []),
                 "front_mode": str(acceptance.get("front_mode") or ""),
                 "work_mode": str(acceptance.get("work_mode") or ""),
+                "workspace_mode": str(
+                    acceptance.get("workspace_mode") or "task"),
+                "project_path": str(
+                    acceptance.get("project_path") or ""),
                 "updated_at": task.updated_at,
             })
         return cards
@@ -3020,7 +3185,7 @@ class AIEOSController:
             return {"ok": False, "code": "not_found",
                     "message": f"找不到 Task：{task_id}"}
         try:
-            task_dir = self.task_directories.for_task(task_id)
+            task_dir = self._task_directory(task)
         except Exception:                                     # noqa: BLE001
             task_dir = None
         if task_dir is not None and task_dir.exists():

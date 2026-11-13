@@ -1027,3 +1027,13 @@ button { cursor: pointer; }
 }
 .repo-picker-foot .form-actions { margin-top: 0; }
 #repo-picker-status.ok { color: #8ce6b0; }
+
+.task-setup { margin-bottom: 10px; }
+.task-setup .commit-bar:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+#workdir-status.ok { color: #8ce6b0; }
+#workdir-status.warn { color: #f0d69a; }
+#workdir-status.error { color: #ff9b9b; }

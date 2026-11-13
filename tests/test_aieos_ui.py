@@ -29,6 +29,7 @@ class _FakeController:
         self.front = "agent_a"
         self.submitted = []
         self.submitted_repo = ""
+        self.submitted_workdir = ""
         self.retried = []
         self.settings = {
             "front_agent": "agent_a",
@@ -50,10 +51,20 @@ class _FakeController:
             "running_jobs": 0,
         }
 
-    def submit(self, text, *, commit_repo=""):
+    def submit(self, text, *, commit_repo="", workdir=""):
         self.submitted.append(text)
         self.submitted_repo = commit_repo
+        self.submitted_workdir = workdir
         return "job_test"
+
+    def workdir_info(self, path=""):
+        target = path or "/tmp/aieos-project"
+        return {
+            "path": target,
+            "exists": True,
+            "is_dir": True,
+            "error": "",
+        }
 
     def commit_repo_info(self, path=""):
         target = path or "/tmp/aieos-output"
@@ -1875,6 +1886,12 @@ def test_front_inspect_includes_task_workspace_path(monkeypatch, tmp_path):
 
 def test_commit_repo_api_and_selector_html(server):
     fake, base = server
+    status, body = _get(base + "/api/workdir?path=/tmp/project")
+    workdir = json.loads(body)
+    assert status == 200
+    assert workdir["is_dir"] is True
+    assert workdir["path"] == "/tmp/project"
+
     status, body = _get(base + "/api/commit/repo")
     payload = json.loads(body)
     assert status == 200
@@ -1890,6 +1907,7 @@ def test_commit_repo_api_and_selector_html(server):
     status, body = _get(base + "/")
     html = body.decode("utf-8")
     assert status == 200
+    assert 'id="workdir-input"' in html
     assert 'id="commit-repo-input"' in html
     assert 'id="repo-picker-modal"' in html
 
@@ -1898,9 +1916,49 @@ def test_submit_passes_commit_repo(server):
     fake, base = server
     status, payload = _post(
         base + "/api/submit",
-        {"text": "做个游戏", "commit_repo": "/tmp/other"},
+        {"text": "做个游戏", "commit_repo": "/tmp/other",
+         "workdir": "/tmp/project"},
     )
     assert status == 200
     assert payload["ok"] is True
     assert fake.submitted == ["做个游戏"]
     assert fake.submitted_repo == "/tmp/other"
+    assert fake.submitted_workdir == "/tmp/project"
+
+
+def test_pi_task_creation_persists_project_workdir(db, tmp_path):
+    from core.task_store import TaskStore
+    from front import FrontBrief, FrontDecision, FrontIntent
+
+    project = tmp_path / "project"
+    project.mkdir()
+    store = TaskStore(db)
+    runtime = SimpleNamespace(
+        directory=_Directory(["agent_a", "agent_c"]),
+        economy=SimpleNamespace(agent=lambda aid: SimpleNamespace(
+            has_brain=True, brain=None)),
+        tasks=store,
+    )
+    controller = AIEOSController(
+        runtime, front_agent="agent_a", pi_work_agents=["agent_c"])
+    decision = FrontDecision(
+        intent=FrontIntent.HANDOFF,
+        role="game_developer",
+        work_profile="standard",
+        brief=FrontBrief(
+            goal="修改项目",
+            task_text="修改项目",
+            deliverables=["app.py"],
+        ),
+    )
+    try:
+        created = controller._create_solo_task(
+            SimpleNamespace(job_id="job_project", workdir=str(project)),
+            "agent_c", decision)
+    finally:
+        controller.close()
+
+    assert created["ok"] is True, created
+    task = store.get(created["task_id"])
+    assert task.acceptance["workspace_mode"] == "project"
+    assert task.acceptance["project_path"] == str(project.resolve())

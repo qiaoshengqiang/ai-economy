@@ -37,30 +37,49 @@ def _safe_task_id(task_id: str) -> str:
 
 
 class TaskDirectory:
-    def __init__(self, root: Path, task_id: str) -> None:
+    def __init__(
+        self,
+        root: Path,
+        task_id: str,
+        *,
+        workdir: Optional[Path] = None,
+    ) -> None:
         self.task_id = _safe_task_id(task_id)
         self.root = Path(root).expanduser().resolve() / self.task_id
         self.workspace = self.root / "workspace"
+        #: project 模式：Agent 直接编辑的用户项目目录；
+        #: 空 = 继续使用 Task Workspace。
+        self.project_workdir = (
+            Path(workdir).expanduser().resolve() if workdir else None)
+        self.workdir = self.project_workdir or self.workspace
         self.aieos = self.root / ".aieos"
         self.session_dir = self.aieos / "pi-session"
 
+    @property
+    def project_mode(self) -> bool:
+        return self.project_workdir is not None
+
     # ------------------------------------------------------------
     def ensure(self) -> "TaskDirectory":
-        self.workspace.mkdir(parents=True, exist_ok=True)
         self.aieos.mkdir(parents=True, exist_ok=True)
         self.session_dir.mkdir(parents=True, exist_ok=True)
+        if self.project_mode:
+            if not self.workdir.is_dir():
+                raise ValueError(f"项目目录不存在：{self.workdir}")
+        else:
+            self.workspace.mkdir(parents=True, exist_ok=True)
         return self
 
     def exists(self) -> bool:
-        return self.workspace.is_dir()
+        return self.workdir.is_dir()
 
     # ------------------------------------------------------------
     def resolve(self, relative_path: str) -> Path:
-        """把 workspace 内的相对路径解析成真实路径，拒绝逃逸。"""
+        """把工作目录内的相对路径解析成真实路径，拒绝逃逸。"""
         raw = str(relative_path or "").strip().lstrip("/")
-        candidate = (self.workspace / raw).resolve()
-        if candidate != self.workspace and self.workspace not in candidate.parents:
-            raise ValueError(f"路径超出 Task Workspace：{relative_path!r}")
+        candidate = (self.workdir / raw).resolve()
+        if candidate != self.workdir and self.workdir not in candidate.parents:
+            raise ValueError(f"路径超出工作目录：{relative_path!r}")
         return candidate
 
     def write_text(self, relative_path: str, content: str) -> Path:
@@ -83,13 +102,13 @@ class TaskDirectory:
 
     # ------------------------------------------------------------
     def list_files(self, *, include_aieos: bool = False) -> List[Dict[str, Any]]:
-        if not self.workspace.is_dir():
+        if not self.workdir.is_dir():
             return []
         files: List[Dict[str, Any]] = []
-        for path in sorted(self.workspace.rglob("*")):
+        for path in sorted(self.workdir.rglob("*")):
             if not path.is_file():
                 continue
-            rel = path.relative_to(self.workspace).as_posix()
+            rel = path.relative_to(self.workdir).as_posix()
             try:
                 content = path.read_text(encoding="utf-8")
                 chars: Optional[int] = len(content)
@@ -104,12 +123,12 @@ class TaskDirectory:
 
     def manifest(self) -> List[Dict[str, Any]]:
         entries: List[Dict[str, Any]] = []
-        if not self.workspace.is_dir():
+        if not self.workdir.is_dir():
             return entries
-        for path in sorted(self.workspace.rglob("*")):
+        for path in sorted(self.workdir.rglob("*")):
             if not path.is_file():
                 continue
-            rel = path.relative_to(self.workspace).as_posix()
+            rel = path.relative_to(self.workdir).as_posix()
             try:
                 data = path.read_bytes()
                 digest = hashlib.sha256(data).hexdigest()
@@ -127,10 +146,13 @@ class TaskDirectory:
     def write_manifest(
         self,
         snapshot: Optional[Dict[str, Any]] = None,
+        files: Optional[List[Dict[str, Any]]] = None,
     ) -> List[Dict[str, Any]]:
-        entries = self.manifest()
+        entries = list(files) if files is not None else self.manifest()
         payload: Dict[str, Any] = {
             "task_id": self.task_id,
+            "workspace_mode": "project" if self.project_mode else "task",
+            "workdir": str(self.workdir),
             "files": entries,
         }
         if snapshot:
@@ -144,8 +166,10 @@ class TaskDirectoryManager:
         self.root = Path(root or Path(__file__).resolve().parent.parent / "tasks")
         self.root = self.root.expanduser().resolve()
 
-    def for_task(self, task_id: str) -> TaskDirectory:
-        return TaskDirectory(self.root, task_id)
+    def for_task(
+        self, task_id: str, *, workdir: Optional[Path] = None,
+    ) -> TaskDirectory:
+        return TaskDirectory(self.root, task_id, workdir=workdir)
 
     def exists(self, task_id: str) -> bool:
         try:

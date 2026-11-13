@@ -215,3 +215,29 @@ def test_validate_commit_repo_requires_absolute_git_repo(db, tmp_path):
             controller._validate_commit_repo(str(plain))
     finally:
         controller.close()
+
+
+def test_validate_workdir_accepts_existing_project(tmp_path, db):
+    project = tmp_path / "project"
+    project.mkdir()
+    runtime = SimpleNamespace(
+        directory=_Directory(),
+        economy=SimpleNamespace(
+            db=db,
+            agent=lambda aid: SimpleNamespace(has_brain=True)),
+        tasks=SimpleNamespace(
+            list_tasks=lambda limit=50: [],
+            get=lambda task_id: None,
+        ),
+    )
+    controller = AIEOSController(
+        runtime, front_agent="agent_a", task_root=tmp_path / "tasks")
+    try:
+        assert controller._validate_workdir(str(project)) == str(
+            project.resolve())
+        with pytest.raises(ValueError, match="绝对路径"):
+            controller._validate_workdir("relative")
+        with pytest.raises(ValueError, match="tasks/"):
+            controller._validate_workdir(str(tmp_path / "tasks" / "x"))
+    finally:
+        controller.close()

@@ -144,6 +144,11 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/settings":
             self._send_json(self.controller.settings_snapshot())
             return
+        if path == "/api/workdir":
+            query = parse_qs(parsed.query)
+            requested = str((query.get("path") or [""])[0] or "").strip()
+            self._send_json(self.controller.workdir_info(requested))
+            return
         if path == "/api/commit/repo":
             query = parse_qs(parsed.query)
             requested = str((query.get("path") or [""])[0] or "").strip()
@@ -208,8 +213,9 @@ class Handler(BaseHTTPRequestHandler):
                 text = str(payload.get("text") or "").strip()
                 commit_repo = str(
                     payload.get("commit_repo") or "").strip()
+                workdir = str(payload.get("workdir") or "").strip()
                 job_id = self.controller.submit(
-                    text, commit_repo=commit_repo)
+                    text, commit_repo=commit_repo, workdir=workdir)
                 self._send_json({"ok": True, "job_id": job_id})
                 return
             if path == "/api/retry":

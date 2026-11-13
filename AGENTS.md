@@ -29,8 +29,8 @@
 
 | | |
 |---|---|
-| **阶段** | **`v0.2.0`** · Workspace Core V1 已冻结 · Agent Core V1 · Tool Runtime V1 · Vision V1 · Demand Entry V1 · Pi Work（workflow / autonomous）· Output Commit V1 · 观察实验 |
-| **测试基线** | 以 `./dev.sh test` 当前输出为准（最近：**5581 passed, 2 skipped, 30 deselected**） |
+| **阶段** | **`v0.2.0`** · Workspace Core V1 已冻结 · Agent Core V1 · Tool Runtime V1 · Vision V1 · Demand Entry V1 · Pi Work（workflow / autonomous）· Output Commit V1 · Project Workdir V1 · 观察实验 |
+| **测试基线** | 以 `./dev.sh test` 当前输出为准（最近：**5590 passed, 2 skipped, 30 deselected**） |
 | **协议版本** | `protocol_version = "1"` |
 | **命令数** | 25（`./dev.sh` 查看全部） |
 | **数据库表** | **29** |
@@ -306,7 +306,7 @@ Shared Context 可以**引用、解释、总结、补充**共同知识；
 
 **V1 已实现**：Agent Core · Task Core · Shared Context · Workspace Core v1 ·
 Worktree Manager · **Tool Runtime V1** · **Vision Perception V1**（ADR-0041）· **Demand Entry V1**（ADR-0042）· **Workspace Read/Edit V1**（ADR-0043）· **Workspace Search V1**（ADR-0044）·
-**Output Commit V1**（快照 + 输出仓库 + manual / limited / auto，ADR-0057/0058）· Economy（Agent / Wallet / Ledger / LLM 成本）· 本地通信 / Message Journal / Claim Lease。
+**Output Commit V1**（快照 + 输出仓库 + manual / limited / auto，ADR-0057/0058）· **Project Workdir V1**（直接改已有项目 + shadow snapshot + 项目锁，ADR-0060）· Economy（Agent / Wallet / Ledger / LLM 成本）· 本地通信 / Message Journal / Claim Lease。
 
 **下一阶段（需要任务书）**：Workspace Permission / ACL / IAM · OS 级执行沙箱 / 网络出口策略 / 工具安装与校验 ·
 Task Payment / Escrow / Settlement · Retry / Queue / Broker · P2P / 多机 ·

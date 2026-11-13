@@ -125,6 +125,9 @@
     metaItem(grid, "contractor", task.contractor || "—");
     metaItem(grid, "participants", (task.participants || []).join(", ") || "—");
     metaItem(grid, "workspace", task.workspace_id || "—");
+    if (task.workspace_mode === "project") {
+      metaItem(grid, "project", task.project_path || "—");
+    }
     metaItem(grid, "created", task.created_at || "—");
     metaItem(grid, "updated", task.updated_at || "—");
     if (job) {
