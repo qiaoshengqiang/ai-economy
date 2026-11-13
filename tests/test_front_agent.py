@@ -113,13 +113,14 @@ def test_rework_requires_completed_task():
     assert decision.task_id == "task_1"
 
 
-def test_rework_on_unknown_task_is_retryable_error():
+def test_rework_on_unknown_task_falls_back_to_clarify():
     runtime = FrontAgentRuntime(
         "front", _think_returning(
             {"intent": "rework", "task_id": "task_missing"}))
-    with pytest.raises(FrontUnavailableError):
-        runtime.decide(
-            "改一下", completed_tasks=[{"task_id": "task_1"}])
+    decision = runtime.decide(
+        "改一下", completed_tasks=[{"task_id": "task_1"}])
+
+    assert decision.intent == FrontIntent.CLARIFY
 
 
 def test_follow_up_requires_active_task():
@@ -143,13 +144,14 @@ def test_cancel_requires_active_task():
     assert decision.task_id == "task_2"
 
 
-def test_cancel_on_non_active_task_is_retryable_error():
+def test_cancel_on_non_active_task_falls_back_to_clarify():
     runtime = FrontAgentRuntime(
         "front", _think_returning(
             {"intent": "cancel", "task_id": "task_missing"}))
-    with pytest.raises(FrontUnavailableError):
-        runtime.decide(
-            "停掉它", active_tasks=[{"task_id": "task_2"}])
+    decision = runtime.decide(
+        "停掉它", active_tasks=[{"task_id": "task_2"}])
+
+    assert decision.intent == FrontIntent.CLARIFY
 
 
 def test_artifacts_require_known_task():
@@ -164,14 +166,15 @@ def test_artifacts_require_known_task():
     assert decision.task_id == "task_1"
 
 
-def test_artifacts_on_unknown_task_is_retryable_error():
+def test_artifacts_on_unknown_task_falls_back_to_clarify():
     runtime = FrontAgentRuntime(
         "front", _think_returning(
             {"intent": "artifacts", "task_id": "task_missing"}))
-    with pytest.raises(FrontUnavailableError):
-        runtime.decide(
-            "看看这个任务的产物",
-            completed_tasks=[{"task_id": "task_1"}])
+    decision = runtime.decide(
+        "看看这个任务的产物",
+        completed_tasks=[{"task_id": "task_1"}])
+
+    assert decision.intent == FrontIntent.CLARIFY
 
 
 def test_clarify():
@@ -183,10 +186,15 @@ def test_clarify():
     assert "哪个文件" in decision.question
 
 
-def test_malformed_output_is_retryable_error():
+def test_malformed_output_falls_back_to_clarify():
     runtime = FrontAgentRuntime("front", _think_returning("not json"))
-    with pytest.raises(FrontUnavailableError, match="无法解析"):
-        runtime.decide("帮我做点事")
+    decision = runtime.decide("帮我做点事")
+
+    assert decision.intent == FrontIntent.CLARIFY
+    assert "没有把输入解析成明确任务" in decision.question
+    assert len(runtime.last_attempts) == 2
+    assert runtime.last_attempts[0]["raw_output"] == "not json"
+    assert runtime.last_attempts[0]["decision_error"]
 
 
 def test_parser_accepts_natural_goal_shape():
@@ -263,6 +271,8 @@ def test_front_prompt_includes_project_context_and_task_rules():
     assert "project_list" in prompt
     assert "project_read" in prompt
     assert "不可信数据" in prompt
+    assert "语音输入" in prompt
+    assert "错字" in prompt
 
 
 def test_front_prompt_includes_recent_conversation():
@@ -582,6 +592,39 @@ def test_llm_failure_retries_once_then_succeeds():
     assert len(calls) == 2
 
 
+def test_llm_empty_content_retries_once_then_succeeds():
+    calls = []
+
+    def think(prompt):
+        calls.append(prompt)
+        if len(calls) == 1:
+            return ""
+        return json.dumps({"intent": "direct_reply", "reply": "恢复了"})
+
+    runtime = FrontAgentRuntime("front", think, think_retries=1)
+    decision = runtime.decide("你好")
+
+    assert decision.intent == FrontIntent.DIRECT_REPLY
+    assert len(calls) == 2
+
+
+def test_llm_empty_content_after_retry_falls_back_to_clarify():
+    calls = []
+
+    def think(prompt):
+        calls.append(prompt)
+        return ""
+
+    runtime = FrontAgentRuntime("front", think, think_retries=1)
+    decision = runtime.decide("你好")
+
+    assert decision.intent == FrontIntent.CLARIFY
+    assert len(runtime.last_attempts) == 2
+    assert all(item["raw_output"] == "" for item in runtime.last_attempts)
+    # 2 个外层解析步骤 × 每次 2 个 LLM 尝试。
+    assert len(calls) == 4
+
+
 def test_llm_failure_after_retry_is_retryable_error():
     def think(prompt):
         raise RuntimeError("network down")
@@ -633,6 +676,9 @@ def test_action_and_final_intent_in_one_output():
         {"path": "code.js", "from_private": "code.js"}]
     assert len(seen) == 1
     assert runtime.last_action_history
+    assert runtime.last_attempts[0]["actions"] == ["private_write"]
+    assert runtime.last_attempts[0]["actions_executed"] is True
+    assert runtime.last_attempts[0]["decisions"] == ["handoff"]
 
 
 

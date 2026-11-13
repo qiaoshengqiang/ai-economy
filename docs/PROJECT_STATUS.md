@@ -4,7 +4,7 @@
 > **日期：2026-11-13**
 > **阶段：开发中 / 观察实验**
 > **协议版本：`1`**
-> **测试基线：`5612 passed, 2 skipped, 30 deselected`**
+> **测试基线：`5615 passed, 2 skipped, 30 deselected`**
 
 本文记录**当前真实可用能力、推荐工作方式、已知限制和版本变化**。
 架构的长期权威仍然是
@@ -278,6 +278,7 @@ task_text
 | Front 回复计时 | `CURRENT` |
 | Task 卡片模式快照 | `CURRENT`（新任务） |
 | Front 只读项目上下文 / `project_list` / `project_read` | `CURRENT` |
+| Front 空输出重试 / 解析失败降级 `clarify` / attempts 诊断 | `CURRENT` |
 | 语音输入（macOS Web Speech API） | `CURRENT` |
 | 设置页：系统 / 常规 / Agent / Roles | `CURRENT` |
 
@@ -501,7 +502,7 @@ Team 协作
 当前基线：
 
 ```text
-5612 passed, 2 skipped, 30 deselected
+5615 passed, 2 skipped, 30 deselected
 ```
 
 启动说明见 [`../START_AIEOS.md`](../START_AIEOS.md)。

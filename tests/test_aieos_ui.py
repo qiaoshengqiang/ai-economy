@@ -1576,6 +1576,42 @@ def test_multiple_cancel_actions_in_one_turn(monkeypatch):
     assert len(job.front_decision["decisions"]) == 2
 
 
+def test_front_parse_failure_falls_back_to_clarify_and_records_attempts(
+    monkeypatch,
+):
+    from front import FrontAgentRuntime
+    from work.controller import WorkJob
+
+    runtime = SimpleNamespace(
+        directory=_Directory(["agent_a"]),
+        economy=SimpleNamespace(agent=lambda aid: SimpleNamespace(
+            has_brain=True, brain=None)),
+        tasks=SimpleNamespace(list_tasks=lambda limit=50: []),
+    )
+    controller = AIEOSController(runtime, front_agent="agent_a")
+    front = FrontAgentRuntime(
+        "agent_a", lambda _prompt: "not json", think_retries=1)
+    monkeypatch.setattr(
+        controller, "_front_runtime", lambda *_args, **_kwargs: front)
+    job = WorkJob(
+        job_id="job_parse_fail", human_text="语音输入有点乱")
+    controller._jobs[job.job_id] = job
+    try:
+        controller._run_job(job)
+        messages = controller.state()["messages"]
+    finally:
+        controller.close()
+
+    assert job.status == "CLARIFY"
+    assert job.front_decision["decisions"][0]["intent"] == "clarify"
+    assert len(job.front_decision["attempts"]) == 2
+    assert "没有把输入解析成明确任务" in (
+        job.front_decision["decisions"][0]["question"])
+    assert any(
+        "没有把输入解析成明确任务" in (item.get("text") or "")
+        for item in messages)
+
+
 def test_follow_up_sends_front_reply(monkeypatch):
     from front import FrontDecision, FrontIntent
     from work.controller import WorkJob

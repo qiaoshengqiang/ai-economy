@@ -140,6 +140,8 @@ LLM → 动作（private_* / draft_*）→ 真实结果回喂
 - 可用动作：
   - `artifact_read {task_id, path, offset?, limit?}`：只读 Task Workspace
     文件内容；不创建 Task，不读宿主绝对路径；
+  - `project_list {path?, depth?}` / `project_read {path, offset?, limit?}`：
+    只读当前选中的项目目录；仅在 Human 选择了 `workdir` 时可用；
   - `private_read` / `private_write` / `private_list` /
     `private_delete`；`draft_read` / `draft_write` / `draft_append` /
     `draft_list` / `draft_delete`。
@@ -162,8 +164,13 @@ LLM → 动作（private_* / draft_*）→ 真实结果回喂
   cancel 失败时用控制面事实纠正，不照抄可能错误的回复。
 - 每次 decide 的 `FrontDecision`（含 `raw_output`）和动作结果写入
   `runs/ui/jobs/<job_id>.json` 的 `front_decision` / `front_actions`。
-- Front LLM 调用失败或输出无法解析时，Job 标记 `INTERRUPTED` +
-  `retryable`，不伪装成 `clarify`，也不创建 Task；UI 提供「重试」。
+- Front LLM **调用异常**时，Job 标记 `INTERRUPTED` + `retryable`，
+  不创建 Task；UI 提供「重试」。
+- Front 返回空内容时会先按 `think_retries` 重试；连续两次无法解析成
+  decision 时，降级为 `clarify`（不创建 Task），并在 job log 的
+  `front_decision.attempts` 保留每次尝试的 `raw_output` / 解析错误。
+- 用户可能使用语音输入；Front prompt 会提示转写文本可能有错字、漏字、
+  断句或同音词错误。语义不顺时先确认，不确定就 `clarify`。
 
 ### 已有 Task 的后续输入
 

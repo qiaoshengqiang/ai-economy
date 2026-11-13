@@ -228,6 +228,9 @@ class FrontTurn:
     decisions: List[FrontDecision] = field(default_factory=list)
     raw_output: str = ""
     action_history: List[Dict[str, Any]] = field(default_factory=list)
+    #: 本回合每次 LLM 尝试的原始输出 / 解析错误 / 动作类型。
+    #: 只用于诊断，不参与决策。
+    attempts: List[Dict[str, Any]] = field(default_factory=list)
 
     @property
     def primary(self) -> FrontDecision:
@@ -240,6 +243,7 @@ class FrontTurn:
             "decisions": [item.to_dict() for item in self.decisions],
             "raw_output": self.raw_output,
             "actions": list(self.action_history),
+            "attempts": list(self.attempts),
         }
 
 

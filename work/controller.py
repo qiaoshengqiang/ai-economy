@@ -1052,6 +1052,8 @@ class AIEOSController:
                         "error": str(exc),
                         "raw_output": str(
                             getattr(front, "last_raw_output", "") or ""),
+                        "attempts": list(
+                            getattr(front, "last_attempts", []) or []),
                     }
                     self._interrupt_front(job, str(exc))
                     return
@@ -1089,6 +1091,8 @@ class AIEOSController:
             front_data["raw_output"] = (
                 str(getattr(turn, "raw_output", "") or "")
                 or headline.raw_output)
+            front_data["attempts"] = list(
+                getattr(turn, "attempts", []) or [])
             job.front_decision = front_data
             job.front_actions = list(
                 getattr(turn, "action_history", None)

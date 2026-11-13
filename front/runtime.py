@@ -84,9 +84,10 @@ class FrontAgentRuntime:
         if mode not in ("autonomous", "relay"):
             mode = "autonomous"
         self.front_mode = mode
-        #: 最近一次 decide 的动作历史 / 原始输出（观测用）。
+        #: 最近一次 decide 的动作历史 / 原始输出 / 每次尝试（观测用）。
         self.last_action_history: List[Dict[str, Any]] = []
         self.last_raw_output: str = ""
+        self.last_attempts: List[Dict[str, Any]] = []
 
     # ------------------------------------------------------------
     # 决策
@@ -143,6 +144,7 @@ class FrontAgentRuntime:
         inspect_count = 0
         self.last_action_history = []
         self.last_raw_output = ""
+        self.last_attempts = []
         for _step in range(self.max_steps):
             prompt = self._prompt(
                 human_text, active, completed, conversation=history,
@@ -162,6 +164,18 @@ class FrontAgentRuntime:
 
             # 动作先执行：同一份输出里既写文件又给出最终 intent 也成立。
             actions, action_error = parse_front_actions(raw)
+            attempt = {
+                "step": _step + 1,
+                "raw_output": str(raw or ""),
+                "decision_error": error,
+                "action_error": action_error,
+                "decisions": [
+                    item.intent for item in (decisions or [])],
+                "actions": [
+                    str(item.get("type") or "")
+                    for item in (actions or [])],
+            }
+            self.last_attempts.append(attempt)
             if actions:
                 if self._execute_actions is None:
                     raise FrontUnavailableError(
@@ -173,6 +187,7 @@ class FrontAgentRuntime:
                     "raw_output": str(raw or ""),
                     "receipt": str(receipt or ""),
                 })
+                attempt["actions_executed"] = True
                 self.last_action_history = list(action_history)
                 parse_failures = 0
                 last_error = ""
@@ -212,27 +227,53 @@ class FrontAgentRuntime:
                     decisions=decisions,
                     raw_output=str(raw or ""),
                     action_history=list(action_history),
+                    attempts=list(self.last_attempts),
                 )
 
             last_error = action_error or error or "front_decision_not_found"
             parse_failures += 1
             if parse_failures >= 2:
-                raise FrontUnavailableError(
-                    f"Front 输出无法解析：{last_error}")
+                return self._fallback_clarify(last_error)
 
         raise FrontUnavailableError(
             f"Front 未在限定步数内给出最终决定："
             f"{self.max_steps} 步")
 
+    def _fallback_clarify(self, error: str) -> FrontTurn:
+        """连续解析失败时不要中断 Job，先请人类确认。"""
+        question = (
+            "我这次没有把输入解析成明确任务。请再发一次，或把目标文件 / "
+            "要做的事写清楚；如果是语音输入，可能有识别错乱，建议确认一下关键词。")
+        decision = FrontDecision(
+            intent=FrontIntent.CLARIFY,
+            question=question,
+            reason=f"front_parse_failed: {error}",
+            raw_output=str(self.last_raw_output or ""),
+        )
+        return FrontTurn(
+            decisions=[decision],
+            raw_output=str(self.last_raw_output or ""),
+            action_history=list(self.last_action_history),
+            attempts=list(self.last_attempts),
+        )
+
     def _think_with_retry(self, prompt: str) -> str:
-        """LLM 调用失败时重试；最终失败交给上层标记可重试中断。"""
+        """LLM 调用失败或返回空内容时重试；异常最终交给上层中断。"""
         attempts = self.think_retries + 1
         last: Optional[Exception] = None
+        saw_empty = False
         for _ in range(attempts):
             try:
-                return self._think(prompt)
+                raw = self._think(prompt)
             except Exception as exc:                          # noqa: BLE001
                 last = exc
+                continue
+            if str(raw or "").strip():
+                return str(raw)
+            saw_empty = True
+        if saw_empty and last is None:
+            # 空内容是模型输出问题，交给 decide_turn 走 clarify 降级。
+            return ""
         raise FrontUnavailableError(
             f"Front LLM call failed after {attempts} attempt(s): "
             f"{type(last).__name__}: {last}")
@@ -343,6 +384,11 @@ class FrontAgentRuntime:
 
 ========== 当前项目目录（用户已选择，只读） ==========
 {project_context or "（当前没有选择项目目录）"}
+
+========== 输入方式事实 ==========
+- 用户可能使用语音输入；转写文本可能有错字、漏字、断句或同音词错误。
+- 遇到语义不顺、指代不清或明显错乱时，先结合上下文确认；
+  不确定就 clarify，不要自行猜测后直接 handoff / rework / follow_up。
 
 ========== Agent 事实（只读） ==========
 {_render_agents(agents)}
