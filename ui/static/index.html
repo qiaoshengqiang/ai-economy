@@ -22,8 +22,14 @@
 
   <main class="layout">
     <section class="panel chat-panel">
-      <div class="panel-head">
-        <h2>与 Front 对话</h2>
+      <div class="panel-head chat-head">
+        <div class="chat-title">
+          <h2>与 Front 对话</h2>
+          <span class="front-timing idle" id="front-timing" role="status" aria-live="polite">
+            <span class="timing-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+            <span class="timing-text">就绪</span>
+          </span>
+        </div>
         <span class="hint">Ctrl/Cmd + Enter 提交</span>
       </div>
       <div class="messages" id="messages"></div>

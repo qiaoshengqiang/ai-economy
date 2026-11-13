@@ -6,6 +6,8 @@
   const els = {
     frontBadge: $("front-badge"),
     workModeBadge: $("work-mode-badge"),
+    frontTiming: $("front-timing"),
+    frontTimingText: document.querySelector("#front-timing .timing-text"),
     runningBadge: $("running-badge"),
     messages: $("messages"),
     prompt: $("prompt"),
@@ -39,6 +41,9 @@
   let activeQuestion = null;
   let lastQuestionKey = "";
   let audioContext = null;
+  let pendingFront = null;
+  let timingTimer = 0;
+  let timingDoneTimer = 0;
 
   function ensureAudio() {
     if (audioContext) return audioContext;
@@ -188,6 +193,72 @@
       return `thinking ${thinking.effort || "on"}`;
     }
     return "thinking default";
+  }
+
+  function lastFrontDuration() {
+    const messages = (state && state.messages) || [];
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index];
+      if (message.role === "front" && Number(message.duration_ms) > 0) {
+        return Number(message.duration_ms);
+      }
+    }
+    return 0;
+  }
+
+  function setFrontTimingIdle() {
+    if (!els.frontTiming || pendingFront) return;
+    const duration = lastFrontDuration();
+    els.frontTiming.className = "front-timing idle";
+    els.frontTimingText.textContent = duration
+      ? `上次回复 ${formatDuration(duration)}`
+      : "就绪";
+  }
+
+  function beginFrontTiming(startedAt) {
+    if (!els.frontTiming) return;
+    window.clearInterval(timingTimer);
+    window.clearTimeout(timingDoneTimer);
+    pendingFront = { jobId: "", startedAt };
+    els.frontTiming.className = "front-timing waiting";
+    const tick = () => {
+      if (!pendingFront) return;
+      const seconds = (performance.now() - startedAt) / 1000;
+      els.frontTimingText.textContent = `Front 正在思考 · ${seconds.toFixed(1)}s`;
+    };
+    tick();
+    timingTimer = window.setInterval(tick, 100);
+  }
+
+  function finishFrontTiming(milliseconds) {
+    if (!pendingFront) return;
+    window.clearInterval(timingTimer);
+    const duration = Number(milliseconds) > 0
+      ? Number(milliseconds)
+      : (performance.now() - pendingFront.startedAt);
+    pendingFront = null;
+    els.frontTiming.className = "front-timing done";
+    els.frontTimingText.textContent = `已回复 · ${formatDuration(duration) || "0.0s"}`;
+    timingDoneTimer = window.setTimeout(setFrontTimingIdle, 2400);
+  }
+
+  function failFrontTiming() {
+    window.clearInterval(timingTimer);
+    window.clearTimeout(timingDoneTimer);
+    pendingFront = null;
+    els.frontTiming.className = "front-timing idle";
+    els.frontTimingText.textContent = "发送失败";
+    timingDoneTimer = window.setTimeout(setFrontTimingIdle, 2400);
+  }
+
+  function checkPendingFront() {
+    if (!pendingFront || !pendingFront.jobId || !state) return;
+    const message = (state.messages || []).find(
+      (item) => item.role === "front" && item.job_id === pendingFront.jobId,
+    );
+    if (!message) return;
+    const elapsed = performance.now() - pendingFront.startedAt;
+    finishFrontTiming(Number(message.duration_ms) || elapsed);
   }
 
   function showToast(text, isError = false) {
@@ -395,7 +466,13 @@
       const working = agent.status === "WORKING"
         || agent.status === "STOPPING";
       const row = document.createElement("div");
-      row.className = "agent-row";
+      row.className = working ? "agent-row working" : "agent-row";
+      if (working) {
+        row.insertAdjacentHTML("afterbegin", `
+          <svg class="agent-border" aria-hidden="true">
+            <rect x="0" y="0" width="100%" height="100%"></rect>
+          </svg>`);
+      }
 
       const avatar = document.createElement("span");
       avatar.className = "agent-avatar";
@@ -595,6 +672,10 @@
     els.workModeBadge.classList.toggle("work-auto", workAuto);
     els.workModeBadge.classList.toggle("work-flow", !workAuto);
     els.runningBadge.textContent = `Running: ${state.running_jobs || 0}`;
+    checkPendingFront();
+    if (!pendingFront && els.frontTiming.classList.contains("idle")) {
+      setFrontTimingIdle();
+    }
     // 有选区时冻结列表重绘；用户点掉选区后，下一次轮询会补上最新数据。
     if (hasActiveTextSelection()) return;
     maybeQuestionSound(state.agents || []);
@@ -624,14 +705,21 @@
     }
     submitting = true;
     els.submit.disabled = true;
+    const startedAt = performance.now();
+    beginFrontTiming(startedAt);
     try {
-      await api("/api/submit", {
+      const submitted = await api("/api/submit", {
         method: "POST",
         body: JSON.stringify({ text }),
       });
+      pendingFront = {
+        jobId: String(submitted.job_id || ""),
+        startedAt,
+      };
       els.prompt.value = "";
       await refresh();
     } catch (error) {
+      failFrontTiming();
       showToast(`提交失败：${error.message}`, true);
     } finally {
       submitting = false;

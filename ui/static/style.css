@@ -131,6 +131,51 @@ button { cursor: pointer; }
   letter-spacing: .04em;
   font-weight: 600;
 }
+.chat-head { gap: 10px; }
+.chat-title { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.chat-title h2 { white-space: nowrap; }
+.front-timing {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 128px;
+  min-height: 22px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  color: var(--muted);
+  font-size: 10.5px;
+  white-space: nowrap;
+  transition: color .2s, border-color .2s, background .2s;
+}
+.front-timing.waiting {
+  color: var(--warn);
+  border-color: rgba(255, 200, 87, .32);
+  background: rgba(255, 200, 87, .08);
+}
+.front-timing.done {
+  color: var(--good);
+  border-color: rgba(80, 216, 144, .3);
+  background: rgba(80, 216, 144, .07);
+}
+.timing-text { font-variant-numeric: tabular-nums; }
+.timing-dots { display: none; align-items: center; gap: 2px; }
+.front-timing.waiting .timing-dots { display: inline-flex; }
+.timing-dots i {
+  display: block;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: timing-dot .9s ease-in-out infinite;
+}
+.timing-dots i:nth-child(2) { animation-delay: .14s; }
+.timing-dots i:nth-child(3) { animation-delay: .28s; }
+@keyframes timing-dot {
+  0%, 60%, 100% { transform: translateY(0); opacity: .35; }
+  30% { transform: translateY(-3px); opacity: 1; }
+}
 .hint, .muted { color: var(--muted); font-size: 12px; }
 .side {
   display: flex;
@@ -295,6 +340,33 @@ button { cursor: pointer; }
   position: relative;
 }
 .agent-row:last-child { border-bottom: 0; }
+.agent-row.working {
+  position: relative;
+  background: linear-gradient(90deg, rgba(255,200,87,.055), var(--panel-2) 34%);
+  box-shadow: inset 2px 0 0 rgba(255,200,87,.8), 0 0 16px rgba(255,200,87,.055);
+}
+.agent-row.working > * { position: relative; z-index: 1; }
+.agent-row.working > .agent-border {
+  position: absolute;
+  inset: 0.5px;
+  width: calc(100% - 1px);
+  height: calc(100% - 1px);
+  overflow: visible;
+  pointer-events: none;
+  z-index: 2;
+  filter: drop-shadow(0 0 2px rgba(255,200,87,.22));
+}
+.agent-border rect {
+  fill: none;
+  stroke: rgba(255,200,87,.82);
+  stroke-width: 1;
+  stroke-dasharray: 5 4;
+  vector-effect: non-scaling-stroke;
+  animation: agent-dash-march 1.4s linear infinite;
+}
+@keyframes agent-dash-march {
+  to { stroke-dashoffset: -9; }
+}
 .agent-avatar {
   position: relative; flex: 0 0 24px; width: 24px; height: 24px;
   display: grid; place-items: center; color: var(--muted);
@@ -390,6 +462,8 @@ button { cursor: pointer; }
 }
 @media (prefers-reduced-motion: reduce) {
   .robot * { animation: none !important; }
+  .agent-border rect { animation: none !important; }
+  .timing-dots i { animation: none !important; }
 }
 
 .task-list {
