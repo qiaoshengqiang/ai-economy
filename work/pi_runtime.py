@@ -400,8 +400,7 @@ class PiWorkRuntime:
 {paths['memory_dir']}
 
 直接使用原生 read/write/edit/bash/grep/find/ls 工具在 Task Workspace 中完成工作。
-读取 `{paths['memory_dir']}/context.md` 获取记忆快照。不要修改其他 Agent
-的私有目录。
+读取 `{paths['memory_dir']}/context.md` 获取记忆快照。只允许修改自己当前任务的私有目录。
 {search_section}
 """
 
@@ -431,8 +430,7 @@ class PiWorkRuntime:
 
 请直接使用原生 read/write/edit/bash/grep/find/ls 工具把交付物写入
 Task Workspace。不要使用 AIEOS Shared Context；本 Work 任务不提供它。
-读取 `{paths['memory_dir']}/context.md` 获取记忆快照。不要修改其他 Agent
-的私有目录。
+读取 `{paths['memory_dir']}/context.md` 获取记忆快照。只允许修改自己当前任务的私有目录。
 {search_section}
 
 如果任务中确实需要人类确认（需求歧义、关键设计选择、不可逆操作），
@@ -1121,7 +1119,7 @@ Task Workspace。不要使用 AIEOS Shared Context；本 Work 任务不提供它
 - 已知限制
 - 下一步（如有）
 
-不要修改其他 Agent 的私有目录。
+只允许修改自己当前任务的私有目录。
 
 任务描述：
 {self.task.description or ''}
