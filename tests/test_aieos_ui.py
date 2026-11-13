@@ -1908,7 +1908,7 @@ def test_commit_repo_api_and_selector_html(server):
     html = body.decode("utf-8")
     assert status == 200
     assert 'id="workdir-input"' in html
-    assert 'id="commit-repo-input"' in html
+    assert 'id="commit-repo-input"' not in html
     assert 'id="repo-picker-modal"' in html
 
 

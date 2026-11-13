@@ -42,15 +42,6 @@
             <button type="button" class="icon-btn" id="workdir-browse">选择目录</button>
             <span id="workdir-status" class="muted">Task Workspace</span>
           </div>
-          <div class="commit-bar" title="产物提交到该仓库的 tasks/<task_id> 子目录">
-            <span class="commit-label">提交仓库</span>
-            <input id="commit-repo-input" type="text"
-              title="产物提交到该仓库的 tasks/<task_id> 子目录"
-              placeholder="未配置默认仓库；可选择其他目录" />
-            <button type="button" class="icon-btn" id="commit-repo-browse">选择目录</button>
-            <button type="button" class="icon-btn" id="commit-repo-default">默认</button>
-            <span id="commit-repo-status" class="muted">未配置</span>
-          </div>
         </div>
         <textarea id="prompt" rows="3"
           placeholder="告诉 Front Agent 你想做什么，例如：做一个简单的打飞机游戏……"></textarea>
@@ -285,9 +276,11 @@
                     <option value="limited">有限自主（任务分支）</option>
                     <option value="auto">完全自主（可合并）</option>
                   </select></label>
-                <label class="field"><span>输出仓库路径</span>
+                <label class="field"><span>默认产物仓库（可选）</span>
                   <input id="commit-output-repo" type="text"
-                    placeholder="留空 = 不提交" /></label>
+                    placeholder="留空 = Task Workspace 任务不提交" /></label>
+                <p class="muted wide">仅 Task Workspace 任务使用；
+                  Project 任务直接写入项目目录，不需要产物仓库。</p>
                 <label class="field"><span>基线分支</span>
                   <input id="commit-base-ref" type="text" value="main" /></label>
                 <label class="field check wide"><span>auto 模式自动合并到基线</span>

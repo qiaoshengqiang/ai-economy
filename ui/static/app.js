@@ -15,10 +15,6 @@
     workdirInput: $("workdir-input"),
     workdirBrowse: $("workdir-browse"),
     workdirStatus: $("workdir-status"),
-    commitRepoInput: $("commit-repo-input"),
-    commitRepoBrowse: $("commit-repo-browse"),
-    commitRepoDefault: $("commit-repo-default"),
-    commitRepoStatus: $("commit-repo-status"),
     repoPickerModal: $("repo-picker-modal"),
     repoPickerTitle: $("repo-picker-title"),
     repoPickerPath: $("repo-picker-path"),
@@ -61,13 +57,9 @@
   let pendingFront = null;
   let timingTimer = 0;
   let timingDoneTimer = 0;
-  let commitRepoDefault = "";
-  let commitRepoTouched = false;
-  let commitRepoInfo = null;
   let workdirInfo = null;
   let repoPickerCurrent = "";
   let repoPickerParent = "";
-  let repoPickerTarget = "commitRepo";
 
   function ensureAudio() {
     if (audioContext) return audioContext;
@@ -370,65 +362,6 @@
     }
   }
 
-  function setCommitRepoStatus(text, kind = "") {
-    els.commitRepoStatus.textContent = text || "";
-    els.commitRepoStatus.classList.toggle("ok", kind === "ok");
-    els.commitRepoStatus.classList.toggle("warn", kind === "warn");
-    els.commitRepoStatus.classList.toggle("error", kind === "error");
-  }
-
-  function renderCommitRepoInfo(info, { isDefault = false } = {}) {
-    if (!info || !info.path) {
-      setCommitRepoStatus("未配置默认仓库", "warn");
-      return;
-    }
-    if (info.is_git_repo) {
-      const label = isDefault ? "默认仓库" : "已选择";
-      setCommitRepoStatus(`${label} · ${info.path}`, "ok");
-    } else {
-      setCommitRepoStatus(
-        `${info.error || "不是 Git 仓库"} · ${info.path}`, "error");
-    }
-  }
-
-  async function loadCommitRepoDefault() {
-    try {
-      const info = await api("/api/commit/repo");
-      commitRepoDefault = info.path || "";
-      commitRepoInfo = info;
-      if (!commitRepoTouched) {
-        els.commitRepoInput.value = commitRepoDefault;
-        renderCommitRepoInfo(info, { isDefault: true });
-      }
-    } catch (error) {
-      setCommitRepoStatus(`读取默认仓库失败：${error.message}`, "error");
-    }
-  }
-
-  async function validateCommitRepo(path) {
-    try {
-      const info = await api(
-        `/api/commit/repo?path=${encodeURIComponent(path || "")}`);
-      commitRepoInfo = info;
-      renderCommitRepoInfo(info);
-      return info;
-    } catch (error) {
-      setCommitRepoStatus(`检查仓库失败：${error.message}`, "error");
-      return null;
-    }
-  }
-
-  async function commitRepoForSubmit(path) {
-    if (!path.startsWith("/")) {
-      throw new Error("输出仓库需要绝对路径");
-    }
-    const info = await validateCommitRepo(path);
-    if (!info || !info.is_git_repo) {
-      throw new Error("目标目录不是 Git 仓库");
-    }
-    return info.git_root || info.path;
-  }
-
   function closeRepoPicker() {
     els.repoPickerModal.hidden = true;
   }
@@ -441,16 +374,8 @@
       repoPickerParent = data.parent || "";
       els.repoPickerPath.value = repoPickerCurrent;
       els.repoPickerUp.disabled = !repoPickerParent;
-      if (repoPickerTarget === "workdir") {
-        els.repoPickerStatus.textContent = "选择 Agent 要直接修改的项目目录";
-        els.repoPickerStatus.classList.add("ok");
-      } else {
-        els.repoPickerStatus.textContent = data.is_git_repo
-          ? "当前目录是 Git 仓库，可以选择"
-          : "当前目录不是 Git 仓库；请进入仓库根目录";
-        els.repoPickerStatus.classList.toggle(
-          "ok", !!data.is_git_repo);
-      }
+      els.repoPickerStatus.textContent = "选择 Agent 要直接修改的项目目录";
+      els.repoPickerStatus.classList.add("ok");
       els.repoPickerList.innerHTML = "";
       if (!data.entries || !data.entries.length) {
         const empty = document.createElement("div");
@@ -482,41 +407,22 @@
     }
   }
 
-  async function openRepoPicker(target = "commitRepo") {
-    repoPickerTarget = target;
-    els.repoPickerTitle.textContent = target === "workdir"
-      ? "选择工作目录（已有项目）"
-      : "选择提交仓库";
+  async function openRepoPicker() {
+    els.repoPickerTitle.textContent = "选择工作目录（已有项目）";
     els.repoPickerModal.hidden = false;
-    const source = target === "workdir"
-      ? els.workdirInput.value
-      : els.commitRepoInput.value;
-    await loadRepoPicker((source || "").trim());
+    await loadRepoPicker((els.workdirInput.value || "").trim());
   }
 
   async function chooseRepoPicker() {
-    if (repoPickerTarget === "workdir") {
-      const info = await validateWorkdir(repoPickerCurrent);
-      if (!info || !info.is_dir) {
-        els.repoPickerStatus.textContent = "请选择存在的目录";
-        els.repoPickerStatus.classList.remove("ok");
-        return;
-      }
-      els.workdirInput.value = info.path;
-      localStorage.setItem("aieos.workdir", info.path);
-      renderWorkdirInfo(info);
-      closeRepoPicker();
-      return;
-    }
-    const info = await validateCommitRepo(repoPickerCurrent);
-    if (!info || !info.is_git_repo) {
-      els.repoPickerStatus.textContent = "请选择 Git 仓库根目录";
+    const info = await validateWorkdir(repoPickerCurrent);
+    if (!info || !info.is_dir) {
+      els.repoPickerStatus.textContent = "请选择存在的目录";
       els.repoPickerStatus.classList.remove("ok");
       return;
     }
-    els.commitRepoInput.value = info.git_root || info.path;
-    commitRepoTouched = true;
-    renderCommitRepoInfo(info);
+    els.workdirInput.value = info.path;
+    localStorage.setItem("aieos.workdir", info.path);
+    renderWorkdirInfo(info);
     closeRepoPicker();
   }
 
@@ -924,14 +830,6 @@
     const startedAt = performance.now();
     beginFrontTiming(startedAt);
     try {
-      let commitRepo = "";
-      if (commitRepoTouched) {
-        const path = (els.commitRepoInput.value || "").trim();
-        if (!path) {
-          throw new Error("请选择提交仓库，或点击“默认”使用默认仓库");
-        }
-        commitRepo = await commitRepoForSubmit(path);
-      }
       let workdir = (els.workdirInput.value || "").trim();
       if (workdir) {
         const info = await validateWorkdir(workdir);
@@ -942,9 +840,7 @@
       }
       const submitted = await api("/api/submit", {
         method: "POST",
-        body: JSON.stringify({
-          text, commit_repo: commitRepo, workdir,
-        }),
+        body: JSON.stringify({ text, workdir }),
       });
       pendingFront = {
         jobId: String(submitted.job_id || ""),
@@ -965,7 +861,7 @@
   /* events */
   els.submit.addEventListener("click", submitPrompt);
   els.workdirBrowse.addEventListener(
-    "click", () => openRepoPicker("workdir"));
+    "click", () => openRepoPicker());
   els.workdirInput.addEventListener("input", () => {
     const value = (els.workdirInput.value || "").trim();
     if (value) localStorage.setItem("aieos.workdir", value);
@@ -985,29 +881,6 @@
       else setWorkdirStatus("Task Workspace", "ok");
     }
   });
-  els.commitRepoBrowse.addEventListener(
-    "click", () => openRepoPicker("commitRepo"));
-  els.commitRepoInput.addEventListener("input", () => {
-    commitRepoTouched = true;
-    setCommitRepoStatus("尚未检查", "warn");
-  });
-  els.commitRepoInput.addEventListener("blur", () => {
-    const path = (els.commitRepoInput.value || "").trim();
-    if (path) validateCommitRepo(path);
-  });
-  els.commitRepoInput.addEventListener("keydown", (event) => {
-    if (event.key === "Enter") {
-      event.preventDefault();
-      const path = (els.commitRepoInput.value || "").trim();
-      if (path) validateCommitRepo(path);
-    }
-  });
-  els.commitRepoDefault.addEventListener("click", async () => {
-    commitRepoTouched = false;
-    els.commitRepoInput.value = commitRepoDefault;
-    setCommitRepoStatus("已恢复默认", "ok");
-    await loadCommitRepoDefault();
-  });
   els.repoPickerGo.addEventListener("click", () => {
     loadRepoPicker((els.repoPickerPath.value || "").trim());
   });
@@ -1026,10 +899,6 @@
       loadRepoPicker((els.repoPickerPath.value || "").trim());
     }
   });
-  window.addEventListener("aieos:settings-saved", async () => {
-    commitRepoTouched = false;
-    await loadCommitRepoDefault();
-  });
   els.questionSubmit.addEventListener("click", submitQuestion);
   els.questionClose.addEventListener("click", closeQuestion);
   els.questionLater.addEventListener("click", closeQuestion);
@@ -1047,7 +916,6 @@
     els.workdirInput.value = savedWorkdir;
     validateWorkdir(savedWorkdir);
   }
-  loadCommitRepoDefault();
   refresh();
   setInterval(refresh, 1200);
 })();

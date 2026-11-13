@@ -301,13 +301,15 @@ task_text
 | `limited` 自动提交到任务分支 | `CURRENT` |
 | `auto` 自动提交 + 可选 fast-forward 合并 | `CURRENT` |
 | Front `commit_confirm` | `CURRENT` |
-| 提交仓库选择（默认 / 绝对路径 / 目录浏览） | `CURRENT` |
 | 提交结果显示仓库路径 / 分支 / commit | `CURRENT` |
+| 任务输入区不再显示产物仓库 | `CURRENT` |
 | 自动 push / 复杂 merge | `FUTURE` |
 | UI 提交列表 / 历史 | 待接入 |
 
 提交时机是 Task COMPLETED 之后；提交结果不改变 Task 状态，也不进入
-Worker 私有记忆。新任务可以在任务输入区选择默认仓库或其他绝对路径。
+Worker 私有记忆。任务输入区不显示产物仓库；默认值来自 Settings 的
+`commit_output_repo`。Project Workdir 任务直接修改项目目录，不创建
+Output Commit。
 详见 [`OUTPUT_COMMIT.md`](architecture/OUTPUT_COMMIT.md)。
 
 ### 7.6 Project Workdir

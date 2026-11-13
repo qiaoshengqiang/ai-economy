@@ -319,18 +319,12 @@ GET  /api/health
 
 > **UI 是入口，不是新的执行框架。**
 
-### 提交仓库选择
+### 产物仓库
 
-聊天输入框下方有「提交仓库」条：
+任务输入区**不显示**产物仓库选择。任务输入区只保留「工作目录」。
+产物仓库默认值来自 Settings 的 `commit_output_repo`：
 
-```text
-提交仓库  [/abs/path/to/repo]  [选择目录]  [默认]
-```
-
-- 默认值来自设置里的 `commit_output_repo`，显示为解析后的绝对路径；
-- 输入框支持绝对路径；
-- 「选择目录」打开服务端目录浏览器，只列出目录并标记 Git 仓库；
-- 选中的仓库会随新 Task 写入 `acceptance.commit_output_repo`；
-- 只影响新任务；运行中的 Task 保持创建时选定的仓库；
-- 未选择时使用默认仓库；
-- 目标必须是现有 Git 仓库，AIEOS 主仓库会被拒绝。
+- Task Workspace 任务完成后，Output Commit 使用该默认仓库；
+- Project Workdir 任务直接修改项目目录，不创建 Output Commit；
+- 目标必须是现有 Git 仓库，AIEOS 主仓库会被拒绝；
+- 提交结果消息仍会显示实际仓库路径、`tasks/<task_id>` 目录、分支和 commit。

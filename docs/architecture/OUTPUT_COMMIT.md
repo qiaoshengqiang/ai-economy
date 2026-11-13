@@ -193,6 +193,7 @@ commit_max_total_bytes  总大小上限
 ```
 
 UI「设置 → 运行」可以修改；也可以写入 `runs/ui/ui_settings.json`。
+任务输入区不显示产物仓库选择；默认仓库统一从 Settings 读取。
 
 ---
 
