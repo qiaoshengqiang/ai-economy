@@ -330,6 +330,14 @@ def test_autonomous_mode_uses_single_minimal_run(db, monkeypatch, tmp_path):
     assert "TASK_DOC.md" not in system
     assert str(directory.workspace) in system
     assert "read/write/edit/bash" in system
+    # 私有 workspace 的用途（正向表述，不含负向约束）
+    assert "私有 workspace" in system
+    assert "草稿" in system
+    assert "中间产物" in system
+    assert "tools/" in system
+    assert "不要" not in system
+    assert "禁止" not in system
+    assert "不允许" not in system
 
     class _FakePiClient:
         def __init__(self, **kwargs):

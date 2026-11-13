@@ -249,7 +249,8 @@ autonomous 单阶段自主模式
   Worker Role 的 phase requirements、验收提示、范围守卫或验证次数要求；
 - 用户 prompt 就是 Task 的 `task_text`（有中途人类回答时追加该回答）；
 - 仍保留最小系统提示：身份、Task Workspace / 私有 workspace / 记忆目录、
-  原生工具列表、私有目录边界，以及可用的本地 web search CLI；
+  私有 workspace 的用途（草稿 / 笔记 / 中间产物 / 可复用脚本）、
+  原生工具列表、操作范围，以及可用的本地 web search CLI；
 - 思考强度使用 Agent 卡片；`Auto` 在自主模式取 `high`；
 - 中断恢复复用同一个 autonomous session；返工按新 iteration 开新 session；
 - 完成判定仍是 Pi `agent_settled` + Workspace 产物 + 最后 assistant 文本 /

@@ -73,6 +73,19 @@ class Workspace:
         self.memory_dir = self.root.parent / "memory"
         self.memory_dir.mkdir(parents=True, exist_ok=True)
 
+        # 私有空间说明：Agent 打开目录就能看到这里可以放什么
+        readme = self.root / "README.md"
+        if not readme.exists():
+            readme.write_text(
+                f"# 私有 workspace\n\n"
+                f"这里是 {agent_id} 自己的长期工作区，跨任务保留。\n\n"
+                f"- 草稿、笔记、中间产物放在这里；\n"
+                f"- 可复用的辅助脚本放在 `tools/`，用 bash 直接运行；\n"
+                f"- 大段内容先写进这里，再分步写入 Task Workspace；\n"
+                f"- 建议目录：`notes/`、`scratch/`、`tools/`。\n\n"
+                f"Task Workspace 放本次任务的交付物和验收产物。\n",
+                encoding="utf-8")
+
     # ------------------------------------------------------------
     # 构造
     # ------------------------------------------------------------

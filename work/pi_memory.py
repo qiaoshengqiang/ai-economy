@@ -93,11 +93,17 @@ Task 工作目录：{self.task_workspace}
 私有 workspace：{self.private_workspace or "（不可用）"}
 记忆目录：{self.memory_dir}
 
+## 私有 workspace
+
+草稿、笔记、中间产物和可复用脚本放在私有 workspace，
+可以按 `notes/`、`scratch/`、`tools/` 分目录。
+大段内容先写进这里，再分步写入 Task Workspace。
+
 ## 记忆协议
 
 - `working.md`：本任务的工作记忆，可读写。
-- `inbox/*.md`：候选记忆，任务结束后由 AIEOS 摄取；不要直接当权威。
-- 不要读取其他 Agent 的目录。
+- `inbox/*.md`：候选记忆，任务结束后由 AIEOS 摄取；以长期记忆为准。
+- 每个 Agent 使用自己的 workspace 和 memory 目录。
 
 ## 私有工作记忆
 
@@ -120,10 +126,11 @@ Task 工作目录：{self.task_workspace}
                 encoding="utf-8")
         (self.memory_dir / "README.md").write_text(
             "# Pi 记忆协议\n\n"
-            "- context.md 只读（由 AIEOS 生成）。\n"
+            "- context.md 由 AIEOS 生成，每次运行刷新。\n"
             "- working.md 是本任务可读写的工作记忆。\n"
-            "- 把候选记忆写入 inbox/*.md。\n"
-            "- 不要把 inbox 当作权威的长期记忆。\n",
+            "- 把候选记忆写入 inbox/*.md，任务结束后由 AIEOS 摄取。\n"
+            "- 长期记忆以 AIEOS 的摄取结果为准。\n"
+            "- 草稿、笔记、中间产物和可复用脚本放在私有 workspace。\n",
             encoding="utf-8")
         return context
 

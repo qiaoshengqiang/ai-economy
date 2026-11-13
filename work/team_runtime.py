@@ -1383,12 +1383,12 @@ Task: {self.task.task_id}
             complete_fn=self._complete_fn,
             include_complete=True,
         )
-        prompt = f"""所有 item 已经 DONE。现在只需要完成 Team Task。
+        prompt = f"""所有 item 已经 DONE。现在直接完成 Team Task。
 
 Task: {self.task.task_id}
 目标: {self.task.description[:1200]}
 
-不要再解释、不要再读取文件。只输出一个 JSON 动作：
+直接输出一个 JSON 动作：
 {{"decision":"act","reasoning":"团队工作已完成，进入收尾",
  "action":{{"type":"work_complete","parameters":{{
    "result_ref":"team-result-{self.task.task_id}",

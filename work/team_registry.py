@@ -116,7 +116,7 @@ class TeamRegistry:
         """
         把预占槽位（例如 request_id）绑定到真实 Task。
 
-        🔒 这不允许换人；只更新引用。
+        🔒 换人请重新预占；这里只更新引用。
         """
         with self._lock:
             slot = self._teams.get(str(slot_id))

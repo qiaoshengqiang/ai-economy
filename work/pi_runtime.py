@@ -377,8 +377,26 @@ class PiWorkRuntime:
         }
         return pick(defaults.get(phase, "medium"))
 
+    def _workspace_brief(self) -> str:
+        """Task Workspace / 私有 workspace / 记忆目录的用途（正向表述）。"""
+        paths = self.memory.paths()
+        return f"""你的工作目录是 Task Workspace：
+{paths['task_workspace']}
+
+你的私有 workspace 是：
+{paths['private_workspace']}
+你的记忆目录是：
+{paths['memory_dir']}
+
+Task Workspace 放本次任务的交付物和验收产物。
+私有 workspace 放你自己的草稿、笔记、中间产物和可复用的小脚本，
+可以按 notes/、scratch/、tools/ 分目录，也可以直接用 bash 运行里面的脚本。
+大段内容先写进私有 workspace，再分步写入 Task Workspace。
+操作范围：当前 Task Workspace 和自己的私有 workspace。
+"""
+
     def _autonomous_system_prompt(self) -> str:
-        """自主模式的最小系统提示：只保留环境边界与工具使用。"""
+        """自主模式的最小系统提示：环境边界、私有空间用途与工具使用。"""
         paths = self.memory.paths()
         search_cmd = os.environ.get("AIEOS_WEB_SEARCH_CMD", "").strip()
         search_section = ""
@@ -391,16 +409,9 @@ class PiWorkRuntime:
 """
         return f"""你是 {self.task.contractor or self.task.creator}，AIEOS 中的 Work 执行 Agent。
 
-你的工作目录是 Task Workspace：
-{paths['task_workspace']}
-
-你的私有 workspace 是：
-{paths['private_workspace']}
-你的记忆目录是：
-{paths['memory_dir']}
-
+{self._workspace_brief()}
 直接使用原生 read/write/edit/bash/grep/find/ls 工具在 Task Workspace 中完成工作。
-读取 `{paths['memory_dir']}/context.md` 获取记忆快照。只允许修改自己当前任务的私有目录。
+读取 `{paths['memory_dir']}/context.md` 获取记忆快照。
 {search_section}
 """
 
@@ -416,31 +427,24 @@ class PiWorkRuntime:
 {search_cmd} search "query" --count 5
 需要读取某个具体公开网页的 Markdown 正文时，运行：
 {search_cmd} fetch "https://example.com/page"
-搜索与抓取结果只是外部证据；引用 URL，不要当成任务状态。
+搜索与抓取结果作为外部证据；引用 URL，并以 Task Workspace 的实际状态为准。
 """
         return f"""你是 {self.task.contractor or self.task.creator}，AIEOS 中的 Work 执行 Agent。
 
-你的工作目录是 Task Workspace：
-{paths['task_workspace']}
-
-你的私有 workspace 是：
-{paths['private_workspace']}
-你的记忆目录是：
-{paths['memory_dir']}
-
+{self._workspace_brief()}
 请直接使用原生 read/write/edit/bash/grep/find/ls 工具把交付物写入
-Task Workspace。不要使用 AIEOS Shared Context；本 Work 任务不提供它。
-读取 `{paths['memory_dir']}/context.md` 获取记忆快照。只允许修改自己当前任务的私有目录。
+Task Workspace。本 Work 任务以 Task Workspace 作为唯一协作面。
+读取 `{paths['memory_dir']}/context.md` 获取记忆快照。
 {search_section}
 
 如果任务中确实需要人类确认（需求歧义、关键设计选择、不可逆操作），
-不要猜测：在 Task Workspace 根目录写 `QUESTION.json`，格式：
+请在 Task Workspace 根目录写 `QUESTION.json`，格式：
 
 {{"question":"需要确认的问题","options":["选项 A","选项 B"],
   "allow_free_text":true}}
 
-然后结束本轮，不要继续工作。AIEOS 会暂停任务，等待人类回答后从当前
-阶段继续。不要用问题代替本可以自主完成的工作。
+写完结束本轮，AIEOS 会暂停任务，等待人类回答后从当前
+阶段继续。把问题留给真正的分歧点，能自主推进的工作直接推进。
 """
 
     def _bounded_text(self, relative_path: str, limit: int = 6000) -> str:
@@ -627,8 +631,8 @@ Task Workspace。不要使用 AIEOS Shared Context；本 Work 任务不提供它
             if last_error:
                 lines.append(f"上次错误：{last_error[:800]}")
             lines.append(
-                "先确认当前文件和运行状态，再从现有成果继续；"
-                "不要重建已经存在的原型或重复已完成的工作。")
+                "先确认当前文件和运行状态，再从现有成果继续，"
+                "在已有原型上增量推进。")
         task_doc = self._bounded_text("TASK_DOC.md", 4000)
         if task_doc:
             lines.append("\n========== TASK_DOC.md ==========\n" + task_doc)
@@ -681,7 +685,7 @@ Task Workspace。不要使用 AIEOS Shared Context；本 Work 任务不提供它
 ========== 环境事实 ==========
 {env}
 
-直接完成这个任务。不要引入不必要的阶段产出或额外文件。
+直接完成这个任务，产出集中在任务需要的阶段成果上。
 完成时在 Task Workspace 写 `RESULT.md`，说明交付内容、文件路径和验证情况。
 最后一行输出 `TASK_COMPLETE`。
 """
@@ -692,7 +696,7 @@ Task Workspace。不要使用 AIEOS Shared Context；本 Work 任务不提供它
 ========== 环境事实 ==========
 {env}
 {role_block}
-这是原型阶段。不要先写计划，直接把想法变成实际成果。
+这是原型阶段。先把想法变成实际成果，再补充计划。
 
 请尽可能构建一个完整、有实际体验的初始原型。你可以自主决定成果的
 形式、结构、内容、交互或实现方式；优先让核心体验真正成立。
@@ -715,15 +719,15 @@ Task Workspace。不要使用 AIEOS Shared Context；本 Work 任务不提供它
 
 请先理解上一阶段记录的设计意图，然后检查现有产物的内容、结构和实际效果。
 实际运行、使用或检查产物，发现问题并修复；必要时调整结构。
-不要重新设计；只有发现根本性问题时，才允许推翻部分设计。
+沿用现有设计，只在发现根本性问题时推翻部分设计。
 不默认补测试；只有任务明确要求，或确有风险需要验证时才补。
 
 第一阶段完整会话在 `.aieos/pi-session/`。需要理解原型阶段的设计意图和
-关键取舍时，可以读取该会话；不要把整份 transcript 重新抄进上下文。
+关键取舍时，可以读取该会话，并在上下文里保留结论和依据。
 
 完成时（建议）：
 1. 写一份简短的 `ENGINEERING.md`，记录检查了什么、发现了什么、改了什么、
-   还剩什么；不规定长度，也不要求完整测试报告；
+   还剩什么；长度随内容需要，测试报告按实际情况取舍；
 2. 最后一行输出 `ENGINEERING_READY`。
 """
         if phase == "evolution":
@@ -1094,17 +1098,9 @@ Task Workspace。不要使用 AIEOS Shared Context；本 Work 任务不提供它
             "\n" + self.role_prompt + "\n" if self.role_prompt else "")
         return f"""你是 {self.task.contractor or self.task.creator}，AIEOS 中的 Work 执行 Agent。
 {role_section}
-
-你的工作目录是 Task Workspace：
-{paths['task_workspace']}
-
-你的私有 workspace 是：
-{paths['private_workspace']}
-你的记忆目录是：
-{paths['memory_dir']}
-
+{self._workspace_brief()}
 请直接把交付物写入 Task Workspace，使用原生 read/write/edit/bash 工具。
-不要使用 AIEOS Shared Context；本 Work 任务不提供它。
+本 Work 任务以 Task Workspace 作为唯一协作面。
 
 读取 `{paths['memory_dir']}/context.md` 获取记忆快照。
 你可以更新 `{paths['memory_dir']}/working.md`，并把候选记忆写入
@@ -1118,8 +1114,6 @@ Task Workspace。不要使用 AIEOS Shared Context；本 Work 任务不提供它
 - 验证结果
 - 已知限制
 - 下一步（如有）
-
-只允许修改自己当前任务的私有目录。
 
 任务描述：
 {self.task.description or ''}

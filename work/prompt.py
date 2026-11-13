@@ -11,7 +11,7 @@ Work 层最小 prompt
 
 ✅ Public Working Memory 是团队**抽象架构白板**：目录、文件归属、
    类/方法接口、依赖、进度。每个 worker 的 prompt 都直接注入它，
-   避免反复读 Shared Context；它不存具体实现或长任务描述。
+   作为团队的共享契约；具体实现和长任务描述放在 Shared Context。
 
 只给当前角色真正需要的：
 
@@ -221,7 +221,7 @@ def _render_tool_docs(tool_docs: Optional[Dict[str, str]]) -> str:
         return ""
     blocks.extend([
         "",
-        "以上是工具文档中的真实约束。请严格遵守；不要依赖转述或记忆。",
+        "以上是工具文档中的真实约束。请严格遵守，并以这里的内容为准。",
     ])
     return "\n".join(blocks)
 
@@ -270,7 +270,7 @@ workspace_id: {context.workspace_id}
 ========== 本阶段可用动作（只读） ==========
 {describe_actions(available_actions)}
 
-========== Work 阶段动作（尚不可执行） ==========
+========== Work 阶段动作（下一阶段启用） ==========
 {describe_actions(next_actions)}
 
 ========== Work 动作参数 ==========
@@ -283,16 +283,17 @@ workspace_id: {context.workspace_id}
 工具目录只列名称；`tool_help` 返回工具的权威文档。
 
 ========== 协议 ==========
-本阶段不能写文件，也不能完成 Task。
+本阶段只读；写文件与完成 Task 在 Work 阶段进行。
 最多 {max_steps} 步。每一步只能是下面两种之一：
 
-(A) ACT —— 一个 JSON 对象，不要 markdown 围栏，不要工具调用标记：
+(A) ACT —— 一个普通 JSON 对象，直接以 `{{` 开头：
 {{"decision":"act","reasoning":"一句话",
  "actions":[{{"type":"tool_help","parameters":{{"tool":"playwright"}}}}]}}
 
-(B) REPORT —— 纯文本，不要 JSON。当你已经有足够事实时使用。
+(B) REPORT —— 纯文本报告。当你已经有足够事实时使用。
 
-不要输出 provider 的工具调用语法（例如 `<|DSML|>`、`invoke name=`）。
+动作统一使用普通 JSON 语法；工具调用标记（例如 `<|DSML|>`、`invoke name=`）
+由 provider 层解析，框架以这里定义的 JSON 形状为准。
 只有上面的 JSON 形状会产生动作。
 
 报告应覆盖这个 Task 真正重要的内容：需求、环境、方法、风险、计划，
@@ -318,15 +319,15 @@ def build_work_prompt(
             "work_complete。")
     elif role == WorkRole.LEAD:
         role_text = (
-            "你是 Team Lead。负责计划、分配、集成和交付；不要把工作推回给人类。")
+            "你是 Team Lead。负责计划、分配、集成和交付，自己推进到收尾。")
     elif role == WorkRole.QA:
         role_text = (
             "你是 QA。对照 Definition of Done 检查交付，并返回 "
             "work_qa_verdict。")
     else:
         role_text = (
-            "你是 Team Member。只完成分配给你的 item；使用 work_item_done / "
-            "work_item_blocked。不要替别人验收。")
+            "你是 Team Member。专注分配给你的 item；使用 work_item_done / "
+            "work_item_blocked 汇报。")
 
     criteria = "\n".join(
         f"- {item}" for item in context.acceptance_criteria
@@ -371,7 +372,7 @@ def build_work_prompt(
  or "（没有认知报告；使用任务原文和当前环境）"}
 
 > 这只是启动快照。环境可能已经变化；需要时请重新读取或搜索，
-> 不要假设快照仍然是最新状态。
+> 并以当前环境为准。
 
 ========== Workspace 事实 ==========
 workspace_id: {context.workspace_id}
@@ -395,7 +396,7 @@ workspace_id: {context.workspace_id}
 Work 步骤一起返回。
 
 ========== 可选：调整下一次调用 ==========
-把以下字段放在 JSON 的**顶层**（不要放进 action.parameters）：
+把以下字段放在 JSON 的**顶层**（与 action.parameters 同级）：
 - "thinking": {{"enabled": true, "effort": "high"}}
   作用于当前阶段；DeepSeek 支持 low / high / max。
   用 enabled:false 关闭。也可以传按阶段设置的映射。
@@ -424,7 +425,7 @@ Work 步骤一起返回。
 {completion_hint}
 
 ========== 输出格式 ==========
-返回一个 JSON 对象，不要 markdown 围栏：
+返回一个普通 JSON 对象，直接以 `{{` 开头：
 {{"decision":"act","reasoning":"一句话",
  "thinking":{{"enabled":true,"effort":"high"}},
  "action":{{"type":"动作类型","parameters":{{...}}}}}}
@@ -514,7 +515,7 @@ def build_lead_plan_prompt(
 可选 `directories`：为成员声明可写目录，runtime 会创建并移交锁。
 每个目录只能有一个 owner；不写时 runtime 会给每个成员一个默认目录。
 
-只输出 JSON，不要 markdown 围栏：
+输出普通 JSON，直接以 `{{` 开头：
 {{"items":[
   {{"item_id":"item_1","assigned_to":"agent_b","goal":"...",
     "paths":["src/module_b"],"acceptance":["..."]}}
@@ -523,8 +524,8 @@ def build_lead_plan_prompt(
  "directories":{{"src/module_b":"agent_b"}},
  "notes":"..."}}
 
-🔒 不要在这里开始生产；下一步才是并行执行。
-🔒 不要输出经济 / 钱包 / 价格相关内容。
+🔒 这个阶段专注计划；下一步进入并行执行。
+🔒 这个阶段的输出聚焦团队计划。
 """
 
 
@@ -566,17 +567,16 @@ def build_team_worker_prompt(
 {describe_action_params(available_actions)}
 - work_item_done:
   {{"item_id":"...", "summary":"...", "paths":["..."]}}
-  （不要用 note 字段；说明写 summary）
+  （说明写 summary 字段）
 - work_item_blocked:
   {{"item_id":"...", "reason":"..."}}
 
 🔒 只做分给你的 item。完成后调用 work_item_done（带 item_id）。
 🔒 被阻塞时调用 work_item_blocked（带 item_id + reason）。
-🔒 同一个文件读一次并记录结论；需要定位其他内容时用 workspace_search，
-   不要整文件反复重读。
-🔒 公共工作记忆里已有契约时，不要再反复读 Shared Context / config。
-🔒 没有 Agent 间通信动作；不要讨论身份或经济。
-🔒 不要替别人验收，也不要调用 work_complete。
+🔒 同一个文件读一次并记录结论；需要定位其他内容时用 workspace_search。
+🔒 公共工作记忆里已有契约时，直接以它为团队契约。
+🔒 Work 层专注交付本身。
+🔒 验收由 QA / Leader 负责；成员完成后调用 work_item_done。
 
 ========== 输出格式 ==========
 只输出 JSON：
@@ -623,15 +623,15 @@ def build_qa_prompt(
 - 对照公共工作记忆里的 team.architecture.files，逐个确认声明的文件真实存在；
 - 如果入口文件引用了其他本地文件（script/link/import），确认它们也存在；
 - 成员回报是声明，不是证据；缺失文件必须 passed=false；
-- 不要因为“大部分已完成”就通过。
+- 以 DoD 和实际文件为准；每一条都核实后才通过。
 
 ========== 你的职责 ==========
 检查整体交付是否满足 DoD。可以 workspace_read / workspace_search /
 run_tool 验证，然后调用 work_qa_verdict。
 
-🔒 不通过必须给出可执行的 feedback。
-🔒 不要反复读 Shared Context；公共工作记忆已经是团队契约。
-🔒 没有 Agent 间通信动作；不要讨论身份或经济。
+🔒 需要修改时给出可执行的 feedback。
+🔒 公共工作记忆已经是团队契约，直接以它为准。
+🔒 Work 层专注交付本身。
 """
 
 
@@ -681,8 +681,8 @@ def build_lead_integration_prompt(
   {{"expected_revision":<当前版本>, "reason":"...",
     "operations":[...], "qa": null}}
 {replan_text}
-🔒 公共工作记忆是团队共享契约；不要反复读 Shared Context。
-🔒 没有 Agent 间通信动作；不要讨论身份或经济。
+🔒 公共工作记忆是团队共享契约，直接以它为准。
+🔒 Work 层专注交付本身。
 🔒 如果设置了 QA，只有 QA 通过后才能完成。
 """
 
@@ -729,13 +729,13 @@ def build_leader_replan_prompt(
 {", ".join(participants)}
 
 ========== 你的职责 ==========
-只调整计划，不直接生产。根据 blocked / pending / QA 反馈决定：
+这个阶段专注调整计划；生产在后续阶段进行。根据 blocked / pending / QA 反馈决定：
 
 - reassign 改派给另一个成员；
 - add 增加一个补丁 / 集成 item；
 - cancel 取消不再需要的 item；
 - update 修改 item 目标 / 验收 / 路径；
-- qa 可以新增、替换或清除（不能是 Leader 自己）。
+- qa 可以新增、替换或清除（由 Leader 之外的参与者担任）。
 
 只输出一个动作：
 {{"decision":"act","reasoning":"...","action":{{
@@ -752,6 +752,6 @@ def build_leader_replan_prompt(
   }}
 }}}}
 
-🔒 不要在这里调用 work_complete。
-🔒 没有 Agent 间通信动作；不要讨论身份或经济。
+🔒 这个阶段只调用 work_plan_update；完成动作留到集成阶段。
+🔒 Work 层专注计划本身。
 """

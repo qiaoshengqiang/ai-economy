@@ -326,12 +326,13 @@ class SoloWorkRuntime:
                         "content": (
                             "这段输出既不是合法的动作信封，也不是报告。\n"
                             "要执行动作，请严格使用下面的 JSON 形状"
-                            "（不要工具调用标记，不要 markdown）：\n"
+                            "（直接以 `{` 开头，使用普通 JSON 语法；"
+                            "工具调用标记由 provider 层处理）：\n"
                             '{"decision":"act","actions":'
                             '[{"type":"tool_help",'
                             '"parameters":{"tool":"playwright"}}]}\n'
                             "如果你已经有足够事实，请用纯文本输出报告"
-                            "（不要 JSON）。"),
+                            "（直接写报告正文）。"),
                     })
                     continue
                 feedback = render_read_results(
@@ -352,7 +353,7 @@ class SoloWorkRuntime:
                     "role": "user",
                     "content": (
                         "现在请用纯文本输出完整的任务认知报告。"
-                        "不要输出 JSON 动作。"),
+                        "这个阶段以报告正文为准。"),
                 })
                 run = agent.act(
                     messages=messages,
@@ -901,8 +902,8 @@ class SoloWorkRuntime:
             extra_instruction=(
                 "\n========== 恢复提示 ==========\n"
                 "你连续两轮没有输出任何动作（只回了文字或格式不可解析）。\n"
-                "不要再只回复文字。\n"
-                "- 如果工作已经完成，必须调用 work_complete；\n"
+                "请给出一个明确动作。\n"
+                "- 如果工作已经完成，调用 work_complete；\n"
                 "- 如果还没完成，给出一个具体动作继续。\n\n"
                 "你上一轮的文字（截断）：\n"
                 f"{last_content[:1200]}\n"

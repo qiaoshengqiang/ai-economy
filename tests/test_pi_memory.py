@@ -90,3 +90,27 @@ def test_pi_memory_ingests_and_consolidates(tmp_path):
     assert short.added
     assert long.calls
     assert not list(inbox.glob("*.md"))
+
+
+def test_pi_memory_context_documents_private_workspace(tmp_path):
+    runtime = SimpleNamespace(
+        economy=SimpleNamespace(agent=lambda aid: SimpleNamespace(
+            workspace=_Workspace(tmp_path / "agent"))),
+        private_working_memory=_Working(),
+        private_short_term_memory=_Short(),
+        private_long_term_memory=_Long(),
+    )
+    task = SimpleNamespace(task_id="task_ctx")
+    directory = TaskDirectoryManager(tmp_path / "tasks").for_task("task_ctx")
+    directory.ensure()
+    bridge = PiMemoryBridge(
+        runtime, agent_id="agent_c", task=task,
+        task_workspace=directory.workspace)
+    bridge.prepare()
+
+    context = (bridge.memory_dir / "context.md").read_text(encoding="utf-8")
+    assert "私有 workspace" in context
+    assert "草稿" in context
+    assert "中间产物" in context
+    assert "tools/" in context
+    assert "不要" not in context

@@ -391,7 +391,8 @@ class TestWorkPrompt:
         assert "工具文档" in prompt
         assert "## 3. Technical approach" not in prompt
         assert '"actions":[{"type":"tool_help"' in prompt
-        assert "不要输出 provider 的工具调用语法" in prompt
+        assert "普通 JSON 语法" in prompt
+        assert "工具调用标记" in prompt
 
     def test_all_registered_solo_actions_are_visible(self):
         """能力清单来自 dispatcher：注册了什么，prompt 里就必须有什么。"""
@@ -499,7 +500,7 @@ class TestWorkPrompt:
         )
         assert "Game.Player.update(dt, input)" in prompt
         assert "Game.CONFIG" in prompt
-        assert "不要再反复读 Shared Context" in prompt
+        assert "公共工作记忆里已有契约时，直接以它为团队契约" in prompt
 
 
 # ============================================================
