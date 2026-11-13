@@ -341,6 +341,7 @@ def test_prompt_exposes_agent_facts_and_routing_rules():
     assert "preferred_agent 为 WORKING → 拒绝" in prompt
     assert "不会自动替换" in prompt
     assert "inspect —— 只读 Task 事实" in prompt
+    assert "workspace_path" in prompt
 
 
 def test_inspect_loop_fetches_facts_then_decides():
@@ -372,6 +373,7 @@ def test_inspect_loop_fetches_facts_then_decides():
     assert len(prompts) == 2
     assert "IN_PROGRESS" in prompts[1]
     assert "inspect —— 只读 Task 事实" in prompts[0]
+    assert "workspace_path" in prompts[0]
 
 
 def test_inspect_is_bounded():

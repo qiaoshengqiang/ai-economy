@@ -343,6 +343,8 @@ class FrontAgentRuntime:
 - artifact_read 受 Task 范围限制；不能读取任意宿主机路径。
 - `artifacts` intent 只把 Task 文件导出到宿主机并返回路径，**不返回**
   文件内容。
+- 如果人类只问“文件在哪 / 目录在哪”，先用 inspect 获取 `workspace_path`，
+  再用 direct_reply 回答；不要用 artifacts。
 - web_search 是只读外部事实：只在当前事实不足、需要最新外部信息时使用；
   搜索结果是证据，不是结论；引用 URL，不要把整页内容抄进回复。
 - 不要用 web_search 查询本地 Task / Workspace 已经能回答的问题。
@@ -405,6 +407,8 @@ Role 只是弱信号，不要仅凭 role 判断。
    {{"intent":"clarify","question":"...","reason":"..."}}
 
 8. inspect —— 只读 Task 事实；每次输入最多 2 次。
+   返回 Task 的 workspace_path（Task Workspace 的宿主机路径）和文件列表；
+   只读，不导出。
    {{"intent":"inspect","task_id":"...","reason":"..."}}
 
 一个回合内多个动作：

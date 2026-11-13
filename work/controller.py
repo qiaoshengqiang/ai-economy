@@ -1218,6 +1218,14 @@ class AIEOSController:
             return {"error": f"{type(exc).__name__}: {exc}"}
 
         task = dict(detail.get("task") or {})
+        # Inspect 是只读事实入口：把 Task Workspace 的真实宿主机路径
+        # 一并交给 Front，避免它为了回答“文件在哪”去走 artifacts 导出。
+        try:
+            task_dir = self.task_directories.for_task(task_id)
+            if task_dir is not None and task_dir.exists():
+                task["workspace_path"] = str(task_dir.workspace)
+        except Exception:                                     # noqa: BLE001
+            pass
         job = dict(detail.get("job") or {})
         rounds = []
         for item in (detail.get("rounds") or [])[-5:]:

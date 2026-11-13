@@ -1822,3 +1822,34 @@ def test_task_timeline_preserves_manual_open_state():
     assert "data-round-key" in js
     assert "block.open = previousOpen.has(roundKey)" in js
     assert ": false;" in js
+
+
+def test_front_inspect_includes_task_workspace_path(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    runtime = SimpleNamespace(
+        directory=_Directory(["agent_a", "agent_b"]),
+        economy=SimpleNamespace(
+            agent=lambda aid: SimpleNamespace(has_brain=True)),
+        tasks=SimpleNamespace(list_tasks=lambda limit=50: []),
+    )
+    controller = AIEOSController(runtime, front_agent="agent_a")
+    fake_dir = SimpleNamespace(
+        exists=lambda: True,
+        workspace=tmp_path / "tasks" / "task_x" / "workspace",
+    )
+    monkeypatch.setattr(
+        controller, "task_detail",
+        lambda task_id: {
+            "task": {"task_id": task_id, "status": "COMPLETED"},
+            "job": {}, "rounds": [], "workspace_files": [], "llm": {},
+        })
+    monkeypatch.setattr(
+        controller.task_directories, "for_task",
+        lambda task_id: fake_dir)
+    try:
+        facts = controller._front_inspect_facts("task_x")
+    finally:
+        controller.close()
+
+    assert facts["task"]["workspace_path"] == str(fake_dir.workspace)
