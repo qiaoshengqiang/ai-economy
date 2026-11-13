@@ -288,6 +288,8 @@ GET  /api/health
 - 每轮 decision / work / summary 明细保存到 `runs/ui/rounds/<task_id>.json`；
 - Task 详情页用 `/api/task/<task_id>` 每 2 秒轮询，暂不引入 SSE；
   当前轮次数据量下，轮询不影响现有实现；
+- Task 详情页的 Front Brief 读取 `Task.acceptance["brief"]`（只读快照）；
+  旧任务在 Job 仍在内存时回退到 `front_decision.brief`；
 - 轮询按内容签名增量重绘：内容没变时不重建 DOM；
 - 检测到文本选区（含拖选中的瞬时状态）时暂停列表重绘，
   用户点掉选区后的下一次轮询再补上最新数据 ——

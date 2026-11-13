@@ -6,7 +6,7 @@
   const els = {
     status: document.getElementById("status"),
     meta: document.getElementById("task-meta"),
-    prompt: document.getElementById("task-prompt"),
+    brief: document.getElementById("task-brief"),
     timeline: document.getElementById("timeline"),
     workspace: document.getElementById("workspace"),
     memory: document.getElementById("public-memory"),
@@ -95,11 +95,33 @@
     }
   }
 
-  function metaItem(parent, key, value) {
-    const item = el("div", "meta-item");
-    item.appendChild(el("div", "meta-key", key));
-    item.appendChild(el("div", "meta-value", value == null ? "—" : value));
+  function techItem(parent, key, value) {
+    const item = el("div", "tech-item");
+    item.appendChild(el("b", "", key));
+    item.appendChild(document.createTextNode(
+      value == null || value === "" ? "—" : String(value)));
     parent.appendChild(item);
+  }
+
+  function fact(parent, label, value, title = "") {
+    if (value == null || value === "") return;
+    const item = el("span", "fact");
+    item.appendChild(el("b", "", label));
+    item.appendChild(document.createTextNode(String(value)));
+    if (title) item.title = title;
+    parent.appendChild(item);
+  }
+
+  function statusTone(status) {
+    if (status === "COMPLETED") return "good";
+    if (["FAILED", "INTERRUPTED", "CANCELLED"].includes(status)) return "bad";
+    if (status === "IN_PROGRESS") return "warn";
+    return "";
+  }
+
+  function baseName(path) {
+    const parts = String(path || "").split(/[\\/]+/).filter(Boolean);
+    return parts.length ? parts[parts.length - 1] : "";
   }
 
   function badge(text, tone = "") {
@@ -115,40 +137,135 @@
     const task = data.task || {};
     const job = data.job;
     els.meta.innerHTML = "";
-    els.meta.appendChild(el("div", "section-title", "任务"));
-    const grid = el("div", "meta-grid");
-    metaItem(grid, "task_id", task.task_id || taskId);
-    metaItem(grid, "status", task.status || "—");
-    metaItem(grid, "mode", task.mode || "—");
-    metaItem(grid, "iteration", task.iteration || 1);
-    metaItem(grid, "执行 Agent", task.creator || "—");
-    metaItem(grid, "contractor", task.contractor || "—");
-    metaItem(grid, "participants", (task.participants || []).join(", ") || "—");
-    metaItem(grid, "workspace", task.workspace_id || "—");
+
+    const top = el("div", "hero-top");
+    const main = el("div", "hero-main");
+    const eyebrow = [
+      task.mode || "SOLO",
+      `iteration ${task.iteration || 1}`,
+      task.work_profile || "",
+    ].filter(Boolean).join(" · ");
+    main.appendChild(el("div", "hero-eyebrow", eyebrow));
+    main.appendChild(el("h1", "hero-title", task.task_id || taskId));
+    top.appendChild(main);
+
+    const status = task.status || "—";
+    const pill = el("span", `hero-status ${statusTone(status)}`.trim());
+    pill.appendChild(el("span", "dot", "●"));
+    pill.appendChild(document.createTextNode(status));
+    top.appendChild(pill);
+    els.meta.appendChild(top);
+
+    const facts = el("div", "facts");
+    fact(facts, "Agent", task.creator || "");
+    fact(facts, "Role", task.role || "");
     if (task.workspace_mode === "project") {
-      metaItem(grid, "project", task.project_path || "—");
+      fact(facts, "Workspace",
+        `Project · ${baseName(task.project_path) || "项目"}`,
+        task.project_path || "");
+    } else {
+      fact(facts, "Workspace", "Task Workspace");
     }
-    metaItem(grid, "created", task.created_at || "—");
-    metaItem(grid, "updated", task.updated_at || "—");
+    fact(facts, "轮次", task.iteration || 1);
     if (job) {
-      metaItem(grid, "job", `${job.status || "?"}${job.error ? " · " + job.error : ""}`);
+      const jobText = job.status || "";
+      const jobError = job.error ? ` · ${job.error}` : "";
+      fact(facts, "Job", `${jobText}${jobError}`);
       const jobDuration = formatDuration(job.duration_ms);
-      if (jobDuration) metaItem(grid, "job 耗时", jobDuration);
+      if (jobDuration) fact(facts, "耗时", jobDuration);
       const frontDuration = formatDuration(job.front_ms);
-      if (frontDuration) metaItem(grid, "Front 决策", frontDuration);
+      if (frontDuration) fact(facts, "Front", frontDuration);
+    }
+    if (facts.childElementCount) els.meta.appendChild(facts);
+
+    const details = document.createElement("details");
+    details.className = "tech-info";
+    details.appendChild(el("summary", "", "技术信息"));
+    const grid = el("div", "tech-grid");
+    techItem(grid, "creator", task.creator);
+    techItem(grid, "contractor", task.contractor);
+    techItem(grid, "participants", (task.participants || []).join(", "));
+    techItem(grid, "workspace_id", task.workspace_id);
+    techItem(grid, "workspace_mode", task.workspace_mode);
+    if (task.project_path) techItem(grid, "project_path", task.project_path);
+    techItem(grid, "created", task.created_at);
+    techItem(grid, "updated", task.updated_at);
+    if (job) {
+      techItem(grid, "job", job.job_id);
       if (job.front_thinking && typeof job.front_thinking === "object") {
-        metaItem(grid, "Front 思考", formatThinking(job.front_thinking));
+        techItem(grid, "Front 思考", formatThinking(job.front_thinking));
       }
     }
-    els.meta.appendChild(grid);
+    details.appendChild(grid);
+    els.meta.appendChild(details);
   }
 
-  function renderPrompt(data) {
+  function briefList(label, items) {
+    if (!items || !items.length) return null;
+    const panel = el("div", "brief-panel");
+    panel.appendChild(el("div", "brief-label", label));
+    const list = el("ul", "brief-list");
+    items.forEach((item) => list.appendChild(el("li", "", item)));
+    panel.appendChild(list);
+    return panel;
+  }
+
+  function renderBrief(data) {
     const task = data.task || {};
-    els.prompt.innerHTML = "";
-    els.prompt.appendChild(el("div", "section-title", "交给 Work 的提示词"));
-    els.prompt.appendChild(el("div", "prompt-label", "Front → Work"));
-    els.prompt.appendChild(pre(task.description || "（无）"));
+    const brief = data.brief || {};
+    const constraints = Array.isArray(brief.constraints)
+      ? brief.constraints : [];
+    const acceptance = (
+      Array.isArray(brief.acceptance_expectations) &&
+      brief.acceptance_expectations.length
+    ) ? brief.acceptance_expectations : (task.criteria || []);
+    const deliverables = Array.isArray(brief.deliverables)
+      ? brief.deliverables : [];
+    const goal = brief.goal || task.description || "";
+    const taskText = brief.task_text || task.description || "";
+    const structured = !!(
+      constraints.length || deliverables.length ||
+      (Array.isArray(brief.acceptance_expectations) &&
+       brief.acceptance_expectations.length));
+
+    els.brief.innerHTML = "";
+    els.brief.appendChild(el("div", "section-title",
+      structured ? "Front → Work" : "任务说明"));
+    if (structured) {
+      const lead = el("div", "brief-lead");
+      lead.appendChild(badge("交付任务说明"));
+      lead.appendChild(el("span", "muted-note",
+        "Front 自主模式下交给 Worker 的任务上下文"));
+      els.brief.appendChild(lead);
+    }
+    if (goal) els.brief.appendChild(el("div", "brief-goal", goal));
+
+    const grid = el("div", "brief-grid");
+    const constraintPanel = briefList("约束", constraints);
+    const acceptancePanel = briefList("验收条件", acceptance);
+    if (constraintPanel) grid.appendChild(constraintPanel);
+    if (acceptancePanel) grid.appendChild(acceptancePanel);
+    if (grid.childElementCount) els.brief.appendChild(grid);
+
+    const extras = [];
+    const deliverablePanel = briefList("交付物", deliverables);
+    if (deliverablePanel) extras.push(deliverablePanel);
+    if (taskText && taskText !== goal) {
+      const panel = el("div", "brief-panel");
+      panel.appendChild(el("div", "brief-label", "task_text"));
+      panel.appendChild(pre(taskText));
+      extras.push(panel);
+    }
+    if (extras.length) {
+      const details = document.createElement("details");
+      details.className = "brief-extra";
+      details.appendChild(el("summary", "", "交付物 / 原始 task_text"));
+      extras.forEach((node) => details.appendChild(node));
+      els.brief.appendChild(details);
+    }
+    if (!goal && !grid.childElementCount) {
+      els.brief.appendChild(el("div", "empty", "（没有任务说明）"));
+    }
   }
 
   function renderAction(action, result) {
@@ -381,10 +498,15 @@
   function render(data) {
     const task = data.task || {};
     document.title = `AIEOS · ${task.task_id || taskId}`;
-    els.status.textContent =
-      `${task.status || "?"}${data.job ? " · " + data.job.status : ""}`;
+    const taskStatus = task.status || "?";
+    const jobStatus = data.job ? data.job.status : "";
+    els.status.textContent = (
+      jobStatus && jobStatus !== taskStatus
+        ? `${taskStatus} · ${jobStatus}`
+        : taskStatus
+    );
     renderMeta(data);
-    renderPrompt(data);
+    renderBrief(data);
     renderTimeline(data);
     renderWorkspace(data);
     renderMemory(data);

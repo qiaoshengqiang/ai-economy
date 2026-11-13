@@ -4,7 +4,7 @@
 > **日期：2026-11-13**
 > **阶段：开发中 / 观察实验**
 > **协议版本：`1`**
-> **测试基线：`5595 passed, 2 skipped, 30 deselected`**
+> **测试基线：`5598 passed, 2 skipped, 30 deselected`**
 
 本文记录**当前真实可用能力、推荐工作方式、已知限制和版本变化**。
 架构的长期权威仍然是
@@ -277,6 +277,7 @@ task_text
 | Front / Work 模式显示 | `CURRENT` |
 | Front 回复计时 | `CURRENT` |
 | Task 卡片模式快照 | `CURRENT`（新任务） |
+| Task 详情页：Front Brief（目标 / 约束 / 验收） | `CURRENT`（新任务） |
 | 设置页：系统 / 常规 / Agent / Roles | `CURRENT` |
 
 ### 7.4 Pi Task Snapshot
@@ -496,7 +497,7 @@ Team 协作
 当前基线：
 
 ```text
-5595 passed, 2 skipped, 30 deselected
+5598 passed, 2 skipped, 30 deselected
 ```
 
 启动说明见 [`../START_AIEOS.md`](../START_AIEOS.md)。

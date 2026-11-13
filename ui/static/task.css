@@ -73,33 +73,170 @@ body {
   text-transform: uppercase;
   margin-bottom: 10px;
 }
-.meta-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
-  gap: 8px 18px;
+.task-hero {
+  background:
+    radial-gradient(600px 240px at 0% 0%, rgba(94, 224, 255, .10), transparent 60%),
+    rgba(11, 22, 35, .88);
 }
-.meta-item {
-  min-width: 0;
+.hero-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
 }
-.meta-key {
-  font-size: 10px;
+.hero-main { min-width: 0; }
+.hero-eyebrow {
   color: var(--muted);
+  font-size: 10px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+.hero-title {
+  margin: 5px 0 0;
+  font-size: 25px;
+  line-height: 1.2;
+  letter-spacing: -.02em;
+  word-break: break-all;
+}
+.hero-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.hero-status .dot { font-size: 9px; }
+.hero-status.good {
+  color: var(--good);
+  border-color: rgba(110, 231, 168, .35);
+}
+.hero-status.bad {
+  color: var(--bad);
+  border-color: rgba(255, 138, 138, .35);
+}
+.hero-status.warn {
+  color: var(--warn);
+  border-color: rgba(255, 209, 102, .35);
+}
+.facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+.fact {
+  display: inline-flex;
+  gap: 6px;
+  align-items: baseline;
+  padding: 5px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(7, 17, 28, .45);
+  font-size: 11px;
+  color: var(--text);
+  max-width: 100%;
+}
+.fact b {
+  color: var(--muted);
+  font-weight: 500;
+  font-size: 9px;
   letter-spacing: .08em;
   text-transform: uppercase;
+  white-space: nowrap;
 }
-.meta-value {
-  margin-top: 2px;
-  color: var(--text);
+.tech-info {
+  margin-top: 14px;
+  border-top: 1px dashed var(--line);
+  padding-top: 10px;
+}
+.tech-info summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 11px;
+}
+.tech-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px 18px;
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.tech-item {
+  min-width: 0;
   word-break: break-word;
 }
-.mono { font-family: var(--mono); font-size: 12px; }
-.prompt-label {
+.tech-item b {
+  display: block;
+  color: #b8c9da;
+  font-weight: 500;
+  font-size: 9px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  margin-bottom: 2px;
+}
+.brief-lead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+.brief-lead .badge { color: var(--accent); }
+.brief-goal {
+  font-size: 15px;
+  line-height: 1.65;
+  color: #e5f0fb;
+  max-width: 900px;
+  word-break: break-word;
+}
+.brief-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 15px;
+}
+.brief-panel {
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  padding: 11px 12px;
+  background: rgba(7, 17, 28, .42);
+  min-width: 0;
+}
+.brief-label {
   font-size: 10px;
-  color: var(--muted);
   letter-spacing: .1em;
   text-transform: uppercase;
+  color: var(--accent);
   margin-bottom: 7px;
 }
+.brief-list {
+  margin: 0;
+  padding-left: 17px;
+  color: #cbd9e7;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.brief-list li + li { margin-top: 2px; }
+.brief-extra {
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.brief-extra summary { cursor: pointer; }
+.brief-extra .brief-panel { margin-top: 8px; }
+.brief-extra .brief-label { margin-top: 0; }
+.muted-note {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+.mono { font-family: var(--mono); font-size: 12px; }
 pre {
   margin: 0;
   padding: 10px 12px;
@@ -230,6 +367,10 @@ pre {
   color: var(--muted);
   font-size: 12px;
   padding: 8px 0;
+}
+@media (max-width: 720px) {
+  .brief-grid { grid-template-columns: 1fr; }
+  .hero-title { font-size: 21px; }
 }
 @media (max-width: 640px) {
   .page { padding: 14px 12px 40px; }

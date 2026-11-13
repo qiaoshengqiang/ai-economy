@@ -1822,7 +1822,7 @@ class AIEOSController:
                     or decision.brief.human_text
                     or decision.brief.goal).strip()]
         )
-        return creation.create(
+        result = creation.create(
             creator=worker,
             description=_description_from_brief(decision.brief),
             participants=[worker],
@@ -1832,6 +1832,9 @@ class AIEOSController:
             workspace_plan=None,
             mode=TaskMode.SOLO,
         )
+        if result.get("ok"):
+            self._store_task_brief(result.get("task_id"), decision.brief)
+        return result
 
     def _create_solo_task_pi(
         self,
@@ -1865,30 +1868,36 @@ class AIEOSController:
                     or decision.brief.human_text
                     or decision.brief.goal).strip()]
         )
+        acceptance = {
+            "criteria": list(criteria),
+            "role": str(getattr(decision, "role", "") or "generalist"),
+            "work_profile": str(
+                getattr(decision, "work_profile", "") or "standard"),
+            "work_mode": str(self.work_mode),
+            "front_mode": str(self.front_mode),
+            "workspace_mode": (
+                "project"
+                if getattr(job, "workdir", "") else "task"),
+            "project_path": str(
+                getattr(job, "workdir", "") or ""),
+            "commit_mode": str(self.commit_mode),
+            "commit_output_repo": str(
+                getattr(job, "commit_repo", "") or ""),
+            "commit_output_repo_mode": (
+                "project"
+                if getattr(job, "commit_repo", "") else "output"),
+        }
+        brief_snapshot = _brief_snapshot(decision.brief)
+        if brief_snapshot:
+            # Front 自主模式交给 Worker 的结构化上下文：只读快照，
+            # 不参与 Task 状态机，也不是第二套 Shared Context。
+            acceptance["brief"] = brief_snapshot
         try:
             task = Task.create(
                 creator=worker,
                 description=_description_from_brief(decision.brief),
                 participants=[worker],
-                acceptance={
-                    "criteria": list(criteria),
-                    "role": str(getattr(decision, "role", "") or "generalist"),
-                    "work_profile": str(
-                        getattr(decision, "work_profile", "") or "standard"),
-                    "work_mode": str(self.work_mode),
-                    "front_mode": str(self.front_mode),
-                    "workspace_mode": (
-                        "project"
-                        if getattr(job, "workdir", "") else "task"),
-                    "project_path": str(
-                        getattr(job, "workdir", "") or ""),
-                    "commit_mode": str(self.commit_mode),
-                    "commit_output_repo": str(
-                        getattr(job, "commit_repo", "") or ""),
-                    "commit_output_repo_mode": (
-                        "project"
-                        if getattr(job, "commit_repo", "") else "output"),
-                },
+                acceptance=acceptance,
                 note=f"demand_run:aieos_{job.job_id}",
                 mode=TaskMode.SOLO,
             )
@@ -1906,6 +1915,27 @@ class AIEOSController:
             "workspace_id": "",
             "description": task.description,
         }
+
+    def _store_task_brief(self, task_id: Any, brief: Any) -> None:
+        """给非 Pi 的 Solo Task 补一份只读 Brief 快照。"""
+        snapshot = _brief_snapshot(brief)
+        if not snapshot or not task_id:
+            return
+        try:
+            task = self.rt.tasks.get(str(task_id))
+        except Exception:                                     # noqa: BLE001
+            return
+        if task is None:
+            return
+        acceptance = dict(getattr(task, "acceptance", None) or {})
+        if acceptance.get("brief"):
+            return
+        acceptance["brief"] = snapshot
+        task.acceptance = acceptance
+        try:
+            self.rt.tasks.save(task)
+        except Exception:                                     # noqa: BLE001
+            return
 
     def _leader_plan(
         self,
@@ -2685,10 +2715,23 @@ class AIEOSController:
             executions = []
 
         job = None
+        job_obj = None
         with self._lock:
             for item in self._jobs.values():
                 if item.task_id == task_id:
+                    job_obj = item
                     job = item.to_dict()
+        acceptance = getattr(task, "acceptance", None) or {}
+        if not isinstance(acceptance, dict):
+            acceptance = {}
+        brief = acceptance.get("brief")
+        if not isinstance(brief, dict) and job_obj is not None:
+            # 旧任务没有把 brief 写进 Task；只要 Job 还在内存里就回退读取。
+            decision = getattr(job_obj, "front_decision", None) or {}
+            candidate = (
+                decision.get("brief") if isinstance(decision, dict) else None)
+            if isinstance(candidate, dict):
+                brief = candidate
         calls = self._llm_summary(task_id)
         return {
             "task": {
@@ -2701,15 +2744,16 @@ class AIEOSController:
                 "participants": list(task.participants or []),
                 "workspace_id": task.workspace_id,
                 "workspace_mode": str(
-                    (getattr(task, "acceptance", None) or {}).get(
-                        "workspace_mode") or "task"),
-                "project_path": str(
-                    (getattr(task, "acceptance", None) or {}).get(
-                        "project_path") or ""),
+                    acceptance.get("workspace_mode") or "task"),
+                "project_path": str(acceptance.get("project_path") or ""),
+                "role": str(acceptance.get("role") or ""),
+                "work_profile": str(acceptance.get("work_profile") or ""),
+                "criteria": list(acceptance.get("criteria") or []),
                 "description": task.description,
                 "created_at": task.created_at,
                 "updated_at": task.updated_at,
             },
+            "brief": brief,
             "job": job,
             "executions": executions,
             "workspace_files": self._workspace_files(task),
@@ -3320,6 +3364,44 @@ class AIEOSController:
         self._executor.shutdown(wait=False, cancel_futures=True)
         prompt_log.clear_job()
         prompt_log.configure(False, None)
+
+
+def _brief_snapshot(brief: Any) -> Optional[Dict[str, Any]]:
+    """Front Brief 的只读快照；文件只留路径来源，不重复存内容。
+
+    `relay` 模式会清空结构化字段，只保留 task_text。这里返回 None，
+    避免详情页把同一段 task_text 再显示一遍。
+    """
+    if brief is None:
+        return None
+    if isinstance(brief, dict):
+        data = dict(brief)
+    else:
+        try:
+            data = brief.to_dict()
+        except Exception:                                     # noqa: BLE001
+            return None
+    if not isinstance(data, dict):
+        return None
+    structured = any(
+        data.get(key)
+        for key in (
+            "constraints", "deliverables", "acceptance_expectations",
+            "non_goals", "ambiguities", "context_refs",
+        )
+    )
+    if not structured:
+        return None
+    files = []
+    for item in data.get("files") or []:
+        if not isinstance(item, dict):
+            continue
+        meta = {
+            key: value for key, value in item.items() if key != "content"}
+        if meta:
+            files.append(meta)
+    data["files"] = files
+    return data
 
 
 def _description_from_brief(brief: Any) -> str:

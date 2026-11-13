@@ -789,6 +789,30 @@ def test_task_detail_js_does_not_reuse_reply_as_thinking():
     assert "decisionReasoning.trim() !== content.trim()" in js
 
 
+def test_task_detail_js_renders_front_brief():
+    from pathlib import Path
+
+    js = (Path(__file__).resolve().parent.parent
+          / "ui" / "static" / "task.js").read_text(encoding="utf-8")
+    assert "data.brief" in js
+    assert "brief.acceptance_expectations" in js
+    assert "交付物 / 原始 task_text" in js
+    assert "task.criteria" in js
+
+
+def test_brief_snapshot_skips_relay_only_brief():
+    from front import FrontBrief
+    from work.controller import _brief_snapshot
+
+    relay = FrontBrief(goal="只做这一件事", task_text="只做这一件事")
+    assert _brief_snapshot(relay) is None
+
+    relay.constraints = ["不改其他文件"]
+    snapshot = _brief_snapshot(relay)
+    assert snapshot is not None
+    assert snapshot["constraints"] == ["不改其他文件"]
+
+
 def test_controller_sets_front_thinking_to_low():
     class _Brain:
         def __init__(self):
@@ -1734,6 +1758,51 @@ def test_pi_task_creation_skips_shared_context(db):
     assert task.acceptance["role"] == "game_developer"
     assert task.acceptance["work_profile"] == "creative_product"
     assert alignment_calls == []
+
+
+def test_task_detail_exposes_front_brief_snapshot(db):
+    from core.task_store import TaskStore
+    from front import FrontBrief, FrontDecision, FrontIntent
+
+    store = TaskStore(db)
+    runtime = SimpleNamespace(
+        directory=_Directory(["agent_a", "agent_c"]),
+        economy=SimpleNamespace(agent=lambda aid: SimpleNamespace(
+            has_brain=True, brain=None)),
+        tasks=store,
+    )
+    controller = AIEOSController(
+        runtime, front_agent="agent_a", pi_work_agents=["agent_c"])
+    decision = FrontDecision(
+        intent=FrontIntent.HANDOFF,
+        role="generalist",
+        work_profile="standard",
+        brief=FrontBrief(
+            goal="写 hello.txt",
+            task_text="写 hello.txt",
+            deliverables=["hello.txt"],
+            constraints=["无第三方依赖"],
+            acceptance_expectations=["文件存在"],
+            files=[{"path": "notes.txt", "content": "SECRET"}],
+        ),
+    )
+    try:
+        created = controller._create_solo_task(
+            SimpleNamespace(job_id="job_pi"), "agent_c", decision)
+        assert created["ok"] is True, created
+        detail = controller.task_detail(created["task_id"])
+        task = store.get(created["task_id"])
+    finally:
+        controller.close()
+
+    assert task.acceptance["brief"]["constraints"] == ["无第三方依赖"]
+    # 文件内容已落在 Workspace / 私有空间，不在 Task 里重复存一份。
+    assert task.acceptance["brief"]["files"] == [{"path": "notes.txt"}]
+    assert detail["brief"]["goal"] == "写 hello.txt"
+    assert detail["brief"]["acceptance_expectations"] == ["文件存在"]
+    assert detail["task"]["role"] == "generalist"
+    assert detail["task"]["work_profile"] == "standard"
+    assert detail["task"]["criteria"] == ["文件存在"]
 
 
 def test_pi_task_artifact_read_reads_disk(tmp_path):
