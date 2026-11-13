@@ -25,7 +25,7 @@ import re
 import secrets
 import sys
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -79,6 +79,45 @@ class Handler(BaseHTTPRequestHandler):
             return {}
         return value if isinstance(value, dict) else {}
 
+    @staticmethod
+    def _is_git_repo(path: Path) -> bool:
+        return (
+            (path / ".git").exists()
+            or ((path / "HEAD").is_file() and (path / "objects").is_dir())
+        )
+
+    def _list_dirs(self, raw: str) -> dict:
+        if raw:
+            if not Path(raw).is_absolute():
+                raise ValueError("目录浏览需要绝对路径")
+            base = Path(raw).expanduser().resolve()
+        else:
+            base = Path.home().resolve()
+        if not base.exists():
+            raise ValueError("目录不存在")
+        if not base.is_dir():
+            raise ValueError("不是目录")
+        entries = []
+        for child in sorted(base.iterdir(), key=lambda p: p.name.casefold()):
+            try:
+                if not child.is_dir() or child.name == ".git":
+                    continue
+            except OSError:
+                continue
+            entries.append({
+                "name": child.name,
+                "path": str(child),
+                "is_git_repo": self._is_git_repo(child),
+            })
+        return {
+            "ok": True,
+            "path": str(base),
+            "parent": str(base.parent) if base.parent != base else "",
+            "home": str(Path.home().resolve()),
+            "is_git_repo": self._is_git_repo(base),
+            "entries": entries,
+        }
+
     # ------------------------------------------------------------
     # GET
     # ------------------------------------------------------------
@@ -104,6 +143,20 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/settings":
             self._send_json(self.controller.settings_snapshot())
+            return
+        if path == "/api/commit/repo":
+            query = parse_qs(parsed.query)
+            requested = str((query.get("path") or [""])[0] or "").strip()
+            self._send_json(self.controller.commit_repo_info(requested))
+            return
+        if path == "/api/fs/dirs":
+            query = parse_qs(parsed.query)
+            raw = str((query.get("path") or [""])[0] or "").strip()
+            try:
+                self._send_json(self._list_dirs(raw))
+            except (OSError, ValueError) as exc:
+                self._send_json(
+                    {"ok": False, "error": str(exc)}, status=400)
             return
         if path.startswith("/api/task/"):
             task_id = path[len("/api/task/"):].strip()
@@ -153,7 +206,10 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if path == "/api/submit":
                 text = str(payload.get("text") or "").strip()
-                job_id = self.controller.submit(text)
+                commit_repo = str(
+                    payload.get("commit_repo") or "").strip()
+                job_id = self.controller.submit(
+                    text, commit_repo=commit_repo)
                 self._send_json({"ok": True, "job_id": job_id})
                 return
             if path == "/api/retry":

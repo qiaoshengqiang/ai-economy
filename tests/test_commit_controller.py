@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from commit.models import CommitRequest
 from front import FrontDecision, FrontIntent
 from work.controller import AIEOSController, JobStatus, WorkJob
@@ -38,9 +40,15 @@ class _CommitService:
         self.request = request
         self.confirmed = None
         self.last_mode = ""
+        self.last_output_repo = ""
+        self.last_repo_mode = ""
 
-    def on_task_completed(self, task, *, mode):
+    def on_task_completed(
+        self, task, *, mode, output_repo="", repo_mode="output",
+    ):
         self.last_mode = mode
+        self.last_output_repo = output_repo
+        self.last_repo_mode = repo_mode
         return self.request
 
     def front_context(self, *, mode):
@@ -82,6 +90,7 @@ def test_completed_task_creates_manual_commit_prompt():
         controller._after_task_completed(job, "task_x")
         texts = [item["text"] for item in controller._messages]
         assert any("提交" in text for text in texts)
+        assert any("仓库：" in text and "目录：" in text for text in texts)
         assert any("aaaaaaaa" in text for text in texts)
     finally:
         controller.close()
@@ -96,6 +105,24 @@ def test_task_commit_mode_snapshot_wins_over_current_setting():
     try:
         controller._after_task_completed(job, "task_x")
         assert controller.commit_service.last_mode == "limited"
+    finally:
+        controller.close()
+
+
+def test_task_commit_target_snapshot_wins_over_current_setting():
+    controller = _controller(_request("AWAITING_HUMAN"))
+    task = controller.rt.tasks.get("task_x")
+    task.acceptance = {
+        "commit_mode": "manual",
+        "commit_output_repo": "/tmp/selected-project",
+        "commit_output_repo_mode": "project",
+    }
+    job = WorkJob(job_id="job_x", human_text="测试")
+    try:
+        controller._after_task_completed(job, "task_x")
+        assert controller.commit_service.last_output_repo == (
+            "/tmp/selected-project")
+        assert controller.commit_service.last_repo_mode == "project"
     finally:
         controller.close()
 
@@ -157,5 +184,34 @@ def test_front_commit_confirm_routes_to_service():
             "task_x", "aaaaaaaa", "human")
         assert job.status == JobStatus.DIRECT_REPLY
         assert "已提交" in job.summary
+    finally:
+        controller.close()
+
+
+def test_validate_commit_repo_requires_absolute_git_repo(db, tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    import subprocess
+    subprocess.run(["git", "init", "-q"], cwd=project, check=True)
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    runtime = SimpleNamespace(
+        directory=_Directory(),
+        economy=SimpleNamespace(
+            db=db,
+            agent=lambda aid: SimpleNamespace(has_brain=True)),
+        tasks=SimpleNamespace(
+            list_tasks=lambda limit=50: [],
+            get=lambda task_id: None,
+        ),
+    )
+    controller = AIEOSController(runtime, front_agent="agent_a")
+    try:
+        assert controller._validate_commit_repo(str(project)) == str(
+            project.resolve())
+        with pytest.raises(ValueError, match="绝对路径"):
+            controller._validate_commit_repo("relative/path")
+        with pytest.raises(ValueError, match="不是 Git 仓库"):
+            controller._validate_commit_repo(str(plain))
     finally:
         controller.close()

@@ -99,14 +99,28 @@ class OutputCommitService:
 
     # ------------------------------------------------------------
     def on_task_completed(
-        self, task: Any, *, mode: str = CommitMode.MANUAL.value,
+        self,
+        task: Any,
+        *,
+        mode: str = CommitMode.MANUAL.value,
+        output_repo: str = "",
+        repo_mode: str = "output",
     ) -> Optional[CommitRequest]:
-        """Task 完成后调用；manual 只创建待确认请求，limited/auto 执行。"""
+        """Task 完成后调用；manual 只创建待确认请求，limited/auto 执行。
+
+        ``output_repo`` 是 Task 创建时选定的目标仓库；空 = 使用全局默认。
+        """
         if str(getattr(task, "status", "")) != TaskStatus.COMPLETED:
             return None
         cfg = self._config()
-        if not cfg["output_repo"] or not self._git_binary:
+        target = str(output_repo or cfg["output_repo"] or "").strip()
+        if not target or not self._git_binary:
             return None
+        target_path = str(Path(target).expanduser().resolve())
+        normalized_repo_mode = (
+            "project" if str(repo_mode or "").strip() == "project"
+            else "output"
+        )
         try:
             normalized_mode = CommitMode(str(mode)).value
         except ValueError:
@@ -127,8 +141,9 @@ class OutputCommitService:
             snapshot_commit=str(snapshot.commit),
             snapshot_tree=str(snapshot.tree),
             mode=normalized_mode,
+            repo_mode=normalized_repo_mode,
             status=status,
-            output_repo=cfg["output_repo"],
+            output_repo=target_path,
             target_ref=f"refs/heads/{cfg['base_ref']}",
             base_commit="",
         )
@@ -276,7 +291,7 @@ class OutputCommitService:
                 lines.append(
                     f"- task_id={item.task_id} code={item.code}"
                     f" snapshot_seq={item.snapshot_seq}"
-                    f" mode={item.mode}")
+                    f" mode={item.mode} repo={item.output_repo}")
         else:
             lines.append("待确认提交：无")
         return "\n".join(lines)
@@ -295,9 +310,14 @@ class OutputCommitService:
 
     def _commit(self, request: CommitRequest) -> Dict[str, str]:
         cfg = self._config()
-        if not cfg["output_repo"]:
+        if not request.output_repo:
             raise CommitBlocked("没有配置输出仓库")
-        repo = self._ensure_repo(cfg)
+        if request.repo_mode == "project":
+            info = self.inspect_repo(request.output_repo)
+            if not info.get("is_git_repo"):
+                raise CommitBlocked(
+                    f"项目目录不是 Git 仓库：{request.output_repo}")
+        repo = self._ensure_repo(request.output_repo, cfg)
         directory = self.task_directories.for_task(request.task_id)
         snapshots = TaskSnapshotStore(directory)
         try:
@@ -388,10 +408,65 @@ class OutputCommitService:
         return proc.returncode == 0
 
     # ------------------------------------------------------------
-    def _ensure_repo(self, cfg: Dict[str, Any]) -> _Repo:
+    def inspect_repo(self, path: str) -> Dict[str, Any]:
+        """只读检查一个目录是否是 Git 仓库，供 UI 选择仓库使用。"""
+        raw = str(path or "").strip()
+        result: Dict[str, Any] = {
+            "path": "",
+            "exists": False,
+            "is_dir": False,
+            "is_git_repo": False,
+            "git_root": "",
+            "repo_mode": "",
+            "error": "",
+        }
+        if not raw:
+            result["error"] = "目录为空"
+            return result
+        target = Path(raw).expanduser().resolve()
+        result["path"] = str(target)
+        result["exists"] = target.exists()
+        result["is_dir"] = target.is_dir()
+        if not result["exists"]:
+            result["error"] = "目录不存在"
+            return result
+        if not result["is_dir"]:
+            result["error"] = "不是目录"
+            return result
+        dot_git = target / ".git"
+        bare = (target / "HEAD").is_file() and (target / "objects").is_dir()
+        if not dot_git.exists() and not bare:
+            result["error"] = "不是 Git 仓库"
+            return result
+        result["is_git_repo"] = True
+        result["repo_mode"] = "bare" if bare else "worktree"
+        result["git_root"] = str(target)
+        if not bare:
+            try:
+                proc = subprocess.run(
+                    [self._git_binary or "git", "-C", str(target),
+                     "rev-parse", "--show-toplevel"],
+                    capture_output=True, text=True, encoding="utf-8",
+                    errors="replace", timeout=self.timeout_seconds,
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                proc = None
+            if (
+                proc is not None
+                and proc.returncode == 0
+                and (proc.stdout or "").strip()
+            ):
+                result["git_root"] = str(
+                    Path((proc.stdout or "").strip()).resolve())
+        return result
+
+    # ------------------------------------------------------------
+    def _ensure_repo(
+        self, output_repo: str, cfg: Dict[str, Any],
+    ) -> _Repo:
         if not self._git_binary:
             raise CommitBlocked("宿主机没有 git")
-        path = Path(cfg["output_repo"]).expanduser().resolve()
+        path = Path(output_repo).expanduser().resolve()
         if path == self.project_root or path == self.project_root / ".git":
             raise CommitBlocked("输出仓库不能是 AIEOS 主仓库")
         target_ref = f"refs/heads/{cfg['base_ref']}"
@@ -440,6 +515,8 @@ class OutputCommitService:
             "",
             f"snapshot: {request.snapshot_seq} {request.snapshot_commit}",
             f"mode: {request.mode}",
+            f"repo: {request.output_repo}",
+            f"branch: refs/heads/aieos/task-{request.task_id}",
         ]
         return "\n".join(lines)[:4000]
 

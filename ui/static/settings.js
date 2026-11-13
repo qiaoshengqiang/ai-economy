@@ -537,6 +537,7 @@
         }),
       });
       await load();
+      window.dispatchEvent(new CustomEvent("aieos:settings-saved"));
       toast("运行设置已保存");
     } catch (error) {
       toast(`保存失败：${error.message}`, true);

@@ -28,6 +28,7 @@ class _FakeController:
     def __init__(self):
         self.front = "agent_a"
         self.submitted = []
+        self.submitted_repo = ""
         self.retried = []
         self.settings = {
             "front_agent": "agent_a",
@@ -49,9 +50,22 @@ class _FakeController:
             "running_jobs": 0,
         }
 
-    def submit(self, text):
+    def submit(self, text, *, commit_repo=""):
         self.submitted.append(text)
+        self.submitted_repo = commit_repo
         return "job_test"
+
+    def commit_repo_info(self, path=""):
+        target = path or "/tmp/aieos-output"
+        return {
+            "path": target,
+            "exists": True,
+            "is_dir": True,
+            "is_git_repo": True,
+            "git_root": target,
+            "repo_mode": "worktree",
+            "error": "",
+        }
 
     def retry(self, job_id):
         self.retried.append(job_id)
@@ -1857,3 +1871,36 @@ def test_front_inspect_includes_task_workspace_path(monkeypatch, tmp_path):
         controller.close()
 
     assert facts["task"]["workspace_path"] == str(fake_dir.workspace)
+
+
+def test_commit_repo_api_and_selector_html(server):
+    fake, base = server
+    status, body = _get(base + "/api/commit/repo")
+    payload = json.loads(body)
+    assert status == 200
+    assert payload["is_git_repo"] is True
+    assert payload["path"] == "/tmp/aieos-output"
+
+    status, body = _get(base + "/api/fs/dirs?path=/")
+    listing = json.loads(body)
+    assert status == 200
+    assert listing["ok"] is True
+    assert listing["path"] == "/"
+
+    status, body = _get(base + "/")
+    html = body.decode("utf-8")
+    assert status == 200
+    assert 'id="commit-repo-input"' in html
+    assert 'id="repo-picker-modal"' in html
+
+
+def test_submit_passes_commit_repo(server):
+    fake, base = server
+    status, payload = _post(
+        base + "/api/submit",
+        {"text": "做个游戏", "commit_repo": "/tmp/other"},
+    )
+    assert status == 200
+    assert payload["ok"] is True
+    assert fake.submitted == ["做个游戏"]
+    assert fake.submitted_repo == "/tmp/other"

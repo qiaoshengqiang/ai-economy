@@ -1050,6 +1050,7 @@ SCHEMA_STATEMENTS: Final[tuple[str, ...]] = (
         snapshot_commit TEXT NOT NULL,
         snapshot_tree   TEXT NOT NULL,
         mode            TEXT NOT NULL,
+        repo_mode       TEXT NOT NULL DEFAULT 'output',
         status          TEXT NOT NULL,
         output_repo     TEXT NOT NULL,
         target_ref      TEXT NOT NULL,
@@ -1286,6 +1287,11 @@ POST_MIGRATION_INDEXES: Final[tuple[str, ...]] = (
 #
 # 格式：表名 -> [(列名, 列定义), ...]
 COLUMN_MIGRATIONS: Final[dict] = {
+    "commit_requests": [
+        # Output Commit V1：区分输出仓库（tasks/<id> 子树）
+        # 与项目仓库（未来直接修改项目）。
+        ("repo_mode", "TEXT NOT NULL DEFAULT 'output'"),
+    ],
     "llm_calls": [
         # 🔴 2026-10-08：调用归属与 Turn 关联（Telemetry Repair V2）。
         #

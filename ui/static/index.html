@@ -40,6 +40,15 @@
           <span class="muted" id="composer-hint">提交后 Front 会判断：直接回复，或交给一个空闲 Agent 独立完成。</span>
           <button class="primary" id="submit-btn">提交</button>
         </div>
+        <div class="commit-bar" title="任务产物会提交到该仓库的 tasks/<task_id> 子目录">
+          <span class="commit-label">提交仓库</span>
+          <input id="commit-repo-input" type="text"
+            title="任务产物会提交到该仓库的 tasks/<task_id> 子目录"
+            placeholder="未配置默认仓库；可选择其他目录" />
+          <button type="button" class="icon-btn" id="commit-repo-browse">选择目录</button>
+          <button type="button" class="icon-btn" id="commit-repo-default">默认</button>
+          <span id="commit-repo-status" class="muted">未配置</span>
+        </div>
       </div>
     </section>
 
@@ -85,6 +94,32 @@
       <div class="form-actions">
         <button type="button" class="icon-btn" id="question-later">稍后</button>
         <button type="button" class="primary" id="question-submit">提交回答</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="repo-picker-modal" hidden>
+    <div class="modal repo-picker-modal">
+      <div class="settings-head">
+        <div>
+          <h2>选择仓库目录</h2>
+          <span class="muted" id="repo-picker-status"></span>
+        </div>
+        <button class="icon-btn" id="repo-picker-close">✕</button>
+      </div>
+      <div class="repo-picker-path">
+        <input id="repo-picker-path" type="text"
+          placeholder="输入绝对路径后回车" />
+        <button type="button" class="icon-btn" id="repo-picker-go">打开</button>
+        <button type="button" class="icon-btn" id="repo-picker-up">上一级</button>
+      </div>
+      <div class="repo-picker-list" id="repo-picker-list"></div>
+      <div class="repo-picker-foot">
+        <span class="muted">只列出目录；选择 Git 仓库根目录。</span>
+        <div class="form-actions">
+          <button type="button" class="icon-btn" id="repo-picker-cancel">取消</button>
+          <button type="button" class="primary" id="repo-picker-choose">选择此目录</button>
+        </div>
       </div>
     </div>
   </div>

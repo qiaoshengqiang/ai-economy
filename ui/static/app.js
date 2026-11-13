@@ -12,6 +12,19 @@
     messages: $("messages"),
     prompt: $("prompt"),
     submit: $("submit-btn"),
+    commitRepoInput: $("commit-repo-input"),
+    commitRepoBrowse: $("commit-repo-browse"),
+    commitRepoDefault: $("commit-repo-default"),
+    commitRepoStatus: $("commit-repo-status"),
+    repoPickerModal: $("repo-picker-modal"),
+    repoPickerPath: $("repo-picker-path"),
+    repoPickerGo: $("repo-picker-go"),
+    repoPickerUp: $("repo-picker-up"),
+    repoPickerList: $("repo-picker-list"),
+    repoPickerStatus: $("repo-picker-status"),
+    repoPickerChoose: $("repo-picker-choose"),
+    repoPickerCancel: $("repo-picker-cancel"),
+    repoPickerClose: $("repo-picker-close"),
     toast: $("toast"),
     agents: $("agents"),
     agentsCount: $("agents-count"),
@@ -44,6 +57,11 @@
   let pendingFront = null;
   let timingTimer = 0;
   let timingDoneTimer = 0;
+  let commitRepoDefault = "";
+  let commitRepoTouched = false;
+  let commitRepoInfo = null;
+  let repoPickerCurrent = "";
+  let repoPickerParent = "";
 
   function ensureAudio() {
     if (audioContext) return audioContext;
@@ -311,6 +329,132 @@
       throw new Error(message);
     }
     return data;
+  }
+
+  function setCommitRepoStatus(text, kind = "") {
+    els.commitRepoStatus.textContent = text || "";
+    els.commitRepoStatus.classList.toggle("ok", kind === "ok");
+    els.commitRepoStatus.classList.toggle("warn", kind === "warn");
+    els.commitRepoStatus.classList.toggle("error", kind === "error");
+  }
+
+  function renderCommitRepoInfo(info, { isDefault = false } = {}) {
+    if (!info || !info.path) {
+      setCommitRepoStatus("未配置默认仓库", "warn");
+      return;
+    }
+    if (info.is_git_repo) {
+      const label = isDefault ? "默认仓库" : "已选择";
+      setCommitRepoStatus(`${label} · ${info.path}`, "ok");
+    } else {
+      setCommitRepoStatus(
+        `${info.error || "不是 Git 仓库"} · ${info.path}`, "error");
+    }
+  }
+
+  async function loadCommitRepoDefault() {
+    try {
+      const info = await api("/api/commit/repo");
+      commitRepoDefault = info.path || "";
+      commitRepoInfo = info;
+      if (!commitRepoTouched) {
+        els.commitRepoInput.value = commitRepoDefault;
+        renderCommitRepoInfo(info, { isDefault: true });
+      }
+    } catch (error) {
+      setCommitRepoStatus(`读取默认仓库失败：${error.message}`, "error");
+    }
+  }
+
+  async function validateCommitRepo(path) {
+    try {
+      const info = await api(
+        `/api/commit/repo?path=${encodeURIComponent(path || "")}`);
+      commitRepoInfo = info;
+      renderCommitRepoInfo(info);
+      return info;
+    } catch (error) {
+      setCommitRepoStatus(`检查仓库失败：${error.message}`, "error");
+      return null;
+    }
+  }
+
+  async function commitRepoForSubmit(path) {
+    if (!path.startsWith("/")) {
+      throw new Error("输出仓库需要绝对路径");
+    }
+    const info = await validateCommitRepo(path);
+    if (!info || !info.is_git_repo) {
+      throw new Error("目标目录不是 Git 仓库");
+    }
+    return info.git_root || info.path;
+  }
+
+  function closeRepoPicker() {
+    els.repoPickerModal.hidden = true;
+  }
+
+  async function loadRepoPicker(path) {
+    try {
+      const data = await api(
+        `/api/fs/dirs?path=${encodeURIComponent(path || "")}`);
+      repoPickerCurrent = data.path || "";
+      repoPickerParent = data.parent || "";
+      els.repoPickerPath.value = repoPickerCurrent;
+      els.repoPickerUp.disabled = !repoPickerParent;
+      els.repoPickerStatus.textContent = data.is_git_repo
+        ? "当前目录是 Git 仓库，可以选择"
+        : "当前目录不是 Git 仓库；请进入仓库根目录";
+      els.repoPickerStatus.classList.toggle(
+        "ok", !!data.is_git_repo);
+      els.repoPickerList.innerHTML = "";
+      if (!data.entries || !data.entries.length) {
+        const empty = document.createElement("div");
+        empty.className = "empty";
+        empty.textContent = "没有子目录";
+        els.repoPickerList.appendChild(empty);
+      } else {
+        data.entries.forEach((entry) => {
+          const row = document.createElement("div");
+          row.className = "repo-dir-row";
+          row.title = entry.path;
+          const name = document.createElement("span");
+          name.className = "repo-dir-name";
+          name.textContent = entry.name;
+          row.appendChild(name);
+          if (entry.is_git_repo) {
+            const tag = document.createElement("span");
+            tag.className = "repo-dir-tag";
+            tag.textContent = "Git 仓库";
+            row.appendChild(tag);
+          }
+          row.addEventListener("click", () => loadRepoPicker(entry.path));
+          els.repoPickerList.appendChild(row);
+        });
+      }
+    } catch (error) {
+      els.repoPickerStatus.textContent = `读取目录失败：${error.message}`;
+      els.repoPickerStatus.classList.remove("ok");
+    }
+  }
+
+  async function openRepoPicker() {
+    els.repoPickerModal.hidden = false;
+    const start = (els.commitRepoInput.value || "").trim();
+    await loadRepoPicker(start);
+  }
+
+  async function chooseRepoPicker() {
+    const info = await validateCommitRepo(repoPickerCurrent);
+    if (!info || !info.is_git_repo) {
+      els.repoPickerStatus.textContent = "请选择 Git 仓库根目录";
+      els.repoPickerStatus.classList.remove("ok");
+      return;
+    }
+    els.commitRepoInput.value = info.git_root || info.path;
+    commitRepoTouched = true;
+    renderCommitRepoInfo(info);
+    closeRepoPicker();
   }
 
   function renderMessages(messages) {
@@ -710,9 +854,17 @@
     const startedAt = performance.now();
     beginFrontTiming(startedAt);
     try {
+      let commitRepo = "";
+      if (commitRepoTouched) {
+        const path = (els.commitRepoInput.value || "").trim();
+        if (!path) {
+          throw new Error("请选择提交仓库，或点击“默认”使用默认仓库");
+        }
+        commitRepo = await commitRepoForSubmit(path);
+      }
       const submitted = await api("/api/submit", {
         method: "POST",
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text, commit_repo: commitRepo }),
       });
       pendingFront = {
         jobId: String(submitted.job_id || ""),
@@ -732,6 +884,50 @@
 
   /* events */
   els.submit.addEventListener("click", submitPrompt);
+  els.commitRepoInput.addEventListener("input", () => {
+    commitRepoTouched = true;
+    setCommitRepoStatus("尚未检查", "warn");
+  });
+  els.commitRepoInput.addEventListener("blur", () => {
+    const path = (els.commitRepoInput.value || "").trim();
+    if (path) validateCommitRepo(path);
+  });
+  els.commitRepoInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      const path = (els.commitRepoInput.value || "").trim();
+      if (path) validateCommitRepo(path);
+    }
+  });
+  els.commitRepoBrowse.addEventListener("click", openRepoPicker);
+  els.commitRepoDefault.addEventListener("click", async () => {
+    commitRepoTouched = false;
+    els.commitRepoInput.value = commitRepoDefault;
+    setCommitRepoStatus("已恢复默认", "ok");
+    await loadCommitRepoDefault();
+  });
+  els.repoPickerGo.addEventListener("click", () => {
+    loadRepoPicker((els.repoPickerPath.value || "").trim());
+  });
+  els.repoPickerUp.addEventListener("click", () => {
+    if (repoPickerParent) loadRepoPicker(repoPickerParent);
+  });
+  els.repoPickerChoose.addEventListener("click", chooseRepoPicker);
+  els.repoPickerCancel.addEventListener("click", closeRepoPicker);
+  els.repoPickerClose.addEventListener("click", closeRepoPicker);
+  els.repoPickerModal.addEventListener("click", (event) => {
+    if (event.target === els.repoPickerModal) closeRepoPicker();
+  });
+  els.repoPickerPath.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      loadRepoPicker((els.repoPickerPath.value || "").trim());
+    }
+  });
+  window.addEventListener("aieos:settings-saved", async () => {
+    commitRepoTouched = false;
+    await loadCommitRepoDefault();
+  });
   els.questionSubmit.addEventListener("click", submitQuestion);
   els.questionClose.addEventListener("click", closeQuestion);
   els.questionLater.addEventListener("click", closeQuestion);
@@ -744,6 +940,7 @@
       submitPrompt();
     }
   });
+  loadCommitRepoDefault();
   refresh();
   setInterval(refresh, 1200);
 })();

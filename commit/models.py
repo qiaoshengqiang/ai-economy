@@ -61,6 +61,7 @@ class CommitRequest:
     status: str
     output_repo: str
     target_ref: str
+    repo_mode: str = "output"
     base_commit: str = ""
     commit_sha: str = ""
     merge_sha: str = ""

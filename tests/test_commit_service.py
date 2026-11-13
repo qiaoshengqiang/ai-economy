@@ -309,3 +309,30 @@ def test_confirm_without_code_uses_the_only_pending_request(db, tmp_path):
 
     assert done.status == "COMMITTED"
     assert done.commit_sha
+
+
+def test_explicit_project_repo_is_used_and_recorded(db, tmp_path):
+    manager, _directory, _record = _setup(tmp_path)
+    project = tmp_path / "other-project"
+    project.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=project, check=True)
+    task = _task()
+    service = _service(db, manager, tmp_path / "output")
+
+    info = service.inspect_repo(str(project))
+    assert info["is_git_repo"] is True
+
+    request = service.on_task_completed(
+        task, mode="manual", output_repo=str(project),
+        repo_mode="project")
+    assert request is not None
+    assert request.status == "AWAITING_HUMAN"
+    assert request.repo_mode == "project"
+    assert request.output_repo == str(project.resolve())
+
+    done = service.confirm(task, request.code)
+    assert done.status == "COMMITTED"
+    assert _git(
+        project, "show", f"refs/heads/aieos/task-{task.task_id}:"
+        f"tasks/{task.task_id}/hello.txt",
+    ).stdout == "hello\n"

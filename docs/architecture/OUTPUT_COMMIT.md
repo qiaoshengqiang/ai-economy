@@ -213,3 +213,71 @@ UI「设置 → 运行」可以修改；也可以写入 `runs/ui/ui_settings.jso
 - `tests/test_commit_controller.py`：完成钩子 / Front `commit_confirm` 路由；
 - 真实任务：`task_651450c9` → manual 确认 → 输出仓库分支提交，
   基线不变；详情见 `docs/PROJECT_STATUS.md`。
+
+---
+
+## 12. Project Repo Mode（`DESIGNED` / `FUTURE`）
+
+当前实现是 **Output Repo Mode**：
+
+```text
+selected repo
+  tasks/<task_id>/...      ← 只写任务子树
+```
+
+它适合交付物、文档、独立小项目，**不会改项目原有文件**。
+
+如果目标是「直接修改另一个项目」，需要单独的 **Project Repo Mode**：
+
+```text
+Task
+  target_repo   = /path/to/project
+  base_ref      = main
+  repo_mode     = project
+```
+
+### 12.1 任务创建
+
+- 校验目录是 Git 仓库，且不是 AIEOS 主仓库；
+- 校验 base_ref 存在、工作区干净；
+- 通过 `WorktreeManager` 从项目创建一个任务 worktree；
+- Pi 的 cwd 指向 worktree，而不是 `tasks/<id>/workspace`；
+- Task 记录 `target_repo / base_ref / base_commit / worktree_id`。
+
+### 12.2 执行与快照
+
+- Pi 在 worktree 中读写项目文件；
+- 现有 Task Snapshot 继续记录阶段性历史；
+- 不允许一个项目同时有多个 live worktree（沿用 Workspace Core 的资源级约束）。
+
+### 12.3 完成与提交
+
+- final snapshot 对应 worktree 的最终状态；
+- 在项目仓库中提交到：
+
+```text
+aieos/task-<task_id>
+```
+
+- 不再写 `tasks/<task_id>` 子树；
+- 代码任务先跑测试；
+- Human 确认后合并到 base_ref；
+- `auto` 仍然只做 fast-forward，复杂冲突交给 Human。
+
+### 12.4 与 Output Repo Mode 的区别
+
+| | Output Repo Mode（当前） | Project Repo Mode（未来） |
+|---|---|---|
+| 目标 | 独立输出仓库 | 现有项目仓库 |
+| 提交内容 | `tasks/<id>` 子树 | 项目文件修改 |
+| 是否改项目 | 否 | 是 |
+| 需要 worktree | 否 | 是 |
+| 需要测试/验收 | 可选 | 代码任务必须 |
+| 适合 | 产物 / 文档 / 独立项目 | 改现有代码库 |
+
+### 12.5 非目标
+
+- 不在 V1 直接修改任意项目；
+- 不自动合并 AIEOS 主仓库；
+- 不做跨项目依赖解析；
+- 不做远程 push（仍为 `FUTURE`）。

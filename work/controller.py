@@ -127,6 +127,8 @@ class WorkJob:
     leader: str = ""
     members: List[str] = field(default_factory=list)
     task_id: str = ""
+    #: 本次 Task 选定的输出仓库；空 = 使用全局默认。
+    commit_repo: str = ""
     summary: str = ""
     error: str = ""
     tokens: int = 0
@@ -155,6 +157,7 @@ class WorkJob:
             "leader": self.leader,
             "members": list(self.members),
             "task_id": self.task_id,
+            "commit_repo": self.commit_repo,
             "summary": self.summary,
             "error": self.error,
             "tokens": self.tokens,
@@ -605,6 +608,34 @@ class AIEOSController:
             settings=self._commit_settings,
         )
 
+    def commit_repo_info(self, path: str = "") -> Dict[str, Any]:
+        """给 UI 的仓库事实：默认仓库 / 用户输入路径。"""
+        if self.commit_service is None:
+            return {
+                "path": "", "exists": False, "is_dir": False,
+                "is_git_repo": False, "git_root": "", "repo_mode": "",
+                "error": "提交功能未启用",
+            }
+        return self.commit_service.inspect_repo(
+            str(path or self.commit_output_repo))
+
+    def _validate_commit_repo(self, path: str) -> str:
+        target = str(path or "").strip()
+        if not target:
+            return ""
+        if not Path(target).is_absolute():
+            raise ValueError("输出仓库需要绝对路径")
+        info = self.commit_repo_info(target)
+        if not info.get("is_git_repo"):
+            raise ValueError(
+                f"目标目录不是 Git 仓库：{info.get('error') or target}")
+        resolved = str(info.get("git_root") or info.get("path") or target)
+        if self.commit_service is not None and Path(resolved).resolve() == (
+            self.commit_service.project_root
+        ):
+            raise ValueError("输出仓库不能是 AIEOS 主仓库")
+        return resolved
+
     # ------------------------------------------------------------
     # 设置页：系统设置 / Worker Roles
     # ------------------------------------------------------------
@@ -707,13 +738,17 @@ class AIEOSController:
     # ------------------------------------------------------------
     # 提交
     # ------------------------------------------------------------
-    def submit(self, human_text: str) -> str:
+    def submit(self, human_text: str, *, commit_repo: str = "") -> str:
         text = str(human_text or "").strip()
         if not text:
             raise ValueError("输入不能为空")
+        target_repo = str(commit_repo or "").strip()
+        if target_repo:
+            target_repo = self._validate_commit_repo(target_repo)
         job = WorkJob(
             job_id=f"job_{uuid.uuid4().hex[:10]}",
             human_text=text,
+            commit_repo=target_repo,
             created_at=_now(),
             updated_at=_now(),
         )
@@ -1343,14 +1378,17 @@ class AIEOSController:
             return
         target = str(request.target_ref or "").removeprefix("refs/heads/")
         if request.status == CommitStatus.COMMITTED.value:
+            lines = [
+                "已提交：",
+                f"仓库：{request.output_repo}",
+                f"目录：tasks/{request.task_id}",
+                f"分支：{request.branch}",
+                f"提交：{request.commit_sha[:8]}",
+            ]
             if request.merge_sha:
-                text = (
-                    f"已提交并合并到 {target}"
-                    f"（{request.merge_sha[:8]}）。")
-            else:
-                text = (
-                    f"已提交到任务分支 {request.branch}"
-                    f"（{request.commit_sha[:8]}）。")
+                lines.append(
+                    f"已合并到基线：{target}（{request.merge_sha[:8]}）")
+            text = "\n".join(lines)
         elif request.status in (
             CommitStatus.FAILED.value, CommitStatus.BLOCKED.value,
             CommitStatus.STALE.value,
@@ -1718,6 +1756,11 @@ class AIEOSController:
                     "work_mode": str(self.work_mode),
                     "front_mode": str(self.front_mode),
                     "commit_mode": str(self.commit_mode),
+                    "commit_output_repo": str(
+                        getattr(job, "commit_repo", "") or ""),
+                    "commit_output_repo_mode": (
+                        "project"
+                        if getattr(job, "commit_repo", "") else "output"),
                 },
                 note=f"demand_run:aieos_{job.job_id}",
                 mode=TaskMode.SOLO,
@@ -2124,14 +2167,21 @@ class AIEOSController:
         if task is None or task.status != TaskStatus.COMPLETED:
             return
         acceptance = getattr(task, "acceptance", None) or {}
+        if not isinstance(acceptance, dict):
+            acceptance = {}
         mode = str(
-            (acceptance.get("commit_mode")
-             if isinstance(acceptance, dict) else "")
-            or self.commit_mode
+            acceptance.get("commit_mode") or self.commit_mode
+        ).strip().lower()
+        target_repo = str(
+            acceptance.get("commit_output_repo") or "").strip()
+        repo_mode = str(
+            acceptance.get("commit_output_repo_mode")
+            or ("project" if target_repo else "output")
         ).strip().lower()
         try:
             request = self.commit_service.on_task_completed(
-                task, mode=mode)
+                task, mode=mode, output_repo=target_repo,
+                repo_mode=repo_mode)
         except Exception as exc:                              # noqa: BLE001
             self._message(
                 "system",
@@ -2145,21 +2195,26 @@ class AIEOSController:
         if request.status == CommitStatus.AWAITING_HUMAN.value:
             self._message(
                 "system",
-                f"任务 {task_id} 已完成。快照 {request.code} "
-                f"可提交到任务分支 {request.branch}；"
+                f"任务 {task_id} 已完成。快照 {request.code} 可提交：\n"
+                f"仓库：{request.output_repo}\n"
+                f"目录：tasks/{request.task_id}\n"
+                f"分支：{request.branch}\n"
                 "需要提交时直接说“提交”即可。",
                 job_id=job.job_id, task_id=task_id)
         elif request.status == CommitStatus.COMMITTED.value:
+            lines = [
+                f"任务 {task_id} 已提交：",
+                f"仓库：{request.output_repo}",
+                f"目录：tasks/{request.task_id}",
+                f"分支：{request.branch}",
+                f"提交：{request.commit_sha[:8]}",
+            ]
             if request.merge_sha:
-                text = (
-                    f"任务 {task_id} 已提交并合并到 {target}"
-                    f"（{request.merge_sha[:8]}）。")
-            else:
-                text = (
-                    f"任务 {task_id} 已提交到任务分支 {request.branch}"
-                    f"（{request.commit_sha[:8]}）。")
+                lines.append(
+                    f"已合并到基线：{target}（{request.merge_sha[:8]}）")
             self._message(
-                "system", text, job_id=job.job_id, task_id=task_id)
+                "system", "\n".join(lines),
+                job_id=job.job_id, task_id=task_id)
         elif request.status in (
             CommitStatus.FAILED.value, CommitStatus.BLOCKED.value,
             CommitStatus.STALE.value,

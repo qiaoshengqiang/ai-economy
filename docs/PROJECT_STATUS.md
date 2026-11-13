@@ -4,7 +4,7 @@
 > **日期：2026-11-13**
 > **阶段：开发中 / 观察实验**
 > **协议版本：`1`**
-> **测试基线：`5574 passed, 2 skipped, 30 deselected`**
+> **测试基线：`5581 passed, 2 skipped, 30 deselected`**
 
 本文记录**当前真实可用能力、推荐工作方式、已知限制和版本变化**。
 架构的长期权威仍然是
@@ -301,11 +301,14 @@ task_text
 | `limited` 自动提交到任务分支 | `CURRENT` |
 | `auto` 自动提交 + 可选 fast-forward 合并 | `CURRENT` |
 | Front `commit_confirm` | `CURRENT` |
+| 提交仓库选择（默认 / 绝对路径 / 目录浏览） | `CURRENT` |
+| 提交结果显示仓库路径 / 分支 / commit | `CURRENT` |
 | 自动 push / 复杂 merge | `FUTURE` |
 | UI 提交列表 / 历史 | 待接入 |
 
 提交时机是 Task COMPLETED 之后；提交结果不改变 Task 状态，也不进入
-Worker 私有记忆。详见 [`OUTPUT_COMMIT.md`](architecture/OUTPUT_COMMIT.md)。
+Worker 私有记忆。新任务可以在聊天框下方选择默认仓库或其他绝对路径。
+详见 [`OUTPUT_COMMIT.md`](architecture/OUTPUT_COMMIT.md)。
 
 ---
 
@@ -463,7 +466,7 @@ Team 协作
 当前基线：
 
 ```text
-5574 passed, 2 skipped, 30 deselected
+5581 passed, 2 skipped, 30 deselected
 ```
 
 启动说明见 [`../START_AIEOS.md`](../START_AIEOS.md)。

@@ -39,6 +39,7 @@ class CommitStore:
         snapshot_commit: str,
         snapshot_tree: str,
         mode: str,
+        repo_mode: str,
         status: str,
         output_repo: str,
         target_ref: str,
@@ -63,15 +64,15 @@ class CommitStore:
                 conn.execute(
                     "INSERT INTO commit_requests ("
                     "  request_id, task_id, iteration, snapshot_seq,"
-                    "  snapshot_commit, snapshot_tree, mode, status,"
-                    "  output_repo, target_ref, base_commit, commit_sha,"
-                    "  merge_sha, authorized_by, authorized_at, error,"
-                    "  created_at, updated_at"
-                    ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "  snapshot_commit, snapshot_tree, mode, repo_mode,"
+                    "  status, output_repo, target_ref, base_commit,"
+                    "  commit_sha, merge_sha, authorized_by, authorized_at,"
+                    "  error, created_at, updated_at"
+                    ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         request_id, task_id, int(iteration),
                         int(snapshot_seq), snapshot_commit, snapshot_tree,
-                        mode, status, output_repo, target_ref,
+                        mode, repo_mode, status, output_repo, target_ref,
                         base_commit or None, None, None, None, None, None,
                         now, now,
                     ),
@@ -194,6 +195,7 @@ class CommitStore:
             snapshot_commit=str(row["snapshot_commit"] or ""),
             snapshot_tree=str(row["snapshot_tree"] or ""),
             mode=str(row["mode"] or ""),
+            repo_mode=str(row["repo_mode"] or "output"),
             status=str(row["status"] or ""),
             output_repo=str(row["output_repo"] or ""),
             target_ref=str(row["target_ref"] or ""),
