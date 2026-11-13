@@ -60,7 +60,7 @@ def test_handoff_can_pass_raw_text():
     assert decision.brief.goal == "帮我写个 hello.txt"
 
 
-def test_handoff_can_pass_faithful_brief():
+def test_handoff_drops_structured_brief_fields():
     think = _think_returning({
         "intent": "handoff",
         "reply": "好，我开始做。",
@@ -77,13 +77,14 @@ def test_handoff_can_pass_faithful_brief():
 
     assert decision.intent == FrontIntent.HANDOFF
     assert isinstance(decision.brief, FrontBrief)
-    # task_text 是 Front 选择交给 Work 的版本
+    # task_text 是唯一交给 Work 的版本
     assert decision.brief.task_text == "写一个 hello.txt"
     # 原文永远保留，供 Work / 审计对照
     assert decision.brief.human_text == "帮我写个 hello.txt"
-    assert decision.brief.deliverables == ["hello.txt"]
-    assert decision.brief.constraints == ["不要用 shell"]
-    assert decision.brief.acceptance_expectations == ["文件存在且非空"]
+    # 结构化字段不会传给 Worker，因此 Front 输出里也不再接收。
+    assert decision.brief.deliverables == []
+    assert decision.brief.constraints == []
+    assert decision.brief.acceptance_expectations == []
     assert decision.brief.reply_style == "友好、简洁，先结论后产物"
 
 
@@ -194,6 +195,7 @@ def test_parser_accepts_natural_goal_shape():
     assert error == ""
     assert decision.intent == FrontIntent.HANDOFF
     assert decision.brief.goal == "写一个报告"
+    assert decision.brief.deliverables == []
 
 
 def test_parser_rejects_direct_reply_without_text():
@@ -222,7 +224,8 @@ def test_front_prompt_is_human_facing_and_does_not_invent_constraints():
     assert "不返回" in prompt
     assert "private_read" in prompt
     assert "brief.files" in prompt
-    assert "task_text 是 Work Agent 看到的内容" in prompt
+    assert "task_text 是 Work Agent 唯一看到的内容" in prompt
+    assert "它们不会传给 Work Agent" in prompt
     assert "preferred_agent 是路由元数据" in prompt
     assert "最近对话" in prompt
     assert "没有创建 Task 的动作" in prompt
@@ -423,7 +426,7 @@ def test_prompt_separates_task_text_from_routing_metadata():
     ])
 
     prompt = think.prompt
-    assert "task_text 是 Work Agent 看到的内容" in prompt
+    assert "task_text 是 Work Agent 唯一看到的内容" in prompt
     assert "preferred_agent 是路由元数据" in prompt
     assert "use it verbatim" not in prompt
 
@@ -434,7 +437,7 @@ def test_prompt_says_assignee_is_routing_not_task_text():
     runtime.decide("让 agent_e 写一个笑话")
 
     prompt = think.prompt
-    assert "task_text 是 Work Agent 看到的内容" in prompt
+    assert "task_text 是 Work Agent 唯一看到的内容" in prompt
     assert "preferred_agent 是路由元数据" in prompt
     assert "路由事实：" in prompt
     assert "keep the original text" not in prompt
@@ -745,7 +748,7 @@ def test_front_relay_mode_prompt_forbids_expansion():
     prompt = prompts[0]
     assert "Front 模式：只传达" in prompt
     assert "不要添加用户没有提出的功能" in prompt
-    assert "deliverables / constraints / acceptance_expectations / files 留空" in prompt
+    assert "brief 只用于附带 files" in prompt
     assert "set_mode" in prompt
     assert "commit_confirm" in prompt
 

@@ -3,8 +3,9 @@ Front 层数据契约
 =================
 
 Brief 承载 Human 原文 + Front 选择的 `task_text`（原文或忠实重述）
-+ 可选的 goal / deliverables / constraints / acceptance + reply_style。
-Front 负责保持原意，不把任务改写成另一种需求。
++ goal（日志短标签）+ files + reply_style。
+🔒 `task_text` 是 Work Agent 唯一看到的内容；结构化需求字段不再由
+   Front handoff 产生，也不传给 Worker。
 Result 是 Work 回到 Front 的**可读结果**，不是 Task 状态。
 """
 
@@ -56,15 +57,18 @@ class FrontBrief:
     Front → Team Lead 的工作 Brief。
 
     🔒 `human_text` 永远是 Human 原文；`task_text` 是 Front 选择交给
-       Work 的版本（可以是原文或忠实重述）。结构化字段是可选补充。
+       Work 的版本（可以是原文或忠实重述），也是 Worker 唯一看到的内容。
     """
 
     goal: str
     brief_id: str = ""
     human_text: str = ""
     #: 交给 Work Agent 的任务文本。可以是 Human 原文，也可以是 Front
-    #: 判断后做的忠实重述；必须保持原意。
+    #: 判断后做的忠实重述；必须保持原意。所有需求 / 约束 / 验收都应
+    #: 直接写在这里。
     task_text: str = ""
+    #: 旧版结构化字段：只保留给 CLI / 旧 job log 兼容。
+    #: Front handoff 不再解析它们，Controller 也不传给 Worker。
     deliverables: List[str] = field(default_factory=list)
     constraints: List[str] = field(default_factory=list)
     acceptance_expectations: List[str] = field(default_factory=list)

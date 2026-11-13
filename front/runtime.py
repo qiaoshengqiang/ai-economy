@@ -304,8 +304,8 @@ class FrontAgentRuntime:
 - task_text 只保留用户的核心任务要求；保留用户明确提出的任务细节。
 - 删除“我想……”“再给 agent_b 一个任务”等对话性、路由性和解释性文字。
 - 不要添加用户没有提出的功能、技术栈、文件、验收标准、约束、实现建议或视觉细节。
-- handoff 的 brief 只填 goal 和 task_text；
-  deliverables / constraints / acceptance_expectations / files 留空。
+- task_text 是 Work Agent 唯一看到的内容；
+  brief 只用于附带 files，不再填写其他字段。
 - role / work_profile / preferred_agent 只作为路由元数据，不要写进 task_text。
 """
         return f"""你是 {self.agent_id}，面向人类的入口。
@@ -399,18 +399,19 @@ Role 只是弱信号，不要仅凭 role 判断。
    {{"intent":"direct_reply","reply":"...","reason":"..."}}
 
 2. handoff —— 新的工作请求。
-   task_text 是 Work Agent 看到的内容；human_text 保留原文。
+   🔒 task_text 是 Work Agent 唯一看到的内容；human_text 保留原文。
+   所有需求、约束、验收标准、交付物都必须写进 task_text。
    preferred_agent 是路由元数据；空 / 省略 = 系统选择一个空闲 worker。
-   brief 可以携带 goal / deliverables / constraints / acceptance_expectations
-   和 files。
+   brief 只用于附带你准备好的文件：brief.files。
+   不要再输出 deliverables / constraints / acceptance_expectations /
+   non_goals / ambiguities / context_refs；它们不会传给 Work Agent。
+   不要在回复中声称 Worker 收到了 task_text 之外的要求。
    {{"intent":"handoff",
      "task_text":"...",
      "role":"worker 角色 id 之一",
      "work_profile":"direct|standard|creative_product",
      "preferred_agent":"optional agent_id",
-     "brief":{{"goal":"...","deliverables":["..."],
-              "constraints":["..."],"acceptance_expectations":["..."],
-              "files":[{{"path":"index.html","content":"..."}}]}},
+     "brief":{{"files":[{{"path":"index.html","content":"..."}}]}},
      "reply":"...",
      "reply_style":"...","reason":"..."}}
 

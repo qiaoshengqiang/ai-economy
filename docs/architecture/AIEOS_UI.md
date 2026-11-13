@@ -62,8 +62,9 @@ Front Agent（固定）
 ```
 
 > Front 自己决定转交方式：可以逐字使用 Human 原文，也可以写一个
-> **不改变原意**的 `task_text`；可选的 goal / deliverables /
-> constraints / acceptance 作为结构化补充。`human_text` 永远保留原文。
+> **不改变原意**的 `task_text`。`task_text` 是 Worker 唯一看到的内容；
+> 所有需求、约束、验收都必须写进 `task_text`。`goal` 只是日志短标签，
+> `files` 是 Front 准备随任务交付的文件。`human_text` 永远保留原文。
 > Front 的 thinking 固定为 `low`，因为它的工作主要是识别意图与沟通。
 
 ### Front 模式
@@ -288,8 +289,8 @@ GET  /api/health
 - 每轮 decision / work / summary 明细保存到 `runs/ui/rounds/<task_id>.json`；
 - Task 详情页用 `/api/task/<task_id>` 每 2 秒轮询，暂不引入 SSE；
   当前轮次数据量下，轮询不影响现有实现；
-- Task 详情页的 Front Brief 读取 `Task.acceptance["brief"]`（只读快照）；
-  旧任务在 Job 仍在内存时回退到 `front_decision.brief`；
+- Task 详情页只展示 `task_text`（`Task.description`）；不再展示或持久化
+  结构化 brief 字段，因为它们不会传给 Worker；
 - 轮询按内容签名增量重绘：内容没变时不重建 DOM；
 - 检测到文本选区（含拖选中的瞬时状态）时暂停列表重绘，
   用户点掉选区后的下一次轮询再补上最新数据 ——

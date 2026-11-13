@@ -180,61 +180,12 @@ body {
   text-transform: uppercase;
   margin-bottom: 2px;
 }
-.brief-lead {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
-  flex-wrap: wrap;
-}
-.brief-lead .badge { color: var(--accent); }
-.brief-goal {
-  font-size: 15px;
-  line-height: 1.65;
-  color: #e5f0fb;
-  max-width: 900px;
-  word-break: break-word;
-}
-.brief-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
-  margin-top: 15px;
-}
-.brief-panel {
-  border: 1px solid var(--line);
-  border-radius: 11px;
-  padding: 11px 12px;
-  background: rgba(7, 17, 28, .42);
-  min-width: 0;
-}
-.brief-label {
+.prompt-label {
   font-size: 10px;
+  color: var(--muted);
   letter-spacing: .1em;
   text-transform: uppercase;
-  color: var(--accent);
   margin-bottom: 7px;
-}
-.brief-list {
-  margin: 0;
-  padding-left: 17px;
-  color: #cbd9e7;
-  font-size: 12px;
-  line-height: 1.7;
-}
-.brief-list li + li { margin-top: 2px; }
-.brief-extra {
-  margin-top: 12px;
-  color: var(--muted);
-  font-size: 11px;
-}
-.brief-extra summary { cursor: pointer; }
-.brief-extra .brief-panel { margin-top: 8px; }
-.brief-extra .brief-label { margin-top: 0; }
-.muted-note {
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 1.6;
 }
 .mono { font-family: var(--mono); font-size: 12px; }
 pre {
@@ -369,7 +320,6 @@ pre {
   padding: 8px 0;
 }
 @media (max-width: 720px) {
-  .brief-grid { grid-template-columns: 1fr; }
   .hero-title { font-size: 21px; }
 }
 @media (max-width: 640px) {

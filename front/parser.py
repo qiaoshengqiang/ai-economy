@@ -5,7 +5,8 @@ Front 决策解析
 从模型输出里解析：
 
     {"intent":"direct_reply","reply":"..."}
-    {"intent":"handoff","brief":{"goal":"..."}}
+    {"intent":"handoff","task_text":"..."}
+    {"intent":"handoff","brief":{"files":[...]}}
     {"intent":"rework","task_id":"..."}
     {"intent":"follow_up","task_id":"..."}
     {"intent":"cancel","task_id":"..."}
@@ -48,39 +49,25 @@ def _iter_json_objects(text: str):
             yield value
 
 
-def _string_list(value: Any):
-    if isinstance(value, str):
-        value = [value]
-    if not isinstance(value, (list, tuple)):
-        return []
-    out = []
-    for item in value:
-        text = str(item or "").strip()
-        if text and text not in out:
-            out.append(text)
-    return out
-
-
 def _brief_from(payload: Dict[str, Any], human_text: str) -> Optional[FrontBrief]:
     raw = payload.get("brief")
     if not isinstance(raw, dict):
-        raw = payload if "goal" in payload else None
+        raw = payload if ("goal" in payload or "task_text" in payload) else None
     if not isinstance(raw, dict):
         return None
-    goal = str(raw.get("goal") or "").strip()
+    task_text = str(payload.get("task_text") or "").strip()
+    # 🔒 `task_text` 是 Work Agent 唯一看到的内容。`goal` 只是日志里的
+    # 短标签，有 task_text 时不再允许它单独分叉。
+    goal = task_text or str(raw.get("goal") or "").strip()
     if not goal:
         return None
     try:
         return FrontBrief(
             goal=goal,
             human_text=human_text,
-            deliverables=_string_list(raw.get("deliverables")),
-            constraints=_string_list(raw.get("constraints")),
-            acceptance_expectations=_string_list(
-                raw.get("acceptance_expectations")),
-            ambiguities=_string_list(raw.get("ambiguities")),
-            non_goals=_string_list(raw.get("non_goals")),
-            context_refs=_string_list(raw.get("context_refs")),
+            task_text=task_text or goal,
+            # 结构化 brief 字段不再从 Front 输出解析：它们不会传给 Worker，
+            # 继续接收只会让 Front 误以为自己已经交付了这些要求。
             files=raw.get("files") or [],
             fallback=bool(raw.get("fallback")),
         )

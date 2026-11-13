@@ -6,7 +6,7 @@
   const els = {
     status: document.getElementById("status"),
     meta: document.getElementById("task-meta"),
-    brief: document.getElementById("task-brief"),
+    prompt: document.getElementById("task-prompt"),
     timeline: document.getElementById("timeline"),
     workspace: document.getElementById("workspace"),
     memory: document.getElementById("public-memory"),
@@ -200,72 +200,12 @@
     els.meta.appendChild(details);
   }
 
-  function briefList(label, items) {
-    if (!items || !items.length) return null;
-    const panel = el("div", "brief-panel");
-    panel.appendChild(el("div", "brief-label", label));
-    const list = el("ul", "brief-list");
-    items.forEach((item) => list.appendChild(el("li", "", item)));
-    panel.appendChild(list);
-    return panel;
-  }
-
-  function renderBrief(data) {
+  function renderPrompt(data) {
     const task = data.task || {};
-    const brief = data.brief || {};
-    const constraints = Array.isArray(brief.constraints)
-      ? brief.constraints : [];
-    const acceptance = (
-      Array.isArray(brief.acceptance_expectations) &&
-      brief.acceptance_expectations.length
-    ) ? brief.acceptance_expectations : (task.criteria || []);
-    const deliverables = Array.isArray(brief.deliverables)
-      ? brief.deliverables : [];
-    const goal = brief.goal || task.description || "";
-    const taskText = brief.task_text || task.description || "";
-    const structured = !!(
-      constraints.length || deliverables.length ||
-      (Array.isArray(brief.acceptance_expectations) &&
-       brief.acceptance_expectations.length));
-
-    els.brief.innerHTML = "";
-    els.brief.appendChild(el("div", "section-title",
-      structured ? "Front → Work" : "任务说明"));
-    if (structured) {
-      const lead = el("div", "brief-lead");
-      lead.appendChild(badge("交付任务说明"));
-      lead.appendChild(el("span", "muted-note",
-        "Front 自主模式下交给 Worker 的任务上下文"));
-      els.brief.appendChild(lead);
-    }
-    if (goal) els.brief.appendChild(el("div", "brief-goal", goal));
-
-    const grid = el("div", "brief-grid");
-    const constraintPanel = briefList("约束", constraints);
-    const acceptancePanel = briefList("验收条件", acceptance);
-    if (constraintPanel) grid.appendChild(constraintPanel);
-    if (acceptancePanel) grid.appendChild(acceptancePanel);
-    if (grid.childElementCount) els.brief.appendChild(grid);
-
-    const extras = [];
-    const deliverablePanel = briefList("交付物", deliverables);
-    if (deliverablePanel) extras.push(deliverablePanel);
-    if (taskText && taskText !== goal) {
-      const panel = el("div", "brief-panel");
-      panel.appendChild(el("div", "brief-label", "task_text"));
-      panel.appendChild(pre(taskText));
-      extras.push(panel);
-    }
-    if (extras.length) {
-      const details = document.createElement("details");
-      details.className = "brief-extra";
-      details.appendChild(el("summary", "", "交付物 / 原始 task_text"));
-      extras.forEach((node) => details.appendChild(node));
-      els.brief.appendChild(details);
-    }
-    if (!goal && !grid.childElementCount) {
-      els.brief.appendChild(el("div", "empty", "（没有任务说明）"));
-    }
+    els.prompt.innerHTML = "";
+    els.prompt.appendChild(el("div", "section-title", "交给 Work 的任务"));
+    els.prompt.appendChild(el("div", "prompt-label", "Front → Work · task_text"));
+    els.prompt.appendChild(pre(task.description || "（无）"));
   }
 
   function renderAction(action, result) {
@@ -506,7 +446,7 @@
         : taskStatus
     );
     renderMeta(data);
-    renderBrief(data);
+    renderPrompt(data);
     renderTimeline(data);
     renderWorkspace(data);
     renderMemory(data);

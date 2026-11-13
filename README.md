@@ -179,7 +179,7 @@ LLM 只能**提出意图**，永远不能**直接改账**。
 | Project Workdir | 直接修改已有项目目录 · shadow snapshot · 项目锁 | ✅ Phase 1（ADR-0060） |
 | 实验线 | Human Demand → 多 Agent 协作生产 / 自主分工观察（`experiments/`） | 🚧 进行中 |
 
-**测试基线**：5598 passed / 2 skipped / 30 deselected
+**测试基线**：5597 passed / 2 skipped / 30 deselected
 
 ### ✅ Step 1：最小运行骨架（已完成）
 
@@ -193,7 +193,7 @@ LLM 只能**提出意图**，永远不能**直接改账**。
 - [x] SQLite 数据库（4 张表）
 - [x] 启动横幅
 - [x] **命令行经济操作**（转账 / 余额 / 流水 / 对账）
-- [x] 5598 个 pytest 测试全绿（另有 30 个真实 API 测试单独跑）
+- [x] 5597 个 pytest 测试全绿（另有 30 个真实 API 测试单独跑）
 
 **验收标准**（已达成）：
 
@@ -2028,7 +2028,7 @@ ai-economy/
 │   ├── database.py            ← SQLite 连接、事务、迁移
 │   └── models.py              ← 表结构定义
 │
-├── tests/                     ← 5598 个测试 + 30 个真实 API 测试
+├── tests/                     ← 5597 个测试 + 30 个真实 API 测试
 └── data/
     └── economy.db             ← SQLite 数据库（运行产物，不进 git）
 ```

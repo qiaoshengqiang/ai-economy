@@ -4,7 +4,7 @@
 > **日期：2026-11-13**
 > **阶段：开发中 / 观察实验**
 > **协议版本：`1`**
-> **测试基线：`5598 passed, 2 skipped, 30 deselected`**
+> **测试基线：`5597 passed, 2 skipped, 30 deselected`**
 
 本文记录**当前真实可用能力、推荐工作方式、已知限制和版本变化**。
 架构的长期权威仍然是
@@ -277,7 +277,6 @@ task_text
 | Front / Work 模式显示 | `CURRENT` |
 | Front 回复计时 | `CURRENT` |
 | Task 卡片模式快照 | `CURRENT`（新任务） |
-| Task 详情页：Front Brief（目标 / 约束 / 验收） | `CURRENT`（新任务） |
 | 设置页：系统 / 常规 / Agent / Roles | `CURRENT` |
 
 ### 7.4 Pi Task Snapshot
@@ -353,12 +352,15 @@ Team 协作是目前最大的未完成区域：
 - 只有 Cognition / Work 工作流式循环；
 - 不能切换到 autonomous。
 
-### 8.3 自主模式不注入角色和验收
+### 8.3 自主模式不注入角色和结构化 brief
 
 这是有意的边界，不是 bug：
 
 - Role 不会在 autonomous 模式生效；
-- brief 的验收标准不会进入 Worker prompt；
+- Front 只交付 `task_text`，它是 Worker 唯一看到的内容；
+- 结构化 brief 字段（deliverables / constraints / acceptance_expectations
+  等）不再由 Front 产生、不持久化、不在详情页展示，也不会进入 Worker prompt；
+- 所有需求、约束、验收都必须由 Front 写进 `task_text`；
 - Worker 自己理解 `task_text` 并决定工作方式。
 
 ### 8.4 Workflow 可能偏重
@@ -497,7 +499,7 @@ Team 协作
 当前基线：
 
 ```text
-5598 passed, 2 skipped, 30 deselected
+5597 passed, 2 skipped, 30 deselected
 ```
 
 启动说明见 [`../START_AIEOS.md`](../START_AIEOS.md)。
