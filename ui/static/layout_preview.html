@@ -160,46 +160,39 @@
   .agents-panel { flex: 0 0 auto; }
   .tasks-panel { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 
-  .agent-grid {
-    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 9px; padding: 11px;
+  .agent-list { display: flex; flex-direction: column; }
+  .agent-row {
+    display: flex; align-items: center; gap: 7px;
+    min-height: 38px; padding: 6px 10px;
+    border-bottom: 1px solid var(--line); background: var(--panel-2);
+    min-width: 0;
   }
-  .agent {
-    border: 1px solid var(--line); border-radius: 12px; padding: 9px 10px;
-    background: var(--panel-2); min-width: 0;
+  .agent-row:last-child { border-bottom: 0; }
+  .agent-row .dot { flex: 0 0 auto; }
+  .agent-id { font-weight: 600; font-size: 12.5px; white-space: nowrap; }
+  .agent-engine {
+    font-size: 9px; letter-spacing: .08em; color: var(--accent);
+    border: 1px solid rgba(94,224,255,.25); border-radius: 999px;
+    padding: 1px 6px; white-space: nowrap;
   }
-  .agent-top { display: flex; align-items: center; gap: 7px; min-width: 0; }
-  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: 0 0 auto; }
-  .dot.IDLE { background: var(--good); box-shadow: 0 0 10px rgba(80,216,144,.55); }
-  .dot.WORKING { background: var(--warn); box-shadow: 0 0 10px rgba(255,200,87,.5); }
-  .agent-id { font-weight: 600; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .agent-role {
-    margin-left: auto; font-size: 9px; letter-spacing: .08em;
-    color: var(--accent); border: 1px solid rgba(94,224,255,.25);
-    border-radius: 999px; padding: 1px 6px; white-space: nowrap;
-  }
-  .agent-mode { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px; }
+  .agent-mode { display: flex; flex-wrap: wrap; gap: 3px; flex: 0 0 auto; }
   .tag {
     display: inline-flex; align-items: center; gap: 4px;
     font-size: 10px; padding: 1px 6px; border-radius: 999px;
-    border: 1px solid var(--line); color: var(--muted);
+    border: 1px solid var(--line); color: var(--muted); white-space: nowrap;
   }
   .tag.front { color: var(--front); border-color: rgba(94,224,255,.3); }
   .tag.auto { color: var(--work-auto); border-color: rgba(80,216,144,.3); }
   .tag.flow { color: var(--work-flow); border-color: rgba(255,200,87,.3); }
   .agent-task {
-    margin-top: 5px; font-size: 10.5px; color: var(--muted);
+    flex: 1 1 auto; min-width: 0; font-size: 10.5px; color: var(--muted);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
-  .agent-thinking {
-    margin-top: 6px; display: flex; align-items: center; gap: 6px;
-    font-size: 10px; color: var(--muted);
-  }
+  .agent-thinking { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; font-size: 9.5px; color: var(--muted); }
   .agent-thinking select {
-    margin-left: auto; border: 1px solid var(--line); border-radius: 6px;
-    background: #0a111a; color: #cbd6e5; font-size: 10px; padding: 1px 4px;
+    border: 1px solid var(--line); border-radius: 5px;
+    background: #0a111a; color: #cbd6e5; font-size: 9.5px; padding: 0 3px;
   }
-
   .task-list {
     flex: 1 1 auto; min-height: 0; overflow: auto; padding: 11px;
     display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
@@ -228,7 +221,6 @@
 
   @media (min-width: 1600px) {
     .layout { grid-template-columns: minmax(0, 1.6fr) minmax(520px, .9fr); }
-    .agent-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   }
   @media (max-width: 1100px) {
     body { overflow-y: auto; height: auto; min-height: 100dvh; }
@@ -243,7 +235,9 @@
     .subtitle, .preview-tag { display: none; }
     .layout { padding: 12px 14px; gap: 12px; }
     .chat-panel { height: 70vh; min-height: 420px; }
-    .agent-grid { grid-template-columns: 1fr 1fr; }
+    .agent-engine { display: none; }
+    .agent-row { flex-wrap: wrap; min-height: 44px; }
+    .agent-task { flex: 1 1 100%; order: 5; margin-left: 15px; }
     .task-list { grid-template-columns: 1fr; }
     .task-desc { -webkit-line-clamp: 3; }
     .msg { max-width: 94%; }
@@ -316,58 +310,36 @@
           <h2>Agents</h2>
           <span class="muted">4 个</span>
         </div>
-        <div class="agent-grid">
-          <div class="agent">
-            <div class="agent-top">
-              <span class="dot IDLE"></span>
-              <span class="agent-id">agent_a</span>
-              <span class="agent-role">FRONT</span>
-            </div>
-            <div class="agent-mode">
-              <span class="tag front">Front 模式 · 自主</span>
-            </div>
-            <div class="agent-task">IDLE · ready</div>
+        <div class="agent-list">
+          <div class="agent-row">
+            <span class="dot IDLE"></span>
+            <span class="agent-id">agent_a</span>
+            <span class="agent-engine">FRONT</span>
+            <span class="agent-mode"><span class="tag front">Front 模式 · 自主</span></span>
+            <span class="agent-task">IDLE · ready</span>
           </div>
-          <div class="agent">
-            <div class="agent-top">
-              <span class="dot WORKING"></span>
-              <span class="agent-id">agent_b</span>
-              <span class="agent-role">PI</span>
-            </div>
-            <div class="agent-mode">
-              <span class="tag auto">Work · 自主</span>
-            </div>
-            <div class="agent-task">task_7c077f68 · 打飞机游戏</div>
-            <div class="agent-thinking">
-              <span>思考</span>
-              <select><option>max</option></select>
-            </div>
+          <div class="agent-row">
+            <span class="dot WORKING"></span>
+            <span class="agent-id">agent_b</span>
+            <span class="agent-engine">PI</span>
+            <span class="agent-mode"><span class="tag auto">Work · 自主</span></span>
+            <span class="agent-task">task_7c077f68 · 打飞机游戏</span>
+            <span class="agent-thinking"><span>思考</span><select><option>max</option></select></span>
           </div>
-          <div class="agent">
-            <div class="agent-top">
-              <span class="dot IDLE"></span>
-              <span class="agent-id">agent_c</span>
-              <span class="agent-role">SOLO</span>
-            </div>
-            <div class="agent-mode">
-              <span class="tag flow">Work · 工作流</span>
-            </div>
-            <div class="agent-task">IDLE · ready</div>
+          <div class="agent-row">
+            <span class="dot IDLE"></span>
+            <span class="agent-id">agent_c</span>
+            <span class="agent-engine">SOLO</span>
+            <span class="agent-mode"><span class="tag flow">Work · 工作流</span></span>
+            <span class="agent-task">IDLE · ready</span>
           </div>
-          <div class="agent">
-            <div class="agent-top">
-              <span class="dot WORKING"></span>
-              <span class="agent-id">agent_d</span>
-              <span class="agent-role">PI</span>
-            </div>
-            <div class="agent-mode">
-              <span class="tag auto">Work · 自主</span>
-            </div>
-            <div class="agent-task">task_03478d2b · 阅读页</div>
-            <div class="agent-thinking">
-              <span>思考</span>
-              <select><option>high</option></select>
-            </div>
+          <div class="agent-row">
+            <span class="dot WORKING"></span>
+            <span class="agent-id">agent_d</span>
+            <span class="agent-engine">PI</span>
+            <span class="agent-mode"><span class="tag auto">Work · 自主</span></span>
+            <span class="agent-task">task_03478d2b · 阅读页</span>
+            <span class="agent-thinking"><span>思考</span><select><option>high</option></select></span>
           </div>
         </div>
       </section>
