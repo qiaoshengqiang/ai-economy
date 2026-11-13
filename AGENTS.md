@@ -30,7 +30,7 @@
 | | |
 |---|---|
 | **阶段** | **`v0.2.0`** · Workspace Core V1 已冻结 · Agent Core V1 · Tool Runtime V1 · Vision V1 · Demand Entry V1 · Pi Work（workflow / autonomous）· Output Commit V1 · Project Workdir V1 · 观察实验 |
-| **测试基线** | 以 `./dev.sh test` 当前输出为准（最近：**5615 passed, 2 skipped, 30 deselected**） |
+| **测试基线** | 以 `./dev.sh test` 当前输出为准（最近：**5617 passed, 2 skipped, 30 deselected**） |
 | **协议版本** | `protocol_version = "1"` |
 | **命令数** | 25（`./dev.sh` 查看全部） |
 | **数据库表** | **29** |
@@ -398,7 +398,7 @@ AGENTS.md → 判断任务领域 → 只读相关 Specification → 必要时读
 | **Workspace / Lifecycle / Human** | [`TASK_WORKSPACE.md`](docs/architecture/TASK_WORKSPACE.md) + ADR-0020/0021/0022（§4.1 · §7 · §14.5 · §15） | TASK_SHARED_CONTEXT.md |
 | **Task Origin / Task Lineage** | [`TASK_ORIGIN_LINEAGE.md`](docs/architecture/TASK_ORIGIN_LINEAGE.md) + **ADR-0023** —— 概念已定（`SETTLED`），**实现为 `FUTURE`** | — |
 | **代码执行 / 测试工具** | [`TOOL_RUNTIME_V1_DESIGN.md`](docs/architecture/TOOL_RUNTIME_V1_DESIGN.md) + **ADR-0040** · `tool_runtime/` · `resources/public/tools/` | 与 Task Execution 无关 |
-| **Guard / 测试** | ADR-0018 · `tests/*guards*.py` | — |
+| **Guard / 测试 / Prompt** | ADR-0018 · `tests/*guards*.py` · [`PROMPT_WRITING_GUIDELINES.md`](docs/architecture/PROMPT_WRITING_GUIDELINES.md) | — |
 | **Git Worktree / Patch / Test / Acceptance / Merge** | [`CHANGE_PIPELINE_V1_DESIGN.md`](docs/architecture/implementation/CHANGE_PIPELINE_V1_DESIGN.md) + **ADR-0032…0037** —— 设计已定；**Worktree Manager 已实现（ADR-0037）**，其余仍 `DESIGNED` | Workspace Core 内部细节 |
 
 **Constitution 只在三种情况下通读**：第一次接触项目 · 要**新增**一条边界 ·
