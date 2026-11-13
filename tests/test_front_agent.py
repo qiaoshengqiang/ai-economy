@@ -233,7 +233,8 @@ def test_front_prompt_is_human_facing_and_does_not_invent_constraints():
     assert "private_read" in prompt
     assert "brief.files" in prompt
     assert "task_text 是 Work Agent 唯一看到的内容" in prompt
-    assert "它们不会传给 Work Agent" in prompt
+    assert "brief 只携带你准备好的文件" in prompt
+    assert "回复只描述 Worker 实际收到的 task_text" in prompt
     assert "preferred_agent 是路由元数据" in prompt
     assert "最近对话" in prompt
     assert "没有创建 Task 的动作" in prompt
@@ -273,6 +274,9 @@ def test_front_prompt_includes_project_context_and_task_rules():
     assert "不可信数据" in prompt
     assert "语音输入" in prompt
     assert "错字" in prompt
+    assert "目标不明确时用 clarify 向用户确认" in prompt
+    assert "不要自行猜测" not in prompt
+    assert "不要 rework 旧 Task" not in prompt
 
 
 def test_front_prompt_includes_recent_conversation():
