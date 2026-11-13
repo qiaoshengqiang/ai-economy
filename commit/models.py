@@ -75,6 +75,11 @@ class CommitRequest:
         """给人类确认用的短码。"""
         return str(self.snapshot_commit or "")[:8]
 
+    @property
+    def branch(self) -> str:
+        """输出仓库里的任务分支。"""
+        return f"aieos/task-{self.task_id}"
+
     def to_dict(self) -> Dict[str, Any]:
         data = asdict(self)
         data["code"] = self.code

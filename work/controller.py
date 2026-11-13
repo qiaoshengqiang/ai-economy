@@ -1343,10 +1343,14 @@ class AIEOSController:
             return
         target = str(request.target_ref or "").removeprefix("refs/heads/")
         if request.status == CommitStatus.COMMITTED.value:
-            text = (
-                f"已提交到 {target}（{request.commit_sha[:8]}）。")
             if request.merge_sha:
-                text += f" 已合并到基线（{request.merge_sha[:8]}）。"
+                text = (
+                    f"已提交并合并到 {target}"
+                    f"（{request.merge_sha[:8]}）。")
+            else:
+                text = (
+                    f"已提交到任务分支 {request.branch}"
+                    f"（{request.commit_sha[:8]}）。")
         elif request.status in (
             CommitStatus.FAILED.value, CommitStatus.BLOCKED.value,
             CommitStatus.STALE.value,
@@ -2142,14 +2146,17 @@ class AIEOSController:
             self._message(
                 "system",
                 f"任务 {task_id} 已完成。可提交快照 {request.code}；"
-                f"回复「确认提交 {request.code}」提交到 {target}。",
+                f"回复「确认提交 {request.code}」提交到 {request.branch}。",
                 job_id=job.job_id, task_id=task_id)
         elif request.status == CommitStatus.COMMITTED.value:
-            text = (
-                f"任务 {task_id} 已提交到 {target}"
-                f"（{request.commit_sha[:8]}）。")
             if request.merge_sha:
-                text += f" 已合并到基线（{request.merge_sha[:8]}）。"
+                text = (
+                    f"任务 {task_id} 已提交并合并到 {target}"
+                    f"（{request.merge_sha[:8]}）。")
+            else:
+                text = (
+                    f"任务 {task_id} 已提交到任务分支 {request.branch}"
+                    f"（{request.commit_sha[:8]}）。")
             self._message(
                 "system", text, job_id=job.job_id, task_id=task_id)
         elif request.status in (

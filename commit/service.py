@@ -132,6 +132,15 @@ class OutputCommitService:
             target_ref=f"refs/heads/{cfg['base_ref']}",
             base_commit="",
         )
+        if (
+            request.status == CommitStatus.APPROVED.value
+            and not request.authorized_by
+        ):
+            request = self.store.update(
+                request.request_id,
+                authorized_by=f"policy:{normalized_mode}",
+                authorized_at=_now(),
+            )
         if request.status in (
             CommitStatus.AWAITING_HUMAN.value,
             CommitStatus.COMMITTED.value,
