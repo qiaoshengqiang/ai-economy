@@ -5,6 +5,7 @@
   const $ = (id) => document.getElementById(id);
   const els = {
     frontBadge: $("front-badge"),
+    workModeBadge: $("work-mode-badge"),
     runningBadge: $("running-badge"),
     messages: $("messages"),
     prompt: $("prompt"),
@@ -331,41 +332,122 @@
     if (atBottom) box.scrollTop = box.scrollHeight;
   }
 
-  function renderAgents(agents) {
+  function robotMarkup(working, front) {
+    const classes = [
+      "robot",
+      working ? "working" : "idle",
+      front ? "front" : "",
+    ].filter(Boolean).join(" ");
+    return `<svg class="${classes}" viewBox="0 0 24 24" aria-hidden="true">
+      <g class="antenna">
+        <path d="M12 5.2V3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+        <circle class="antenna-tip" cx="12" cy="2.1" r="1.2" fill="currentColor"/>
+      </g>
+      <g class="body">
+        <rect x="5" y="5" width="14" height="12" rx="3.2"
+          fill="rgba(94,224,255,.06)" stroke="currentColor" stroke-width="1.2"/>
+        <rect x="7.5" y="7.4" width="9" height="6.4" rx="1.8"
+          fill="rgba(8,11,18,.6)" stroke="currentColor" stroke-width=".8"
+          stroke-opacity=".45"/>
+        <circle class="eye" cx="9.9" cy="10.4" r=".95" fill="currentColor"/>
+        <circle class="eye" cx="14.1" cy="10.4" r=".95" fill="currentColor"/>
+        <path d="M10.2 13.2h3.6" stroke="currentColor" stroke-width=".9"
+          stroke-linecap="round" stroke-opacity=".55"/>
+      </g>
+      <g class="arm arm-l">
+        <path d="M5 10.2v2.1" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+      </g>
+      <g class="arm arm-r">
+        <path d="M19 10.2v2.1" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+      </g>
+      <g class="legs">
+        <path d="M9 17v2.1M15 17v2.1" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+      </g>
+    </svg>`;
+  }
+
+  function renderAgents(agents, tasks) {
     const list = agents || [];
-    const key = JSON.stringify(list);
+    const settings = (state && state.settings) || {};
+    const frontMode = settings.front_mode === "relay" ? "只传达" : "自主";
+    const workMode = settings.work_mode === "autonomous" ? "自主" : "工作流";
+    const taskMap = new Map((tasks || []).map((task) => [task.task_id, task]));
+    const key = JSON.stringify({
+      agents: list,
+      front_mode: settings.front_mode || "autonomous",
+      work_mode: settings.work_mode || "workflow",
+      tasks: (tasks || []).map((task) => [task.task_id, task.description]),
+    });
     if (key === lastAgentsKey && els.agents.childElementCount) return;
     lastAgentsKey = key;
     els.agentsCount.textContent = `${list.length} 个`;
     els.agents.innerHTML = "";
+    if (!list.length) {
+      const empty = document.createElement("div");
+      empty.className = "empty";
+      empty.textContent = "还没有 Agent。";
+      els.agents.appendChild(empty);
+      return;
+    }
     list.forEach((agent) => {
-      const card = document.createElement("div");
-      card.className = "agent";
-      const top = document.createElement("div");
-      top.className = "agent-top";
+      const isFront = agent.agent_id === state.front_agent
+        || agent.role === "FRONT";
+      const working = agent.status === "WORKING"
+        || agent.status === "STOPPING";
+      const row = document.createElement("div");
+      row.className = "agent-row";
+
+      const avatar = document.createElement("span");
+      avatar.className = "agent-avatar";
+      avatar.innerHTML = robotMarkup(working, isFront);
       const dot = document.createElement("span");
       dot.className = `dot ${agent.status || ""}`;
+      avatar.appendChild(dot);
+      row.appendChild(avatar);
+
       const id = document.createElement("span");
       id.className = "agent-id";
       id.textContent = agent.agent_id;
-      const role = document.createElement("span");
-      role.className = "agent-role";
-      role.textContent = agent.role || "";
-      top.appendChild(dot);
-      top.appendChild(id);
-      top.appendChild(role);
-      card.appendChild(top);
-      const task = document.createElement("div");
+      row.appendChild(id);
+
+      const engine = document.createElement("span");
+      engine.className = "agent-engine";
+      const isPi = (settings.pi_work_agents || []).includes(agent.agent_id);
+      engine.textContent = isFront ? "FRONT" : (isPi ? "PI" : "SOLO");
+      row.appendChild(engine);
+
+      const mode = document.createElement("span");
+      mode.className = "agent-mode";
+      const tag = document.createElement("span");
+      if (isFront) {
+        tag.className = "tag front";
+        tag.textContent = `Front · ${frontMode}`;
+      } else {
+        tag.className = `tag ${workMode === "自主" ? "auto" : "flow"}`;
+        tag.textContent = `Work · ${workMode}`;
+      }
+      mode.appendChild(tag);
+      row.appendChild(mode);
+
+      const task = document.createElement("span");
       task.className = "agent-task";
-      task.textContent = agent.task_id
-        ? `task ${agent.task_id}`
-        : (agent.has_brain ? "IDLE · ready" : "no brain");
-      card.appendChild(task);
+      if (agent.task_id) {
+        const ref = taskMap.get(agent.task_id);
+        const desc = ref && ref.description
+          ? ` · ${ref.description.slice(0, 26)}`
+          : "";
+        task.textContent = `${agent.task_id}${desc}`;
+        task.title = ref && ref.description ? ref.description : agent.task_id;
+      } else {
+        task.textContent = agent.has_brain ? "IDLE · ready" : "no brain";
+      }
+      row.appendChild(task);
+
       const levels = Array.isArray(agent.thinking_levels)
         ? agent.thinking_levels : [];
-      if (levels.length && agent.role !== "FRONT") {
-        const row = document.createElement("div");
-        row.className = "agent-thinking";
+      if (levels.length && !isFront) {
+        const thinking = document.createElement("span");
+        thinking.className = "agent-thinking";
         const label = document.createElement("span");
         label.textContent = "思考";
         const select = document.createElement("select");
@@ -373,7 +455,7 @@
         select.title = "Prototype 固定 max；这里设置 Engineering / Evolution";
         const auto = document.createElement("option");
         auto.value = "auto";
-        auto.textContent = "Auto（阶段策略）";
+        auto.textContent = "Auto";
         auto.selected = !agent.thinking || agent.thinking === "auto";
         select.appendChild(auto);
         levels.forEach((level) => {
@@ -399,10 +481,11 @@
             select.disabled = false;
           }
         });
-        row.appendChild(label);
-        row.appendChild(select);
-        card.appendChild(row);
+        thinking.appendChild(label);
+        thinking.appendChild(select);
+        row.appendChild(thinking);
       }
+
       if (agent.question) {
         const bubble = document.createElement("button");
         bubble.type = "button";
@@ -414,9 +497,9 @@
           event.stopPropagation();
           openQuestion({ ...agent.question, task_id: agent.question.task_id || agent.task_id });
         });
-        card.appendChild(bubble);
+        row.appendChild(bubble);
       }
-      els.agents.appendChild(card);
+      els.agents.appendChild(row);
     });
   }
 
@@ -437,11 +520,9 @@
     list.forEach((task) => {
       const card = document.createElement("div");
       card.className = `task-card clickable ${task.status || ""}`;
-      card.title = "在新标签页打开执行明细";
+      card.title = "在新任务页打开执行明细";
       card.addEventListener("click", () => {
-        // 正在选择卡片文字时不跳转，否则拖选会在 mouseup 时被当成点击。
         if (hasActiveTextSelection()) return;
-        // 同一标签页打开：避免多个 AIEOS 页面并存，返回按钮也回到同一个入口。
         window.location.assign(
           `/task.html?task_id=${encodeURIComponent(task.task_id)}`,
         );
@@ -456,26 +537,48 @@
       status.textContent = task.status || "";
       top.appendChild(id);
       top.appendChild(status);
-      const label = document.createElement("div");
-      label.className = "task-prompt-label";
-      label.textContent = "Front → Work 提示词";
+      card.appendChild(top);
+
+      const modes = document.createElement("div");
+      modes.className = "task-modes";
+      const front = document.createElement("span");
+      front.className = "tag front";
+      front.textContent = task.front_mode === "relay"
+        ? "Front 只传达"
+        : (task.front_mode === "autonomous" ? "Front 自主" : "Front —");
+      modes.appendChild(front);
+      const work = document.createElement("span");
+      work.className = task.work_mode === "autonomous"
+        ? "tag auto"
+        : (task.work_mode === "workflow" ? "tag flow" : "tag");
+      work.textContent = task.work_mode === "autonomous"
+        ? "Work 自主"
+        : (task.work_mode === "workflow" ? "Work 工作流" : "Work 默认");
+      modes.appendChild(work);
+      const iteration = document.createElement("span");
+      iteration.className = "tag";
+      iteration.textContent = `迭代 ${task.iteration || 1}`;
+      modes.appendChild(iteration);
+      card.appendChild(modes);
+
       const desc = document.createElement("div");
       desc.className = "task-desc";
       desc.textContent = task.description || "";
+      card.appendChild(desc);
+
       const meta = document.createElement("div");
       meta.className = "task-meta";
       const leader = document.createElement("span");
-      leader.textContent = `执行 Agent: ${task.leader || "—"}`;
-      const members = document.createElement("span");
-      members.textContent = `参与者: ${(task.members || []).join(", ") || "—"}`;
-      const iteration = document.createElement("span");
-      iteration.textContent = `迭代 ${task.iteration || 1}`;
+      leader.textContent = `Agent ${task.leader || "—"}`;
       meta.appendChild(leader);
-      meta.appendChild(members);
-      meta.appendChild(iteration);
-      card.appendChild(top);
-      card.appendChild(label);
-      card.appendChild(desc);
+      const others = (task.members || []).filter(
+        (member) => member !== task.leader,
+      );
+      if (others.length) {
+        const members = document.createElement("span");
+        members.textContent = `成员 ${others.join(", ")}`;
+        meta.appendChild(members);
+      }
       card.appendChild(meta);
       els.tasks.appendChild(card);
     });
@@ -483,13 +586,20 @@
 
   function render() {
     if (!state) return;
-    els.frontBadge.textContent = `Front: ${state.front_agent || "—"}`;
+    const settings = state.settings || {};
+    const frontMode = settings.front_mode === "relay" ? "只传达" : "自主";
+    const workAuto = settings.work_mode !== "workflow";
+    els.frontBadge.textContent = `Front: ${state.front_agent || "—"} · ${frontMode}`;
+    els.frontBadge.classList.toggle("front-relay", frontMode === "只传达");
+    els.workModeBadge.textContent = `Work: ${workAuto ? "自主" : "工作流"}`;
+    els.workModeBadge.classList.toggle("work-auto", workAuto);
+    els.workModeBadge.classList.toggle("work-flow", !workAuto);
     els.runningBadge.textContent = `Running: ${state.running_jobs || 0}`;
     // 有选区时冻结列表重绘；用户点掉选区后，下一次轮询会补上最新数据。
     if (hasActiveTextSelection()) return;
     maybeQuestionSound(state.agents || []);
     renderMessages(state.messages || []);
-    renderAgents(state.agents);
+    renderAgents(state.agents, state.tasks);
     renderTasks(state.tasks);
   }
 

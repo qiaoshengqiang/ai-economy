@@ -1085,7 +1085,8 @@ def test_task_cards_mark_open_task_interrupted():
     task = SimpleNamespace(
         task_id="task_open", status="IN_PROGRESS", mode="SOLO",
         iteration=1, description="d", creator="agent_b",
-        participants=["agent_b"], updated_at="", is_open=True)
+        participants=["agent_b"], updated_at="", is_open=True,
+        acceptance={"front_mode": "relay", "work_mode": "autonomous"})
     runtime = SimpleNamespace(
         directory=_Directory(["agent_a", "agent_b"]),
         economy=SimpleNamespace(agent=lambda aid: SimpleNamespace(
@@ -1099,6 +1100,8 @@ def test_task_cards_mark_open_task_interrupted():
         controller.close()
 
     assert card["status"] == "INTERRUPTED"
+    assert card["front_mode"] == "relay"
+    assert card["work_mode"] == "autonomous"
 
 
 def test_controller_checkpoint_roundtrip(tmp_path):

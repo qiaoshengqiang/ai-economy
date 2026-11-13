@@ -1547,6 +1547,7 @@ class AIEOSController:
                     "work_profile": str(
                         getattr(decision, "work_profile", "") or "standard"),
                     "work_mode": str(self.work_mode),
+                    "front_mode": str(self.front_mode),
                 },
                 note=f"demand_run:aieos_{job.job_id}",
                 mode=TaskMode.SOLO,
@@ -2459,6 +2460,9 @@ class AIEOSController:
             status = task.status
             if task.is_open and task.task_id not in live:
                 status = "INTERRUPTED"
+            acceptance = getattr(task, "acceptance", None)
+            if not isinstance(acceptance, dict):
+                acceptance = {}
             cards.append({
                 "task_id": task.task_id,
                 "status": status,
@@ -2467,6 +2471,8 @@ class AIEOSController:
                 "description": (task.description or "")[:300],
                 "leader": task.creator,
                 "members": list(task.participants or []),
+                "front_mode": str(acceptance.get("front_mode") or ""),
+                "work_mode": str(acceptance.get("work_mode") or ""),
                 "updated_at": task.updated_at,
             })
         return cards

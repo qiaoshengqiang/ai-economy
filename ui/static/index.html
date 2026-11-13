@@ -13,7 +13,8 @@
       <div class="subtitle">Human ↔ Front Agent ↔ Solo Agent</div>
     </div>
     <div class="top-status">
-      <span class="pill" id="front-badge">Front: —</span>
+      <span class="pill front" id="front-badge" title="Front Agent 当前模式">Front: —</span>
+      <span class="pill work-auto" id="work-mode-badge" title="Worker 当前模式">Work: —</span>
       <span class="pill" id="running-badge">Running: 0</span>
       <button class="icon-btn" id="settings-btn" title="设置">⚙ 设置</button>
     </div>
@@ -42,7 +43,7 @@
           <h2>Agents</h2>
           <span class="muted" id="agents-count"></span>
         </div>
-        <div class="agent-grid" id="agents"></div>
+        <div class="agent-list" id="agents"></div>
       </section>
 
       <section class="panel">
