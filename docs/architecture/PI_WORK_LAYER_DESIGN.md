@@ -41,6 +41,10 @@ tasks/<task_id>/
     manifest.json
     pi-session/           ← Pi session，不进交付物
     pi-stderr.log
+    snapshot.git/         ← 任务私有快照仓库（派生）
+    snapshot.index
+    snapshot-ignore
+    snapshots.json
 ```
 
 - 磁盘是内容权威；
@@ -258,6 +262,34 @@ autonomous 单阶段自主模式
 
 自主模式不引入新的调度器、预算 gate 或验收器；它只是不再给 Agent
 注入工作流阶段提示。
+
+## 4.8 Task Snapshot（任务私有 Git 历史）
+
+Pi 仍然直接写 `workspace/`；AIEOS 在旁边维护一个**任务私有**的 Git 快照仓库：
+
+```text
+GIT_DIR      tasks/<task_id>/.aieos/snapshot.git
+GIT_WORK_TREE tasks/<task_id>/workspace
+```
+
+- 不在 `workspace/` 里创建 `.git`；
+- 不提交 AIEOS 主仓库，也不自动 merge 到主分支；
+- 每个快照是 shadow repo 里的一个 commit，记录
+  `tree / parent / label / phase / turn / files / bytes / skipped`；
+- 抓取时机：`baseline`、`phase:<name>:end`、`interrupted`、
+  `waiting_human`、`final`；
+- `manifest.json` 增加 `snapshot` 字段（`seq / commit / tree / label`）；
+- 默认忽略 `.aieos/`、`.git/`、`node_modules/`、`.venv/`、
+  `__pycache__/`、`.env`、`*.key`、`*.pem` 等；
+- 未跟踪文件超过 2MB 默认跳过；
+- 快照失败 fail-open：写 `.aieos/snapshot-error.log`，不阻断 Task。
+
+> 🔒 **Snapshot ≠ Task Workspace State**
+> 快照是 workspace 的派生物，只用于历史 / diff / restore；
+> 验收仍然看 workspace + manifest，不把快照当第二个状态源。
+
+恢复能力按 Human 显式操作设计（UI 后续接入），恢复前会自动抓
+`before-restore`，因此恢复本身可撤销。Front 暂不开放快照恢复。
 
 ## 5. 完成与 usage
 

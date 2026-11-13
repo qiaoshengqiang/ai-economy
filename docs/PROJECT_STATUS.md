@@ -4,7 +4,7 @@
 > **日期：2026-11-13**
 > **阶段：开发中 / 观察实验**
 > **协议版本：`1`**
-> **测试基线：`5536 passed, 2 skipped, 30 deselected`**
+> **测试基线：`5551 passed, 2 skipped, 30 deselected`**
 
 本文记录**当前真实可用能力、推荐工作方式、已知限制和版本变化**。
 架构的长期权威仍然是
@@ -276,6 +276,19 @@ task_text
 | Task 卡片模式快照 | `CURRENT`（新任务） |
 | 设置页：系统 / 常规 / Agent / Roles | `CURRENT` |
 
+### 7.4 Pi Task Snapshot
+
+| 能力 | 状态 |
+|---|---|
+| 任务私有 Git 快照仓库（`.aieos/snapshot.git`） | `CURRENT` |
+| baseline / phase end / interrupted / final 快照 | `CURRENT` |
+| `manifest.json` 记录 snapshot commit/tree | `CURRENT` |
+| diff / restore 核心 API | `CURRENT` |
+| UI 快照列表 / diff / 恢复入口 | 待接入 |
+
+快照是 workspace 的派生物，不是第二个状态源；不写 AIEOS 主仓库。
+详见 [`PI_WORK_LAYER_DESIGN.md`](architecture/PI_WORK_LAYER_DESIGN.md) §4.8。
+
 ---
 
 ## 8. 当前已知限制
@@ -331,7 +344,14 @@ Pi workflow 的 Evolution 阶段容易：
 - 旧任务创建时没有记录 Front 模式，会显示 `Front —`；
 - 不会用当前全局模式伪造历史。
 
-### 8.7 成本观察
+### 8.7 快照 UI 尚未接入
+
+- 快照已经在 Pi Work 中自动生成；
+- 目前可以通过 `git --git-dir=tasks/<id>/.aieos/snapshot.git log` 查看；
+- UI 还没有版本列表、diff 和恢复按钮；
+- 恢复目前只通过代码 API 调用，Front 不开放。
+
+### 8.8 成本观察
 
 Pi 自主任务仍然可能消耗较多 token：
 
@@ -350,6 +370,7 @@ Pi 自主任务仍然可能消耗较多 token：
 - 新增 Front `set_mode` 对话切换能力；
 - 新增 Web Search / Fetch（Front action + Pi CLI + 内部端点）；
 - 新增 UI 模式显示、紧凑 Agent 列表、机器人动画、工作中虚线边框、Front 回复计时；
+- 新增 Pi Task Snapshot：任务私有 Git 历史，不污染主仓库，支持 diff / restore；
 - 修复 Pi 超时被标成 FAILED、返工 session 复用、role 未持久化、`last_error` 不更新；
 - DeepSeek context 默认 600K，单次输出上限 32K；
 - Team 仍然暂停，非 Pi Solo 仍然只有工作流式循环。
@@ -414,7 +435,7 @@ Team 协作
 当前基线：
 
 ```text
-5536 passed, 2 skipped, 30 deselected
+5551 passed, 2 skipped, 30 deselected
 ```
 
 启动说明见 [`../START_AIEOS.md`](../START_AIEOS.md)。

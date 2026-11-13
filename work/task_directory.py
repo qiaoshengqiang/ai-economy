@@ -124,12 +124,18 @@ class TaskDirectory:
             })
         return entries
 
-    def write_manifest(self) -> List[Dict[str, Any]]:
+    def write_manifest(
+        self,
+        snapshot: Optional[Dict[str, Any]] = None,
+    ) -> List[Dict[str, Any]]:
         entries = self.manifest()
-        self.write_json("manifest.json", {
+        payload: Dict[str, Any] = {
             "task_id": self.task_id,
             "files": entries,
-        })
+        }
+        if snapshot:
+            payload["snapshot"] = dict(snapshot)
+        self.write_json("manifest.json", payload)
         return entries
 
 

@@ -228,6 +228,17 @@ def test_pi_work_runtime_completes_and_ingests_memory(db, monkeypatch, tmp_path)
     assert [item["phase"] for item in rounds] == [
         "prototype", "engineering", "evolution"]
     assert (directory.aieos / "work_state.json").exists()
+    if runner.snapshots.enabled:
+        assert [item.label for item in runner.snapshots.list()] == [
+            "baseline",
+            "phase:prototype:end",
+            "phase:engineering:end",
+            "phase:evolution:end",
+            "final",
+        ]
+        manifest_payload = json.loads(
+            (directory.aieos / "manifest.json").read_text("utf-8"))
+        assert manifest_payload["snapshot"]["label"] == "final"
     state_path = directory.aieos / "work_state.json"
     state = json.loads(state_path.read_text("utf-8"))
     assert state["session_id"] == "T-PI-WORK"
@@ -255,6 +266,15 @@ def test_pi_work_runtime_completes_and_ingests_memory(db, monkeypatch, tmp_path)
         "prototype", "")
     assert "检查核心交互" in role_runner._phase_prompt(
         "engineering", "")
+
+    class _BoomSnapshots:
+        def capture(self, *args, **kwargs):
+            raise RuntimeError("snapshot boom")
+
+    runner.snapshots = _BoomSnapshots()
+    assert runner._capture_snapshot("boom") is None
+    assert "snapshot boom" in (
+        directory.aieos / "snapshot-error.log").read_text("utf-8")
 
     pi_agent_dir = runner._write_pi_models("http://127.0.0.1:1", "m")
     model_cfg = (pi_agent_dir / "models.json").read_text("utf-8")

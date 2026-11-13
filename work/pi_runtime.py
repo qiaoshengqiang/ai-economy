@@ -34,6 +34,7 @@ from work.lifecycle import WorkLifecycle
 from work.pi_memory import PiMemoryBridge
 from work.pi_rpc import PiRpcClient, PiRunResult
 from work.roles import WorkResult
+from work.task_snapshot import SnapshotRecord, TaskSnapshotStore
 from work.worker_roles import render_role_prompt
 from work.task_directory import TaskDirectory
 
@@ -118,6 +119,9 @@ class PiWorkRuntime:
             task=task,
             task_workspace=task_directory.workspace,
         )
+        # Task 私有快照仓库：不写 AIEOS 主仓库，也不在 workspace 里放 .git。
+        self.snapshots = TaskSnapshotStore(task_directory)
+        self._snapshot_error = ""
 
     # ------------------------------------------------------------
     def _agent(self) -> Any:
@@ -822,6 +826,22 @@ Task Workspace。本 Work 任务以 Task Workspace 作为唯一协作面。
         text = self._last_assistant_text(events)
         return "PROTOTYPE_READY" in text
 
+    def _capture_snapshot(
+        self, label: str, *, phase: str = "", turn: int = 0,
+    ) -> Optional[SnapshotRecord]:
+        """抓快照；失败只记日志，不打断 Task。"""
+        try:
+            return self.snapshots.capture(
+                label, phase=phase, turn=turn)
+        except Exception as exc:                              # noqa: BLE001
+            self._snapshot_error = f"{type(exc).__name__}: {exc}"
+            try:
+                self.task_directory.write_meta(
+                    "snapshot-error.log", self._snapshot_error + "\n")
+            except Exception:                                 # noqa: BLE001
+                pass
+            return None
+
     # ------------------------------------------------------------
     def run(self) -> WorkResult:
         task = self.task
@@ -872,6 +892,16 @@ Task Workspace。本 Work 任务以 Task Workspace 作为唯一协作面。
             self._resume_reason = resume_reason
             self._resumed = resumed
             self._write_task_doc()
+            try:
+                has_snapshots = bool(self.snapshots.list())
+            except Exception:                                 # noqa: BLE001
+                has_snapshots = False
+            if has_snapshots:
+                self._capture_snapshot(
+                    "resume",
+                    phase=str(self._work_state.get("phase") or ""))
+            else:
+                self._capture_snapshot("baseline")
             all_events: List[Dict[str, Any]] = []
             phase_runs: List[Dict[str, Any]] = []
             all_stderr: List[str] = []
@@ -959,6 +989,10 @@ Task Workspace。本 Work 任务以 Task Workspace 作为唯一协作面。
                         self._write_work_state(
                             phase, status="stopped", thinking=thinking,
                             error=error_text)
+                        self._capture_snapshot(
+                            "interrupted", phase=phase,
+                            turn=sum(
+                                item["turns"] for item in phase_runs))
                         result.error = error_text
                         result.status = task.status
                         return result
@@ -966,6 +1000,10 @@ Task Workspace。本 Work 任务以 Task Workspace 作为唯一协作面。
                         self._write_work_state(
                             phase, status="failed", thinking=thinking,
                             error=run.error)
+                        self._capture_snapshot(
+                            "interrupted", phase=phase,
+                            turn=sum(
+                                item["turns"] for item in phase_runs))
                         result.error = run.error
                         result.status = task.status
                         return result
@@ -974,6 +1012,10 @@ Task Workspace。本 Work 任务以 Task Workspace 作为唯一协作面。
                         self._write_work_state(
                             phase, status="waiting_human",
                             thinking=thinking)
+                        self._capture_snapshot(
+                            "waiting_human", phase=phase,
+                            turn=sum(
+                                item["turns"] for item in phase_runs))
                         result.waiting_human = True
                         result.question = question
                         result.summary = str(question.get("question") or "")
@@ -1000,6 +1042,10 @@ Task Workspace。本 Work 任务以 Task Workspace 作为唯一协作面。
                             self._write_work_state(
                                 phase, status="failed", thinking=thinking,
                                 error=error_text)
+                            self._capture_snapshot(
+                                "phase:prototype:failed", phase=phase,
+                                turn=sum(
+                                    item["turns"] for item in phase_runs))
                             result.error = error_text
                             result.status = task.status
                             return result
@@ -1010,6 +1056,10 @@ Task Workspace。本 Work 任务以 Task Workspace 作为唯一协作面。
                             "ENGINEERING.md", run.events, "工程验证记录")
                     self._write_work_state(
                         phase, status="completed", thinking=thinking)
+                    self._capture_snapshot(
+                        f"phase:{phase}:end", phase=phase,
+                        turn=sum(
+                            item["turns"] for item in phase_runs))
             finally:
                 if proxy is not None:
                     proxy.stop()
@@ -1025,7 +1075,10 @@ Task Workspace。本 Work 任务以 Task Workspace 作为唯一协作面。
             self.task_directory.write_json(
                 "work_state.json", self._work_state)
             self._write_task_doc()
-            manifest = self.task_directory.write_manifest()
+            snapshot = self._capture_snapshot("final")
+            snapshot_info = snapshot.to_dict() if snapshot else None
+            manifest = self.task_directory.write_manifest(
+                snapshot=snapshot_info)
             if all_stderr:
                 self.task_directory.write_meta(
                     "pi-stderr.log", "\n".join(all_stderr))
@@ -1061,6 +1114,7 @@ Task Workspace。本 Work 任务以 Task Workspace 作为唯一协作面。
                 "summary": summary,
                 "files": manifest,
                 "memory": memory_result,
+                "snapshot": snapshot_info,
             })
 
             self.lifecycle.complete_solo(
@@ -1073,12 +1127,16 @@ Task Workspace。本 Work 任务以 Task Workspace 作为唯一协作面。
                         "engine": "pi",
                         "manifest": manifest,
                         "memory": memory_result,
+                        "snapshot": snapshot_info,
                     },
                 ),
             )
             result.status = task.status
             return result
         except Exception as exc:                              # noqa: BLE001
+            self._capture_snapshot(
+                "interrupted",
+                phase=str(self._work_state.get("phase") or ""))
             result.error = f"{type(exc).__name__}: {exc}"
             result.status = task.status
             return result
