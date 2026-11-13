@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AIEOS · 布局预览</title>
+<style>
+  :root {
+    --bg: #080b12;
+    --panel: #101722;
+    --panel-2: #0c121b;
+    --line: #233044;
+    --text: #e6edf7;
+    --muted: #8b9bb0;
+    --accent: #5ee0ff;
+    --accent-2: #9f8cff;
+    --good: #50d890;
+    --warn: #ffc857;
+    --bad: #ff6b7a;
+    --front: #5ee0ff;
+    --work-auto: #50d890;
+    --work-flow: #ffc857;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
+    color: var(--text);
+    background:
+      radial-gradient(900px 500px at 15% 0%, rgba(55,115,190,.18), transparent 60%),
+      radial-gradient(700px 500px at 95% 15%, rgba(126,87,255,.12), transparent 60%),
+      var(--bg);
+    font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+          "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    user-select: text;
+  }
+  button, textarea, input, select { font: inherit; }
+  button { cursor: pointer; }
+
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex: 0 0 auto;
+    padding: 13px 22px;
+    border-bottom: 1px solid var(--line);
+    background: rgba(8,11,18,.82);
+    backdrop-filter: blur(12px);
+    z-index: 5;
+  }
+  .brand { display: flex; align-items: baseline; gap: 14px; min-width: 0; }
+  .logo { font-size: 22px; letter-spacing: .16em; font-weight: 700; color: var(--accent); }
+  .subtitle { color: var(--muted); font-size: 12px; letter-spacing: .06em; white-space: nowrap; }
+  .top-status { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
+  .preview-tag {
+    font-size: 10px; letter-spacing: .1em; color: var(--muted);
+    border: 1px dashed var(--line); border-radius: 999px; padding: 4px 9px;
+    white-space: nowrap;
+  }
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    border: 1px solid var(--line); background: var(--panel-2);
+    color: var(--muted); padding: 5px 10px; border-radius: 999px;
+    font-size: 12px; white-space: nowrap;
+  }
+  .pill b { color: var(--text); font-weight: 600; }
+  .pill.front { border-color: rgba(94,224,255,.35); }
+  .pill.front b { color: var(--front); }
+  .pill.work-auto { border-color: rgba(80,216,144,.35); }
+  .pill.work-auto b { color: var(--work-auto); }
+  .pill.work-flow { border-color: rgba(255,200,87,.35); }
+  .pill.work-flow b { color: var(--work-flow); }
+  .pill.running { color: var(--warn); }
+  .icon-btn {
+    border: 1px solid var(--line); background: var(--panel-2); color: var(--muted);
+    border-radius: 9px; padding: 6px 10px; font-size: 12px;
+  }
+  .icon-btn:hover { filter: brightness(1.15); }
+
+  .layout {
+    display: grid;
+    flex: 1 1 auto;
+    grid-template-columns: minmax(0, 1.55fr) minmax(420px, .95fr);
+    grid-template-rows: minmax(0, 1fr);
+    gap: 16px;
+    width: 100%;
+    max-width: 1800px;
+    min-height: 0;
+    margin: 0 auto;
+    padding: 16px 22px;
+  }
+
+  .panel {
+    background: linear-gradient(180deg, rgba(18,27,40,.92), rgba(10,15,23,.94));
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    overflow: hidden;
+    box-shadow: 0 18px 50px rgba(0,0,0,.22);
+    min-height: 0;
+  }
+  .panel-head {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; padding: 13px 15px; border-bottom: 1px solid var(--line);
+  }
+  .panel-head h2 { margin: 0; font-size: 14px; letter-spacing: .04em; font-weight: 600; }
+  .muted { color: var(--muted); font-size: 12px; }
+  .hint { color: var(--muted); font-size: 11px; }
+
+  .chat-panel { display: flex; flex-direction: column; }
+  .messages {
+    flex: 1 1 auto; min-height: 0; overflow: auto;
+    padding: 16px 18px; display: flex; flex-direction: column; gap: 12px;
+  }
+  .msg { max-width: 82%; display: flex; flex-direction: column; gap: 4px; }
+  .msg.human { align-self: flex-end; align-items: flex-end; }
+  .msg .who { font-size: 10px; letter-spacing: .08em; color: var(--muted); text-transform: uppercase; }
+  .bubble {
+    padding: 9px 12px; border-radius: 13px; border: 1px solid var(--line);
+    background: var(--panel-2); color: #dbe6f3; font-size: 13px; line-height: 1.65;
+  }
+  .msg.human .bubble {
+    background: rgba(94,224,255,.10); border-color: rgba(94,224,255,.28);
+  }
+  .msg.system .bubble {
+    background: rgba(255,200,87,.07); border-color: rgba(255,200,87,.22);
+    color: #e9ddc4; font-size: 12px;
+  }
+  .msg.system { align-self: center; max-width: 92%; }
+  .bubble code {
+    font-family: ui-monospace, Menlo, monospace; font-size: 11px;
+    background: rgba(94,224,255,.08); color: var(--accent);
+    padding: 1px 5px; border-radius: 5px; word-break: break-all;
+  }
+  .composer {
+    flex: 0 0 auto; border-top: 1px solid var(--line); padding: 12px 14px;
+    background: rgba(8,11,18,.45);
+  }
+  .composer textarea {
+    width: 100%; resize: none; min-height: 68px;
+    border: 1px solid var(--line); border-radius: 11px;
+    background: var(--panel-2); color: var(--text); padding: 10px 11px;
+    outline: none;
+  }
+  .composer textarea::placeholder { color: #62748b; }
+  .composer-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 9px; }
+  .primary {
+    border: 1px solid rgba(94,224,255,.55);
+    background: linear-gradient(180deg, rgba(94,224,255,.28), rgba(94,224,255,.12));
+    color: var(--text); border-radius: 10px; padding: 8px 16px; font-weight: 600;
+  }
+
+  .side { display: flex; flex-direction: column; gap: 16px; min-height: 0; }
+  .agents-panel { flex: 0 0 auto; }
+  .tasks-panel { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+
+  .agent-grid {
+    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 9px; padding: 11px;
+  }
+  .agent {
+    border: 1px solid var(--line); border-radius: 12px; padding: 9px 10px;
+    background: var(--panel-2); min-width: 0;
+  }
+  .agent-top { display: flex; align-items: center; gap: 7px; min-width: 0; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: 0 0 auto; }
+  .dot.IDLE { background: var(--good); box-shadow: 0 0 10px rgba(80,216,144,.55); }
+  .dot.WORKING { background: var(--warn); box-shadow: 0 0 10px rgba(255,200,87,.5); }
+  .agent-id { font-weight: 600; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .agent-role {
+    margin-left: auto; font-size: 9px; letter-spacing: .08em;
+    color: var(--accent); border: 1px solid rgba(94,224,255,.25);
+    border-radius: 999px; padding: 1px 6px; white-space: nowrap;
+  }
+  .agent-mode { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px; }
+  .tag {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 10px; padding: 1px 6px; border-radius: 999px;
+    border: 1px solid var(--line); color: var(--muted);
+  }
+  .tag.front { color: var(--front); border-color: rgba(94,224,255,.3); }
+  .tag.auto { color: var(--work-auto); border-color: rgba(80,216,144,.3); }
+  .tag.flow { color: var(--work-flow); border-color: rgba(255,200,87,.3); }
+  .agent-task {
+    margin-top: 5px; font-size: 10.5px; color: var(--muted);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .agent-thinking {
+    margin-top: 6px; display: flex; align-items: center; gap: 6px;
+    font-size: 10px; color: var(--muted);
+  }
+  .agent-thinking select {
+    margin-left: auto; border: 1px solid var(--line); border-radius: 6px;
+    background: #0a111a; color: #cbd6e5; font-size: 10px; padding: 1px 4px;
+  }
+
+  .task-list {
+    flex: 1 1 auto; min-height: 0; overflow: auto; padding: 11px;
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 9px; align-content: start;
+  }
+  .task-card {
+    border: 1px solid var(--line); border-left: 3px solid var(--accent);
+    border-radius: 12px; padding: 10px 11px; background: var(--panel-2);
+    min-width: 0;
+  }
+  .task-card.COMPLETED { border-left-color: var(--good); }
+  .task-card.IN_PROGRESS, .task-card.WORKING { border-left-color: var(--warn); }
+  .task-card.FAILED { border-left-color: var(--bad); }
+  .task-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .task-id { font-size: 11.5px; color: var(--accent); font-family: ui-monospace, Menlo, monospace; }
+  .task-status { font-size: 9.5px; letter-spacing: .08em; color: var(--muted); }
+  .task-modes { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+  .task-desc {
+    margin: 6px 0 7px; font-size: 11.5px; line-height: 1.55; color: #cbd6e5;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    overflow: hidden; white-space: pre-wrap;
+  }
+  .task-meta { display: flex; flex-wrap: wrap; gap: 7px; font-size: 10.5px; color: var(--muted); }
+  .task-meta .sep { opacity: .35; }
+  .empty { color: var(--muted); font-size: 12px; padding: 12px; }
+
+  @media (min-width: 1600px) {
+    .layout { grid-template-columns: minmax(0, 1.6fr) minmax(520px, .9fr); }
+    .agent-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  }
+  @media (max-width: 1100px) {
+    body { overflow-y: auto; height: auto; min-height: 100dvh; }
+    .layout { display: flex; flex-direction: column; overflow: visible; }
+    .chat-panel { flex: 0 0 auto; height: min(72vh, 760px); min-height: 460px; }
+    .side { flex: 0 0 auto; height: auto; }
+    .tasks-panel { flex: 0 0 auto; }
+    .task-list { max-height: none; }
+  }
+  @media (max-width: 700px) {
+    .topbar { align-items: flex-start; flex-direction: column; padding: 12px 14px; }
+    .subtitle, .preview-tag { display: none; }
+    .layout { padding: 12px 14px; gap: 12px; }
+    .chat-panel { height: 70vh; min-height: 420px; }
+    .agent-grid { grid-template-columns: 1fr 1fr; }
+    .task-list { grid-template-columns: 1fr; }
+    .task-desc { -webkit-line-clamp: 3; }
+    .msg { max-width: 94%; }
+  }
+</style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">AIEOS</div>
+      <div class="subtitle">Human ↔ Front Agent ↔ Solo Agent</div>
+    </div>
+    <div class="top-status">
+      <span class="preview-tag">静态布局预览</span>
+      <span class="pill front">Front <b>agent_a</b> · <b>自主</b></span>
+      <span class="pill work-auto">Work <b>自主</b></span>
+      <span class="pill running">Running <b>2</b></span>
+      <button class="icon-btn">⚙ 设置</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="panel chat-panel">
+      <div class="panel-head">
+        <h2>与 Front 对话</h2>
+        <span class="hint">Ctrl/Cmd + Enter 提交</span>
+      </div>
+      <div class="messages">
+        <div class="msg human">
+          <span class="who">Human</span>
+          <div class="bubble">做一个简单的打飞机游戏</div>
+        </div>
+        <div class="msg">
+          <span class="who">Front Agent</span>
+          <div class="bubble">好，我把这个打飞机游戏交给 agent_b 来做，做成可直接打开的多文件网页，并做真实浏览器验证。</div>
+        </div>
+        <div class="msg system">
+          <div class="bubble">Task <code>task_7c077f68</code> 已创建 · Work 自主模式 · Agent agent_b</div>
+        </div>
+        <div class="msg human">
+          <span class="who">Human</span>
+          <div class="bubble">游戏目录在哪，你发我下</div>
+        </div>
+        <div class="msg">
+          <span class="who">Front Agent</span>
+          <div class="bubble">
+            <code>/Users/.../tasks/task_7c077f68/workspace</code>
+          </div>
+        </div>
+        <div class="msg human">
+          <span class="who">Human</span>
+          <div class="bubble">以后 Front 用只传达模式，Worker 用自主模式。</div>
+        </div>
+        <div class="msg system">
+          <div class="bubble">已切换：Front 模式 → relay；Work 模式 → autonomous。对新任务生效。</div>
+        </div>
+      </div>
+      <div class="composer">
+        <textarea rows="3" placeholder="告诉 Front Agent 你想做什么，例如：做一个简单的打飞机游戏……"></textarea>
+        <div class="composer-actions">
+          <span class="muted">当前任务使用创建时的模式；顶部显示的是全局默认。</span>
+          <button class="primary">提交</button>
+        </div>
+      </div>
+    </section>
+
+    <aside class="side">
+      <section class="panel agents-panel">
+        <div class="panel-head">
+          <h2>Agents</h2>
+          <span class="muted">4 个</span>
+        </div>
+        <div class="agent-grid">
+          <div class="agent">
+            <div class="agent-top">
+              <span class="dot IDLE"></span>
+              <span class="agent-id">agent_a</span>
+              <span class="agent-role">FRONT</span>
+            </div>
+            <div class="agent-mode">
+              <span class="tag front">Front 模式 · 自主</span>
+            </div>
+            <div class="agent-task">IDLE · ready</div>
+          </div>
+          <div class="agent">
+            <div class="agent-top">
+              <span class="dot WORKING"></span>
+              <span class="agent-id">agent_b</span>
+              <span class="agent-role">PI</span>
+            </div>
+            <div class="agent-mode">
+              <span class="tag auto">Work · 自主</span>
+            </div>
+            <div class="agent-task">task_7c077f68 · 打飞机游戏</div>
+            <div class="agent-thinking">
+              <span>思考</span>
+              <select><option>max</option></select>
+            </div>
+          </div>
+          <div class="agent">
+            <div class="agent-top">
+              <span class="dot IDLE"></span>
+              <span class="agent-id">agent_c</span>
+              <span class="agent-role">SOLO</span>
+            </div>
+            <div class="agent-mode">
+              <span class="tag flow">Work · 工作流</span>
+            </div>
+            <div class="agent-task">IDLE · ready</div>
+          </div>
+          <div class="agent">
+            <div class="agent-top">
+              <span class="dot WORKING"></span>
+              <span class="agent-id">agent_d</span>
+              <span class="agent-role">PI</span>
+            </div>
+            <div class="agent-mode">
+              <span class="tag auto">Work · 自主</span>
+            </div>
+            <div class="agent-task">task_03478d2b · 阅读页</div>
+            <div class="agent-thinking">
+              <span>思考</span>
+              <select><option>high</option></select>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel tasks-panel">
+        <div class="panel-head">
+          <h2>Task 卡片</h2>
+          <span class="muted">6 个</span>
+        </div>
+        <div class="task-list">
+          <article class="task-card IN_PROGRESS">
+            <div class="task-top">
+              <span class="task-id">task_7c077f68</span>
+              <span class="task-status">IN_PROGRESS</span>
+            </div>
+            <div class="task-modes">
+              <span class="tag front">Front 自主</span>
+              <span class="tag auto">Work 自主</span>
+              <span class="tag">迭代 1</span>
+            </div>
+            <div class="task-desc">做一个简单可玩的打飞机（纵版射击）网页小游戏，交付可直接双击打开运行的多文件网页项目。</div>
+            <div class="task-meta">
+              <span>agent_b</span><span class="sep">·</span>
+              <span>77 轮</span><span class="sep">·</span>
+              <span>106.6 AIC</span>
+            </div>
+          </article>
+
+          <article class="task-card COMPLETED">
+            <div class="task-top">
+              <span class="task-id">task_03478d2b</span>
+              <span class="task-status">COMPLETED</span>
+            </div>
+            <div class="task-modes">
+              <span class="tag front">Front 自主</span>
+              <span class="tag flow">Work 工作流</span>
+              <span class="tag">迭代 1</span>
+            </div>
+            <div class="task-desc">做一个温馨风格的网页，主体是一篇文章（阅读页），分两阶段推进并中途向人类索取文章内容。</div>
+            <div class="task-meta">
+              <span>agent_b</span><span class="sep">·</span>
+              <span>137 轮</span><span class="sep">·</span>
+              <span>182.2 AIC</span>
+            </div>
+          </article>
+
+          <article class="task-card COMPLETED">
+            <div class="task-top">
+              <span class="task-id">task_74e60290</span>
+              <span class="task-status">COMPLETED</span>
+            </div>
+            <div class="task-modes">
+              <span class="tag front">Front 自主</span>
+              <span class="tag flow">Work 工作流</span>
+              <span class="tag">迭代 2</span>
+            </div>
+            <div class="task-desc">用 three.js 做一款可玩的网页赛车游戏：赛博朋克城市，街道、高架、地下隧道等路段。</div>
+            <div class="task-meta">
+              <span>agent_b</span><span class="sep">·</span>
+              <span>331 轮</span><span class="sep">·</span>
+              <span>393.1 AIC</span>
+            </div>
+          </article>
+
+          <article class="task-card COMPLETED">
+            <div class="task-top">
+              <span class="task-id">task_a7451095</span>
+              <span class="task-status">COMPLETED</span>
+            </div>
+            <div class="task-modes">
+              <span class="tag front">Front 只传达</span>
+              <span class="tag auto">Work 自主</span>
+              <span class="tag">迭代 2</span>
+            </div>
+            <div class="task-desc">把 fetch.md 标题改成全大写，其他内容不变。</div>
+            <div class="task-meta">
+              <span>agent_b</span><span class="sep">·</span>
+              <span>5 轮</span><span class="sep">·</span>
+              <span>2.4 AIC</span>
+            </div>
+          </article>
+
+          <article class="task-card COMPLETED">
+            <div class="task-top">
+              <span class="task-id">task_99935538</span>
+              <span class="task-status">COMPLETED</span>
+            </div>
+            <div class="task-modes">
+              <span class="tag front">Front 自主</span>
+              <span class="tag auto">Work 自主</span>
+              <span class="tag">迭代 1</span>
+            </div>
+            <div class="task-desc">查 DeepSeek Search API 每 1000 次请求的价格，写入 search_price.md。</div>
+            <div class="task-meta">
+              <span>agent_b</span><span class="sep">·</span>
+              <span>8 轮</span><span class="sep">·</span>
+              <span>1.2 AIC</span>
+            </div>
+          </article>
+
+          <article class="task-card FAILED">
+            <div class="task-top">
+              <span class="task-id">task_d219bde7</span>
+              <span class="task-status">FAILED</span>
+            </div>
+            <div class="task-modes">
+              <span class="tag front">Front 自主</span>
+              <span class="tag flow">Work 工作流</span>
+              <span class="tag">迭代 1</span>
+            </div>
+            <div class="task-desc">写一个模块化贪吃蛇网页游戏，要求蛇不是简单方块，而是有特点的蛇的形象。</div>
+            <div class="task-meta">
+              <span>agent_d</span><span class="sep">·</span>
+              <span>—</span><span class="sep">·</span>
+              <span>—</span>
+            </div>
+          </article>
+        </div>
+      </section>
+    </aside>
+  </main>
+</body>
+</html>
