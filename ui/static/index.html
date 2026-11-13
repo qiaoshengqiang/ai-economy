@@ -34,20 +34,25 @@
       </div>
       <div class="messages" id="messages"></div>
       <div class="composer">
-        <div class="task-setup">
-          <div class="commit-bar">
-            <span class="commit-label">工作目录</span>
-            <input id="workdir-input" type="text"
-              placeholder="留空 = 使用 AIEOS Task Workspace" />
-            <button type="button" class="icon-btn" id="workdir-browse">选择目录</button>
-            <span id="workdir-status" class="muted">Task Workspace</span>
-          </div>
-        </div>
         <textarea id="prompt" rows="3"
           placeholder="告诉 Front Agent 你想做什么，例如：做一个简单的打飞机游戏……"></textarea>
         <div class="composer-actions">
           <span class="muted" id="composer-hint">提交后 Front 会判断：直接回复，或交给一个空闲 Agent 独立完成。</span>
-          <button class="primary" id="submit-btn">提交</button>
+          <div class="composer-targets">
+            <button type="button" class="target-chip" id="workspace-chip"
+              title="AIEOS Task Workspace">
+              <span class="chip-icon">▰</span>
+              <span class="chip-name" id="workspace-name">Task Workspace</span>
+              <span class="chip-caret">▾</span>
+            </button>
+            <button class="primary" id="submit-btn">提交</button>
+            <div class="workspace-menu" id="workspace-menu" hidden>
+              <div class="menu-path" id="workspace-path">AIEOS Task Workspace</div>
+              <button type="button" id="workspace-change">更换工作目录…</button>
+              <button type="button" id="workspace-use-task">使用 Task Workspace</button>
+              <div class="menu-note">只影响新任务；运行中的任务保持创建时的目录。</div>
+            </div>
+          </div>
         </div>
       </div>
     </section>

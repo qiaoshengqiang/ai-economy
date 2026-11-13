@@ -1037,3 +1037,81 @@ button { cursor: pointer; }
 #workdir-status.ok { color: #8ce6b0; }
 #workdir-status.warn { color: #f0d69a; }
 #workdir-status.error { color: #ff9b9b; }
+
+/* ============================================================
+   任务输入区的目标选择 chip
+   ============================================================ */
+.composer-targets {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  flex-wrap: wrap;
+  position: relative;
+}
+.target-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 230px;
+  min-width: 0;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-2);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 12px;
+}
+.target-chip:hover { border-color: rgba(94, 224, 255, .45); }
+.target-chip.error { border-color: rgba(255, 107, 122, .55); }
+.target-chip .chip-icon { color: #5ee0ff; font-size: 12px; flex: 0 0 auto; }
+.target-chip .chip-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.target-chip .chip-caret { color: var(--muted); font-size: 10px; }
+.workspace-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  width: min(360px, 86vw);
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #0f1722;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, .45);
+  z-index: 20;
+}
+.workspace-menu[hidden] { display: none !important; }
+.workspace-menu .menu-path {
+  font: 11px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--muted);
+  word-break: break-all;
+  padding: 4px 6px 8px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 6px;
+}
+.workspace-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  border-radius: 8px;
+  padding: 8px 9px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 12px;
+}
+.workspace-menu button:hover { background: rgba(94, 224, 255, .08); }
+.workspace-menu .menu-note {
+  padding: 7px 8px 2px;
+  color: var(--muted);
+  font-size: 11px;
+}
+@media (max-width: 700px) {
+  .target-chip { max-width: 150px; }
+}

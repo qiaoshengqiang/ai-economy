@@ -319,9 +319,20 @@ GET  /api/health
 
 > **UI 是入口，不是新的执行框架。**
 
-### 产物仓库
+### 工作目录 chip / 产物仓库
 
-任务输入区**不显示**产物仓库选择。任务输入区只保留「工作目录」。
+任务输入区只保留一个工作目录 chip：
+
+```text
+[▰ project-demo ▾] [提交]
+```
+
+- 只显示路径最后一级目录；
+- 悬停显示完整路径；
+- 点击打开菜单：更换工作目录 / 使用 Task Workspace；
+- 留空时显示 `Task Workspace`。
+
+任务输入区**不显示**产物仓库选择。
 产物仓库默认值来自 Settings 的 `commit_output_repo`：
 
 - Task Workspace 任务完成后，Output Commit 使用该默认仓库；

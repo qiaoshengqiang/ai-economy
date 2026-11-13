@@ -12,9 +12,12 @@
     messages: $("messages"),
     prompt: $("prompt"),
     submit: $("submit-btn"),
-    workdirInput: $("workdir-input"),
-    workdirBrowse: $("workdir-browse"),
-    workdirStatus: $("workdir-status"),
+    workspaceChip: $("workspace-chip"),
+    workspaceName: $("workspace-name"),
+    workspaceMenu: $("workspace-menu"),
+    workspacePath: $("workspace-path"),
+    workspaceChange: $("workspace-change"),
+    workspaceUseTask: $("workspace-use-task"),
     repoPickerModal: $("repo-picker-modal"),
     repoPickerTitle: $("repo-picker-title"),
     repoPickerPath: $("repo-picker-path"),
@@ -57,7 +60,7 @@
   let pendingFront = null;
   let timingTimer = 0;
   let timingDoneTimer = 0;
-  let workdirInfo = null;
+  let workdirPath = "";
   let repoPickerCurrent = "";
   let repoPickerParent = "";
 
@@ -329,35 +332,45 @@
     return data;
   }
 
-  function setWorkdirStatus(text, kind = "") {
-    els.workdirStatus.textContent = text || "";
-    els.workdirStatus.classList.toggle("ok", kind === "ok");
-    els.workdirStatus.classList.toggle("warn", kind === "warn");
-    els.workdirStatus.classList.toggle("error", kind === "error");
-  }
-
-  function renderWorkdirInfo(info) {
-    if (!info || !info.path) {
-      setWorkdirStatus("Task Workspace", "ok");
+  function renderWorkspace(path, info = null) {
+    const value = String(path || "").trim();
+    if (!value) {
+      els.workspaceName.textContent = "Task Workspace";
+      els.workspacePath.textContent = "AIEOS Task Workspace";
+      els.workspaceChip.title = "AIEOS Task Workspace";
+      els.workspaceChip.classList.remove("error");
       return;
     }
-    if (info.is_dir) {
-      setWorkdirStatus(`项目目录 · ${info.path}`, "ok");
-    } else {
-      setWorkdirStatus(
-        `${info.error || "目录不可用"} · ${info.path}`, "error");
-    }
+    const parts = value.replace(/\/+$/, "").split("/");
+    els.workspaceName.textContent = parts[parts.length - 1] || value;
+    els.workspacePath.textContent = info && !info.is_dir
+      ? `${value}\n${info.error || "目录不可用"}`
+      : value;
+    els.workspaceChip.title = value;
+    els.workspaceChip.classList.toggle(
+      "error", !!(info && !info.is_dir));
+  }
+
+  function setWorkdir(path, info = null) {
+    workdirPath = String(path || "").trim();
+    if (workdirPath) localStorage.setItem("aieos.workdir", workdirPath);
+    else localStorage.removeItem("aieos.workdir");
+    renderWorkspace(workdirPath, info);
   }
 
   async function validateWorkdir(path) {
+    const value = String(path || "").trim();
+    if (!value) {
+      setWorkdir("");
+      return { path: "", is_dir: true, error: "" };
+    }
     try {
       const info = await api(
-        `/api/workdir?path=${encodeURIComponent(path || "")}`);
-      workdirInfo = info;
-      renderWorkdirInfo(info);
+        `/api/workdir?path=${encodeURIComponent(value)}`);
+      setWorkdir(value, info);
       return info;
     } catch (error) {
-      setWorkdirStatus(`检查目录失败：${error.message}`, "error");
+      renderWorkspace(value, { is_dir: false, error: error.message });
       return null;
     }
   }
@@ -410,7 +423,7 @@
   async function openRepoPicker() {
     els.repoPickerTitle.textContent = "选择工作目录（已有项目）";
     els.repoPickerModal.hidden = false;
-    await loadRepoPicker((els.workdirInput.value || "").trim());
+    await loadRepoPicker(workdirPath);
   }
 
   async function chooseRepoPicker() {
@@ -420,9 +433,7 @@
       els.repoPickerStatus.classList.remove("ok");
       return;
     }
-    els.workdirInput.value = info.path;
-    localStorage.setItem("aieos.workdir", info.path);
-    renderWorkdirInfo(info);
+    setWorkdir(info.path, info);
     closeRepoPicker();
   }
 
@@ -830,7 +841,7 @@
     const startedAt = performance.now();
     beginFrontTiming(startedAt);
     try {
-      let workdir = (els.workdirInput.value || "").trim();
+      let workdir = workdirPath;
       if (workdir) {
         const info = await validateWorkdir(workdir);
         if (!info || !info.is_dir) {
@@ -860,25 +871,25 @@
 
   /* events */
   els.submit.addEventListener("click", submitPrompt);
-  els.workdirBrowse.addEventListener(
-    "click", () => openRepoPicker());
-  els.workdirInput.addEventListener("input", () => {
-    const value = (els.workdirInput.value || "").trim();
-    if (value) localStorage.setItem("aieos.workdir", value);
-    else localStorage.removeItem("aieos.workdir");
-    setWorkdirStatus("尚未检查", "warn");
+  els.workspaceChip.addEventListener("click", (event) => {
+    event.stopPropagation();
+    els.workspaceMenu.hidden = !els.workspaceMenu.hidden;
   });
-  els.workdirInput.addEventListener("blur", () => {
-    const path = (els.workdirInput.value || "").trim();
-    if (path) validateWorkdir(path);
-    else setWorkdirStatus("Task Workspace", "ok");
+  els.workspaceChange.addEventListener("click", () => {
+    els.workspaceMenu.hidden = true;
+    openRepoPicker();
   });
-  els.workdirInput.addEventListener("keydown", (event) => {
-    if (event.key === "Enter") {
-      event.preventDefault();
-      const path = (els.workdirInput.value || "").trim();
-      if (path) validateWorkdir(path);
-      else setWorkdirStatus("Task Workspace", "ok");
+  els.workspaceUseTask.addEventListener("click", () => {
+    els.workspaceMenu.hidden = true;
+    setWorkdir("");
+  });
+  document.addEventListener("click", (event) => {
+    if (
+      !els.workspaceMenu.hidden
+      && !els.workspaceMenu.contains(event.target)
+      && !els.workspaceChip.contains(event.target)
+    ) {
+      els.workspaceMenu.hidden = true;
     }
   });
   els.repoPickerGo.addEventListener("click", () => {
@@ -913,7 +924,7 @@
   });
   const savedWorkdir = localStorage.getItem("aieos.workdir") || "";
   if (savedWorkdir) {
-    els.workdirInput.value = savedWorkdir;
+    setWorkdir(savedWorkdir);
     validateWorkdir(savedWorkdir);
   }
   refresh();

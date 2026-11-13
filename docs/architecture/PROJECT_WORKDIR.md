@@ -104,15 +104,16 @@ runs/project_locks/<sha256(project_path)>.lock
 
 ## 6. UI
 
-聊天输入区上方新增：
+任务输入区只显示工作目录 chip：
 
 ```text
-工作目录  [/abs/path]  [选择目录]  状态
-提交仓库  [/abs/path]  [选择目录] [默认]
+[▰ project-demo ▾] [提交]
 ```
 
-- 工作目录留空 = Task Workspace；
-- 支持绝对路径输入；
+- chip 只显示路径最后一级目录；
+- 悬停显示完整路径；
+- 点击打开菜单：更换工作目录 / 使用 Task Workspace；
+- 留空时显示 `Task Workspace`；
 - 支持服务端目录浏览器；
 - 选择结果保存在浏览器 localStorage，刷新后恢复；
 - 只影响新任务；运行中的任务保持创建时的目录。
