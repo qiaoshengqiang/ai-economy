@@ -8,11 +8,13 @@
     "任何一项都必须带理由。"
   ],
   "max_tokens": {
-    "agent_a": 16384,
-    "agent_b": 16384,
-    "agent_c": 16384,
-    "agent_d": 16384,
-    "agent_e": 16384
+    "agent_a": 32768,
+    "agent_b": 32768,
+    "agent_c": 32768,
+    "agent_d": 32768,
+    "agent_e": 32768,
+    "novel_plot_architect": 32768,
+    "novel_world_builder": 32768
   },
   "model": {
     "agent_b": {
@@ -35,7 +37,7 @@
     }
   },
   "_reasons": {
-    "max_tokens": "2026-10-10。agent_a..e 原为 2048（老配置遗留）。实测：agent_a 用 deepseek-flash —— **推理模型**，它把 2048 全用在 reasoning 上，撞到输出上限，content 一个字都不剩（output_status=EMPTY_CONTENT · cognitive_status=TRUNCATED · finish_reason=length · chars=0）。观察实验因此什么都没产出，而报告还误说成「Agent 选择不分工」。写到 16384，与 novel_* 一致。",
+    "max_tokens": "2026-11-14。统一模型配置：Agent 不再单独声明 brain.max_tokens；同一 model profile 的所有 Agent 共享 models.<profile>.max_output_tokens。deepseek-flash / deepseek-chat 的模型输出上限为 32768，因此这些 Agent 从 16384（或迁移前基线 2048）提升到 32768。",
     "model": "2026-11-07。用户把 5 个 Agent 统一到 deepseek-flash：百炼端点响应慢/超时、豆包在长 payload 上截断 JSON，两者都会把「模型可靠性」混进协作实验结果。这是有意的模型迁移，不是配置重构漂移。"
   }
 }

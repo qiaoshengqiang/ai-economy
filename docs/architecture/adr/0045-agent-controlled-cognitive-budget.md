@@ -5,6 +5,10 @@
 - **Supersedes**：无
 - **Superseded by**：无
 
+> **2026-11-14 修订**：Agent 配置不再声明 `brain.max_tokens`；
+> 默认预算取 `models.<profile>.max_output_tokens`，同一模型的 Agent 共享。
+> 本文中“可超过 config 的 `brain.max_tokens`”按历史语义保留。
+
 ## Context
 
 两次真实 Demand 运行暴露了同一类问题：

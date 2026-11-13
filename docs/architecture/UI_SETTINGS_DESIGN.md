@@ -62,21 +62,21 @@ context_window / max_output_tokens / supports_reasoning / thinking_levels
 | 概念 | 归属 | 说明 |
 |---|---|---|
 | `context_window` | 模型 | 模型总上下文窗口 |
-| `max_output_tokens` | 模型 | 默认最大输出；Pi Work 统一使用它 |
+| `max_output_tokens` | 模型 | 默认最大输出；同一 model profile 的所有 Agent 共享 |
 | `thinking_levels` | 模型 | 固定思考强度集合，Agent 卡片选项只从这里来 |
-| `brain.max_tokens` | Agent | 输出上限偏好 |
-| `cognitive_budget` | Runtime | 单次调用输出硬上限 |
+| `cognitive_budget` | Runtime | 单次调用输出硬上限（不能高于模型上限） |
 
-原生 Brain 调用的实际输出上限：
+Agent 不再声明 `brain.max_tokens`；模型 profile 是上下文与输出配置的
+**唯一来源**。原生 Brain 调用的实际输出上限：
 
 ```text
-min(agent.max_tokens, model.max_output_tokens, cognitive_budget)
+min(model.max_output_tokens, cognitive_budget)
 ```
 
 Pi Work 的 `models.json` 使用：
 
 - `contextWindow = context_window`
-- `maxTokens = model.max_output_tokens`（Pi Work 不再用 Agent 的 max_tokens 二次截断）
+- `maxTokens = model.max_output_tokens`（Front / Pi Work 共用同一个模型上限）
 - `reasoning = supports_reasoning`
 - `thinkingLevelMap` 由 `thinking_levels` 生成；不支持的档位为 null
 

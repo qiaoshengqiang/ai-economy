@@ -266,8 +266,10 @@ class ResolvedAgent:
     credential_profile: str
     credential: ResolvedCredential
     temperature: float
+    #: 与 max_output_tokens 同值；保留字段兼容旧调用方。
     max_tokens: Optional[int]
-    #: 来自 model 的上下文窗口 / 默认输出上限；Agent 可覆盖 max_tokens。
+    #: 来自 model profile 的上下文窗口 / 输出上限。
+    #: 🔒 同一 model profile 的所有 Agent 共享这两个值。
     context_window: Optional[int] = None
     max_output_tokens: Optional[int] = None
     supports_reasoning: bool = False
@@ -639,6 +641,11 @@ class ConfigValidator:
                     f"agents.{agent_id}.brain.credential = {cred_profile!r} "
                     f"不存在。已知 credential：{sorted(credentials)}。")
 
+            if "max_tokens" in brain:
+                problems.append(
+                    f"agents.{agent_id}.brain.max_tokens 不再支持 —— "
+                    f"输出上限由 models.{model_profile}.max_output_tokens 决定。")
+
             # 禁止 Agent 保存 provider 的重复信息
             for banned in ("provider", "api_key_env", "base_url"):
                 if banned in brain:
@@ -917,6 +924,11 @@ class ConfigResolver:
         cred_profile = _require_text(
             brain.get("credential"), f"agents.{agent_id}.brain.credential")
 
+        if "max_tokens" in brain:
+            raise ConfigurationError(
+                f"agents.{agent_id}.brain.max_tokens 不再支持 —— "
+                f"输出上限由 models.{model_profile}.max_output_tokens 决定。")
+
         for banned in ("provider", "api_key_env", "base_url"):
             if banned in brain:
                 raise ConfigurationError(
@@ -933,8 +945,7 @@ class ConfigResolver:
             credential_profile=cred_profile,
             credential=self.credential(cred_profile),
             temperature=float(brain.get("temperature", 0.7)),
-            max_tokens=(int(brain["max_tokens"])
-                        if brain.get("max_tokens") is not None else None),
+            max_tokens=model.max_output_tokens,
             context_window=model.context_window,
             max_output_tokens=model.max_output_tokens,
             supports_reasoning=model.supports_reasoning,

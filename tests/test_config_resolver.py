@@ -253,6 +253,21 @@ class TestResolvesCorrectly:
         assert two.credential.env == "TEST_KEY_B"
         assert one.credential.profile != two.credential.profile
 
+    def test_same_model_profile_shares_context_and_output(self):
+        """同一 model profile 的所有 Agent 共享 context / output 配置。"""
+        resolved = load_resolved_config(GLOBAL_CONFIG_FILE,
+                                        adapter_specs=adapter_specs)
+        groups = {}
+        for agent in resolved.agents.values():
+            groups.setdefault(agent.model_profile, set()).add((
+                agent.context_window,
+                agent.max_output_tokens,
+                agent.max_tokens,
+            ))
+        for profile, values in groups.items():
+            assert len(values) == 1, (
+                f"{profile} 的 Agent 上下文 / 输出配置不一致：{values}")
+
     def test_10_new_provider_needs_no_python_change(self):
         """
         **只改配置**就能新增一个使用已有 adapter 的 Provider。
@@ -507,6 +522,18 @@ class TestGuardsGoRedWhenViolated:
         assert _must_fail(cfg2)
 
     # ---- 反向 5：Agent 里出现 provider ----
+    def test_agent_may_not_override_max_tokens(self):
+        """输出上限由 model profile 统一决定，Agent 不再单独声明。"""
+        cfg = base_canonical()
+        cfg["agents"]["agent_one"]["brain"]["max_tokens"] = 4096
+        msg = _must_fail(cfg)
+        assert "max_tokens" in msg
+        assert "max_output_tokens" in msg
+
+        cfg2 = base_canonical()
+        assert "max_tokens" not in cfg2["agents"]["agent_one"]["brain"]
+        assert _problems(cfg2) == []
+
     def test_07_agent_may_not_declare_provider(self):
         """
         规格 §1.3：Agent 只引用 model / credential，

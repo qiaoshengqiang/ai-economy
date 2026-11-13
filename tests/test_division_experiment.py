@@ -160,7 +160,7 @@ def test_it_prints_model_and_budget_up_front():
 
 def test_neutral_agents_have_a_workable_output_budget():
     """
-    🔒 `agent_a..e` 曾经是 `max_tokens: 2048`（老配置遗留）。
+    🔒 输出上限由 model profile 统一决定；Agent 不再单独声明。
        对**推理模型**（deepseek-flash）和写长文都远远不够 ⇒
        `finish_reason=length` + content 为空。
     """
@@ -168,10 +168,16 @@ def test_neutral_agents_have_a_workable_output_budget():
 
     cfg = yaml.safe_load(
         (ROOT / "config" / "config.yaml").read_text(encoding="utf-8"))
+    llm = yaml.safe_load(
+        (ROOT / "config" / "llm.yaml").read_text(encoding="utf-8"))
     for a in ("agent_a", "agent_b", "agent_c", "agent_d", "agent_e"):
-        mt = ((cfg["agents"][a].get("brain") or {}).get("max_tokens"))
+        brain = cfg["agents"][a].get("brain") or {}
+        assert "max_tokens" not in brain, (
+            f"{a} 仍在 Agent 配置里覆盖输出上限")
+        profile = brain.get("model")
+        mt = (llm["models"][profile].get("max_output_tokens"))
         assert mt is not None and int(mt) >= 8192, (
-            f"{a} 的 max_tokens={mt} 太小 —— 推理模型会把 content 挤空")
+            f"{a} 的 model profile {profile} max_output_tokens={mt} 太小")
 
 
 def test_task_and_workspace_ids_do_not_leak_the_experiment_intent():

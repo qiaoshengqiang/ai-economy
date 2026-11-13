@@ -69,8 +69,8 @@ class BrainSettings:
     system_prompt: str = ""
     temperature: float = 0.7
     max_tokens: int = 2048
-    #: 来自 model profile 的上下文窗口 / 默认输出上限。
-    #: Agent 的 max_tokens 仍然可以覆盖 max_output_tokens。
+    #: 来自 model profile 的上下文窗口 / 输出上限。
+    #: 🔒 Agent 不再单独覆盖；同一 model profile 的所有 Agent 共享。
     context_window: Optional[int] = None
     max_output_tokens: Optional[int] = None
     supports_reasoning: bool = False

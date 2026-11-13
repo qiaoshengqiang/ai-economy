@@ -4,7 +4,7 @@
 > **日期：2026-11-13**
 > **阶段：开发中 / 观察实验**
 > **协议版本：`1`**
-> **测试基线：`5622 passed, 2 skipped, 30 deselected`**
+> **测试基线：`5624 passed, 2 skipped, 30 deselected`**
 
 本文记录**当前真实可用能力、推荐工作方式、已知限制和版本变化**。
 架构的长期权威仍然是
@@ -71,7 +71,7 @@ Work 模式：autonomous
 Pi Agents：agent_b, agent_c, agent_d, agent_e
 Pi 超时：7200 秒
 DeepSeek context：600000
-DeepSeek 单次输出：32768
+DeepSeek 单次输出：32768（同一 model profile 的所有 Agent 共享）
 提交模式：manual
 输出仓库：空（未启用）
 输出基线：main
@@ -502,7 +502,7 @@ Team 协作
 当前基线：
 
 ```text
-5622 passed, 2 skipped, 30 deselected
+5624 passed, 2 skipped, 30 deselected
 ```
 
 启动说明见 [`../START_AIEOS.md`](../START_AIEOS.md)。

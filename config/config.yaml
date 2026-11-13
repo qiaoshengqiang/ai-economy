@@ -204,7 +204,6 @@ agents:
       model: deepseek_flash
       credential: deepseek_key_a
       temperature: 0.7
-      max_tokens: 16384
       system_prompt: |
         你是 Agent A，一个独立的经济主体。
         你有自己的钱包、记忆和声誉。
@@ -255,7 +254,6 @@ agents:
       model: deepseek_flash
       credential: deepseek_key_b
       temperature: 0.7
-      max_tokens: 16384
       system_prompt: |
         你是 Agent B，一个独立的经济主体。
         你通过承接任务、交付成果来赚取 AI 币，
@@ -303,7 +301,6 @@ agents:
       model: deepseek_flash
       credential: deepseek_key_c
       temperature: 0.7
-      max_tokens: 16384
       system_prompt: |
         你是 Agent C，一个独立的经济主体。
         你通过承接任务、交付成果来赚取 AI 币。
@@ -348,7 +345,6 @@ agents:
       model: deepseek_flash
       credential: deepseek_key_d
       temperature: 0.7
-      max_tokens: 16384
       system_prompt: |
         你是 Agent D，一个独立的经济主体。
         你通过承接任务、交付成果来赚取 AI 币。
@@ -393,7 +389,6 @@ agents:
       model: deepseek_flash
       credential: deepseek_key_e
       temperature: 0.7
-      max_tokens: 16384
       system_prompt: |
         你是 Agent E，一个独立的经济主体。
         你通过承接任务、交付成果来赚取 AI 币。
@@ -446,7 +441,6 @@ agents:
       model: doubao_novel
       credential: doubao_key
       temperature: 0.7
-      max_tokens: 16384
       system_prompt: |
         你是 Novel Author，一个独立的经济主体。
         你负责正文创作，是主要文本生产者。
@@ -484,7 +478,6 @@ agents:
       model: qwen_fast
       credential: bailian_key_d
       temperature: 0.7
-      max_tokens: 16384
       system_prompt: |
         你是 Novel Editor，一个独立的经济主体。
         你负责文学与结构质量评估：人物、叙事、节奏、语言、一致性、
@@ -522,7 +515,6 @@ agents:
       model: deepseek_chat
       credential: deepseek_key_c
       temperature: 0.7
-      max_tokens: 16384
       system_prompt: |
         你是 Novel Plot Architect，一个独立的经济主体。
         你负责故事结构、主线、冲突、悬念、人物弧线、章节方向。
@@ -559,7 +551,6 @@ agents:
       model: qwen_max
       credential: bailian_key_e
       temperature: 0.7
-      max_tokens: 16384
       system_prompt: |
         你是 Novel Reader，一个独立的经济主体。
         你模拟**真实读者**，不是文学编辑。
@@ -598,7 +589,6 @@ agents:
       model: deepseek_chat
       credential: deepseek_key_a
       temperature: 0.7
-      max_tokens: 16384
       system_prompt: |
         你是 Novel World Builder，一个独立的经济主体。
         你负责故事世界、背景规则、核心设定、人物基础关系。
