@@ -221,6 +221,13 @@
                 <p class="muted wide">自主模式只给 Agent 最小系统提示与原始需求，
                   不注入 Prototype / Engineering / Evolution 的阶段、角色和验收提示。
                   对新任务生效。</p>
+                <label class="field"><span>Front 模式</span>
+                  <select id="front-mode">
+                    <option value="autonomous">自主（补全 brief）</option>
+                    <option value="relay">只传达（只给核心要求）</option>
+                  </select></label>
+                <p class="muted wide">只传达模式下，Front 不添加功能、约束或验收标准，
+                  task_text 只保留用户的核心要求。建议配合 Work 自主模式使用。</p>
                 <label class="field check wide"><span>限制 Work 总时长</span>
                   <input id="pi-timeout-enabled" type="checkbox" /></label>
                 <label class="field"><span>Work 总时长（秒）</span>

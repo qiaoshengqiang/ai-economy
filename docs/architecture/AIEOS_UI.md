@@ -66,6 +66,27 @@ Front Agent（固定）
 > constraints / acceptance 作为结构化补充。`human_text` 永远保留原文。
 > Front 的 thinking 固定为 `low`，因为它的工作主要是识别意图与沟通。
 
+### Front 模式
+
+`Front 模式` 是常规设置里的全局开关，影响之后所有 Front 决策：
+
+```text
+autonomous  自主：可以补全 brief（goal / deliverables / constraints /
+            acceptance / files），也可以重写 task_text
+relay       只传达：只保留用户的核心任务要求，不添加需求
+```
+
+`relay` 模式：
+
+- `task_text` 保留用户明确提出的任务细节，删除对话性、路由性文字；
+- 不添加用户没有提出的功能、技术栈、文件、验收标准、约束或实现建议；
+- handoff 的 brief 只保留 `goal` 和 `task_text`；
+- Controller 会再清空 `deliverables` / `constraints` /
+  `acceptance_expectations` / `files` 等字段，避免 Front 扩写进入 Task；
+- `role` / `work_profile` / `preferred_agent` 仍可作为路由元数据；
+- 它只控制 Front 的传达方式；如果希望 Worker 也只看到原始需求，
+  应配合 Work 的 `autonomous` 模式使用。
+
 ### 角色约束
 
 - Front Agent **永不创建 Task**；

@@ -61,6 +61,7 @@ class FrontAgentRuntime:
         action_types: Iterable[str] = (),
         max_steps: int = 12,
         think_retries: int = 1,
+        front_mode: str = "autonomous",
     ) -> None:
         if not callable(think):
             raise ValueError("FrontAgentRuntime 需要可调用的 think(prompt)")
@@ -79,6 +80,10 @@ class FrontAgentRuntime:
             str(item) for item in action_types if str(item).strip()}))
         self.max_steps = max(1, int(max_steps))
         self.think_retries = max(0, int(think_retries))
+        mode = str(front_mode or "autonomous").strip().lower()
+        if mode not in ("autonomous", "relay"):
+            mode = "autonomous"
+        self.front_mode = mode
         #: 最近一次 decide 的动作历史 / 原始输出（观测用）。
         self.last_action_history: List[Dict[str, Any]] = []
         self.last_raw_output: str = ""
@@ -291,6 +296,18 @@ class FrontAgentRuntime:
                 "\n上一次输出无法解析：" + previous_error +
                 "。继续下一步；最终仍要输出一个合法的 JSON。\n")
         actions = ", ".join(self.action_types) or "（无）"
+        mode_section = ""
+        if self.front_mode == "relay":
+            mode_section = """
+========== Front 模式：只传达 ==========
+当前是“只传达”模式，不做需求扩展。
+- task_text 只保留用户的核心任务要求；保留用户明确提出的任务细节。
+- 删除“我想……”“再给 agent_b 一个任务”等对话性、路由性和解释性文字。
+- 不要添加用户没有提出的功能、技术栈、文件、验收标准、约束、实现建议或视觉细节。
+- handoff 的 brief 只填 goal 和 task_text；
+  deliverables / constraints / acceptance_expectations / files 留空。
+- role / work_profile / preferred_agent 只作为路由元数据，不要写进 task_text。
+"""
         return f"""你是 {self.agent_id}，面向人类的入口。
 
 请自然对话，使用人类使用的语言。你可以使用自己的私有 workspace 和草稿，
@@ -367,7 +384,7 @@ handoff 可以携带你在 `brief.files` 里准备好的文件：
 - creative_product：可交互产品、多文件、多模块、玩法/视觉/交互，需要真实运行验证。
 无法判断时选 standard，不要默认 direct。
 Role 只是弱信号，不要仅凭 role 判断。
-
+{mode_section}
 ========== 意图 ==========
 1. direct_reply —— 直接回答。
    {{"intent":"direct_reply","reply":"...","reason":"..."}}

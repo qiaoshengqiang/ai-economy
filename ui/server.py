@@ -181,6 +181,7 @@ class Handler(BaseHTTPRequestHandler):
                     pi_timeout_enabled=payload.get("pi_timeout_enabled"),
                     pi_timeout_seconds=payload.get("pi_timeout_seconds"),
                     work_mode=payload.get("work_mode"),
+                    front_mode=payload.get("front_mode"),
                 )
                 self._send_json({"ok": True, "settings": settings})
                 return

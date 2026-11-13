@@ -184,3 +184,66 @@ def test_worker_roles_crud_through_controller(tmp_path):
         assert role["archived"] is True
     finally:
         controller.close()
+
+
+def test_front_mode_round_trip(tmp_path):
+    path = tmp_path / "ui_settings.json"
+    controller = _controller(tmp_path)
+    try:
+        assert controller.settings_dict()["front_mode"] == "autonomous"
+        controller.update_settings(front_mode="relay")
+        assert controller.settings_dict()["front_mode"] == "relay"
+    finally:
+        controller.close()
+
+    data = json.loads(path.read_text("utf-8"))
+    assert data["front_mode"] == "relay"
+    reloaded = _controller(tmp_path)
+    try:
+        assert reloaded.settings_dict()["front_mode"] == "relay"
+        try:
+            reloaded.update_settings(front_mode="unknown")
+        except ValueError as exc:
+            assert "front_mode" in str(exc)
+        else:
+            raise AssertionError("unknown front_mode should fail")
+    finally:
+        reloaded.close()
+
+
+def test_relay_front_mode_strips_brief_extras(tmp_path):
+    from front import FrontBrief, FrontDecision, FrontIntent
+
+    controller = _controller(tmp_path)
+    decision = FrontDecision(
+        intent=FrontIntent.HANDOFF,
+        brief=FrontBrief(
+            goal="做一个更完整的赛车游戏",
+            human_text="我想玩游戏，再给 agent_b 一个任务，做一个赛车游戏。",
+            task_text="做一个赛车游戏",
+            deliverables=["index.html"],
+            constraints=["不要使用外部依赖"],
+            acceptance_expectations=["能玩"],
+            ambiguities=["画风"],
+            non_goals=["联机"],
+            context_refs=["ref"],
+            files=[{"path": "a.txt", "content": "x"}],
+        ),
+        role="game_developer",
+        work_profile="creative_product",
+    )
+    controller.front_mode = "relay"
+    try:
+        controller._apply_front_mode(decision)
+    finally:
+        controller.close()
+
+    assert decision.brief.task_text == "做一个赛车游戏"
+    assert decision.brief.goal == "做一个赛车游戏"
+    assert decision.brief.deliverables == []
+    assert decision.brief.constraints == []
+    assert decision.brief.acceptance_expectations == []
+    assert decision.brief.ambiguities == []
+    assert decision.brief.non_goals == []
+    assert decision.brief.context_refs == []
+    assert decision.brief.files == []

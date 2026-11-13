@@ -230,6 +230,8 @@ class AIEOSController:
         self.agent_thinking: Dict[str, str] = {}
         #: Work 模式：workflow = 阶段化；autonomous = 单阶段自主工作。
         self.work_mode = "workflow"
+        #: Front 模式：autonomous = 当前会补全 brief；relay = 只传达。
+        self.front_mode = "autonomous"
         self.pi_cli_path = str(pi_cli_path or "pi")
         self.pi_provider = str(pi_provider or "")
         self.pi_model = str(pi_model or "")
@@ -351,6 +353,9 @@ class AIEOSController:
         mode = str(data.get("work_mode") or "workflow").strip().lower()
         if mode in ("workflow", "autonomous"):
             self.work_mode = mode
+        front_mode = str(data.get("front_mode") or "autonomous").strip().lower()
+        if front_mode in ("autonomous", "relay"):
+            self.front_mode = front_mode
 
     def update_settings(
         self,
@@ -365,6 +370,7 @@ class AIEOSController:
         pi_timeout_enabled: Optional[bool] = None,
         pi_timeout_seconds: Optional[float] = None,
         work_mode: Optional[str] = None,
+        front_mode: Optional[str] = None,
     ) -> Dict[str, Any]:
         with self._lock:
             if front_agent is not None:
@@ -441,6 +447,12 @@ class AIEOSController:
                     raise ValueError(
                         "work_mode 必须是 workflow 或 autonomous")
                 self.work_mode = mode
+            if front_mode is not None:
+                mode = str(front_mode).strip().lower()
+                if mode not in ("autonomous", "relay"):
+                    raise ValueError(
+                        "front_mode 必须是 autonomous 或 relay")
+                self.front_mode = mode
             self._persist_settings()
             self._configure_front_brain()
             self._notify()
@@ -459,6 +471,7 @@ class AIEOSController:
             "pi_timeout_enabled": bool(self.pi_timeout_enabled),
             "pi_timeout_seconds": float(self.pi_timeout_seconds),
             "work_mode": str(self.work_mode),
+            "front_mode": str(self.front_mode),
         }
 
     def _pi_timeout(self) -> float:
@@ -829,6 +842,7 @@ class AIEOSController:
                 )
             ]
             headline = work[0] if work else decisions[0]
+            self._apply_front_mode(headline)
             job.front_intent = headline.intent
             front_data = headline.to_dict()
             front_data["decisions"] = [
@@ -1046,7 +1060,8 @@ class AIEOSController:
             inspect_fn=self._front_inspect_facts,
             roles=self.worker_roles.catalog(),
             execute_actions=_execute,
-            action_types=dispatcher.action_types)
+            action_types=dispatcher.action_types,
+            front_mode=self.front_mode)
 
     def _pi_enabled(self, agent_id: str) -> bool:
         return str(agent_id or "") in self.pi_work_agents
@@ -1256,6 +1271,33 @@ class AIEOSController:
             "files": files,
             "llm": detail.get("llm") or {},
         }
+
+    def _apply_front_mode(self, decision: Any) -> None:
+        """relay 模式只保留核心 task_text，不让 Front 扩写进 Task。"""
+        if self.front_mode != "relay":
+            return
+        if getattr(decision, "intent", "") != FrontIntent.HANDOFF:
+            return
+        brief = getattr(decision, "brief", None)
+        if brief is None:
+            return
+        text = str(
+            getattr(brief, "task_text", "")
+            or getattr(brief, "goal", "")
+            or getattr(brief, "human_text", "")
+        ).strip()
+        if not text:
+            return
+        brief.task_text = text
+        brief.goal = text
+        brief.deliverables = []
+        brief.constraints = []
+        brief.acceptance_expectations = []
+        brief.ambiguities = []
+        brief.non_goals = []
+        brief.context_refs = []
+        brief.files = []
+        brief.fallback = False
 
     def _run_handoff_solo(
         self,

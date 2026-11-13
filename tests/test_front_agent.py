@@ -728,3 +728,21 @@ def test_rework_parses_rework_scope():
 
     assert decision.rework_scope == "redesign"
     assert decision.to_dict()["rework_scope"] == "redesign"
+
+
+def test_front_relay_mode_prompt_forbids_expansion():
+    prompts = []
+
+    def think(prompt):
+        prompts.append(prompt)
+        return json.dumps(
+            {"intent": "direct_reply", "reply": "好"},
+            ensure_ascii=False)
+
+    runtime = FrontAgentRuntime("front", think, front_mode="relay")
+    runtime.decide("我想玩游戏，再给 agent_b 一个任务，做一个赛车游戏。")
+
+    prompt = prompts[0]
+    assert "Front 模式：只传达" in prompt
+    assert "不要添加用户没有提出的功能" in prompt
+    assert "deliverables / constraints / acceptance_expectations / files 留空" in prompt
