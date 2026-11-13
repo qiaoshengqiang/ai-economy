@@ -173,6 +173,9 @@ LLM → 动作（private_* / draft_*）→ 真实结果回喂
   - 其他情况降级为 `clarify`（不创建 Task）；
   - job log 的 `front_decision.attempts` 保留每次尝试的
     `raw_output` / 解析错误。
+- 解析器只把显式 `intent` / `decision` 的 JSON 当作最终决定；
+  Markdown 代码块里的文件内容 / 示例 JSON（例如 `QUESTION.json`）
+  不会被误判成 `clarify` 或其他决定。
 - 用户可能使用语音输入；Front prompt 会提示转写文本可能有错字、漏字、
   断句或同音词错误。语义不顺时先确认，不确定就 `clarify`。
 

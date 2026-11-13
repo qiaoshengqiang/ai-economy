@@ -211,6 +211,46 @@ def test_prose_answer_falls_back_to_direct_reply():
     assert len(runtime.last_attempts) == 2
 
 
+def test_json_inside_code_fence_is_not_a_decision():
+    text = (
+        "我看完了，私有空间里有一个示例：\n"
+        "```json\n"
+        '{"id":"question-demo","question":"alpha 还是 beta？",'
+        '"options":["alpha","beta"],"status":"waiting_for_answer"}\n'
+        "```\n"
+        "需要我贴完整原文吗？")
+    decision, error = parse_front_decision(text)
+
+    assert decision is None
+    assert error == "front_decision_not_found"
+
+
+def test_natural_shape_with_unknown_keys_is_not_a_decision():
+    decision, error = parse_front_decision(
+        '{"id":"question-demo","question":"alpha 还是 beta?"}')
+
+    assert decision is None
+    assert error == "front_decision_not_found"
+
+
+def test_explicit_decision_inside_code_fence_still_parses():
+    text = '```json\n{"intent":"direct_reply","reply":"ok"}\n```'
+    decision, error = parse_front_decision(text)
+
+    assert error == ""
+    assert decision.intent == FrontIntent.DIRECT_REPLY
+
+
+def test_actions_inside_code_fence_still_parse():
+    text = (
+        '```json\n{"actions":[{"type":"private_list",'
+        '"parameters":{}}]}\n```')
+    actions, error = parse_front_actions(text)
+
+    assert error == ""
+    assert actions[0]["type"] == "private_list"
+
+
 def test_parser_accepts_natural_goal_shape():
     decision, error = parse_front_decision(
         '{"goal":"写一个报告","deliverables":["report.md"]}')
@@ -297,6 +337,9 @@ def test_front_prompt_includes_project_context_and_task_rules():
     assert "本地 Task / Workspace 事实由" in prompt
     assert "待确认请求唯一" in prompt
     assert "普通文本会作为 direct_reply 显示" in prompt
+    assert "private_list {}" in prompt
+    assert "private_read {path}" in prompt
+    assert "动作结果返回后" in prompt
     assert "不要自行猜测" not in prompt
     assert "不要 rework 旧 Task" not in prompt
     assert "不要默认 direct" not in prompt
@@ -634,6 +677,7 @@ def test_llm_empty_content_retries_once_then_succeeds():
 
     assert decision.intent == FrontIntent.DIRECT_REPLY
     assert len(calls) == 2
+    assert "上一次没有输出任何内容" in calls[1]
 
 
 def test_llm_empty_content_after_retry_falls_back_to_clarify():

@@ -295,9 +295,14 @@ class FrontAgentRuntime:
         attempts = self.think_retries + 1
         last: Optional[Exception] = None
         saw_empty = False
+        empty_prompt = (
+            prompt
+            + "\n\n上一次没有输出任何内容。请基于上面的对话和动作结果，"
+              "直接输出下一步：继续一个动作，或给出最终 JSON 决定。")
         for _ in range(attempts):
+            current = empty_prompt if saw_empty else prompt
             try:
-                raw = self._think(prompt)
+                raw = self._think(current)
             except Exception as exc:                          # noqa: BLE001
                 last = exc
                 continue
@@ -463,14 +468,17 @@ class FrontAgentRuntime:
 {{"actions":[{{"type":"artifact_read","parameters":{{"task_id":"task_x","path":"index.html","offset":1,"limit":10}}}}]}}
 {{"actions":[{{"type":"project_read","parameters":{{"path":"index.html","offset":1,"limit":120}}}}]}}
 
-动作会真实执行；结果会在下一次 prompt 返回。然后继续。
+动作会真实执行；结果会在下一次 prompt 返回。
+动作结果返回后，下一步是继续一个动作，或输出最终 JSON 决定；
+推理内容不会显示给用户。
 `artifact_read` / `project_read` 是**动作**：放在 `actions` 里；
 `intent` 只放最终决定。
 参数：
 - artifact_read {{task_id, path, offset?, limit?}} —— 读取 Task
   Workspace 中的文件（只读；返回内容 + total_lines/revision）
-{project_action_doc}- private_write {{path, content}}；private_read {{path}}；private_list {{}}
-- private_delete {{path}}
+{project_action_doc}- private_list {{}} —— 返回私有空间路径列表
+- private_read {{path}} —— 读取私有空间文件内容
+- private_write {{path, content}}；private_delete {{path}}
 - draft_write {{content, label}}；draft_append {{draft_id, content}}
 - web_search {{query, count?, need_content?, ori_question?}} —— 查询外部实时信息
 - web_fetch {{url}} —— 读取一个公开网页的 Markdown 内容

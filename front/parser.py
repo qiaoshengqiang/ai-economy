@@ -19,6 +19,7 @@ Front 决策解析
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from front.contracts import FrontBrief, FrontDecision, FrontIntent
@@ -36,10 +37,43 @@ FRONT_ACTION_NAMES = frozenset({
     "draft_delete",
 })
 
+#: 自然形状 decision 允许出现的键。用来避免把文件内容里的
+#: `{"question": ...}` / `{"reply": ...}` 误认成 Front 决定。
+_NATURAL_DECISION_KEYS = frozenset({
+    "goal", "brief", "task_text", "question", "reply", "reason",
+    "confidence", "deliverables", "constraints",
+    "acceptance_expectations", "ambiguities", "non_goals",
+    "context_refs", "files", "role", "work_profile", "preferred_agent",
+    "reply_style", "front_mode", "work_mode", "task_id",
+    "commit_code", "rework_scope",
+})
+
+
+def _fenced_ranges(text: str) -> List[Tuple[int, int]]:
+    """Markdown fenced code block 的字符区间。"""
+    ranges: List[Tuple[int, int]] = []
+    start: Optional[int] = None
+    for match in re.finditer(r"(?m)^\s*```", text):
+        if start is None:
+            start = match.start()
+        else:
+            ranges.append((start, match.end()))
+            start = None
+    if start is not None:
+        ranges.append((start, len(text)))
+    return ranges
+
 
 def _iter_json_objects(text: str):
+    """逐个产出 JSON 对象，并标记它是否位于 Markdown 代码块内。
+
+    🔒 代码块里的普通 JSON 可能是**文件内容 / 示例**，不是 Front 的
+       最终 decision。自然形状推断只对代码块外的对象生效。
+    """
+    text = str(text or "")
+    ranges = _fenced_ranges(text)
     decoder = json.JSONDecoder()
-    for index, char in enumerate(text or ""):
+    for index, char in enumerate(text):
         if char != "{":
             continue
         try:
@@ -47,7 +81,9 @@ def _iter_json_objects(text: str):
         except (ValueError, TypeError):
             continue
         if isinstance(value, dict):
-            yield value
+            fenced = any(
+                start <= index < end for start, end in ranges)
+            yield value, fenced
 
 
 def _brief_from(payload: Dict[str, Any], human_text: str) -> Optional[FrontBrief]:
@@ -87,7 +123,7 @@ def parse_front_actions(
         actions = [...] 动作步骤；按声明顺序执行
         error != ""     看起来是动作信封，但结构不合法
     """
-    for payload in _iter_json_objects(str(text or "")):
+    for payload, _fenced in _iter_json_objects(str(text or "")):
         direct = str(
             payload.get("intent") or payload.get("action_type") or "").strip()
         if direct in FRONT_ACTION_NAMES:
@@ -146,7 +182,7 @@ def parse_front_decision(
     active = {str(item) for item in active_task_ids}
     completed = {str(item) for item in completed_task_ids}
 
-    for payload in _iter_json_objects(str(text or "")):
+    for payload, fenced in _iter_json_objects(str(text or "")):
         raw_intent = str(
             payload.get("intent") or payload.get("decision") or "").strip()
         # 动作步骤不是最终决定：即使模型顺手写了 reply，也不能把它
@@ -155,7 +191,15 @@ def parse_front_decision(
                 "actions" in payload or "action" in payload):
             continue
         # 兼容自然形状：有 goal 就是 handoff，有 reply 就是 direct_reply。
+        # 🔒 代码块里的 JSON 可能是文件内容（例如 QUESTION.json），
+        #    只有显式 intent 才能作为最终决定。
         if not raw_intent:
+            if fenced:
+                continue
+            if any(
+                    key not in _NATURAL_DECISION_KEYS
+                    for key in payload):
+                continue
             if "goal" in payload or "brief" in payload:
                 raw_intent = FrontIntent.HANDOFF
             elif "question" in payload:
@@ -327,7 +371,7 @@ def parse_front_decisions(
     active = {str(item) for item in active_task_ids}
     completed = {str(item) for item in completed_task_ids}
 
-    for payload in _iter_json_objects(str(text or "")):
+    for payload, _fenced in _iter_json_objects(str(text or "")):
         raw = payload.get("decisions")
         if raw is None:
             raw = payload.get("intents")
