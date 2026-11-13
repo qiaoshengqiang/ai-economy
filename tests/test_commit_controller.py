@@ -256,3 +256,23 @@ def test_project_workdir_task_skips_output_commit():
         assert controller.commit_service.last_mode == ""
     finally:
         controller.close()
+
+
+def test_submit_control_message_does_not_check_project_busy():
+    controller = _controller(_request("AWAITING_HUMAN"))
+    controller._executor = SimpleNamespace(
+        submit=lambda *args, **kwargs: None,
+        shutdown=lambda **kwargs: None)
+
+    def _unexpected(_path):
+        raise AssertionError("submit 不应在 Front 分析前检查项目占用")
+
+    controller._open_project_task = _unexpected
+    try:
+        job_id = controller.submit(
+            "提交", workdir="/tmp/another-project")
+        assert job_id.startswith("job_")
+        job = controller._jobs[job_id]
+        assert job.workdir == "/tmp/another-project"
+    finally:
+        controller.close()

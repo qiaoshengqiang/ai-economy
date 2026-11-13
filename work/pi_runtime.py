@@ -1180,10 +1180,15 @@ Task Workspace 放本次任务的交付物和验收产物。
                 self.task_directory.write_meta(
                     "pi-stderr.log", "\n".join(all_stderr))
             if not manifest:
-                result.error = (
-                    "Pi 已结束，但项目目录没有任何变更"
-                    if self.project_mode
-                    else "Pi 已结束，但 Task Workspace 没有任何文件")
+                if self.project_mode and self._snapshot_error:
+                    result.error = (
+                        "项目快照失败，无法确认变更："
+                        f"{self._snapshot_error}")
+                else:
+                    result.error = (
+                        "Pi 已结束，但项目目录没有任何变更"
+                        if self.project_mode
+                        else "Pi 已结束，但 Task Workspace 没有任何文件")
                 result.status = task.status
                 return result
 

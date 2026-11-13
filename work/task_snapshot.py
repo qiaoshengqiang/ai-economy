@@ -178,7 +178,10 @@ class TaskSnapshotStore:
         temp_index = self._temp_path("index")
         try:
             self._seed_index(temp_index)
-            self._run(["add", "-A", "--", "."], index=temp_index)
+            add_args = ["add", "-A", "--", "."]
+            for nested in self._nested_repo_paths():
+                add_args.append(f":(exclude){nested}")
+            self._run(add_args, index=temp_index)
             skipped = self._drop_oversized(temp_index, previous_paths)
             tree = self._run(
                 ["write-tree"], index=temp_index).stdout.strip()
@@ -463,6 +466,31 @@ class TaskSnapshotStore:
             ["ls-files", "-z", "--others", "--exclude-standard"]).stdout
         others = {path for path in out.split("\0") if path}
         return tracked | others
+
+    def _nested_repo_paths(self) -> List[str]:
+        """项目里的嵌套 Git 仓库不进入本次快照。
+
+        嵌套仓库可能没有 checkout（`does not have a commit checked out`），
+        直接 `git add` 会让整个 project snapshot 失败。这里把它们作为
+        pathspec 排除，根目录文件仍正常记录。
+        """
+        nested: List[str] = []
+        root = self.workspace.resolve()
+        for current, dirs, files in os.walk(root):
+            here = Path(current)
+            if here != root and (".git" in dirs or ".git" in files):
+                try:
+                    rel = here.relative_to(root).as_posix()
+                except ValueError:
+                    continue
+                if rel:
+                    nested.append(rel)
+                # 不再进入嵌套仓库内部。
+                dirs[:] = []
+                continue
+            if here == root and ".git" in dirs:
+                dirs.remove(".git")
+        return sorted(set(nested))
 
     def _index_paths(self, index: Path) -> set[str]:
         if not Path(index).exists():

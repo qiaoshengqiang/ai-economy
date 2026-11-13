@@ -636,6 +636,11 @@ class AIEOSController:
         for task in tasks:
             if not getattr(task, "is_open", False):
                 continue
+            # 只有真正有运行中 Job 的 Task 才占用项目。
+            # 旧的中断/等待任务不应永久阻塞同一项目的新任务；
+            # 真正并发执行由 ProjectLockManager 再挡一次。
+            if not self._is_live(task.task_id):
+                continue
             acceptance = getattr(task, "acceptance", None) or {}
             if not isinstance(acceptance, dict):
                 continue
@@ -821,13 +826,10 @@ class AIEOSController:
         text = str(human_text or "").strip()
         if not text:
             raise ValueError("输入不能为空")
-        target_workdir = self._validate_workdir(workdir)
-        if target_workdir:
-            busy = self._open_project_task(target_workdir)
-            if busy is not None:
-                raise ValueError(
-                    f"项目还有未完成的任务：{busy.task_id}；"
-                    "请先完成或停止它")
+        # 工作目录在这里只保存；路径校验和「同项目只有一个任务」放到
+        # 真正创建 Task 的 handoff 阶段。否则像“提交”这样的控制消息
+        # 会因为当前选区里还有未完成项目而被 400 拒绝。
+        target_workdir = str(workdir or "").strip()
         target_repo = str(commit_repo or "").strip()
         if target_repo:
             target_repo = self._validate_commit_repo(target_repo)
@@ -1838,6 +1840,24 @@ class AIEOSController:
         decision: Any,
     ) -> Dict[str, Any]:
         """Pi Work 的 Task：真实目录；不创建 Shared Context / 逻辑 Workspace。"""
+        try:
+            workdir = self._validate_workdir(
+                str(getattr(job, "workdir", "") or ""))
+        except ValueError as exc:
+            return {
+                "ok": False, "code": "invalid_workdir",
+                "message": str(exc),
+            }
+        if workdir:
+            busy = self._open_project_task(workdir)
+            if busy is not None:
+                return {
+                    "ok": False, "code": "project_busy",
+                    "message": (
+                        f"项目还有未完成的任务：{busy.task_id}；"
+                        "请先完成或停止它"),
+                }
+            job.workdir = workdir
         criteria = (
             decision.brief.acceptance_expectations
             or decision.brief.deliverables

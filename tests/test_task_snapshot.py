@@ -256,3 +256,20 @@ def test_manifest_can_carry_snapshot_metadata(tmp_path):
     assert payload["snapshot"]["commit"] == record.commit
     assert payload["snapshot"]["tree"] == record.tree
     assert payload["snapshot"]["count"] == 1
+
+
+def test_nested_git_repo_does_not_break_project_snapshot(tmp_path):
+    directory = _directory(tmp_path)
+    workspace = directory.workspace
+    (workspace / "hello.py").write_text("print('hello')\n", encoding="utf-8")
+    nested = workspace / "nested-project"
+    nested.mkdir()
+    (nested / "app.py").write_text("value = 1\n", encoding="utf-8")
+    subprocess.run(["git", "init", "-q"], cwd=nested, check=True)
+
+    store = TaskSnapshotStore(directory)
+    record = store.capture("baseline")
+
+    assert record is not None
+    assert [item["path"] for item in store.file_entries(record.seq)] == [
+        "hello.py"]

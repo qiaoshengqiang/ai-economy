@@ -136,7 +136,9 @@ runs/project_locks/<sha256(project_path)>.lock
 - Front / Worker 不能自行选择项目路径；
 - 自动 commit / merge 仍属于后续阶段；
 - Project 任务完成后不创建 Output Repo 提交请求，因为代码已经直接落在项目目录；
-- 非 Pi 引擎暂不支持 project 模式。
+- 非 Pi 引擎暂不支持 project 模式；
+- 项目里的嵌套 Git 仓库会从 snapshot 中排除；修改嵌套仓库内部文件不会出现在
+  manifest（根目录文件不受影响）。
 
 ---
 
