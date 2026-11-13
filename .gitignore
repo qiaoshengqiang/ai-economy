@@ -89,3 +89,16 @@ runs/
 
 # Pi Work 的真实 Task 目录（运行产物，不进仓库）
 tasks/
+
+# 实验运行数据库 / WAL / SHM（可重建，不进仓库）
+experiments/**/*.db
+experiments/**/*.db-shm
+experiments/**/*.db-wal
+
+# Pi CLI / node_modules 生成目录（本地安装，不进仓库）
+experiments/pi_compare*/
+experiments/pi_compare2*/
+experiments/pi_work_pilot*/
+
+# 本地空数据库产物
+tool.db
