@@ -267,13 +267,14 @@ class OutputCommitService:
     # ------------------------------------------------------------
     def front_context(self, *, mode: str = CommitMode.MANUAL.value) -> str:
         pending = self.store.list_pending_all(limit=20)
-        lines = [f"当前提交模式：{mode}"]
+        lines = [f"当前默认提交模式：{mode}"]
         if pending:
             lines.append("待确认提交：")
             for item in pending:
                 lines.append(
                     f"- task_id={item.task_id} code={item.code}"
-                    f" snapshot_seq={item.snapshot_seq}")
+                    f" snapshot_seq={item.snapshot_seq}"
+                    f" mode={item.mode}")
         else:
             lines.append("待确认提交：无")
         return "\n".join(lines)
