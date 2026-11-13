@@ -278,8 +278,14 @@ def test_front_prompt_includes_project_context_and_task_rules():
     assert "语音输入" in prompt
     assert "错字" in prompt
     assert "clarify 可以用来向用户确认目标" in prompt
+    assert "standard 是默认值" in prompt
+    assert "artifact_read 的访问范围是 Task Workspace" in prompt
+    assert "本地 Task / Workspace 事实由" in prompt
+    assert "待确认请求唯一" in prompt
     assert "不要自行猜测" not in prompt
     assert "不要 rework 旧 Task" not in prompt
+    assert "不要默认 direct" not in prompt
+    assert "使用前先 inspect" not in prompt
 
 
 def test_front_prompt_includes_recent_conversation():
@@ -811,7 +817,7 @@ def test_rework_parses_rework_scope():
     assert decision.to_dict()["rework_scope"] == "redesign"
 
 
-def test_front_relay_mode_prompt_forbids_expansion():
+def test_front_relay_mode_prompt_keeps_only_user_content():
     prompts = []
 
     def think(prompt):
@@ -825,8 +831,8 @@ def test_front_relay_mode_prompt_forbids_expansion():
 
     prompt = prompts[0]
     assert "Front 模式：只传达" in prompt
-    assert "不要添加用户没有提出的功能" in prompt
-    assert "brief 只用于附带 files" in prompt
+    assert "task_text 与用户提出的任务内容一致" in prompt
+    assert "brief 只携带 files" in prompt
     assert "set_mode" in prompt
     assert "commit_confirm" in prompt
 
