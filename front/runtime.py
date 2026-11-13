@@ -233,11 +233,44 @@ class FrontAgentRuntime:
             last_error = action_error or error or "front_decision_not_found"
             parse_failures += 1
             if parse_failures >= 2:
+                prose = self._prose_reply(last_error)
+                if prose is not None:
+                    return prose
                 return self._fallback_clarify(last_error)
 
         raise FrontUnavailableError(
             f"Front 未在限定步数内给出最终决定："
             f"{self.max_steps} 步")
+
+    def _prose_reply(self, error: str) -> Optional[FrontTurn]:
+        """兼容层：没有结构化 decision 的纯文本最终回答按 direct_reply 处理。
+
+        典型场景：用户问「总结一下这个目录」，Front 读文件后直接写了
+        Markdown 总结。这里只接受没有 actions / JSON 结构的非空文本；
+        结构化输出解析失败仍然走 clarify。
+        """
+        for attempt in reversed(self.last_attempts):
+            raw = str(attempt.get("raw_output") or "").strip()
+            if len(raw) < 20:
+                continue
+            if attempt.get("actions"):
+                continue
+            if any(marker in raw for marker in (
+                    '"intent"', '"actions"', "<actions>", '"decisions"')):
+                continue
+            decision = FrontDecision(
+                intent=FrontIntent.DIRECT_REPLY,
+                reply=raw,
+                reason=f"front_prose_fallback: {error}",
+                raw_output=raw,
+            )
+            return FrontTurn(
+                decisions=[decision],
+                raw_output=raw,
+                action_history=list(self.last_action_history),
+                attempts=list(self.last_attempts),
+            )
+        return None
 
     def _fallback_clarify(self, error: str) -> FrontTurn:
         """连续解析失败时不要中断 Job，先请人类确认。"""
@@ -485,6 +518,7 @@ Role 是弱信号；work_profile 依据任务本身判断。
 {mode_section}
 ========== 意图 ==========
 1. direct_reply —— 直接回答。
+   用户问事实、总结、解释、建议时，回答文本放在 reply 字段。
    {{"intent":"direct_reply","reply":"...","reason":"..."}}
 
 2. handoff —— 新的工作请求。
@@ -560,7 +594,8 @@ commit_confirm）按你给出的顺序执行。
 - 没有 preferred_agent → 系统选择一个空闲 worker。
 
 状态为 INTERRUPTED 的 Task 当前没有运行；follow_up 可以恢复它。
-最终输出是一个 JSON 对象。
+最终输出是一个 JSON 对象。普通文本会作为 direct_reply 显示；
+执行任务使用结构化 intent。
 """
 
 

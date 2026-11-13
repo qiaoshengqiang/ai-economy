@@ -167,8 +167,12 @@ LLM → 动作（private_* / draft_*）→ 真实结果回喂
 - Front LLM **调用异常**时，Job 标记 `INTERRUPTED` + `retryable`，
   不创建 Task；UI 提供「重试」。
 - Front 返回空内容时会先按 `think_retries` 重试；连续两次无法解析成
-  decision 时，降级为 `clarify`（不创建 Task），并在 job log 的
-  `front_decision.attempts` 保留每次尝试的 `raw_output` / 解析错误。
+  decision 时：
+  - 纯文本最终回答（没有 JSON decision / action）按 `direct_reply` 处理，
+    不创建 Task；这覆盖「总结目录」这类直接回答；
+  - 其他情况降级为 `clarify`（不创建 Task）；
+  - job log 的 `front_decision.attempts` 保留每次尝试的
+    `raw_output` / 解析错误。
 - 用户可能使用语音输入；Front prompt 会提示转写文本可能有错字、漏字、
   断句或同音词错误。语义不顺时先确认，不确定就 `clarify`。
 

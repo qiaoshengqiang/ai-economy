@@ -197,6 +197,20 @@ def test_malformed_output_falls_back_to_clarify():
     assert runtime.last_attempts[0]["decision_error"]
 
 
+def test_prose_answer_falls_back_to_direct_reply():
+    answer = (
+        "## 目录总结\n\n"
+        "这个目录包含一个前端页面、一个服务端脚本和若干说明文档。")
+    runtime = FrontAgentRuntime("front", _think_returning(answer))
+
+    decision = runtime.decide("总结一下这个目录")
+
+    assert decision.intent == FrontIntent.DIRECT_REPLY
+    assert decision.reply == answer
+    assert "front_prose_fallback" in decision.reason
+    assert len(runtime.last_attempts) == 2
+
+
 def test_parser_accepts_natural_goal_shape():
     decision, error = parse_front_decision(
         '{"goal":"写一个报告","deliverables":["report.md"]}')
@@ -282,6 +296,7 @@ def test_front_prompt_includes_project_context_and_task_rules():
     assert "artifact_read 的访问范围是 Task Workspace" in prompt
     assert "本地 Task / Workspace 事实由" in prompt
     assert "待确认请求唯一" in prompt
+    assert "普通文本会作为 direct_reply 显示" in prompt
     assert "不要自行猜测" not in prompt
     assert "不要 rework 旧 Task" not in prompt
     assert "不要默认 direct" not in prompt
