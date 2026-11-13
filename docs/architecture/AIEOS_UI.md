@@ -100,18 +100,6 @@ Front 还有一个 `set_mode` 控制 intent，可以在对话里修改：
 - 同一回合里先 `set_mode` 再 handoff 时，handoff 按新模式处理；
 - 当前模式会作为只读上下文注入 Front prompt，Front 可以回答“现在是什么模式”。
 
-Front 还可以通过 `set_engine` 修改某个 Worker 的执行底座：
-
-```json
-{"intent":"set_engine","agent_id":"agent_b","engine":"solo",
- "reply":"已切到 Solo"}
-```
-
-- `pi` → Pi Work；`solo` → `SoloWorkRuntime`；
-- 只影响之后的新任务，运行中的任务不变；
-- Front Agent 自己不能切换；
-- `solo` 没有 autonomous，只有工作流式循环。
-
 ### 角色约束
 
 - Front Agent **永不创建 Task**；

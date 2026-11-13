@@ -4,7 +4,7 @@
 > **日期：2026-11-13**
 > **阶段：开发中 / 观察实验**
 > **协议版本：`1`**
-> **测试基线：`5538 passed, 2 skipped, 30 deselected`**
+> **测试基线：`5536 passed, 2 skipped, 30 deselected`**
 
 本文记录**当前真实可用能力、推荐工作方式、已知限制和版本变化**。
 架构的长期权威仍然是
@@ -203,25 +203,6 @@ Front 有 `set_mode` 控制 intent：
 - 同一回合先 `set_mode` 再 handoff 时，handoff 按新模式处理；
 - 当前模式会注入 Front 的只读上下文。
 
-### 5.3 切换执行底座
-
-Front 还可以修改某个 Worker 的执行底座：
-
-```json
-{
-  "intent": "set_engine",
-  "agent_id": "agent_b",
-  "engine": "solo",
-  "reply": "agent_b 已切到 Solo"
-}
-```
-
-- `engine: pi` → Pi Work；
-- `engine: solo` → `SoloWorkRuntime`；
-- 只影响之后的新任务，运行中的任务不变；
-- `solo` 目前只有工作流式循环，没有 autonomous；
-- Front Agent 自己不能切换。
-
 ---
 
 ## 6. Role 注入事实
@@ -367,7 +348,6 @@ Pi 自主任务仍然可能消耗较多 token：
 - 新增 `work_mode`：`workflow` / `autonomous`；
 - 新增 Front 模式：`autonomous` / `relay`；
 - 新增 Front `set_mode` 对话切换能力；
-- 新增 Front `set_engine`：可以在对话里把某个 Worker 从 Pi 切换到 Solo，或切回 Pi；
 - 新增 Web Search / Fetch（Front action + Pi CLI + 内部端点）；
 - 新增 UI 模式显示、紧凑 Agent 列表、机器人动画、工作中虚线边框、Front 回复计时；
 - 修复 Pi 超时被标成 FAILED、返工 session 复用、role 未持久化、`last_error` 不更新；
@@ -434,7 +414,7 @@ Team 协作
 当前基线：
 
 ```text
-5538 passed, 2 skipped, 30 deselected
+5536 passed, 2 skipped, 30 deselected
 ```
 
 启动说明见 [`../START_AIEOS.md`](../START_AIEOS.md)。

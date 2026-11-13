@@ -1162,53 +1162,7 @@ class AIEOSController:
         if intent == FrontIntent.SET_MODE:
             self._apply_mode_change(job, decision)
             return
-        if intent == FrontIntent.SET_ENGINE:
-            self._apply_engine_change(job, decision)
-            return
         raise ValueError(f"不支持的 Front 控制动作：{intent!r}")
-
-    def _apply_engine_change(self, job: WorkJob, decision: Any) -> None:
-        agent_id = str(
-            getattr(decision, "agent_id", "") or "").strip()
-        engine = str(
-            getattr(decision, "engine", "") or "").strip().lower()
-        if engine not in ("pi", "solo"):
-            self._reply_direct(job, "执行底座必须是 pi 或 solo。")
-            return
-        if not agent_id or agent_id not in self._agent_ids:
-            self._reply_direct(job, f"未知 Agent：{agent_id!r}。")
-            return
-        if agent_id == self.front_agent:
-            self._reply_direct(job, "Front Agent 不能切换执行底座。")
-            return
-        if agent_id in self.disabled_agents:
-            self._reply_direct(
-                job, f"{agent_id} 已被停用，不能切换执行底座。")
-            return
-        if not self._agent_has_brain(agent_id):
-            self._reply_direct(
-                job, f"{agent_id} 没有可用的 Brain，不能切换执行底座。")
-            return
-        if engine == "pi":
-            cli = Path(self.pi_cli_path)
-            if not cli.is_file() and not shutil.which(self.pi_cli_path):
-                self._reply_direct(
-                    job, f"找不到 Pi CLI：{self.pi_cli_path}，不能切到 Pi。")
-                return
-        wanted = set(self.pi_work_agents)
-        if engine == "pi":
-            wanted.add(agent_id)
-        else:
-            wanted.discard(agent_id)
-        try:
-            self.update_settings(pi_work_agents=sorted(wanted))
-        except ValueError as exc:
-            self._reply_direct(job, f"执行底座修改失败：{exc}")
-            return
-        text = str(getattr(decision, "reply", "") or "").strip()
-        if not text:
-            text = f"已将 {agent_id} 的执行底座切换为 {engine}。"
-        self._reply_direct(job, text)
 
     def _apply_mode_change(self, job: WorkJob, decision: Any) -> None:
         front_mode = str(
@@ -1300,9 +1254,6 @@ class AIEOSController:
                 "status": self.availability.state(aid),
                 "role": (
                     "FRONT" if aid == self.front_agent else "WORKER"),
-                "engine": (
-                    "front" if aid == self.front_agent
-                    else ("pi" if self._pi_enabled(aid) else "solo")),
                 "can_work": (
                     aid != self.front_agent
                     and aid not in self.disabled_agents

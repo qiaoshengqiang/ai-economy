@@ -294,21 +294,6 @@ def parse_front_decision(
                 confidence=confidence,
                 reason=str(payload.get("reason") or "")), ""
 
-        if raw_intent == FrontIntent.SET_ENGINE:
-            agent_id = str(payload.get("agent_id") or "").strip()
-            engine = str(payload.get("engine") or "").strip().lower()
-            if not agent_id:
-                return None, "set_engine_missing_agent"
-            if engine not in ("pi", "solo"):
-                return None, "set_engine_invalid_engine"
-            return FrontDecision(
-                intent=raw_intent,
-                agent_id=agent_id,
-                engine=engine,
-                reply=str(payload.get("reply") or "").strip(),
-                confidence=confidence,
-                reason=str(payload.get("reason") or "")), ""
-
         if raw_intent == FrontIntent.CLARIFY:
             question = str(payload.get("question") or "").strip()
             return FrontDecision(
