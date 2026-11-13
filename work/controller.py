@@ -842,7 +842,9 @@ class AIEOSController:
                 )
             ]
             headline = work[0] if work else decisions[0]
-            self._apply_front_mode(headline)
+            self._apply_front_mode(
+                headline,
+                front_mode=self._effective_front_mode(decisions))
             job.front_intent = headline.intent
             front_data = headline.to_dict()
             front_data["decisions"] = [
@@ -1113,6 +1115,10 @@ class AIEOSController:
             "completed_tasks": completed,
             "conversation": self._conversation(job),
             "agents": self._agent_facts(),
+            "context": (
+                f"当前 Front 模式：{self.front_mode}\n"
+                f"当前 Work 模式：{self.work_mode}\n"
+                "可用 set_mode 修改；修改后对新任务生效。"),
         }
         if callable(method):
             return method(job.human_text, **kwargs)
@@ -1153,7 +1159,37 @@ class AIEOSController:
         if intent == FrontIntent.ARTIFACTS:
             self._export_artifacts(job, decision)
             return
+        if intent == FrontIntent.SET_MODE:
+            self._apply_mode_change(job, decision)
+            return
         raise ValueError(f"不支持的 Front 控制动作：{intent!r}")
+
+    def _apply_mode_change(self, job: WorkJob, decision: Any) -> None:
+        front_mode = str(
+            getattr(decision, "front_mode", "") or "").strip().lower()
+        work_mode = str(
+            getattr(decision, "work_mode", "") or "").strip().lower()
+        if not front_mode and not work_mode:
+            self._reply_direct(
+                job, "没有指定要修改的模式；请说明 Front 或 Work 模式。")
+            return
+        try:
+            self.update_settings(
+                front_mode=front_mode or None,
+                work_mode=work_mode or None,
+            )
+        except ValueError as exc:
+            self._reply_direct(job, f"模式修改失败：{exc}")
+            return
+        text = str(getattr(decision, "reply", "") or "").strip()
+        if not text:
+            parts = []
+            if front_mode:
+                parts.append(f"Front 模式 → {front_mode}")
+            if work_mode:
+                parts.append(f"Work 模式 → {work_mode}")
+            text = "已更新：" + "；".join(parts) + "。"
+        self._reply_direct(job, text)
 
     def _acquire_leader(self, job: WorkJob) -> Optional[str]:
         candidates = [
@@ -1272,9 +1308,23 @@ class AIEOSController:
             "llm": detail.get("llm") or {},
         }
 
-    def _apply_front_mode(self, decision: Any) -> None:
+    def _effective_front_mode(self, decisions: List[Any]) -> str:
+        """同一回合里若 Front 先 set_mode，handoff 按新模式处理。"""
+        mode = self.front_mode
+        for item in decisions or []:
+            if getattr(item, "intent", "") != FrontIntent.SET_MODE:
+                continue
+            candidate = str(
+                getattr(item, "front_mode", "") or "").strip().lower()
+            if candidate in ("autonomous", "relay"):
+                mode = candidate
+        return mode
+
+    def _apply_front_mode(
+        self, decision: Any, *, front_mode: str = "",
+    ) -> None:
         """relay 模式只保留核心 task_text，不让 Front 扩写进 Task。"""
-        if self.front_mode != "relay":
+        if str(front_mode or self.front_mode) != "relay":
             return
         if getattr(decision, "intent", "") != FrontIntent.HANDOFF:
             return

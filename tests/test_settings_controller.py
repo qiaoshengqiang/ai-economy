@@ -247,3 +247,31 @@ def test_relay_front_mode_strips_brief_extras(tmp_path):
     assert decision.brief.non_goals == []
     assert decision.brief.context_refs == []
     assert decision.brief.files == []
+
+
+def test_front_set_mode_control_updates_both_modes(tmp_path):
+    from front import FrontDecision, FrontIntent
+    from work.controller import WorkJob
+
+    path = tmp_path / "ui_settings.json"
+    controller = _controller(tmp_path)
+    job = WorkJob(
+        job_id="job_modes",
+        human_text="以后 Front 只传达，Worker 自主工作",
+    )
+    decision = FrontDecision(
+        intent=FrontIntent.SET_MODE,
+        front_mode="relay",
+        work_mode="autonomous",
+        reply="已切换：Front 只传达，Work 自主。",
+    )
+    try:
+        controller._apply_control_decision(job, decision)
+    finally:
+        controller.close()
+
+    data = json.loads(path.read_text("utf-8"))
+    assert data["front_mode"] == "relay"
+    assert data["work_mode"] == "autonomous"
+    assert job.status == "DIRECT_REPLY"
+    assert job.summary == "已切换：Front 只传达，Work 自主。"

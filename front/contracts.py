@@ -36,13 +36,15 @@ class FrontIntent:
     CLARIFY = "clarify"
     #: 只读查看 Task 事实（不是最终决定；Front 可以在决定前调用）
     INSPECT = "inspect"
+    #: 修改 Front / Work 的全局模式
+    SET_MODE = "set_mode"
 
     @classmethod
     def all(cls) -> List[str]:
         return [
             cls.DIRECT_REPLY, cls.HANDOFF, cls.REWORK,
             cls.FOLLOW_UP, cls.CANCEL, cls.ARTIFACTS, cls.CLARIFY,
-            cls.INSPECT,
+            cls.INSPECT, cls.SET_MODE,
         ]
 
 
@@ -158,6 +160,10 @@ class FrontDecision:
     role: str = ""
     #: handoff：交付模式 direct / standard / creative_product。
     work_profile: str = "standard"
+    #: set_mode：Front 模式 autonomous / relay；空 = 不修改。
+    front_mode: str = ""
+    #: set_mode：Work 模式 workflow / autonomous；空 = 不修改。
+    work_mode: str = ""
     #: rework：返工范围 fix / enhance / redesign。
     rework_scope: str = ""
     confidence: float = 1.0
@@ -196,6 +202,8 @@ class FrontDecision:
             "preferred_agent": self.preferred_agent,
             "role": self.role,
             "work_profile": self.work_profile,
+            "front_mode": self.front_mode,
+            "work_mode": self.work_mode,
             "rework_scope": self.rework_scope,
             "confidence": self.confidence,
             "reason": self.reason,

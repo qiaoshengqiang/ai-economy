@@ -428,12 +428,19 @@ Role 只是弱信号，不要仅凭 role 判断。
    只读，不导出。
    {{"intent":"inspect","task_id":"...","reason":"..."}}
 
+9. set_mode —— 修改 Front / Work 的全局模式，不创建 Task。
+   front_mode：autonomous | relay（可选）
+   work_mode：workflow | autonomous（可选）
+   {{"intent":"set_mode","front_mode":"relay","work_mode":"autonomous",
+     "reply":"...","reason":"..."}}
+   未提供的字段保持不变。修改后对新任务生效。
+
 一个回合内多个动作：
 {{"decisions":[
   {{"intent":"cancel","task_id":"task_a","reply":"task_a 已停"}},
   {{"intent":"cancel","task_id":"task_b","reply":"task_b 已停"}}
 ]}}
-控制动作（direct_reply / clarify / cancel / artifacts）按你给出的顺序执行。
+控制动作（direct_reply / clarify / cancel / artifacts / set_mode）按你给出的顺序执行。
 每个回合最多一个执行动作（handoff / rework / follow_up），它在控制动作之后执行。
 
 路由事实：

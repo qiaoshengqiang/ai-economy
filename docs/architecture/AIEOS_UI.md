@@ -87,6 +87,19 @@ relay       只传达：只保留用户的核心任务要求，不添加需求
 - 它只控制 Front 的传达方式；如果希望 Worker 也只看到原始需求，
   应配合 Work 的 `autonomous` 模式使用。
 
+Front 还有一个 `set_mode` 控制 intent，可以在对话里修改：
+
+```json
+{"intent":"set_mode","front_mode":"relay","work_mode":"autonomous",
+ "reply":"已切换"}
+```
+
+- 两个字段都可选；未提供的不变；
+- 只修改全局设置，不创建 Task；
+- 修改后对后续 Front 调用 / 新任务生效；
+- 同一回合里先 `set_mode` 再 handoff 时，handoff 按新模式处理；
+- 当前模式会作为只读上下文注入 Front prompt，Front 可以回答“现在是什么模式”。
+
 ### 角色约束
 
 - Front Agent **永不创建 Task**；

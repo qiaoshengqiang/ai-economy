@@ -746,3 +746,18 @@ def test_front_relay_mode_prompt_forbids_expansion():
     assert "Front 模式：只传达" in prompt
     assert "不要添加用户没有提出的功能" in prompt
     assert "deliverables / constraints / acceptance_expectations / files 留空" in prompt
+    assert "set_mode" in prompt
+
+
+def test_set_mode_decision_parses_both_modes():
+    decision, error = parse_front_decision(
+        '{"intent":"set_mode","front_mode":"relay",'
+        '"work_mode":"autonomous","reply":"已切换"}',
+        human_text="以后 Front 只传达，Worker 自主工作",
+    )
+    assert error == ""
+    assert decision is not None
+    assert decision.intent == FrontIntent.SET_MODE
+    assert decision.front_mode == "relay"
+    assert decision.work_mode == "autonomous"
+    assert decision.reply == "已切换"

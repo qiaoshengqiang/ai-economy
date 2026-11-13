@@ -279,6 +279,21 @@ def parse_front_decision(
                 confidence=confidence,
                 reason=str(payload.get("reason") or "")), ""
 
+        if raw_intent == FrontIntent.SET_MODE:
+            front_mode = str(
+                payload.get("front_mode") or "").strip().lower()
+            work_mode = str(
+                payload.get("work_mode") or "").strip().lower()
+            if not front_mode and not work_mode:
+                return None, "set_mode_missing_target"
+            return FrontDecision(
+                intent=raw_intent,
+                front_mode=front_mode,
+                work_mode=work_mode,
+                reply=str(payload.get("reply") or "").strip(),
+                confidence=confidence,
+                reason=str(payload.get("reason") or "")), ""
+
         if raw_intent == FrontIntent.CLARIFY:
             question = str(payload.get("question") or "").strip()
             return FrontDecision(
