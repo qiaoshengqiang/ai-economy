@@ -522,17 +522,19 @@
 
       const levels = Array.isArray(agent.thinking_levels)
         ? agent.thinking_levels : [];
-      if (levels.length && !isFront) {
+      if (levels.length) {
         const thinking = document.createElement("span");
         thinking.className = "agent-thinking";
         const label = document.createElement("span");
         label.textContent = "思考";
         const select = document.createElement("select");
         select.className = "agent-thinking-select";
-        select.title = "Prototype 固定 max；这里设置 Engineering / Evolution";
+        select.title = isFront
+          ? "Front 决策思考强度；Auto 默认 low"
+          : "Prototype 固定 max；这里设置 Engineering / Evolution";
         const auto = document.createElement("option");
         auto.value = "auto";
-        auto.textContent = "Auto";
+        auto.textContent = isFront ? "Auto（low）" : "Auto";
         auto.selected = !agent.thinking || agent.thinking === "auto";
         select.appendChild(auto);
         levels.forEach((level) => {

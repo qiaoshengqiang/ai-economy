@@ -275,3 +275,38 @@ def test_front_set_mode_control_updates_both_modes(tmp_path):
     assert data["work_mode"] == "autonomous"
     assert job.status == "DIRECT_REPLY"
     assert job.summary == "已切换：Front 只传达，Work 自主。"
+
+
+def test_front_thinking_setting_updates_decision_policy(tmp_path):
+    from types import SimpleNamespace
+
+    class _Brain:
+        def __init__(self):
+            self.calls = []
+            self.settings = SimpleNamespace(
+                thinking_levels=("off", "low", "high", "max"))
+
+        def set_thinking(self, enabled, effort, *, phase):
+            self.calls.append((enabled, effort, phase))
+
+        def thinking_for(self, phase):
+            return None
+
+    brain = _Brain()
+    runtime = SimpleNamespace(
+        directory=_Directory(["agent_a", "agent_b"]),
+        economy=SimpleNamespace(agent=lambda aid: SimpleNamespace(
+            has_brain=True, brain=brain)),
+        tasks=SimpleNamespace(list_tasks=lambda limit=50: []),
+    )
+    controller = AIEOSController(
+        runtime, front_agent="agent_a",
+        settings_path=tmp_path / "ui_settings.json")
+    try:
+        assert brain.calls[-1] == (True, "low", "decision")
+        controller.update_settings(agent_thinking={"agent_a": "high"})
+        assert brain.calls[-1] == (True, "high", "decision")
+        controller.update_settings(agent_thinking={"agent_a": "off"})
+        assert brain.calls[-1] == (False, None, "decision")
+    finally:
+        controller.close()

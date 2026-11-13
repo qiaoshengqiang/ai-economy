@@ -2663,14 +2663,20 @@ class AIEOSController:
             self._agent_tasks.pop(aid, None)
 
     def _configure_front_brain(self) -> None:
-        """Front 只做意图识别与沟通，不需要高强度思考。"""
+        """Front 的决策思考强度：Auto 默认 low，可在 Agent 卡片修改。"""
         agent = self._agent(self.front_agent)
         brain = getattr(agent, "brain", None)
         setter = getattr(brain, "set_thinking", None)
         if not callable(setter):
             return
+        level = self._thinking_for_agent(self.front_agent)
+        if not level or level == "auto":
+            level = "low"
         try:
-            setter(True, "low", phase="decision")
+            if level == "off":
+                setter(False, None, phase="decision")
+            else:
+                setter(True, level, phase="decision")
         except Exception:                                     # noqa: BLE001
             return
 
