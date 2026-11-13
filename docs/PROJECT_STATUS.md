@@ -4,7 +4,7 @@
 > **日期：2026-11-13**
 > **阶段：开发中 / 观察实验**
 > **协议版本：`1`**
-> **测试基线：`5591 passed, 2 skipped, 30 deselected`**
+> **测试基线：`5593 passed, 2 skipped, 30 deselected`**
 
 本文记录**当前真实可用能力、推荐工作方式、已知限制和版本变化**。
 架构的长期权威仍然是
@@ -495,10 +495,21 @@ Team 协作
 当前基线：
 
 ```text
-5591 passed, 2 skipped, 30 deselected
+5593 passed, 2 skipped, 30 deselected
 ```
 
 启动说明见 [`../START_AIEOS.md`](../START_AIEOS.md)。
+
+平台支持：
+
+```text
+macOS   当前主要验证平台
+Linux   预期可用，尚未建立完整 CI
+Windows 未支持；待改清单见 PLATFORM_COMPATIBILITY.md
+WSL     实验性，路径语义需单独处理
+```
+
+详见 [`architecture/PLATFORM_COMPATIBILITY.md`](architecture/PLATFORM_COMPATIBILITY.md)。
 
 ---
 
