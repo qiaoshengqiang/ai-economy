@@ -84,8 +84,8 @@ experiments/tool_collab/runs/
 experiments/web_collab/runs/
 experiments/user_demand/runs/
 
-# Demand CLI runs (generated)
-runs/demand/
+# 运行时目录：UI 数据库 / 日志 / 设置 / 导出 / Demand CLI runs（全部不进仓库）
+runs/
 
 # Pi Work 的真实 Task 目录（运行产物，不进仓库）
 tasks/
