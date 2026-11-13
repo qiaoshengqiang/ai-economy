@@ -388,7 +388,7 @@ class FrontAgentRuntime:
 ========== 输入方式事实 ==========
 - 用户可能使用语音输入；转写文本可能有错字、漏字、断句或同音词错误。
 - 遇到语义不顺、指代不清或明显错乱时，先结合上下文确认；
-  目标不明确时用 clarify 向用户确认，确认后再 handoff / rework / follow_up。
+  clarify 可以用来向用户确认目标。
 
 ========== Agent 事实（只读） ==========
 {_render_agents(agents)}
@@ -402,20 +402,24 @@ class FrontAgentRuntime:
 ========== 已完成的 Task（只读） ==========
 {_render_tasks(completed)}
 
-========== 任务判断规则 ==========
-- 先判断用户说的是「当前选中的项目目录」还是「已有 Task」。
-- 当前有项目目录时，用户说「这个项目 / 项目里的网页 / 这个目录 /
-  这里的文件」指的是项目目录，不是 Task。
-- 只有用户明确提到 Task ID、刚才那个任务、上次生成的那个，或语义
-  明显指向已有 Task 时，才用 follow_up / rework。
-- rework 只用于 COMPLETED 的 Task；follow_up 只用于进行中 /
+========== 任务判断事实 ==========
+- 当前选中的项目目录、已有 Task、以及两者之间的关系，是三个独立事实。
+- 用户说「这个项目 / 项目里的网页 / 这个目录 / 这里的文件」时，
+  这些词通常指向当前项目目录；同一句话里出现某个 Task、task_id 或
+  「上次那个任务」时，也同时指向该 Task。
+- follow_up / rework 需要一个明确的已有 Task 目标：task_id、
+  「刚才那个任务」「上次生成的那个」，或上下文能唯一确定。
+  目标不唯一时，clarify 可以向用户确认。
+- rework 用于 COMPLETED 的 Task；follow_up 用于进行中 /
   INTERRUPTED 的 Task。
-- rework / follow_up 前先 inspect 对应 Task，确认 task_id、状态、
-  描述与用户所指一致；不确定时用 clarify 确认。
-- 改项目目录里的文件时用 handoff 创建新任务。
-- handoff 的 task_text 必须写清：改哪个对象、在哪个目录、期望结果；
-  项目任务要包含目标文件路径。
-- task_text 必须自包含，让一个没有看过对话的 Worker 也能独立理解任务。
+- 同一项目目录可以先后承载多个 Task，也可以继续已有 Task。
+  选择取决于用户要延续哪个任务，以及这次变更是否属于同一目标。
+- 同一项目目录同一时间只有一个运行中的 Task；需要确认项目归属时，
+  inspect 可以读取 Task 的 workspace_path / workspace_mode。
+- rework / follow_up 会改变已有 Task；inspect 可以读取 task_id、状态、
+  描述和 workspace_path，用来核对用户所指的任务。
+- Worker 只看到 task_text；task_text 写清目标对象、目录和期望结果，
+  Worker 才能独立执行。
 
 ========== 检查结果（只读） ==========
 {_render_inspection(inspection)}
@@ -487,7 +491,7 @@ Role 只是弱信号，不要仅凭 role 判断。
 
 2. handoff —— 新的工作请求。
    🔒 task_text 是 Work Agent 唯一看到的内容；human_text 保留原文。
-   所有需求、约束、验收标准、交付物都必须写进 task_text。
+   Worker 依据 task_text 执行；需求、约束、验收标准、交付物写进 task_text。
    preferred_agent 是路由元数据；空 / 省略 = 系统选择一个空闲 worker。
    brief 只携带你准备好的文件：brief.files。
    回复只描述 Worker 实际收到的 task_text。

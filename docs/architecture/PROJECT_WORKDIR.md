@@ -141,13 +141,16 @@ Front prompt：路径 / 一级内容 / 网页候选
 规则：
 
 - 当前有项目目录时，用户说「这个项目 / 项目里的网页 / 这个目录 /
-  这里的文件」指项目目录，不是某个 Task；
-- 只有明确提到 Task ID / 刚才那个任务 / 上次生成的那个时，才用
-  `follow_up` / `rework`；
-- `rework` / `follow_up` 前先 `inspect`，确认 task_id、状态和描述；
-  不确定就 `clarify`；
-- 改项目目录里的文件用 `handoff`，不要 `rework` 旧 Task；
-- 项目任务的 `task_text` 必须包含目标文件路径。
+  这里的文件」通常指项目目录；同一句话里出现 Task ID / 刚才那个任务时，
+  也同时指向该 Task；
+- `follow_up` / `rework` 需要明确的已有 Task 目标；目标不唯一时用
+  `clarify` 确认；
+- `rework` / `follow_up` 会改变已有 Task；`inspect` 可读取 task_id、
+  状态、描述和 `workspace_path`，用来核对用户所指的任务；
+- 同一项目目录可以继续已有 Task，也可以创建新 Task；选择取决于用户
+  要延续哪个任务，以及这次变更是否属于同一目标；
+- 同一项目目录同一时间只有一个运行中的 Task；
+- Worker 只看到 `task_text`；项目任务的目标文件路径写进 `task_text`。
 
 Front 可以只读项目目录：
 

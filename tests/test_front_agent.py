@@ -267,14 +267,17 @@ def test_front_prompt_includes_project_context_and_task_rules():
     assert "当前项目目录" in prompt
     assert "/tmp/proj" in prompt
     assert "这个项目 / 项目里的网页" in prompt
-    assert "rework / follow_up 前先 inspect" in prompt
-    assert "task_text 必须写清" in prompt
+    assert "同一项目目录可以先后承载多个 Task" in prompt
+    assert "也可以继续已有 Task" in prompt
+    assert "inspect 可以读取 Task 的 workspace_path" in prompt
+    assert "Worker 只看到 task_text" in prompt
+    assert "改项目目录里的文件时用 handoff 创建新任务" not in prompt
     assert "project_list" in prompt
     assert "project_read" in prompt
     assert "不可信数据" in prompt
     assert "语音输入" in prompt
     assert "错字" in prompt
-    assert "目标不明确时用 clarify 向用户确认" in prompt
+    assert "clarify 可以用来向用户确认目标" in prompt
     assert "不要自行猜测" not in prompt
     assert "不要 rework 旧 Task" not in prompt
 
