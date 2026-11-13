@@ -7,7 +7,10 @@
 > Agent 可以自己决定做任务、拒绝任务、外包任务、向其他 Agent 询价、报价、支付、收款。
 > Agent 的最终能力不仅由模型能力决定，也由它能否在经济系统中长期生存决定。
 
-**当前版本：v0.1（开发中）** —— 目标：跑通一次真实的 Agent 经济交易。
+**当前版本：v0.2.0（开发中）** —— 当前最佳工作方式：Front → Pi Agent → 自主工作。
+
+> 当前版本的真实能力、推荐模式、已知限制与版本变化，见
+> [`docs/PROJECT_STATUS.md`](docs/PROJECT_STATUS.md)。
 
 ---
 
@@ -18,6 +21,7 @@
 
 | 文档 | 作用 | 什么时候读 |
 |---|---|---|
+| [`docs/PROJECT_STATUS.md`](docs/PROJECT_STATUS.md) | **当前版本现状** —— 推荐模式 / 已知限制 / 版本变化 | 想知道「现在到底能做什么」时 |
 | [`AGENTS.md`](AGENTS.md) | **Developer Context** —— 入口与导航 | **开始工作前** |
 | [`docs/architecture/ARCHITECTURE_CONSTITUTION.md`](docs/architecture/ARCHITECTURE_CONSTITUTION.md) | **长期架构 Source of Truth** | 改架构之前 |
 | [`docs/architecture/TASK_SHARED_CONTEXT.md`](docs/architecture/TASK_SHARED_CONTEXT.md) | Task Shared Context / Alignment 规范 | 做 Shared Context 时 |
@@ -186,7 +190,7 @@ LLM 只能**提出意图**，永远不能**直接改账**。
 - [x] SQLite 数据库（4 张表）
 - [x] 启动横幅
 - [x] **命令行经济操作**（转账 / 余额 / 流水 / 对账）
-- [x] 4768 个 pytest 测试全绿（另有 30 个真实 API 测试单独跑）
+- [x] 5536 个 pytest 测试全绿（另有 30 个真实 API 测试单独跑）
 
 **验收标准**（已达成）：
 
@@ -194,7 +198,7 @@ LLM 只能**提出意图**，永远不能**直接改账**。
 $ python3 main.py
 
 ================================
-        AI Economy OS v0.1
+        AI Economy OS v0.2.0
 ================================
 
 Agent A
@@ -1793,7 +1797,7 @@ python -m pip install -r requirements.txt
 cp .env.example .env
 ```
 
-**v0.1 阶段可以完全跳过这一步。**
+**当前阶段可以完全跳过这一步。**
 系统默认使用 `MockProvider`，没有任何 API Key 也能跑通整个经济系统。
 
 ### 4. 启动
@@ -2063,7 +2067,7 @@ DeepSeek Doubao Grok
 
 ### 货币
 
-系统内部经济单位叫 **AI 币**（符号 `AI`）。v0.1 用本地 Ledger 模拟，**不接区块链**。
+系统内部经济单位叫 **AI 币**（符号 `AI`）。当前版本用本地 Ledger 模拟，**不接区块链**。
 
 ### Token ↔ AI 币 换算
 
@@ -2085,7 +2089,7 @@ economy:
 | `ESCROW_RELEASE` | 托管释放给收款方 |
 | `ESCROW_REFUND` | 托管退回付款方 |
 | `LLM_COST` | 调用模型的成本（真实经营成本） |
-| `FEE` | 系统手续费（v0.1 不收，留位置） |
+| `FEE` | 系统手续费（当前版本不收，留位置） |
 
 ### LLM 成本进经济系统
 
@@ -2113,13 +2117,13 @@ balance <= 0  →  INSOLVENT
 破产不等于程序崩溃。Agent 依然存在、依然有记忆，
 只是不能再承担它付不起的经济责任了。
 
-v0.1 不做贷款、抵押、信用、保险、破产重组 —— 但概念保留。
+当前版本不做贷款、抵押、信用、保险、破产重组 —— 但概念保留。
 
 ---
 
 ## 未来扩展方向
 
-> 以下均为**设计方向记录**，v0.1 **不实现**。
+> 以下均为**设计方向记录**，当前版本**不实现**。
 > 现在记录是为了确保当前架构留好了接口。
 
 ### Agent 自我生存
@@ -2178,7 +2182,7 @@ Capital Market    资本市场
 
 ---
 
-## v0.1 明确不做的事
+## 当前版本明确不做的事
 
 为了聚焦，以下全部推迟：
 

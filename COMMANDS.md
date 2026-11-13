@@ -212,7 +212,7 @@ Agent 余额
 
 ```
 ================================
-        AI Economy OS v0.1
+        AI Economy OS v0.2.0
           Step 2 Demo
 ================================
 
@@ -559,7 +559,7 @@ extra_body:
 
 ```
 ================================
-        AI Economy OS v0.1
+        AI Economy OS v0.2.0
    Step 3 Communication Demo
 ================================
 

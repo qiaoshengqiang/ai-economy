@@ -21,6 +21,7 @@
 
 | 文档 | 长度 | 作用 | 什么时候读 |
 |---|---|---|---|
+| [`../PROJECT_STATUS.md`](../PROJECT_STATUS.md) | 中 | **当前版本 `v0.2.0` 的真实状态、推荐模式、已知限制** | 想知道「现在到底能做什么 / 不能用什么」时 |
 | [AGENT_CORE_MODEL_V1.md](AGENT_CORE_MODEL_V1.md) | **高** | **Agent 是什么 · World · Gateway · Capability · Cognitive Substrate**（上层架构地图，全部标 `CONFIRMED` / `PROVISIONAL` / `OPEN`） | **讨论任何新概念之前先读** —— Autonomous Agent / Tool / Browser / Game / Multi-World / 生产资料 |
 | [`../../AGENTS.md`](../../AGENTS.md) | 短 | **Developer Context** —— 导航与入口 | **每次开始工作前** |
 | [ARCHITECTURE_CONSTITUTION.md](ARCHITECTURE_CONSTITUTION.md) | 长 | **长期 Source of Truth** —— 完整架构事实 | 动手改架构之前 |
@@ -82,8 +83,9 @@ ADR            ← 单个决策的历史与理由（中）
 
 | | |
 |---|---|
-| **阶段** | Post-Change-Pipeline-Phase-1 · Agent Core V1 · Tool Runtime V1 已实现 |
-| **测试** | 以 `./dev.sh test` 当前输出为准（最近：4790 passed, 2 skipped, 30 deselected） |
+| **版本** | **`v0.2.0`**（当前状态见 [`../PROJECT_STATUS.md`](../PROJECT_STATUS.md)） |
+| **阶段** | Post-Change-Pipeline-Phase-1 · Agent Core V1 · Tool Runtime V1 · Pi Work（workflow / autonomous）已实现 |
+| **测试** | 以 `./dev.sh test` 当前输出为准（最近：5536 passed, 2 skipped, 30 deselected） |
 | **协议** | v1 |
 | **Memory 四层** | Layer 1 `DESIGNED` · **Layer 2 `CURRENT`** · Layer 3/4 `FUTURE`（见 AGENTS.md §4） |
 | **Task Workspace** | `TaskWorkspaceRef` 仍是纯引用；**Workspace Core v1 已实现**（资源树 / 锁 / 版本，ADR-0029） |

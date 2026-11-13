@@ -29,8 +29,8 @@
 
 | | |
 |---|---|
-| **阶段** | `Workspace Core V1 已冻结 · Agent Core V1 已实现 · Tool Runtime V1 已实现 · Vision V1 已实现 · Demand Entry V1 已实现 · 观察实验` |
-| **测试基线** | 以 `./dev.sh test` 当前输出为准（最近：**5535 passed, 2 skipped, 30 deselected**） |
+| **阶段** | **`v0.2.0`** · Workspace Core V1 已冻结 · Agent Core V1 · Tool Runtime V1 · Vision V1 · Demand Entry V1 · Pi Work（workflow / autonomous）· 观察实验 |
+| **测试基线** | 以 `./dev.sh test` 当前输出为准（最近：**5536 passed, 2 skipped, 30 deselected**） |
 | **协议版本** | `protocol_version = "1"` |
 | **命令数** | 25（`./dev.sh` 查看全部） |
 | **数据库表** | **28** |
@@ -52,13 +52,13 @@ Workspace v1  资源树 · Controller · Explicit/Effective Lock · Revision · 
 Change Pipeline  Phase 1 WorktreeManager · hello-demo（真实 LLM 端到端）
 Agent Core    Actions（14 执行器）· Cognition · Experience · Reflection · Self Model · Stage · Budget · Delegation
 Tool Runtime  V1 · 公共只读工具库（python/pytest/node/playwright）· 独立 run 目录 · 受控执行（ADR-0040）· 认知预算自主（ADR-0045）
-实验线        Human Demand → 第一个 Agent 能否自主分工（`experiments/`）  ← 当前工作重心
+Pi Work      workflow / autonomous · Front autonomous / relay · web search · 恢复 / Reopen
+实验线        Pi 自主工作观察 · Human Demand → Agent 自主分工（`experiments/`）  ← 当前工作重心
 ```
 
 ### 下一步
 
-> **两条线**：① **冻结路线图** —— Change Pipeline 的 Patch（Test / Acceptance / Merge 在其后），见
-> [`CHANGE_PIPELINE_V1_DESIGN.md`](docs/architecture/implementation/CHANGE_PIPELINE_V1_DESIGN.md)；② **当前重心** —— 「Human Demand → Agent 自主分工 → 闭环」跑通（`experiments/`）。
+> **下一步**：① 当前重心 —— Pi autonomous / Front relay 观察与收敛（[现状](docs/PROJECT_STATUS.md)）；② 冻结路线图 —— Change Pipeline Patch（[设计](docs/architecture/implementation/CHANGE_PIPELINE_V1_DESIGN.md)）。
 
 ---
 

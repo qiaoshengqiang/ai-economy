@@ -228,7 +228,7 @@ def test_status_summary(funded_agents):
 
     assert status["agent_count"] == 2
     assert status["currency"] == "AIC"
-    assert status["version"] == "0.1"
+    assert status["version"] == "0.2.0"
     assert status["audit"]["balanced"] is True
     assert len(status["agents"]) == 2
 

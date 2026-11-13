@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AI Economy OS v0.1 —— 启动入口 & 命令行工具
+AI Economy OS v0.2.0 —— 启动入口 & 命令行工具
 ============================================================
 
 【基本运行】
@@ -1388,7 +1388,7 @@ def cmd_start(runtime: Runtime, args: argparse.Namespace) -> int:
         return 0
 
     system_name = str(economy.config.get("system.name", "AI Economy OS"))
-    system_version = str(economy.config.get("system.version", "0.1"))
+    system_version = str(economy.config.get("system.version", "0.2.0"))
 
     print_banner(system_name, system_version)
     print_agents(economy)
@@ -1897,7 +1897,7 @@ def cmd_demo(runtime: Runtime, args: argparse.Namespace) -> int:
     effective_provider = override or brain.provider
 
     banner_name = str(economy.config.get("system.name", "AI Economy OS"))
-    banner_version = str(economy.config.get("system.version", "0.1"))
+    banner_version = str(economy.config.get("system.version", "0.2.0"))
 
     print()
     print("=" * BANNER_WIDTH)
@@ -2095,7 +2095,7 @@ async def _communication_demo_async(
     receiver = economy.agent(receiver_id)
 
     banner_name = str(economy.config.get("system.name", "AI Economy OS"))
-    version = str(economy.config.get("system.version", "0.1"))
+    version = str(economy.config.get("system.version", "0.2.0"))
 
     print()
     print("=" * BANNER_WIDTH)
@@ -2623,7 +2623,7 @@ def cmd_task_demo(runtime: Runtime, args: argparse.Namespace) -> int:
 
     print()
     print("=" * 64)
-    print("        AI Economy OS v0.1")
+    print("        AI Economy OS v0.2.0")
     print("        Step 4A — Task Core Demo")
     print("=" * 64)
     print()
@@ -2913,7 +2913,7 @@ def cmd_capability_demo(runtime: Runtime, args: argparse.Namespace) -> int:
 
     print()
     print("=" * 66)
-    print("        AI Economy OS v0.1")
+    print("        AI Economy OS v0.2.0")
     print("        Step 4B — Capability & Delegation Demo")
     print("=" * 66)
     print()
@@ -3258,7 +3258,7 @@ def cmd_negotiation_demo(runtime: Runtime, args: argparse.Namespace) -> int:
 
     print()
     print("=" * 68)
-    print("        AI Economy OS v0.1")
+    print("        AI Economy OS v0.2.0")
     print("        Step 4C — Negotiation Demo")
     print("=" * 68)
     print()
@@ -3550,7 +3550,7 @@ def cmd_task_4d_demo(runtime: Runtime, args: argparse.Namespace) -> int:
 
     print()
     print("=" * 72)
-    print("        AI Economy OS v0.1")
+    print("        AI Economy OS v0.2.0")
     print("        Step 4D — Task Execution / Submission / Verification")
     print("=" * 72)
     print()
@@ -3908,7 +3908,7 @@ def cmd_reliability_demo(runtime: Runtime, args: argparse.Namespace) -> int:
 
     print()
     print("=" * 74)
-    print("        AI Economy OS v0.1")
+    print("        AI Economy OS v0.2.0")
     print("        Step 4D.1 — Reliability / Concurrency Hardening")
     print("=" * 74)
     print()
@@ -6830,7 +6830,7 @@ def cmd_reliability_multiprocess_demo(
 
     print()
     print("=" * 76)
-    print("        AI Economy OS v0.1")
+    print("        AI Economy OS v0.2.0")
     print("        Workspace Phase 0 — Multiprocess / Claim Lease")
     print("=" * 76)
     print()
@@ -7153,7 +7153,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser = argparse.ArgumentParser(
         prog="main.py",
-        description="AI Economy OS v0.1 —— Agent 经济系统",
+        description="AI Economy OS v0.2.0 —— Agent 经济系统",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         parents=[shared],
         epilog="""

@@ -673,7 +673,7 @@ class Economy:
         agents = self.all_agents()
         return {
             "system": self.config.get("system.name", "AI Economy OS"),
-            "version": self.config.get("system.version", "0.1"),
+            "version": self.config.get("system.version", "0.2.0"),
             "currency": self.currency,
             "tokens_per_ai_coin": self.tokens_per_ai_coin,
             "database": self.db.path,
