@@ -62,6 +62,7 @@ class PiWorkRuntime:
         phase_plan: Optional[List[str]] = None,
         thinking: str = "auto",
         work_profile: str = "",
+        work_mode: str = "workflow",
         rework_scope: str = "",
     ) -> None:
         if task.mode != TaskMode.SOLO:
@@ -99,6 +100,10 @@ class PiWorkRuntime:
             work_profile
             or (acceptance.get("work_profile") if isinstance(acceptance, dict) else "")
             or "standard").strip().lower()
+        mode = str(work_mode or "workflow").strip().lower()
+        if mode not in ("workflow", "autonomous"):
+            mode = "workflow"
+        self.work_mode = mode
         self.rework_scope = str(rework_scope or "").strip().lower()
         self.thinking = str(thinking or "auto").strip().lower()
         self._work_state: Dict[str, Any] = {}
@@ -252,11 +257,14 @@ class PiWorkRuntime:
         "prototype": "原型生成",
         "engineering": "实现验证",
         "evolution": "持续迭代",
+        "autonomous": "自主工作",
     }
     _THINKING_ORDER = (
         "max", "xhigh", "high", "medium", "low", "minimal", "off")
 
     def _base_phase_plan(self) -> List[str]:
+        if self.work_mode == "autonomous":
+            return ["autonomous"]
         if self._explicit_phase_plan is not None:
             return list(self._explicit_phase_plan)
         profile = self.work_profile or "standard"
@@ -292,6 +300,19 @@ class PiWorkRuntime:
         self, state: Dict[str, Any],
     ) -> tuple[List[str], bool, str]:
         """返回 (phase_plan, resumed, resume_reason)。"""
+        if self.work_mode == "autonomous":
+            phase = str(state.get("phase") or "")
+            status = str(
+                state.get("phase_status") or state.get("status") or "")
+            state_iter = int(state.get("iteration") or 0)
+            if (phase == "autonomous" and status != "complete"
+                    and state_iter == int(self.task.iteration or 1)):
+                return ["autonomous"], True, (
+                    str(state.get("resume_reason") or "task_resume"))
+            if state_iter and int(self.task.iteration or 1) > state_iter:
+                scope = self.rework_scope or "enhance"
+                return ["autonomous"], True, f"rework:{scope}"
+            return ["autonomous"], False, ""
         phases = self._base_phase_plan()
         known = ["direct"] + [p for p in phases if p != "direct"]
         phase = str(state.get("phase") or "")
@@ -341,6 +362,11 @@ class PiWorkRuntime:
                 ),
             )
 
+        # 自主模式没有阶段策略：按 Agent 卡片；Auto 用 high。
+        if self.work_mode == "autonomous":
+            if self.thinking and self.thinking != "auto":
+                return pick(self.thinking)
+            return pick("high")
         # Prototype 固定最高档；Agent 卡片只影响后续阶段。
         if phase == "prototype":
             return pick("max")
@@ -351,7 +377,37 @@ class PiWorkRuntime:
         }
         return pick(defaults.get(phase, "medium"))
 
+    def _autonomous_system_prompt(self) -> str:
+        """自主模式的最小系统提示：只保留环境边界与工具使用。"""
+        paths = self.memory.paths()
+        search_cmd = os.environ.get("AIEOS_WEB_SEARCH_CMD", "").strip()
+        search_section = ""
+        if search_cmd:
+            search_section = f"""
+需要实时外部信息时，可以运行：
+{search_cmd} search "query" --count 5
+需要读取具体公开网页正文时，可以运行：
+{search_cmd} fetch "https://example.com/page"
+"""
+        return f"""你是 {self.task.contractor or self.task.creator}，AIEOS 中的 Work 执行 Agent。
+
+你的工作目录是 Task Workspace：
+{paths['task_workspace']}
+
+你的私有 workspace 是：
+{paths['private_workspace']}
+你的记忆目录是：
+{paths['memory_dir']}
+
+直接使用原生 read/write/edit/bash/grep/find/ls 工具在 Task Workspace 中完成工作。
+读取 `{paths['memory_dir']}/context.md` 获取记忆快照。不要修改其他 Agent
+的私有目录。
+{search_section}
+"""
+
     def _minimal_system_prompt(self) -> str:
+        if self.work_mode == "autonomous":
+            return self._autonomous_system_prompt()
         paths = self.memory.paths()
         search_cmd = os.environ.get("AIEOS_WEB_SEARCH_CMD", "").strip()
         search_section = ""
@@ -606,6 +662,14 @@ Task Workspace。不要使用 AIEOS Shared Context；本 Work 任务不提供它
 
     def _phase_prompt(self, phase: str, memory_context: str) -> str:
         task_text = self.task.description or f"Task {self.task.task_id}"
+        if self.work_mode == "autonomous":
+            text = task_text
+            answer = self._answer_text()
+            if answer:
+                text = (
+                    f"{text}\n\n"
+                    f"========== 人类回答 ==========\n{answer}")
+            return text
         env = self._environment_facts(phase)
         role_section = self._role_phase_section(phase)
         role_block = (

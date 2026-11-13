@@ -61,7 +61,7 @@ class _FakeController:
                         max_solo_turns=None, pi_work_agents=None,
                         disabled_agents=None, prompt_log_enabled=None,
                         agent_thinking=None, pi_timeout_enabled=None,
-                        pi_timeout_seconds=None):
+                        pi_timeout_seconds=None, work_mode=None):
         if front_agent:
             self.front = front_agent
             self.settings["front_agent"] = front_agent

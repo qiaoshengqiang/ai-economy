@@ -106,6 +106,31 @@ def test_pi_timeout_switch_round_trip(tmp_path):
         reloaded.close()
 
 
+def test_work_mode_round_trip(tmp_path):
+    path = tmp_path / "ui_settings.json"
+    controller = _controller(tmp_path)
+    try:
+        assert controller.settings_dict()["work_mode"] == "workflow"
+        controller.update_settings(work_mode="autonomous")
+        assert controller.settings_dict()["work_mode"] == "autonomous"
+    finally:
+        controller.close()
+
+    data = json.loads(path.read_text("utf-8"))
+    assert data["work_mode"] == "autonomous"
+    reloaded = _controller(tmp_path)
+    try:
+        assert reloaded.settings_dict()["work_mode"] == "autonomous"
+        try:
+            reloaded.update_settings(work_mode="unknown")
+        except ValueError as exc:
+            assert "work_mode" in str(exc)
+        else:
+            raise AssertionError("unknown work_mode should fail")
+    finally:
+        reloaded.close()
+
+
 def test_front_agent_cannot_be_disabled(tmp_path):
     controller = _controller(tmp_path)
     try:

@@ -228,6 +228,8 @@ class AIEOSController:
         self.disabled_agents: set[str] = set()
         #: Agent 卡片选择的思考强度；"auto" = 阶段策略。
         self.agent_thinking: Dict[str, str] = {}
+        #: Work 模式：workflow = 阶段化；autonomous = 单阶段自主工作。
+        self.work_mode = "workflow"
         self.pi_cli_path = str(pi_cli_path or "pi")
         self.pi_provider = str(pi_provider or "")
         self.pi_model = str(pi_model or "")
@@ -346,6 +348,9 @@ class AIEOSController:
                 for aid, level in raw_thinking.items()
                 if str(aid) in self._agent_ids
             }
+        mode = str(data.get("work_mode") or "workflow").strip().lower()
+        if mode in ("workflow", "autonomous"):
+            self.work_mode = mode
 
     def update_settings(
         self,
@@ -359,6 +364,7 @@ class AIEOSController:
         agent_thinking: Optional[Dict[str, str]] = None,
         pi_timeout_enabled: Optional[bool] = None,
         pi_timeout_seconds: Optional[float] = None,
+        work_mode: Optional[str] = None,
     ) -> Dict[str, Any]:
         with self._lock:
             if front_agent is not None:
@@ -429,6 +435,12 @@ class AIEOSController:
                 if value <= 0:
                     raise ValueError("pi_timeout_seconds 必须 > 0")
                 self.pi_timeout_seconds = value
+            if work_mode is not None:
+                mode = str(work_mode).strip().lower()
+                if mode not in ("workflow", "autonomous"):
+                    raise ValueError(
+                        "work_mode 必须是 workflow 或 autonomous")
+                self.work_mode = mode
             self._persist_settings()
             self._configure_front_brain()
             self._notify()
@@ -446,6 +458,7 @@ class AIEOSController:
             "agent_thinking": dict(self.agent_thinking),
             "pi_timeout_enabled": bool(self.pi_timeout_enabled),
             "pi_timeout_seconds": float(self.pi_timeout_seconds),
+            "work_mode": str(self.work_mode),
         }
 
     def _pi_timeout(self) -> float:
@@ -1047,6 +1060,10 @@ class AIEOSController:
         role_prompt: str = "",
         role: Any = None,
     ) -> PiWorkRuntime:
+        acceptance = getattr(task, "acceptance", None)
+        work_mode = (
+            acceptance.get("work_mode")
+            if isinstance(acceptance, dict) else "workflow")
         return PiWorkRuntime(
             self.rt, task,
             task_directory=self.task_directories.for_task(task.task_id),
@@ -1064,6 +1081,7 @@ class AIEOSController:
             role=role,
             thinking=self._thinking_for_agent(
                 task.contractor or task.creator),
+            work_mode=str(work_mode or "workflow"),
         )
 
     def _front_turn(
@@ -1428,6 +1446,7 @@ class AIEOSController:
                     "role": str(getattr(decision, "role", "") or "generalist"),
                     "work_profile": str(
                         getattr(decision, "work_profile", "") or "standard"),
+                    "work_mode": str(self.work_mode),
                 },
                 note=f"demand_run:aieos_{job.job_id}",
                 mode=TaskMode.SOLO,

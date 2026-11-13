@@ -275,3 +275,99 @@ def test_pi_work_runtime_completes_and_ingests_memory(db, monkeypatch, tmp_path)
     prompt = runner._minimal_system_prompt()
     assert "aieos_web_search.py search" in prompt
     assert "aieos_web_search.py fetch" in prompt
+
+
+def test_autonomous_mode_uses_single_minimal_run(db, monkeypatch, tmp_path):
+    task = Task.create(
+        task_id="T-AUTONOMOUS", creator="agent_c",
+        description="做一个温暖的阅读页。",
+        workspace_id="WS-AUTO", participants=["agent_c"],
+        acceptance={
+            "work_profile": "creative_product",
+            "work_mode": "autonomous",
+        },
+        mode=TaskMode.SOLO)
+    task.claim_producer("agent_c")
+    store = TaskStore(db)
+    store.save(task)
+
+    workspace = _FakeWorkspace(tmp_path / "agent_c")
+    runtime = SimpleNamespace(
+        tasks=store,
+        economy=SimpleNamespace(agent=lambda aid: SimpleNamespace(
+            has_brain=True, brain=_FakeBrain(), workspace=workspace)),
+        private_working_memory=_FakeWorkingMemory(),
+        private_short_term_memory=_FakeShortMemory(),
+        private_long_term_memory=_FakeLongMemory(),
+        recorder=_Recorder(),
+        experiment_run_id="exp-auto",
+    )
+    directory = TaskDirectoryManager(
+        tmp_path / "tasks").for_task(task.task_id)
+    runner = PiWorkRuntime(
+        runtime, task,
+        task_directory=directory,
+        pi_cli_path="fake-pi",
+        use_llm_proxy=False,
+        work_mode="autonomous",
+    )
+
+    assert runner._base_phase_plan() == ["autonomous"]
+    plan, resumed, _ = runner._phase_plan_for_run({})
+    assert plan == ["autonomous"]
+    assert resumed is False
+    plan, resumed, _ = runner._phase_plan_for_run({
+        "phase": "autonomous", "phase_status": "running", "iteration": 1})
+    assert plan == ["autonomous"]
+    assert resumed is True
+
+    assert runner._phase_prompt("autonomous", "") == task.description
+    assert runner._phase_thinking("autonomous") == "high"
+    system = runner._minimal_system_prompt()
+    assert "原型阶段" not in system
+    assert "工程阶段" not in system
+    assert "QUESTION.json" not in system
+    assert "TASK_DOC.md" not in system
+    assert str(directory.workspace) in system
+    assert "read/write/edit/bash" in system
+
+    class _FakePiClient:
+        def __init__(self, **kwargs):
+            self.cwd = Path(kwargs["cwd"])
+
+        def run(self, prompt, *, timeout_seconds, should_stop, event_sink):
+            (self.cwd / "autonomous.txt").write_text("ok", encoding="utf-8")
+            events = [
+                {"type": "turn_start", "_received_at": 1.0},
+                {
+                    "type": "message_end",
+                    "_received_at": 2.0,
+                    "message": {
+                        "role": "assistant",
+                        "provider": "deepseek",
+                        "model": "deepseek-flash",
+                        "content": [{"type": "text", "text": "done"}],
+                        "usage": {
+                            "input": 1, "output": 1,
+                            "cacheRead": 0, "cacheWrite": 0,
+                            "totalTokens": 2,
+                        },
+                    },
+                },
+                {"type": "turn_end", "_received_at": 3.0},
+                {"type": "agent_settled", "_received_at": 3.1},
+            ]
+            if event_sink is not None:
+                for event in events:
+                    event_sink(event)
+            return PiRunResult(events=events, exit_code=0)
+
+    monkeypatch.setattr(
+        "work.pi_runtime.PiRpcClient", _FakePiClient, raising=True)
+    result = runner.run()
+    assert result.ok is True, result.error
+    assert (directory.workspace / "autonomous.txt").read_text() == "ok"
+    state = json.loads(
+        (directory.aieos / "work_state.json").read_text("utf-8"))
+    assert state["phase"] == "complete"
+    assert state["history"][-1]["phase"] == "autonomous"

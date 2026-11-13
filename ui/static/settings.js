@@ -242,6 +242,7 @@
       agent.agent_id === regular.front_agent));
     $("max-teams").value = String(regular.max_parallel_teams || 3);
     $("max-solo-turns").value = String(regular.max_solo_turns || 24);
+    $("work-mode").value = regular.work_mode || "workflow";
     $("pi-timeout-enabled").checked = regular.pi_timeout_enabled !== false;
     $("pi-timeout-seconds").value = String(
       regular.pi_timeout_seconds || 1800);
@@ -519,6 +520,7 @@
           front_agent: $("front-select").value,
           max_parallel_teams: Number($("max-teams").value || 3),
           max_solo_turns: Number($("max-solo-turns").value || 24),
+          work_mode: $("work-mode").value,
           pi_timeout_enabled: $("pi-timeout-enabled").checked,
           pi_timeout_seconds: Number($("pi-timeout-seconds").value || 1800),
           prompt_log_enabled: $("prompt-log-enabled").checked,

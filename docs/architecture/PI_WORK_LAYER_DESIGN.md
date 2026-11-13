@@ -231,6 +231,30 @@ Front                          Pi
 - Search / Fetch 结果按条数和字符数截断；搜索失败按 action error 回喂，
   不中断 Task。
 
+## 4.7 自主模式（Autonomous）
+
+常规设置里新增 `Work 模式`：
+
+```text
+workflow   当前阶段化模式（Prototype → Engineering → Evolution）
+autonomous 单阶段自主模式
+```
+
+- 模式写入 Task 的 `acceptance.work_mode`，只影响新任务；旧任务默认 `workflow`；
+- 自主模式只有一个 phase：`autonomous`；
+- 不给 Agent 注入 Prototype / Engineering / Evolution 的阶段责任、
+  Worker Role 的 phase requirements、验收提示、范围守卫或验证次数要求；
+- 用户 prompt 就是 Task 的 `task_text`（有中途人类回答时追加该回答）；
+- 仍保留最小系统提示：身份、Task Workspace / 私有 workspace / 记忆目录、
+  原生工具列表、私有目录边界，以及可用的本地 web search CLI；
+- 思考强度使用 Agent 卡片；`Auto` 在自主模式取 `high`；
+- 中断恢复复用同一个 autonomous session；返工按新 iteration 开新 session；
+- 完成判定仍是 Pi `agent_settled` + Workspace 产物 + 最后 assistant 文本 /
+  `RESULT.md` 作为总结。
+
+自主模式不引入新的调度器、预算 gate 或验收器；它只是不再给 Agent
+注入工作流阶段提示。
+
 ## 5. 完成与 usage
 
 当前 pilot：

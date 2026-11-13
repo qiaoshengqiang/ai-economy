@@ -213,6 +213,14 @@
                   <input id="max-teams" type="number" min="1" max="8" /></label>
                 <label class="field"><span>单任务最大轮次</span>
                   <input id="max-solo-turns" type="number" min="1" max="200" /></label>
+                <label class="field"><span>Work 模式</span>
+                  <select id="work-mode">
+                    <option value="workflow">工作流（阶段化）</option>
+                    <option value="autonomous">自主（单阶段）</option>
+                  </select></label>
+                <p class="muted wide">自主模式只给 Agent 最小系统提示与原始需求，
+                  不注入 Prototype / Engineering / Evolution 的阶段、角色和验收提示。
+                  对新任务生效。</p>
                 <label class="field check wide"><span>限制 Work 总时长</span>
                   <input id="pi-timeout-enabled" type="checkbox" /></label>
                 <label class="field"><span>Work 总时长（秒）</span>
