@@ -310,3 +310,37 @@ def test_front_thinking_setting_updates_decision_policy(tmp_path):
         assert brain.calls[-1] == (False, None, "decision")
     finally:
         controller.close()
+
+
+def test_front_set_engine_updates_pi_agents(tmp_path):
+    from front import FrontDecision, FrontIntent
+    from work.controller import WorkJob
+
+    path = tmp_path / "ui_settings.json"
+    controller = _controller(tmp_path)
+    controller.pi_cli_path = "/bin/sh"
+    job = WorkJob(job_id="job_engine", human_text="把 agent_b 切到 solo")
+    try:
+        controller.update_settings(pi_work_agents=["agent_b"])
+        controller._apply_control_decision(job, FrontDecision(
+            intent=FrontIntent.SET_ENGINE,
+            agent_id="agent_b",
+            engine="solo",
+            reply="agent_b 已切到 Solo",
+        ))
+        assert controller.pi_work_agents == set()
+        assert job.status == "DIRECT_REPLY"
+        assert job.summary == "agent_b 已切到 Solo"
+
+        controller._apply_control_decision(job, FrontDecision(
+            intent=FrontIntent.SET_ENGINE,
+            agent_id="agent_b",
+            engine="pi",
+            reply="agent_b 已切到 Pi",
+        ))
+        assert controller.pi_work_agents == {"agent_b"}
+    finally:
+        controller.close()
+
+    data = json.loads(path.read_text("utf-8"))
+    assert data["pi_work_agents"] == ["agent_b"]

@@ -38,13 +38,15 @@ class FrontIntent:
     INSPECT = "inspect"
     #: 修改 Front / Work 的全局模式
     SET_MODE = "set_mode"
+    #: 修改某个 Worker 的执行底座（Pi / Solo）
+    SET_ENGINE = "set_engine"
 
     @classmethod
     def all(cls) -> List[str]:
         return [
             cls.DIRECT_REPLY, cls.HANDOFF, cls.REWORK,
             cls.FOLLOW_UP, cls.CANCEL, cls.ARTIFACTS, cls.CLARIFY,
-            cls.INSPECT, cls.SET_MODE,
+            cls.INSPECT, cls.SET_MODE, cls.SET_ENGINE,
         ]
 
 
@@ -164,6 +166,10 @@ class FrontDecision:
     front_mode: str = ""
     #: set_mode：Work 模式 workflow / autonomous；空 = 不修改。
     work_mode: str = ""
+    #: set_engine：目标 Worker；空 = 不修改。
+    agent_id: str = ""
+    #: set_engine：pi / solo；空 = 不修改。
+    engine: str = ""
     #: rework：返工范围 fix / enhance / redesign。
     rework_scope: str = ""
     confidence: float = 1.0
@@ -204,6 +210,8 @@ class FrontDecision:
             "work_profile": self.work_profile,
             "front_mode": self.front_mode,
             "work_mode": self.work_mode,
+            "agent_id": self.agent_id,
+            "engine": self.engine,
             "rework_scope": self.rework_scope,
             "confidence": self.confidence,
             "reason": self.reason,

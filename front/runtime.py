@@ -385,6 +385,11 @@ handoff 可以携带你在 `brief.files` 里准备好的文件：
 无法判断时选 standard，不要默认 direct。
 Role 只是弱信号，不要仅凭 role 判断。
 
+========== Worker 执行底座 ==========
+- pi：Pi Work；可使用 workflow / autonomous 两种 Work 模式。
+- solo：SoloWorkRuntime；只有工作流式循环，没有 autonomous。
+- 修改执行底座只影响之后的新任务；运行中的任务不变。
+
 ========== Role 注入条件 ==========
 - Role 是任务元数据，不等于 Worker 已经收到角色提示词。
 - 只有 Work 模式 = workflow，且阶段为 prototype / engineering / evolution
@@ -443,6 +448,12 @@ Role 只是弱信号，不要仅凭 role 判断。
    {{"intent":"set_mode","front_mode":"relay","work_mode":"autonomous",
      "reply":"...","reason":"..."}}
    未提供的字段保持不变。修改后对新任务生效。
+
+10. set_engine —— 修改某个 Worker 的执行底座，不创建 Task。
+   agent_id：目标 Worker；engine：pi | solo。
+   {{"intent":"set_engine","agent_id":"agent_b","engine":"solo",
+     "reply":"...","reason":"..."}}
+   只影响之后的新任务；运行中的任务不变。
 
 一个回合内多个动作：
 {{"decisions":[
@@ -538,7 +549,9 @@ def _render_agents(agents: List[Dict[str, Any]]) -> str:
         return "（无）"
     return "\n".join(
         f"- {item['agent_id']}：status={item['status'] or '?'} "
-        f"role={item['role'] or 'WORKER'} can_work={item['can_work']}"
+        f"role={item['role'] or 'WORKER'} "
+        f"engine={item.get('engine') or '?'} "
+        f"can_work={item['can_work']}"
         for item in agents
     )
 

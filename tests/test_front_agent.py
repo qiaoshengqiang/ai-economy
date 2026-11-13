@@ -779,3 +779,17 @@ def test_front_prompt_explains_role_injection_scope():
     assert "只有 Work 模式 = workflow" in prompt
     assert "Work 模式 = autonomous 时" in prompt
     assert "direct 阶段也不注入 Role" in prompt
+
+
+def test_set_engine_decision_parses_worker_and_engine():
+    decision, error = parse_front_decision(
+        '{"intent":"set_engine","agent_id":"agent_b","engine":"solo",'
+        '"reply":"已切到 Solo"}',
+        human_text="把 agent_b 切回 solo",
+    )
+    assert error == ""
+    assert decision is not None
+    assert decision.intent == FrontIntent.SET_ENGINE
+    assert decision.agent_id == "agent_b"
+    assert decision.engine == "solo"
+    assert decision.reply == "已切到 Solo"

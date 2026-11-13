@@ -447,6 +447,7 @@
       agents: list,
       front_mode: settings.front_mode || "autonomous",
       work_mode: settings.work_mode || "workflow",
+      pi_work_agents: settings.pi_work_agents || [],
       tasks: (tasks || []).map((task) => [task.task_id, task.description]),
     });
     if (key === lastAgentsKey && els.agents.childElementCount) return;
