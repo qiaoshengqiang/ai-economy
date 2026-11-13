@@ -4,7 +4,7 @@
 > **日期：2026-11-13**
 > **阶段：开发中 / 观察实验**
 > **协议版本：`1`**
-> **测试基线：`5551 passed, 2 skipped, 30 deselected`**
+> **测试基线：`5571 passed, 2 skipped, 30 deselected`**
 
 本文记录**当前真实可用能力、推荐工作方式、已知限制和版本变化**。
 架构的长期权威仍然是
@@ -72,6 +72,9 @@ Pi Agents：agent_b, agent_c, agent_d, agent_e
 Pi 超时：7200 秒
 DeepSeek context：600000
 DeepSeek 单次输出：32768
+提交模式：manual
+输出仓库：空（未启用）
+输出基线：main
 ```
 
 其中：
@@ -289,6 +292,21 @@ task_text
 快照是 workspace 的派生物，不是第二个状态源；不写 AIEOS 主仓库。
 详见 [`PI_WORK_LAYER_DESIGN.md`](architecture/PI_WORK_LAYER_DESIGN.md) §4.8。
 
+### 7.5 Output Commit
+
+| 能力 | 状态 |
+|---|---|
+| 独立输出仓库（`tasks/<task_id>` 子树 + 任务分支） | `CURRENT` |
+| `manual` 人类确认提交 | `CURRENT` |
+| `limited` 自动提交到任务分支 | `CURRENT` |
+| `auto` 自动提交 + 可选 fast-forward 合并 | `CURRENT` |
+| Front `commit_confirm` | `CURRENT` |
+| 自动 push / 复杂 merge | `FUTURE` |
+| UI 提交列表 / 历史 | 待接入 |
+
+提交时机是 Task COMPLETED 之后；提交结果不改变 Task 状态，也不进入
+Worker 私有记忆。详见 [`OUTPUT_COMMIT.md`](architecture/OUTPUT_COMMIT.md)。
+
 ---
 
 ## 8. 当前已知限制
@@ -351,7 +369,16 @@ Pi workflow 的 Evolution 阶段容易：
 - UI 还没有版本列表、diff 和恢复按钮；
 - 恢复目前只通过代码 API 调用，Front 不开放。
 
-### 8.8 成本观察
+### 8.8 Output Commit 限制
+
+- 只提交有 `final` snapshot 的 Task；中断 / waiting_human 不提交；
+- `auto` 只做 fast-forward 合并，不解决复杂冲突；
+- 不自动 push 到远程；
+- 空快照、超大文件、输出仓库等于 AIEOS 主仓库会被拒绝；
+- `TASK_DOC.md` 等 AIEOS 元数据不进入输出仓库；
+- UI 还没有提交历史 / 分支查看入口。
+
+### 8.9 成本观察
 
 Pi 自主任务仍然可能消耗较多 token：
 
@@ -371,6 +398,7 @@ Pi 自主任务仍然可能消耗较多 token：
 - 新增 Web Search / Fetch（Front action + Pi CLI + 内部端点）；
 - 新增 UI 模式显示、紧凑 Agent 列表、机器人动画、工作中虚线边框、Front 回复计时；
 - 新增 Pi Task Snapshot：任务私有 Git 历史，不污染主仓库，支持 diff / restore；
+- 新增 Output Commit：Task 完成后提交到独立输出仓库，支持 manual / limited / auto；
 - 修复 Pi 超时被标成 FAILED、返工 session 复用、role 未持久化、`last_error` 不更新；
 - DeepSeek context 默认 600K，单次输出上限 32K；
 - Team 仍然暂停，非 Pi Solo 仍然只有工作流式循环。
@@ -435,7 +463,7 @@ Team 协作
 当前基线：
 
 ```text
-5551 passed, 2 skipped, 30 deselected
+5571 passed, 2 skipped, 30 deselected
 ```
 
 启动说明见 [`../START_AIEOS.md`](../START_AIEOS.md)。

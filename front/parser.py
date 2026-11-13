@@ -294,6 +294,23 @@ def parse_front_decision(
                 confidence=confidence,
                 reason=str(payload.get("reason") or "")), ""
 
+        if raw_intent == FrontIntent.COMMIT_CONFIRM:
+            task_id = str(payload.get("task_id") or "").strip()
+            code = str(
+                payload.get("commit_code")
+                or payload.get("code") or "").strip()
+            if task_id not in (active | completed):
+                return None, "commit_confirm_task_not_found"
+            if len(code) < 6:
+                return None, "commit_confirm_missing_code"
+            return FrontDecision(
+                intent=raw_intent,
+                task_id=task_id,
+                commit_code=code,
+                reply=str(payload.get("reply") or "").strip(),
+                confidence=confidence,
+                reason=str(payload.get("reason") or "")), ""
+
         if raw_intent == FrontIntent.CLARIFY:
             question = str(payload.get("question") or "").strip()
             return FrontDecision(

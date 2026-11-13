@@ -747,6 +747,7 @@ def test_front_relay_mode_prompt_forbids_expansion():
     assert "不要添加用户没有提出的功能" in prompt
     assert "deliverables / constraints / acceptance_expectations / files 留空" in prompt
     assert "set_mode" in prompt
+    assert "commit_confirm" in prompt
 
 
 def test_set_mode_decision_parses_both_modes():
@@ -761,6 +762,20 @@ def test_set_mode_decision_parses_both_modes():
     assert decision.front_mode == "relay"
     assert decision.work_mode == "autonomous"
     assert decision.reply == "已切换"
+
+
+def test_commit_confirm_decision_parses_snapshot_code():
+    decision, error = parse_front_decision(
+        '{"intent":"commit_confirm","task_id":"task_x",'
+        '"commit_code":"abc12345","reply":"提交中"}',
+        human_text="确认提交 abc12345",
+        completed_task_ids=["task_x"],
+    )
+    assert error == ""
+    assert decision is not None
+    assert decision.intent == FrontIntent.COMMIT_CONFIRM
+    assert decision.task_id == "task_x"
+    assert decision.commit_code == "abc12345"
 
 
 def test_front_prompt_explains_role_injection_scope():

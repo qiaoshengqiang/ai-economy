@@ -282,6 +282,9 @@ class TaskSnapshotStore:
                 })
         return items
 
+    def get(self, seq: int) -> SnapshotRecord:
+        return self._find(self._load(), seq)
+
     def file_at(self, seq: int, path: str) -> bytes:
         record = self._find(self._load(), seq)
         rel = self._safe_path(path)
@@ -291,6 +294,44 @@ class TaskSnapshotStore:
         if proc.returncode != 0:
             raise SnapshotError(f"快照中没有文件：{rel}")
         return proc.stdout
+
+    def file_entries(self, seq: int) -> List[Dict[str, Any]]:
+        """列出快照中的文件（path / mode / sha / bytes）。"""
+        record = self._find(self._load(), seq)
+        out = self._run(
+            ["ls-tree", "-r", "-l", record.tree]).stdout
+        entries: List[Dict[str, Any]] = []
+        for line in out.splitlines():
+            meta, _, path = line.partition("\t")
+            parts = meta.split()
+            if len(parts) < 4:
+                continue
+            try:
+                size = int(parts[3])
+            except ValueError:
+                size = 0
+            entries.append({
+                "path": path,
+                "mode": parts[0],
+                "type": parts[1],
+                "sha": parts[2],
+                "bytes": size,
+            })
+        return entries
+
+    def tree_patch(self, seq: int) -> str:
+        """生成「空树 → 快照」的 binary patch。
+
+        输出仓库的 CommitService 用它把快照内容挂到
+        `tasks/<task_id>/` 子树下，不需要共享 Git object store。
+        """
+        record = self._find(self._load(), seq)
+        empty_tree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+        return self._run([
+            "diff", "--no-color", "--no-ext-diff",
+            "--binary", "--full-index",
+            empty_tree, record.tree,
+        ]).stdout
 
     # ------------------------------------------------------------
     def restore(

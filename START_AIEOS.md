@@ -57,6 +57,11 @@ AIEOS_PI_AGENTS=agent_b ./start_aieos.sh start
 
 # 换 Pi CLI 路径
 AIEOS_PI_CLI=/path/to/pi ./start_aieos.sh start
+
+# 启用独立输出仓库（manual / limited / auto）
+AIEOS_OUTPUT_REPO=/path/to/aieos-output \
+AIEOS_COMMIT_MODE=manual \
+./start_aieos.sh start
 ```
 
 也可以组合：
@@ -67,6 +72,9 @@ AIEOS_PI_AGENTS=agent_b \
 AIEOS_PI_CLI=/path/to/pi \
 ./start_aieos.sh restart
 ```
+
+提交设置也可以在 UI「设置 → 运行」修改；一旦保存到
+`runs/ui/ui_settings.json`，它以文件为准，启动参数只作为初始值。
 
 ## 启动前检查
 

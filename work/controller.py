@@ -43,6 +43,9 @@ from typing import Any, Dict, List, Optional
 
 from llm import prompt_log
 from llm.web_search import WebSearchClient, WebSearchError
+from commit.models import CommitMode, CommitStatus
+from commit.service import CommitError, OutputCommitService
+from commit.store import CommitStore
 from core.task import Task, TaskMode, TaskStatus
 from demand.task_creation import TaskCreationService
 from services.artifacts import read_artifact
@@ -200,6 +203,13 @@ class AIEOSController:
         pi_agent_dir: Optional[Path] = None,
         pi_timeout_seconds: float = 7200.0,
         pi_timeout_enabled: bool = True,
+        commit_mode: str = "manual",
+        commit_output_repo: str = "",
+        commit_base_ref: str = "main",
+        commit_auto_merge: bool = False,
+        commit_max_file_bytes: int = 20 * 1024 * 1024,
+        commit_max_total_bytes: int = 50 * 1024 * 1024,
+        commit_service: Any = None,
         task_root: Optional[Path] = None,
         settings_path: Optional[Path] = None,
         log_dir: Optional[Path] = None,
@@ -238,6 +248,16 @@ class AIEOSController:
         self.pi_agent_dir = Path(pi_agent_dir) if pi_agent_dir else None
         self.pi_timeout_seconds = float(pi_timeout_seconds)
         self.pi_timeout_enabled = bool(pi_timeout_enabled)
+        mode = str(commit_mode or "manual").strip().lower()
+        if mode not in (CommitMode.MANUAL.value, CommitMode.LIMITED.value,
+                        CommitMode.AUTO.value):
+            mode = CommitMode.MANUAL.value
+        self.commit_mode = mode
+        self.commit_output_repo = str(commit_output_repo or "").strip()
+        self.commit_base_ref = str(commit_base_ref or "main").strip() or "main"
+        self.commit_auto_merge = bool(commit_auto_merge)
+        self.commit_max_file_bytes = max(1, int(commit_max_file_bytes))
+        self.commit_max_total_bytes = max(1, int(commit_max_total_bytes))
         self.task_directories = TaskDirectoryManager(task_root)
         self.settings_path = Path(settings_path) if settings_path else None
         self.log_dir = Path(log_dir) if log_dir else None
@@ -283,6 +303,10 @@ class AIEOSController:
         self._front_drafts_store: Optional[TaskDraftStore] = None
         self._load_settings()
         self._apply_prompt_log_config()
+        if commit_service is not None:
+            self.commit_service = commit_service
+        else:
+            self.commit_service = self._build_commit_service()
 
         # 固定 Front Agent 不参与组队，也不显示为 WORKING。
         if self.front_agent not in self._agent_ids:
@@ -356,6 +380,32 @@ class AIEOSController:
         front_mode = str(data.get("front_mode") or "autonomous").strip().lower()
         if front_mode in ("autonomous", "relay"):
             self.front_mode = front_mode
+        commit_mode = str(
+            data.get("commit_mode") or "manual").strip().lower()
+        if commit_mode in (
+            CommitMode.MANUAL.value, CommitMode.LIMITED.value,
+            CommitMode.AUTO.value,
+        ):
+            self.commit_mode = commit_mode
+        if "commit_output_repo" in data:
+            self.commit_output_repo = str(
+                data.get("commit_output_repo") or "").strip()
+        if "commit_base_ref" in data:
+            self.commit_base_ref = (
+                str(data.get("commit_base_ref") or "main").strip()
+                or "main")
+        if "commit_auto_merge" in data:
+            self.commit_auto_merge = bool(data.get("commit_auto_merge"))
+        for key, attr in (
+            ("commit_max_file_bytes", "commit_max_file_bytes"),
+            ("commit_max_total_bytes", "commit_max_total_bytes"),
+        ):
+            try:
+                value = int(data.get(key) or 0)
+            except (TypeError, ValueError):
+                value = 0
+            if value > 0:
+                setattr(self, attr, value)
 
     def update_settings(
         self,
@@ -371,6 +421,12 @@ class AIEOSController:
         pi_timeout_seconds: Optional[float] = None,
         work_mode: Optional[str] = None,
         front_mode: Optional[str] = None,
+        commit_mode: Optional[str] = None,
+        commit_output_repo: Optional[str] = None,
+        commit_base_ref: Optional[str] = None,
+        commit_auto_merge: Optional[bool] = None,
+        commit_max_file_bytes: Optional[int] = None,
+        commit_max_total_bytes: Optional[int] = None,
     ) -> Dict[str, Any]:
         with self._lock:
             if front_agent is not None:
@@ -453,6 +509,36 @@ class AIEOSController:
                     raise ValueError(
                         "front_mode 必须是 autonomous 或 relay")
                 self.front_mode = mode
+            if commit_mode is not None:
+                value = str(commit_mode).strip().lower()
+                if value not in (
+                    CommitMode.MANUAL.value,
+                    CommitMode.LIMITED.value,
+                    CommitMode.AUTO.value,
+                ):
+                    raise ValueError(
+                        "commit_mode 必须是 manual / limited / auto")
+                self.commit_mode = value
+            if commit_output_repo is not None:
+                self.commit_output_repo = str(
+                    commit_output_repo or "").strip()
+            if commit_base_ref is not None:
+                value = str(commit_base_ref or "main").strip() or "main"
+                if ".." in value or value.startswith("-"):
+                    raise ValueError("commit_base_ref 不合法")
+                self.commit_base_ref = value
+            if commit_auto_merge is not None:
+                self.commit_auto_merge = bool(commit_auto_merge)
+            if commit_max_file_bytes is not None:
+                value = int(commit_max_file_bytes)
+                if value <= 0:
+                    raise ValueError("commit_max_file_bytes 必须 > 0")
+                self.commit_max_file_bytes = value
+            if commit_max_total_bytes is not None:
+                value = int(commit_max_total_bytes)
+                if value <= 0:
+                    raise ValueError("commit_max_total_bytes 必须 > 0")
+                self.commit_max_total_bytes = value
             self._persist_settings()
             self._configure_front_brain()
             self._notify()
@@ -472,6 +558,12 @@ class AIEOSController:
             "pi_timeout_seconds": float(self.pi_timeout_seconds),
             "work_mode": str(self.work_mode),
             "front_mode": str(self.front_mode),
+            "commit_mode": str(self.commit_mode),
+            "commit_output_repo": str(self.commit_output_repo),
+            "commit_base_ref": str(self.commit_base_ref),
+            "commit_auto_merge": bool(self.commit_auto_merge),
+            "commit_max_file_bytes": int(self.commit_max_file_bytes),
+            "commit_max_total_bytes": int(self.commit_max_total_bytes),
         }
 
     def _pi_timeout(self) -> float:
@@ -491,6 +583,26 @@ class AIEOSController:
         prompt_log.configure(
             bool(self.prompt_log_enabled),
             self.prompt_log_path,
+        )
+
+    def _commit_settings(self) -> Dict[str, Any]:
+        return {
+            "output_repo": self.commit_output_repo,
+            "base_ref": self.commit_base_ref,
+            "auto_merge": self.commit_auto_merge,
+            "max_file_bytes": self.commit_max_file_bytes,
+            "max_total_bytes": self.commit_max_total_bytes,
+        }
+
+    def _build_commit_service(self) -> Optional[OutputCommitService]:
+        """组合根注入真实 DB 时才启用；轻量测试可以不注入。"""
+        db = getattr(getattr(self.rt, "economy", None), "db", None)
+        if db is None:
+            return None
+        return OutputCommitService(
+            task_directories=self.task_directories,
+            store=CommitStore(db),
+            settings=self._commit_settings,
         )
 
     # ------------------------------------------------------------
@@ -1110,15 +1222,25 @@ class AIEOSController:
     ) -> FrontTurn:
         """优先走多动作接口；旧 Front 实现仍按单动作兼容。"""
         method = getattr(front, "decide_turn", None)
+        commit_context = ""
+        if self.commit_service is not None:
+            try:
+                commit_context = self.commit_service.front_context(
+                    mode=self.commit_mode)
+            except Exception:                                 # noqa: BLE001
+                commit_context = ""
+        context = (
+            f"当前 Front 模式：{self.front_mode}\n"
+            f"当前 Work 模式：{self.work_mode}\n"
+            "可用 set_mode 修改；修改后对新任务生效。")
+        if commit_context:
+            context += "\n" + commit_context
         kwargs = {
             "active_tasks": active,
             "completed_tasks": completed,
             "conversation": self._conversation(job),
             "agents": self._agent_facts(),
-            "context": (
-                f"当前 Front 模式：{self.front_mode}\n"
-                f"当前 Work 模式：{self.work_mode}\n"
-                "可用 set_mode 修改；修改后对新任务生效。"),
+            "context": context,
         }
         if callable(method):
             return method(job.human_text, **kwargs)
@@ -1162,6 +1284,9 @@ class AIEOSController:
         if intent == FrontIntent.SET_MODE:
             self._apply_mode_change(job, decision)
             return
+        if intent == FrontIntent.COMMIT_CONFIRM:
+            self._apply_commit_confirm(job, decision)
+            return
         raise ValueError(f"不支持的 Front 控制动作：{intent!r}")
 
     def _apply_mode_change(self, job: WorkJob, decision: Any) -> None:
@@ -1190,6 +1315,46 @@ class AIEOSController:
                 parts.append(f"Work 模式 → {work_mode}")
             text = "已更新：" + "；".join(parts) + "。"
         self._reply_direct(job, text)
+
+    def _apply_commit_confirm(self, job: WorkJob, decision: Any) -> None:
+        """人类确认提交；Front 只转达，不执行 git。"""
+        task_id = str(getattr(decision, "task_id", "") or "").strip()
+        code = str(getattr(decision, "commit_code", "") or "").strip()
+        if self.commit_service is None:
+            self._reply_direct(
+                job, "当前没有配置输出仓库，不能提交。", task_id)
+            return
+        if not task_id:
+            self._reply_direct(job, "缺少要提交的 Task。")
+            return
+        try:
+            task = self.rt.tasks.get(task_id)
+        except Exception:                                     # noqa: BLE001
+            task = None
+        if task is None:
+            self._reply_direct(
+                job, f"找不到任务 {task_id}。", task_id)
+            return
+        try:
+            request = self.commit_service.confirm(
+                task, code, actor="human")
+        except CommitError as exc:
+            self._reply_direct(job, str(exc), task_id)
+            return
+        target = str(request.target_ref or "").removeprefix("refs/heads/")
+        if request.status == CommitStatus.COMMITTED.value:
+            text = (
+                f"已提交到 {target}（{request.commit_sha[:8]}）。")
+            if request.merge_sha:
+                text += f" 已合并到基线（{request.merge_sha[:8]}）。"
+        elif request.status in (
+            CommitStatus.FAILED.value, CommitStatus.BLOCKED.value,
+            CommitStatus.STALE.value,
+        ):
+            text = f"提交未完成：{request.error or request.status}"
+        else:
+            text = f"提交状态：{request.status}"
+        self._reply_direct(job, text, task_id)
 
     def _acquire_leader(self, job: WorkJob) -> Optional[str]:
         candidates = [
@@ -1548,6 +1713,7 @@ class AIEOSController:
                         getattr(decision, "work_profile", "") or "standard"),
                     "work_mode": str(self.work_mode),
                     "front_mode": str(self.front_mode),
+                    "commit_mode": str(self.commit_mode),
                 },
                 note=f"demand_run:aieos_{job.job_id}",
                 mode=TaskMode.SOLO,
@@ -1819,6 +1985,11 @@ class AIEOSController:
         if rework_scope not in ("fix", "enhance", "redesign"):
             rework_scope = "enhance"
         if action == "rework":
+            if self.commit_service is not None:
+                try:
+                    self.commit_service.invalidate_task(task.task_id)
+                except Exception:                             # noqa: BLE001
+                    pass
             turn = int(getattr(task, "iteration", 1) or 1) + 1
             # Reopen 不覆盖旧历史；把本轮要求追加到 Task 描述，
             # 让 Leader / 成员都能看到 Human 这次改了什么。
@@ -1935,6 +2106,60 @@ class AIEOSController:
             job.error = result.error or f"Task {task_id} 未完成"
         self._write_checkpoint(task_id, result)
         self._touch(job)
+        if result.ok:
+            self._after_task_completed(job, task_id)
+
+    def _after_task_completed(self, job: WorkJob, task_id: str) -> None:
+        """Task COMPLETED 之后触发提交请求；失败不回滚 Task。"""
+        if self.commit_service is None:
+            return
+        try:
+            task = self.rt.tasks.get(task_id)
+        except Exception:                                     # noqa: BLE001
+            return
+        if task is None or task.status != TaskStatus.COMPLETED:
+            return
+        acceptance = getattr(task, "acceptance", None) or {}
+        mode = str(
+            (acceptance.get("commit_mode")
+             if isinstance(acceptance, dict) else "")
+            or self.commit_mode
+        ).strip().lower()
+        try:
+            request = self.commit_service.on_task_completed(
+                task, mode=mode)
+        except Exception as exc:                              # noqa: BLE001
+            self._message(
+                "system",
+                f"任务 {task_id} 的提交请求失败："
+                f"{type(exc).__name__}: {exc}",
+                job_id=job.job_id, task_id=task_id)
+            return
+        if request is None:
+            return
+        target = str(request.target_ref or "").removeprefix("refs/heads/")
+        if request.status == CommitStatus.AWAITING_HUMAN.value:
+            self._message(
+                "system",
+                f"任务 {task_id} 已完成。可提交快照 {request.code}；"
+                f"回复「确认提交 {request.code}」提交到 {target}。",
+                job_id=job.job_id, task_id=task_id)
+        elif request.status == CommitStatus.COMMITTED.value:
+            text = (
+                f"任务 {task_id} 已提交到 {target}"
+                f"（{request.commit_sha[:8]}）。")
+            if request.merge_sha:
+                text += f" 已合并到基线（{request.merge_sha[:8]}）。"
+            self._message(
+                "system", text, job_id=job.job_id, task_id=task_id)
+        elif request.status in (
+            CommitStatus.FAILED.value, CommitStatus.BLOCKED.value,
+            CommitStatus.STALE.value,
+        ):
+            self._message(
+                "system",
+                f"任务 {task_id} 提交未完成：{request.error or request.status}",
+                job_id=job.job_id, task_id=task_id)
 
     def _reply_direct(
         self, job: WorkJob, text: str, task_id: str = "",

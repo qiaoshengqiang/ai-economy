@@ -38,13 +38,15 @@ class FrontIntent:
     INSPECT = "inspect"
     #: 修改 Front / Work 的全局模式
     SET_MODE = "set_mode"
+    #: 人类确认提交某个已完成 Task 的 final snapshot
+    COMMIT_CONFIRM = "commit_confirm"
 
     @classmethod
     def all(cls) -> List[str]:
         return [
             cls.DIRECT_REPLY, cls.HANDOFF, cls.REWORK,
             cls.FOLLOW_UP, cls.CANCEL, cls.ARTIFACTS, cls.CLARIFY,
-            cls.INSPECT, cls.SET_MODE,
+            cls.INSPECT, cls.SET_MODE, cls.COMMIT_CONFIRM,
         ]
 
 
@@ -164,6 +166,8 @@ class FrontDecision:
     front_mode: str = ""
     #: set_mode：Work 模式 workflow / autonomous；空 = 不修改。
     work_mode: str = ""
+    #: commit_confirm：人类确认的快照短码。
+    commit_code: str = ""
     #: rework：返工范围 fix / enhance / redesign。
     rework_scope: str = ""
     confidence: float = 1.0
@@ -181,10 +185,13 @@ class FrontDecision:
         if self.intent in (
             FrontIntent.REWORK, FrontIntent.FOLLOW_UP,
             FrontIntent.CANCEL, FrontIntent.ARTIFACTS,
-            FrontIntent.INSPECT,
+            FrontIntent.INSPECT, FrontIntent.COMMIT_CONFIRM,
         ):
             if not str(self.task_id or "").strip():
                 raise ValueError(f"{self.intent} 必须带 task_id")
+        if self.intent == FrontIntent.COMMIT_CONFIRM:
+            if not str(self.commit_code or "").strip():
+                raise ValueError("commit_confirm 必须带 commit_code")
         if self.intent == FrontIntent.CLARIFY:
             if not str(self.question or "").strip():
                 self.question = "我需要再确认一下你的目标，能具体说明吗？"
@@ -204,6 +211,7 @@ class FrontDecision:
             "work_profile": self.work_profile,
             "front_mode": self.front_mode,
             "work_mode": self.work_mode,
+            "commit_code": self.commit_code,
             "rework_scope": self.rework_scope,
             "confidence": self.confidence,
             "reason": self.reason,

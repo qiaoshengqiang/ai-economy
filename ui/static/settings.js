@@ -244,6 +244,10 @@
     $("max-solo-turns").value = String(regular.max_solo_turns || 24);
     $("work-mode").value = regular.work_mode || "workflow";
     $("front-mode").value = regular.front_mode || "autonomous";
+    $("commit-mode").value = regular.commit_mode || "manual";
+    $("commit-output-repo").value = regular.commit_output_repo || "";
+    $("commit-base-ref").value = regular.commit_base_ref || "main";
+    $("commit-auto-merge").checked = !!regular.commit_auto_merge;
     $("pi-timeout-enabled").checked = regular.pi_timeout_enabled !== false;
     $("pi-timeout-seconds").value = String(
       regular.pi_timeout_seconds || 7200);
@@ -523,6 +527,10 @@
           max_solo_turns: Number($("max-solo-turns").value || 24),
           work_mode: $("work-mode").value,
           front_mode: $("front-mode").value,
+          commit_mode: $("commit-mode").value,
+          commit_output_repo: $("commit-output-repo").value,
+          commit_base_ref: $("commit-base-ref").value,
+          commit_auto_merge: $("commit-auto-merge").checked,
           pi_timeout_enabled: $("pi-timeout-enabled").checked,
           pi_timeout_seconds: Number($("pi-timeout-seconds").value || 7200),
           prompt_log_enabled: $("prompt-log-enabled").checked,

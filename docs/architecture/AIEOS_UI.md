@@ -100,6 +100,21 @@ Front 还有一个 `set_mode` 控制 intent，可以在对话里修改：
 - 同一回合里先 `set_mode` 再 handoff 时，handoff 按新模式处理；
 - 当前模式会作为只读上下文注入 Front prompt，Front 可以回答“现在是什么模式”。
 
+### Output Commit 确认
+
+Task 完成后，如果配置了输出仓库，Front 会看到待确认提交的短码。
+人类回复「确认提交 <code>」时，Front 输出：
+
+```json
+{"intent":"commit_confirm","task_id":"task_x","commit_code":"abc12345",
+ "reply":"已提交"}
+```
+
+- Front 只转达人类确认，不执行 git；
+- 实际提交由系统 `OutputCommitService` 执行；
+- Front 不能自己发起提交；
+- 提交结果不进入 Worker 私有记忆。
+
 ### 角色约束
 
 - Front Agent **永不创建 Task**；

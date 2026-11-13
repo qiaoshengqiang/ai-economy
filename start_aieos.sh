@@ -16,6 +16,7 @@
 #
 # 可用环境变量覆盖：
 #   AIEOS_PORT / AIEOS_PI_AGENTS / AIEOS_PI_CLI
+#   AIEOS_COMMIT_MODE / AIEOS_OUTPUT_REPO / AIEOS_COMMIT_BASE_REF
 #   AIEOS_LOG / AIEOS_PID_FILE
 # ============================================================
 
@@ -27,6 +28,9 @@ cd "$ROOT"
 PORT="${AIEOS_PORT:-8000}"
 PI_AGENTS="${AIEOS_PI_AGENTS:-agent_b,agent_c,agent_d,agent_e}"
 PI_CLI="${AIEOS_PI_CLI:-$ROOT/experiments/pi_compare/pi_node/node_modules/.bin/pi}"
+COMMIT_MODE="${AIEOS_COMMIT_MODE:-manual}"
+OUTPUT_REPO="${AIEOS_OUTPUT_REPO:-}"
+COMMIT_BASE_REF="${AIEOS_COMMIT_BASE_REF:-main}"
 LOG="${AIEOS_LOG:-$ROOT/runs/ui/server.log}"
 PID_FILE="${AIEOS_PID_FILE:-$ROOT/runs/ui/aieos.pid}"
 PYTHON="$ROOT/.venv/bin/python"
@@ -108,6 +112,9 @@ start_service() {
     --port "$PORT" \
     --pi-agents "$PI_AGENTS" \
     --pi-cli "$PI_CLI" \
+    --commit-mode "$COMMIT_MODE" \
+    --output-repo "$OUTPUT_REPO" \
+    --commit-base-ref "$COMMIT_BASE_REF" \
     >"$LOG" 2>&1 &
   pid=$!
   echo "$pid" >"$PID_FILE"

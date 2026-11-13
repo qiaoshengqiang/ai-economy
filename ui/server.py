@@ -182,6 +182,14 @@ class Handler(BaseHTTPRequestHandler):
                     pi_timeout_seconds=payload.get("pi_timeout_seconds"),
                     work_mode=payload.get("work_mode"),
                     front_mode=payload.get("front_mode"),
+                    commit_mode=payload.get("commit_mode"),
+                    commit_output_repo=payload.get("commit_output_repo"),
+                    commit_base_ref=payload.get("commit_base_ref"),
+                    commit_auto_merge=payload.get("commit_auto_merge"),
+                    commit_max_file_bytes=payload.get(
+                        "commit_max_file_bytes"),
+                    commit_max_total_bytes=payload.get(
+                        "commit_max_total_bytes"),
                 )
                 self._send_json({"ok": True, "settings": settings})
                 return
@@ -247,6 +255,19 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--pi-timeout", type=float, default=7200.0)
     ap.add_argument("--task-root", default=None,
                     help="真实 Task 目录根；默认 <repo>/tasks")
+    ap.add_argument(
+        "--commit-mode", default="manual",
+        choices=["manual", "limited", "auto"],
+        help="输出仓库提交策略；默认 manual（每次人类确认）")
+    ap.add_argument(
+        "--output-repo", default="",
+        help="独立输出仓库路径；空 = 不启用提交")
+    ap.add_argument(
+        "--commit-base-ref", default="main",
+        help="输出仓库基线分支；默认 main")
+    ap.add_argument(
+        "--commit-auto-merge", action="store_true",
+        help="auto 模式下允许 fast-forward 合并到基线分支")
     # 保留旧参数兼容
 
     return ap
@@ -318,6 +339,10 @@ def main(argv=None) -> int:
             if args.pi_agent_dir else None
         ),
         pi_timeout_seconds=max(1.0, float(args.pi_timeout)),
+        commit_mode=args.commit_mode,
+        commit_output_repo=args.output_repo,
+        commit_base_ref=args.commit_base_ref,
+        commit_auto_merge=bool(args.commit_auto_merge),
         task_root=(
             Path(args.task_root).expanduser().resolve()
             if args.task_root else (ROOT / "tasks").resolve()

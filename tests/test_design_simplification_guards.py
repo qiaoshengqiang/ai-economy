@@ -641,8 +641,9 @@ class TestNoImplementation:
         # + 3（Change Pipeline Phase 1）
         # + 2（Public Working Memory）
         # + 2（Private Working Memory）
-        # + 2（Private Short / Long-Term Memory）= 27
-        assert len(names) == 28, (
-            f"表数应为 13 + 5 + 3 + 2 + 2 + 3 = 28，实际 {len(names)}："
-            f"{sorted(names)}"
+        # + 3（Private Short / Long-Term Memory）
+        # + 1（Commit Requests）= 29
+        assert len(names) == 29, (
+            f"表数应为 13 + 5 + 3 + 2 + 2 + 3 + 1 = 29，"
+            f"实际 {len(names)}：{sorted(names)}"
         )

@@ -235,6 +235,21 @@
                   </select></label>
                 <p class="muted wide">只传达模式下，Front 不添加功能、约束或验收标准，
                   task_text 只保留用户的核心要求。建议配合 Work 自主模式使用。</p>
+                <label class="field"><span>提交模式</span>
+                  <select id="commit-mode">
+                    <option value="manual">人类授权（每次确认）</option>
+                    <option value="limited">有限自主（任务分支）</option>
+                    <option value="auto">完全自主（可合并）</option>
+                  </select></label>
+                <label class="field"><span>输出仓库路径</span>
+                  <input id="commit-output-repo" type="text"
+                    placeholder="留空 = 不提交" /></label>
+                <label class="field"><span>基线分支</span>
+                  <input id="commit-base-ref" type="text" value="main" /></label>
+                <label class="field check wide"><span>auto 模式自动合并到基线</span>
+                  <input id="commit-auto-merge" type="checkbox" /></label>
+                <p class="muted wide">输出仓库独立于 AIEOS 主仓库；
+                  manual 每次提交需要人类确认，limited/auto 由系统执行。</p>
                 <label class="field check wide"><span>限制 Work 总时长</span>
                   <input id="pi-timeout-enabled" type="checkbox" /></label>
                 <label class="field"><span>Work 总时长（秒）</span>

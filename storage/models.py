@@ -1036,6 +1036,35 @@ SCHEMA_STATEMENTS: Final[tuple[str, ...]] = (
     """,
 
     # --------------------------------------------------------
+    # Output Commit —— 任务完成后的输出仓库提交请求
+    # --------------------------------------------------------
+    # 🔒 这不是 Task 生命周期状态；Task 仍然是 COMPLETED。
+    #    唯一索引保证同一个 Task / iteration / snapshot / target
+    #    不会因为重试变成两个 commit request。
+    """
+    CREATE TABLE IF NOT EXISTS commit_requests (
+        request_id      TEXT PRIMARY KEY,
+        task_id         TEXT NOT NULL,
+        iteration       INTEGER NOT NULL,
+        snapshot_seq    INTEGER NOT NULL,
+        snapshot_commit TEXT NOT NULL,
+        snapshot_tree   TEXT NOT NULL,
+        mode            TEXT NOT NULL,
+        status          TEXT NOT NULL,
+        output_repo     TEXT NOT NULL,
+        target_ref      TEXT NOT NULL,
+        base_commit     TEXT,
+        commit_sha      TEXT,
+        merge_sha       TEXT,
+        authorized_by   TEXT,
+        authorized_at   TEXT,
+        error           TEXT,
+        created_at      TEXT NOT NULL,
+        updated_at      TEXT NOT NULL
+    )
+    """,
+
+    # --------------------------------------------------------
     # Public Working Memory
     # --------------------------------------------------------
     # 🔒 当前指针表：**唯一会被 UPDATE** 的表（CAS 在 revision 上）。
@@ -1231,6 +1260,18 @@ POST_MIGRATION_INDEXES: Final[tuple[str, ...]] = (
     "ON worktree_events (workspace_id, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_worktree_events_wt "
     "ON worktree_events (worktree_id, created_at)",
+
+    # ---- Output Commit ----
+    # 同一个 Task / iteration / snapshot / target 只允许一条请求。
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_commit_requests_once "
+    "ON commit_requests "
+    "(task_id, iteration, snapshot_tree, output_repo, target_ref)",
+    # 人类确认：按 Task 查待确认请求。
+    "CREATE INDEX IF NOT EXISTS idx_commit_requests_task "
+    "ON commit_requests (task_id, status, created_at)",
+    # 全局待确认列表（Front context）。
+    "CREATE INDEX IF NOT EXISTS idx_commit_requests_status "
+    "ON commit_requests (status, created_at)",
 )
 
 

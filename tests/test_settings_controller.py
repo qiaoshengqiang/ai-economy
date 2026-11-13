@@ -310,3 +310,32 @@ def test_front_thinking_setting_updates_decision_policy(tmp_path):
         assert brain.calls[-1] == (False, None, "decision")
     finally:
         controller.close()
+
+
+def test_commit_settings_round_trip(tmp_path):
+    path = tmp_path / "ui_settings.json"
+    controller = _controller(tmp_path)
+    try:
+        assert controller.settings_dict()["commit_mode"] == "manual"
+        controller.update_settings(
+            commit_mode="limited",
+            commit_output_repo=str(tmp_path / "output"),
+            commit_base_ref="trunk",
+            commit_auto_merge=True,
+        )
+        assert controller.settings_dict()["commit_mode"] == "limited"
+        assert controller.commit_output_repo == str(tmp_path / "output")
+        assert controller.commit_base_ref == "trunk"
+        assert controller.commit_auto_merge is True
+    finally:
+        controller.close()
+
+    data = json.loads(path.read_text("utf-8"))
+    assert data["commit_mode"] == "limited"
+    assert data["commit_auto_merge"] is True
+    reloaded = _controller(tmp_path)
+    try:
+        assert reloaded.settings_dict()["commit_mode"] == "limited"
+        assert reloaded.commit_output_repo == str(tmp_path / "output")
+    finally:
+        reloaded.close()

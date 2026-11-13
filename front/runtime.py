@@ -444,12 +444,20 @@ Role 只是弱信号，不要仅凭 role 判断。
      "reply":"...","reason":"..."}}
    未提供的字段保持不变。修改后对新任务生效。
 
+10. commit_confirm —— 人类确认提交某个已完成 Task 的快照。
+   只在人类明确说“确认提交 <code>”时输出；不要自己发起提交。
+   commit_code 来自完成消息里的快照短码。
+   Front 不执行 git；系统 CommitService 执行。
+   {{"intent":"commit_confirm","task_id":"...","commit_code":"abc12345",
+     "reply":"...","reason":"..."}}
+
 一个回合内多个动作：
 {{"decisions":[
   {{"intent":"cancel","task_id":"task_a","reply":"task_a 已停"}},
   {{"intent":"cancel","task_id":"task_b","reply":"task_b 已停"}}
 ]}}
-控制动作（direct_reply / clarify / cancel / artifacts / set_mode）按你给出的顺序执行。
+控制动作（direct_reply / clarify / cancel / artifacts / set_mode /
+commit_confirm）按你给出的顺序执行。
 每个回合最多一个执行动作（handoff / rework / follow_up），它在控制动作之后执行。
 
 路由事实：
