@@ -72,6 +72,7 @@
     navigator.userAgent || navigator.platform || "");
   let recognition = null;
   let micActive = false;
+  let micDiscardResults = false;
   let micPrefix = "";
   let micSuffix = "";
   let micFinal = "";
@@ -324,6 +325,7 @@
     micPrefix = value.slice(0, Math.min(start, end));
     micSuffix = value.slice(Math.max(start, end));
     micFinal = "";
+    micDiscardResults = false;
     setMicState(true);
     try {
       recognition.start();
@@ -338,12 +340,21 @@
     }
   }
 
-  function stopMic() {
+  function stopMic({ discard = false } = {}) {
     if (!recognition) return;
+    micDiscardResults = !!discard;
     if (micActive) {
-      try { recognition.stop(); } catch (_error) { /* already stopped */ }
+      try {
+        if (discard) recognition.abort();
+        else recognition.stop();
+      } catch (_error) { /* already stopped */ }
     }
     setMicState(false);
+    if (discard) {
+      micPrefix = "";
+      micSuffix = "";
+      micFinal = "";
+    }
   }
 
   function setupMic() {
@@ -361,6 +372,8 @@
 
     recognition.onstart = () => setMicState(true);
     recognition.onresult = (event) => {
+      // 提交后浏览器可能还会补发最后一次 result；不能再写回已清空的输入框。
+      if (micDiscardResults) return;
       let interim = "";
       for (
         let index = event.resultIndex;
@@ -942,7 +955,7 @@
   }
 
   async function submitPrompt() {
-    if (micActive) stopMic();
+    if (recognition) stopMic({ discard: true });
     const text = els.prompt.value.trim();
     if (!text) {
       showToast("请先输入内容");

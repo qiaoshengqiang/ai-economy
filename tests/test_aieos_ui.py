@@ -1949,6 +1949,11 @@ def test_voice_input_uses_browser_speech_recognition():
     assert "recognition.lang = \"zh-CN\"" in js
     assert "not-allowed" in js
     assert "MIC_PLATFORM_SUPPORTED" in js
+    # 提交后浏览器可能补发最后一次 result，不能写回已清空的输入框。
+    assert "micDiscardResults" in js
+    assert "if (micDiscardResults) return;" in js
+    assert "stopMic({ discard: true })" in js
+    assert "recognition.abort()" in js
 
 
 def test_platform_compatibility_documents_voice_input():
