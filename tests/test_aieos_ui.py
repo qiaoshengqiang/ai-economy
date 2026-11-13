@@ -1930,6 +1930,37 @@ def test_styles_keep_copy_actions_from_blocking_selection():
     assert ".msg-actions .copy-btn { pointer-events: auto; }" in css
 
 
+def test_composer_has_voice_input_button_before_workspace_chip():
+    from pathlib import Path
+
+    html = (Path(__file__).resolve().parent.parent
+            / "ui" / "static" / "index.html").read_text(encoding="utf-8")
+    assert 'id="mic-btn"' in html
+    assert 'aria-label="语音输入"' in html
+    assert html.index('id="mic-btn"') < html.index('id="workspace-chip"')
+
+
+def test_voice_input_uses_browser_speech_recognition():
+    from pathlib import Path
+
+    js = (Path(__file__).resolve().parent.parent
+          / "ui" / "static" / "app.js").read_text(encoding="utf-8")
+    assert "webkitSpeechRecognition" in js
+    assert "recognition.lang = \"zh-CN\"" in js
+    assert "not-allowed" in js
+    assert "MIC_PLATFORM_SUPPORTED" in js
+
+
+def test_platform_compatibility_documents_voice_input():
+    from pathlib import Path
+
+    doc = (Path(__file__).resolve().parent.parent
+           / "docs" / "architecture" / "PLATFORM_COMPATIBILITY.md"
+           ).read_text(encoding="utf-8")
+    assert "语音输入" in doc
+    assert "Windows" in doc
+
+
 def test_settings_page_has_prompt_log_toggle():
     from pathlib import Path
 

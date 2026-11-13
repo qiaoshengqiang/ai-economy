@@ -37,6 +37,7 @@ node_modules/.bin/pi
 | Git 快照 / 文件模式 | 中 | P1 |
 | 测试 / CI | 高 | P1 |
 | 长路径 / UNC / 权限 | 中 | P2 |
+| 语音输入 | Windows 未实现；macOS 依赖浏览器 Web Speech API | P2 |
 
 ---
 
@@ -498,10 +499,63 @@ Windows 开发者接手时，建议按顺序：
 - [ ] Windows 忽略文件
 - [ ] Windows 权限 / ACL 文档
 - [ ] Windows 服务化 / 后台运行
+- [ ] Windows 语音输入（Web Speech API / 原生引擎）
 
 ---
 
-## 10. 当前建议
+## 10. 语音输入
+
+### 10.1 当前实现
+
+语音输入使用**浏览器 Web Speech API**，不经过 AIEOS 服务端，也不上传音频到
+AIEOS：
+
+```text
+ui/static/index.html   mic-btn
+ui/static/app.js       SpeechRecognition / webkitSpeechRecognition
+ui/static/style.css    .mic-btn / .mic-btn.recording
+```
+
+- 语言固定 `zh-CN`；
+- 连续识别 + 中间结果；
+- 识别结果插入光标位置，不覆盖已有文字；
+- 点击麦克风开始，再点一次停止；提交时自动停止；
+- 浏览器不支持时按钮隐藏；
+- Windows 当前直接隐藏按钮（`MIC_PLATFORM_SUPPORTED`）。
+
+### 10.2 平台状态
+
+| 平台 / 浏览器 | 状态 | 说明 |
+|---|---|---|
+| macOS Safari | `CURRENT` | `webkitSpeechRecognition` 使用 Apple 语音识别 |
+| macOS Chrome | `CURRENT` | Web Speech API；识别服务可能依赖网络 |
+| Windows | `UNSUPPORTED` | 当前隐藏按钮，未验证 Edge / Chrome |
+| Linux | `UNVERIFIED` | 浏览器支持时可能可用，未验证 |
+| Firefox | `UNSUPPORTED` | Web Speech API 支持有限，按钮通常隐藏 |
+
+### 10.3 使用条件
+
+- 页面必须运行在安全上下文：`localhost` / `127.0.0.1` 或 HTTPS；
+  通过局域网 IP 的普通 HTTP 打开时，浏览器会拒绝麦克风。
+- 浏览器首次使用会请求麦克风权限；macOS 还需要：
+  `系统设置 → 隐私与安全性 → 麦克风` 允许对应浏览器。
+- macOS Chrome 的识别通常依赖网络；Safari 使用 Apple 的语音识别。
+- 当前没有调用原生 `SFSpeechRecognizer`，也没有本地语音模型。
+  如果要求 Chrome 也强制走 macOS 原生引擎，需要单独做 native bridge。
+
+### 10.4 Windows 后续
+
+Windows 支持至少需要：
+
+- 验证 Edge / Chrome 的 Web Speech API 是否可用；
+- 或接 Windows 原生语音识别；
+- 处理系统麦克风权限；
+- 在 `PLATFORM_COMPATIBILITY` 与 UI 上区分平台；
+- 增加 Windows CI / 手工冒烟。
+
+---
+
+## 11. 当前建议
 
 ```text
 现在：只承诺 macOS 可用。
@@ -513,7 +567,7 @@ Windows：不承诺；本文作为社区贡献入口。
 
 ---
 
-## 11. 相关文件
+## 12. 相关文件
 
 | 文件 | 作用 |
 |---|---|

@@ -39,6 +39,17 @@
         <div class="composer-actions">
           <span class="muted" id="composer-hint">提交后 Front 会判断：直接回复，或交给一个空闲 Agent 独立完成。</span>
           <div class="composer-targets">
+            <button type="button" class="icon-btn mic-btn" id="mic-btn"
+              aria-label="语音输入" aria-pressed="false"
+              title="语音输入（macOS）" hidden>
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z"
+                  fill="none" stroke="currentColor" stroke-width="2" />
+                <path d="M5 11a7 7 0 0 0 14 0M12 18v3M8 21h8"
+                  fill="none" stroke="currentColor" stroke-width="2"
+                  stroke-linecap="round" />
+              </svg>
+            </button>
             <button type="button" class="target-chip" id="workspace-chip"
               title="AIEOS Task Workspace">
               <span class="chip-icon">▰</span>

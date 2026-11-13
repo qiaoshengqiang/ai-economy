@@ -12,6 +12,7 @@
     messages: $("messages"),
     prompt: $("prompt"),
     submit: $("submit-btn"),
+    mic: $("mic-btn"),
     workspaceChip: $("workspace-chip"),
     workspaceName: $("workspace-name"),
     workspaceMenu: $("workspace-menu"),
@@ -63,6 +64,17 @@
   let workdirPath = "";
   let repoPickerCurrent = "";
   let repoPickerParent = "";
+
+  const SpeechRecognition = (
+    window.SpeechRecognition || window.webkitSpeechRecognition || null);
+  // Windows 暂不实现；语音输入当前只在 macOS 上验证。
+  const MIC_PLATFORM_SUPPORTED = !/Windows/i.test(
+    navigator.userAgent || navigator.platform || "");
+  let recognition = null;
+  let micActive = false;
+  let micPrefix = "";
+  let micSuffix = "";
+  let micFinal = "";
 
   function ensureAudio() {
     if (audioContext) return audioContext;
@@ -286,6 +298,105 @@
     els.toast.hidden = false;
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => { els.toast.hidden = true; }, 6500);
+  }
+
+  function setMicState(active) {
+    micActive = !!active;
+    if (!els.mic) return;
+    els.mic.classList.toggle("recording", micActive);
+    els.mic.setAttribute("aria-pressed", micActive ? "true" : "false");
+    els.mic.title = micActive ? "停止语音输入" : "语音输入（macOS）";
+  }
+
+  function renderMicText(interim) {
+    const text = `${micFinal}${interim || ""}`;
+    els.prompt.value = `${micPrefix}${text}${micSuffix}`;
+    const cursor = (micPrefix + text).length;
+    els.prompt.setSelectionRange(cursor, cursor);
+  }
+
+  function startMic() {
+    if (!recognition || micActive) return;
+    const focused = document.activeElement === els.prompt;
+    const value = els.prompt.value;
+    const start = focused ? els.prompt.selectionStart : value.length;
+    const end = focused ? els.prompt.selectionEnd : value.length;
+    micPrefix = value.slice(0, Math.min(start, end));
+    micSuffix = value.slice(Math.max(start, end));
+    micFinal = "";
+    setMicState(true);
+    try {
+      recognition.start();
+    } catch (error) {
+      setMicState(false);
+      if (!error || error.name !== "InvalidStateError") {
+        showToast(
+          `语音输入启动失败：${error && error.message ? error.message : error}`,
+          true,
+        );
+      }
+    }
+  }
+
+  function stopMic() {
+    if (!recognition) return;
+    if (micActive) {
+      try { recognition.stop(); } catch (_error) { /* already stopped */ }
+    }
+    setMicState(false);
+  }
+
+  function setupMic() {
+    if (!els.mic) return;
+    // 浏览器不支持 / Windows 暂不实现时直接隐藏，不打扰用户。
+    if (!SpeechRecognition || !MIC_PLATFORM_SUPPORTED) {
+      els.mic.hidden = true;
+      return;
+    }
+    recognition = new SpeechRecognition();
+    recognition.lang = "zh-CN";
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.maxAlternatives = 1;
+
+    recognition.onstart = () => setMicState(true);
+    recognition.onresult = (event) => {
+      let interim = "";
+      for (
+        let index = event.resultIndex;
+        index < event.results.length;
+        index += 1
+      ) {
+        const result = event.results[index];
+        if (!result || !result[0]) continue;
+        if (result.isFinal) micFinal += result[0].transcript;
+        else interim += result[0].transcript;
+      }
+      renderMicText(interim);
+    };
+    recognition.onerror = (event) => {
+      const code = String((event && event.error) || "");
+      if (code === "aborted") return;
+      setMicState(false);
+      const messages = {
+        "not-allowed": "麦克风权限被拒绝，请在浏览器和系统设置中允许",
+        "service-not-allowed": "语音识别服务不可用",
+        "audio-capture": "没有找到可用的麦克风",
+        "no-speech": "没有听到语音，请再试一次",
+        "network": "语音识别服务连接失败；Chrome 需要网络",
+      };
+      showToast(
+        messages[code] || `语音输入失败：${code || "未知错误"}`,
+        true,
+      );
+    };
+    recognition.onend = () => setMicState(false);
+
+    els.mic.hidden = false;
+    els.mic.addEventListener("click", () => {
+      if (micActive) stopMic();
+      else startMic();
+    });
   }
 
   async function copyText(text) {
@@ -831,6 +942,7 @@
   }
 
   async function submitPrompt() {
+    if (micActive) stopMic();
     const text = els.prompt.value.trim();
     if (!text) {
       showToast("请先输入内容");
@@ -922,6 +1034,12 @@
       submitPrompt();
     }
   });
+  window.addEventListener("beforeunload", () => {
+    if (recognition && micActive) {
+      try { recognition.abort(); } catch (_error) { /* ignore */ }
+    }
+  });
+  setupMic();
   const savedWorkdir = localStorage.getItem("aieos.workdir") || "";
   if (savedWorkdir) {
     setWorkdir(savedWorkdir);
