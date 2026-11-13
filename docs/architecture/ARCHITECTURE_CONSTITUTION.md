@@ -13,7 +13,7 @@
 | **文档状态** | 长期维护（不是一次性报告） |
 | **当前阶段** | Post-Change-Pipeline-Phase-1 · Agent Core V1 · Tool Runtime V1 · Vision Perception V1 · Demand Entry V1 · Workspace Read/Edit/Search V1 已实现 |
 | **协议版本** | `protocol_version = "1"` |
-| **基线测试** | 以 `./dev.sh test` 当前输出为准（最近：5624 passed, 2 skipped, 30 deselected） |
+| **基线测试** | 以 `./dev.sh test` 当前输出为准（最近：5625 passed, 2 skipped, 30 deselected） |
 | **最后更新** | 文档对齐（Step 4F / Workspace Core v1 / Agent Core v1） |
 
 ---
@@ -1033,7 +1033,7 @@ Multi-agent voting protocol · Complex ontology。
 | Workspace Search V1 | `workspace_search` 只读字面搜索 · Demand 全能力接线 | ADR-0044 |
 | 实验线 | Human Demand → 多 Agent 协作生产 / 自主分工观察（`experiments/`） | — |
 
-**基线**：以 `./dev.sh test` 当前输出为准（最近：5624 passed）· Protocol `v1` · 25 个命令 · 29 张表
+**基线**：以 `./dev.sh test` 当前输出为准（最近：5625 passed）· Protocol `v1` · 25 个命令 · 29 张表
 
 ### 16.2 已知技术债（`CURRENT` 的真实问题）
 

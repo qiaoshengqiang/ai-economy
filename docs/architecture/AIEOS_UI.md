@@ -307,8 +307,8 @@ GET  /api/health
   结构化 brief 字段，因为它们不会传给 Worker；
 - 提交时把用户选择的 `workdir` 作为只读项目上下文传给 Front；
   Front 可用 `project_list` / `project_read` 查看当前项目，但不能写；
-- 输入区麦克风使用浏览器 Web Speech API（macOS 验证）；
-  Windows 当前隐藏，细节见 `PLATFORM_COMPATIBILITY.md`；
+- 输入区麦克风代码保留，但前端开关 `VOICE_INPUT_ENABLED=false` 暂时隐藏；
+  细节见 `PLATFORM_COMPATIBILITY.md`；
 - 轮询按内容签名增量重绘：内容没变时不重建 DOM；
 - 检测到文本选区（含拖选中的瞬时状态）时暂停列表重绘，
   用户点掉选区后的下一次轮询再补上最新数据 ——

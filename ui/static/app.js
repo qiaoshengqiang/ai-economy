@@ -65,6 +65,8 @@
   let repoPickerCurrent = "";
   let repoPickerParent = "";
 
+  // 语音输入先在前端隐藏；代码保留，后续把开关打开即可恢复。
+  const VOICE_INPUT_ENABLED = false;
   const SpeechRecognition = (
     window.SpeechRecognition || window.webkitSpeechRecognition || null);
   // Windows 暂不实现；语音输入当前只在 macOS 上验证。
@@ -360,7 +362,11 @@
   function setupMic() {
     if (!els.mic) return;
     // 浏览器不支持 / Windows 暂不实现时直接隐藏，不打扰用户。
-    if (!SpeechRecognition || !MIC_PLATFORM_SUPPORTED) {
+    if (
+      !VOICE_INPUT_ENABLED
+      || !SpeechRecognition
+      || !MIC_PLATFORM_SUPPORTED
+    ) {
       els.mic.hidden = true;
       return;
     }

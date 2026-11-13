@@ -1992,6 +1992,15 @@ def test_voice_input_uses_browser_speech_recognition():
     assert "recognition.abort()" in js
 
 
+def test_voice_input_is_hidden_for_now():
+    from pathlib import Path
+
+    js = (Path(__file__).resolve().parent.parent
+          / "ui" / "static" / "app.js").read_text(encoding="utf-8")
+    assert "const VOICE_INPUT_ENABLED = false;" in js
+    assert "els.mic.hidden = true;" in js
+
+
 def test_platform_compatibility_documents_voice_input():
     from pathlib import Path
 

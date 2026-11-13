@@ -37,7 +37,7 @@ node_modules/.bin/pi
 | Git 快照 / 文件模式 | 中 | P1 |
 | 测试 / CI | 高 | P1 |
 | 长路径 / UNC / 权限 | 中 | P2 |
-| 语音输入 | Windows 未实现；macOS 依赖浏览器 Web Speech API | P2 |
+| 语音输入 | Windows 未实现；macOS 前端暂时隐藏（代码保留） | P2 |
 
 ---
 
@@ -521,14 +521,16 @@ ui/static/style.css    .mic-btn / .mic-btn.recording
 - 识别结果插入光标位置，不覆盖已有文字；
 - 点击麦克风开始，再点一次停止；提交时自动停止；
 - 浏览器不支持时按钮隐藏；
-- Windows 当前直接隐藏按钮（`MIC_PLATFORM_SUPPORTED`）。
+- Windows 当前直接隐藏按钮（`MIC_PLATFORM_SUPPORTED`）；
+- **前端暂时隐藏**：`VOICE_INPUT_ENABLED=false`，按钮不显示；
+  代码保留，后续把开关改为 `true` 即可恢复。
 
 ### 10.2 平台状态
 
 | 平台 / 浏览器 | 状态 | 说明 |
 |---|---|---|
-| macOS Safari | `CURRENT` | `webkitSpeechRecognition` 使用 Apple 语音识别 |
-| macOS Chrome | `CURRENT` | Web Speech API；识别服务可能依赖网络 |
+| macOS Safari | `HIDDEN` | 代码保留；`webkitSpeechRecognition` 使用 Apple 语音识别 |
+| macOS Chrome | `HIDDEN` | 代码保留；Web Speech API，识别服务可能依赖网络 |
 | Windows | `UNSUPPORTED` | 当前隐藏按钮，未验证 Edge / Chrome |
 | Linux | `UNVERIFIED` | 浏览器支持时可能可用，未验证 |
 | Firefox | `UNSUPPORTED` | Web Speech API 支持有限，按钮通常隐藏 |
