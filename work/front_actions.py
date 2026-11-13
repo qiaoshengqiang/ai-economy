@@ -7,9 +7,14 @@ Front 不是 Work Agent，但需要在自己的私有空间里准备文件/草�
     private_read / private_write / private_list / private_delete
     draft_read / draft_write / draft_append / draft_list / draft_delete
 
-🔒 这里**没有** Task / Workspace / run_tool：
+并且可以**只读**用户当前选中的项目目录：
+
+    project_list / project_read
+
+🔒 这里**没有** Task / Workspace 写入 / run_tool：
    · Front 不创建 Task；
    · Front 不写 Task Workspace；
+   · project_* 只读，且只允许访问当前 `workdir`；
    · 代码 / 长文本先放私有空间或草稿，再随 handoff 的
      `brief.files` 交给 Work Agent。
 """
@@ -36,10 +41,12 @@ from actions import (
 from services.private_workspace import (
     delete_private, list_private, read_private, write_private,
 )
+from work.project_context import list_project, read_project_file
 
 
 FRONT_ACTION_TYPES = frozenset({
     "artifact_read",
+    "project_list", "project_read",
     "web_search", "web_fetch",
     "private_read", "private_write", "private_list", "private_delete",
     "draft_read", "draft_write", "draft_append", "draft_list",
@@ -187,6 +194,82 @@ class FrontArtifactReadExecutor:
         )
 
 
+class FrontProjectListExecutor:
+    """`project_list` —— 只读当前项目目录。"""
+
+    action_types = frozenset({"project_list"})
+
+    def __init__(self, project_root: str) -> None:
+        self.project_root = str(project_root or "")
+
+    def execute(self, intent: ActionIntent) -> ActionResult:
+        params = dict(getattr(intent, "parameters", None) or {})
+        try:
+            raw = list_project(
+                self.project_root,
+                path=params.get("path") or "",
+                depth=params.get("depth") or 1,
+            )
+        except Exception as exc:                              # noqa: BLE001
+            return ActionResult(
+                success=False,
+                error=f"{type(exc).__name__}: {exc}",
+                action_id=intent.intent_id,
+                action_type=intent.action_type,
+                metadata={"code": "project_list_failed"},
+            )
+        return ActionResult(
+            success=True,
+            output=raw,
+            action_id=intent.intent_id,
+            action_type=intent.action_type,
+            metadata={"code": None},
+        )
+
+
+class FrontProjectReadExecutor:
+    """`project_read` —— 只读当前项目目录里的一个文本文件。"""
+
+    action_types = frozenset({"project_read"})
+
+    def __init__(self, project_root: str) -> None:
+        self.project_root = str(project_root or "")
+
+    def execute(self, intent: ActionIntent) -> ActionResult:
+        params = dict(getattr(intent, "parameters", None) or {})
+        path = str(params.get("path") or "").strip()
+        if not path:
+            return ActionResult(
+                success=False,
+                error="project_read 需要 path",
+                action_id=intent.intent_id,
+                action_type=intent.action_type,
+                metadata={"code": "bad_request"},
+            )
+        try:
+            raw = read_project_file(
+                self.project_root,
+                path,
+                offset=params.get("offset"),
+                limit=params.get("limit"),
+            )
+        except Exception as exc:                              # noqa: BLE001
+            return ActionResult(
+                success=False,
+                error=f"{type(exc).__name__}: {exc}",
+                action_id=intent.intent_id,
+                action_type=intent.action_type,
+                metadata={"code": "project_read_failed"},
+            )
+        return ActionResult(
+            success=True,
+            output=raw,
+            action_id=intent.intent_id,
+            action_type=intent.action_type,
+            metadata={"code": None},
+        )
+
+
 def build_front_dispatcher(
     *,
     workspace_of: Callable[[str], Any],
@@ -194,6 +277,7 @@ def build_front_dispatcher(
     artifact_read_fn: Optional[Callable[..., Any]] = None,
     web_search_fn: Optional[Callable[..., Any]] = None,
     web_fetch_fn: Optional[Callable[..., Any]] = None,
+    project_root: str = "",
 ) -> ActionDispatcher:
     """把 Front 的私有空间 / 草稿 / 只读产物动作接成一个 dispatcher。"""
 
@@ -216,6 +300,11 @@ def build_front_dispatcher(
         ])
     if artifact_read_fn is not None:
         executors.append(FrontArtifactReadExecutor(artifact_read_fn))
+    if str(project_root or "").strip():
+        executors.extend([
+            FrontProjectListExecutor(project_root),
+            FrontProjectReadExecutor(project_root),
+        ])
     if web_search_fn is not None:
         executors.append(FrontWebSearchExecutor(web_search_fn))
     if web_fetch_fn is not None:

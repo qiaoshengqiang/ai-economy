@@ -65,6 +65,7 @@ from work.front_actions import (
     build_front_dispatcher, execute_front_actions,
 )
 from work.pi_runtime import PiWorkRuntime
+from work.project_context import render_project_context
 from work.project_lock import ProjectLockManager
 from work.task_directory import TaskDirectoryManager
 from work.task_snapshot import TaskSnapshotStore
@@ -1031,7 +1032,7 @@ class AIEOSController:
                 return
             admitted = True
             self._set_job(job, JobStatus.FRONT_ANALYZING)
-            front = self._front_runtime()
+            front = self._front_runtime(self._front_project_root(job))
             if front is None:
                 self._fail(job, "Front Agent 没有可用的 Brain")
                 return
@@ -1264,7 +1265,19 @@ class AIEOSController:
     def web_fetch(self, agent_id: str, url: str) -> Dict[str, Any]:
         return self._web_search_client(agent_id).fetch(url)
 
-    def _front_runtime(self) -> Optional[FrontAgentRuntime]:
+    def _front_project_root(self, job: WorkJob) -> str:
+        """Front 只读项目能力绑定的目录；无效时返回空字符串。"""
+        raw = str(getattr(job, "workdir", "") or "").strip()
+        if not raw:
+            return ""
+        try:
+            return self._validate_workdir(raw)
+        except ValueError:
+            return ""
+
+    def _front_runtime(
+        self, project_root: str = "",
+    ) -> Optional[FrontAgentRuntime]:
         agent = self._agent(self.front_agent)
         if agent is None or not getattr(agent, "has_brain", False):
             return None
@@ -1287,6 +1300,7 @@ class AIEOSController:
                 self.front_agent, query, **kwargs),
             web_fetch_fn=lambda url: self.web_fetch(
                 self.front_agent, url),
+            project_root=project_root,
         )
 
         def _execute(actions: List[Dict[str, Any]]) -> str:
@@ -1360,12 +1374,21 @@ class AIEOSController:
             "可用 set_mode 修改；修改后对新任务生效。")
         if commit_context:
             context += "\n" + commit_context
+        project_context = "当前没有选择项目目录。"
+        workdir = str(getattr(job, "workdir", "") or "").strip()
+        if workdir:
+            try:
+                project_context = render_project_context(
+                    self._validate_workdir(workdir))
+            except ValueError as exc:
+                project_context = f"当前项目目录不可用：{exc}"
         kwargs = {
             "active_tasks": active,
             "completed_tasks": completed,
             "conversation": self._conversation(job),
             "agents": self._agent_facts(),
             "context": context,
+            "project_context": project_context,
         }
         if callable(method):
             return method(job.human_text, **kwargs)

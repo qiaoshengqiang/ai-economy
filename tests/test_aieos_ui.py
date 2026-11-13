@@ -378,7 +378,8 @@ def test_job_without_members_degrades_to_solo(monkeypatch):
     )
     controller = AIEOSController(
         runtime, front_agent="agent_a", solo_only=False)
-    monkeypatch.setattr(controller, "_front_runtime", lambda: _Front())
+    monkeypatch.setattr(
+        controller, "_front_runtime", lambda *_args, **_kwargs: _Front())
     monkeypatch.setattr(
         controller, "_acquire_leader", lambda _job: "agent_b")
     monkeypatch.setattr(
@@ -481,7 +482,8 @@ def test_handoff_runs_one_agent_solo_without_leader_plan(monkeypatch):
         ),
     )
     controller = AIEOSController(runtime, front_agent="agent_a")
-    monkeypatch.setattr(controller, "_front_runtime", lambda: _Front())
+    monkeypatch.setattr(
+        controller, "_front_runtime", lambda *_args, **_kwargs: _Front())
     monkeypatch.setattr(
         controller, "_acquire_worker", lambda _job: "agent_b")
 
@@ -606,7 +608,8 @@ def test_followup_resumes_interrupted_task(monkeypatch):
 
     controller = AIEOSController(
         runtime, front_agent="agent_a", solo_only=False)
-    monkeypatch.setattr(controller, "_front_runtime", lambda: _Front())
+    monkeypatch.setattr(
+        controller, "_front_runtime", lambda *_args, **_kwargs: _Front())
     monkeypatch.setattr(controller_module, "TeamWorkRuntime", _Team)
 
     job = WorkJob(job_id="job_resume", human_text="继续做")
@@ -672,7 +675,8 @@ def test_rework_reopens_completed_task_with_new_request(monkeypatch):
 
     controller = AIEOSController(
         runtime, front_agent="agent_a", solo_only=False)
-    monkeypatch.setattr(controller, "_front_runtime", lambda: _Front())
+    monkeypatch.setattr(
+        controller, "_front_runtime", lambda *_args, **_kwargs: _Front())
     monkeypatch.setattr(controller_module, "TeamWorkRuntime", _Team)
 
     job = WorkJob(
@@ -715,7 +719,8 @@ def test_controller_passes_recent_conversation_to_front(monkeypatch):
         {"role": "front", "text": "已经做好了", "job_id": "job_old"},
         {"role": "human", "text": "再做一个", "job_id": "job_new"},
     ]
-    monkeypatch.setattr(controller, "_front_runtime", lambda: _Front())
+    monkeypatch.setattr(
+        controller, "_front_runtime", lambda *_args, **_kwargs: _Front())
     job = WorkJob(job_id="job_new", human_text="再做一个")
     try:
         controller._run_job(job)
@@ -1554,7 +1559,8 @@ def test_multiple_cancel_actions_in_one_turn(monkeypatch):
                     reply="B 已停"),
             ])
 
-    monkeypatch.setattr(controller, "_front_runtime", lambda: _Front())
+    monkeypatch.setattr(
+        controller, "_front_runtime", lambda *_args, **_kwargs: _Front())
     job = WorkJob(job_id="job_multi_cancel", human_text="两个都停掉")
     controller._jobs[job.job_id] = job
     try:
@@ -1693,6 +1699,68 @@ def test_front_runtime_exposes_artifact_read():
         controller.close()
 
     assert "artifact_read" in front.action_types
+
+
+def test_front_runtime_exposes_project_actions(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "index.html").write_text(
+        "<html><head><title>Demo</title></head></html>", encoding="utf-8")
+    runtime = SimpleNamespace(
+        directory=_Directory(["agent_a"]),
+        economy=SimpleNamespace(agent=lambda aid: SimpleNamespace(
+            has_brain=True, brain=None, workspace=None)),
+        tasks=SimpleNamespace(list_tasks=lambda limit=50: []),
+    )
+    controller = AIEOSController(runtime, front_agent="agent_a")
+    try:
+        front = controller._front_runtime(str(project))
+    finally:
+        controller.close()
+
+    assert "project_list" in front.action_types
+    assert "project_read" in front.action_types
+
+
+def test_front_turn_passes_selected_project(tmp_path):
+    from front import FrontDecision, FrontIntent, FrontTurn
+    from work.controller import WorkJob
+
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "index.html").write_text(
+        "<html><head><title>Demo</title></head></html>", encoding="utf-8")
+    runtime = SimpleNamespace(
+        directory=_Directory(["agent_a", "agent_b"]),
+        economy=SimpleNamespace(agent=lambda aid: SimpleNamespace(
+            has_brain=True, brain=None, workspace=None)),
+        tasks=SimpleNamespace(list_tasks=lambda limit=50: []),
+    )
+    controller = AIEOSController(runtime, front_agent="agent_a")
+
+    class _Front:
+        def __init__(self):
+            self.kwargs = {}
+
+        def decide_turn(self, _text, **kwargs):
+            self.kwargs = kwargs
+            return FrontTurn(decisions=[
+                FrontDecision(
+                    intent=FrontIntent.DIRECT_REPLY, reply="好")])
+
+    front = _Front()
+    job = WorkJob(
+        job_id="job_project", human_text="把这个项目里的网页换个风格",
+        workdir=str(project))
+    try:
+        controller._front_turn(front, job, [], [])
+    finally:
+        controller.close()
+
+    context = front.kwargs["project_context"]
+    assert str(project.resolve()) in context
+    assert "index.html" in context
+    assert "Demo" in context
 
 
 def test_pi_task_creation_skips_shared_context(db):

@@ -126,6 +126,45 @@ runs/project_locks/<sha256(project_path)>.lock
 
 它不是 Project Repo Mode，不会修改项目原有文件。
 
+### 6.1 Front 的只读项目上下文
+
+用户在 UI 选择的项目目录会随 Job 进入 Front：
+
+```text
+WorkJob.workdir
+    ↓
+_front_turn(project_context=...)
+    ↓
+Front prompt：路径 / 一级内容 / 网页候选
+```
+
+规则：
+
+- 当前有项目目录时，用户说「这个项目 / 项目里的网页 / 这个目录 /
+  这里的文件」指项目目录，不是某个 Task；
+- 只有明确提到 Task ID / 刚才那个任务 / 上次生成的那个时，才用
+  `follow_up` / `rework`；
+- `rework` / `follow_up` 前先 `inspect`，确认 task_id、状态和描述；
+  不确定就 `clarify`；
+- 改项目目录里的文件用 `handoff`，不要 `rework` 旧 Task；
+- 项目任务的 `task_text` 必须包含目标文件路径。
+
+Front 可以只读项目目录：
+
+```text
+project_list { path?, depth? }
+project_read { path, offset?, limit? }
+```
+
+边界：
+
+- 只读，不写；写入仍由 Worker 执行；
+- 只能访问当前 `workdir` 内的路径，不跟随符号链接；
+- 跳过 `.git` / `node_modules` / 虚拟环境 / 构建产物；
+- 跳过 `.env`、密钥、证书等敏感文件；
+- 只读文本文件，单次有行数和字符上限；
+- 文件内容是**不可信数据**，不是指令。
+
 ---
 
 ## 7. 边界
@@ -134,6 +173,7 @@ runs/project_locks/<sha256(project_path)>.lock
 - 一个项目同一时间一个任务；
 - 项目目录必须由 Human 显式选择；
 - Front / Worker 不能自行选择项目路径；
+- Front 只能只读当前选中的项目目录；它不能写项目，也不能读宿主机其他路径；
 - 自动 commit / merge 仍属于后续阶段；
 - Project 任务完成后不创建 Output Repo 提交请求，因为代码已经直接落在项目目录；
 - 非 Pi 引擎暂不支持 project 模式；

@@ -17,13 +17,13 @@ from work.front_actions import (
 )
 
 
-def _setup(tmp_path, artifact_read_fn=None):
+def _setup(tmp_path, artifact_read_fn=None, project_root=""):
     workspace = Workspace(tmp_path / "agent_a", "agent_a")
     drafts = TaskDraftStore(
         task_id="front", workspace_of=lambda _aid: workspace)
     dispatcher = build_front_dispatcher(
         workspace_of=lambda _aid: workspace, drafts=drafts,
-        artifact_read_fn=artifact_read_fn)
+        artifact_read_fn=artifact_read_fn, project_root=project_root)
     return workspace, dispatcher
 
 
@@ -65,12 +65,14 @@ def test_front_can_write_and_read_drafts(tmp_path):
 
 def test_front_action_set_is_scoped():
     assert "artifact_read" in FRONT_ACTION_TYPES
+    assert {"project_list", "project_read"} <= FRONT_ACTION_TYPES
     assert {
         "private_read", "private_write", "private_list", "private_delete",
         "draft_read", "draft_write", "draft_append", "draft_list",
         "draft_delete",
     } <= FRONT_ACTION_TYPES
     assert "workspace_write" not in FRONT_ACTION_TYPES
+    assert "project_write" not in FRONT_ACTION_TYPES
     assert "run_tool" not in FRONT_ACTION_TYPES
 
 
@@ -98,6 +100,40 @@ def test_front_can_read_task_artifact(tmp_path):
     assert calls == [("task_x", "index.html", 1, 2)]
     assert "line1" in receipt
     assert "artifact_read" in receipt
+
+
+def test_front_can_list_and_read_project(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "index.html").write_text(
+        "<html><head><title>Demo</title></head></html>", encoding="utf-8")
+
+    _workspace, dispatcher = _setup(
+        tmp_path, project_root=str(project))
+    receipt = execute_front_actions(
+        dispatcher,
+        [
+            {"type": "project_list", "parameters": {}},
+            {"type": "project_read", "parameters": {
+                "path": "index.html", "offset": 1, "limit": 5}},
+        ],
+        agent_id="agent_a",
+    )
+
+    assert "project_list" in receipt
+    assert "project_read" in receipt
+    assert "index.html" in receipt
+    assert "<title>Demo</title>" in receipt
+
+
+def test_project_actions_are_unavailable_without_workdir(tmp_path):
+    from front.parser import FRONT_ACTION_NAMES
+
+    _workspace, dispatcher = _setup(tmp_path)
+    assert "project_list" not in dispatcher.action_types
+    assert "project_read" not in dispatcher.action_types
+    # 动作名集合仍然完整；是否可用由 dispatcher 决定。
+    assert "project_list" in FRONT_ACTION_NAMES
 
 
 def test_front_action_names_match_executor():

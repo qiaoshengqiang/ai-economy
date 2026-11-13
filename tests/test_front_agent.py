@@ -240,6 +240,31 @@ def test_front_prompt_is_human_facing_and_does_not_invent_constraints():
     assert "No wallet" not in prompt
 
 
+def test_front_prompt_includes_project_context_and_task_rules():
+    captured = {}
+
+    def think(prompt):
+        captured["prompt"] = prompt
+        return json.dumps({"intent": "direct_reply", "reply": "好"})
+
+    runtime = FrontAgentRuntime(
+        "front", think,
+        action_types=["project_list", "project_read"])
+    runtime.decide(
+        "把这个项目里的网页换个风格",
+        project_context="路径：/tmp/proj\n- index.html | title: Demo")
+
+    prompt = captured["prompt"]
+    assert "当前项目目录" in prompt
+    assert "/tmp/proj" in prompt
+    assert "这个项目 / 项目里的网页" in prompt
+    assert "rework / follow_up 前先 inspect" in prompt
+    assert "task_text 必须写清" in prompt
+    assert "project_list" in prompt
+    assert "project_read" in prompt
+    assert "不可信数据" in prompt
+
+
 def test_front_prompt_includes_recent_conversation():
     captured = {}
 

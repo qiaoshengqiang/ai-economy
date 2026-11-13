@@ -291,6 +291,8 @@ GET  /api/health
   当前轮次数据量下，轮询不影响现有实现；
 - Task 详情页只展示 `task_text`（`Task.description`）；不再展示或持久化
   结构化 brief 字段，因为它们不会传给 Worker；
+- 提交时把用户选择的 `workdir` 作为只读项目上下文传给 Front；
+  Front 可用 `project_list` / `project_read` 查看当前项目，但不能写；
 - 轮询按内容签名增量重绘：内容没变时不重建 DOM；
 - 检测到文本选区（含拖选中的瞬时状态）时暂停列表重绘，
   用户点掉选区后的下一次轮询再补上最新数据 ——
