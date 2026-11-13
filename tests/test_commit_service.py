@@ -216,6 +216,33 @@ def test_oversized_snapshot_is_blocked(db, tmp_path):
     assert "上限" in request.error
 
 
+def test_commit_only_reads_task_workspace(db, tmp_path):
+    manager, directory, _record = _setup(tmp_path)
+    task = _task()
+    service = _service(db, manager, tmp_path / "output")
+    before = {
+        path.relative_to(directory.workspace).as_posix(): path.read_bytes()
+        for path in directory.workspace.rglob("*")
+        if path.is_file()
+    }
+    snapshots_before = (
+        directory.aieos / "snapshots.json").read_text(encoding="utf-8")
+
+    request = service.on_task_completed(task, mode="limited")
+
+    assert request is not None and request.status == "COMMITTED"
+    after = {
+        path.relative_to(directory.workspace).as_posix(): path.read_bytes()
+        for path in directory.workspace.rglob("*")
+        if path.is_file()
+    }
+    assert after == before
+    assert not (directory.workspace / ".git").exists()
+    assert (
+        directory.aieos / "snapshots.json"
+    ).read_text(encoding="utf-8") == snapshots_before
+
+
 def test_reopen_makes_pending_request_stale(db, tmp_path):
     manager, _directory, _record = _setup(tmp_path)
     task = _task()
