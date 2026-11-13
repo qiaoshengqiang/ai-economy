@@ -214,6 +214,33 @@
     min-width: 0;
   }
   .agent-row:last-child { border-bottom: 0; }
+  .agent-row.working {
+    position: relative;
+    background: linear-gradient(90deg, rgba(255,200,87,.055), var(--panel-2) 34%);
+    box-shadow: inset 2px 0 0 rgba(255,200,87,.8), 0 0 16px rgba(255,200,87,.055);
+  }
+  .agent-row.working::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border: 1px solid transparent;
+    background: linear-gradient(90deg,
+      rgba(255,200,87,.16),
+      rgba(255,200,87,.8),
+      rgba(255,200,87,.16)) border-box;
+    background-size: 220% 100%;
+    -webkit-mask: linear-gradient(#fff 0 0) padding-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    animation: agent-border-flow 3.2s linear infinite;
+    pointer-events: none;
+    z-index: 0;
+  }
+  .agent-row.working > * { position: relative; z-index: 1; }
+  @keyframes agent-border-flow {
+    0% { background-position: 0% 50%; }
+    100% { background-position: 220% 50%; }
+  }
   .agent-avatar {
     position: relative; flex: 0 0 24px; width: 24px; height: 24px;
     display: grid; place-items: center; color: var(--muted);
@@ -301,6 +328,7 @@
   }
   @media (prefers-reduced-motion: reduce) {
     .robot * { animation: none !important; }
+    .agent-row.working::before { animation: none !important; }
   }
 
   .task-list {
@@ -465,7 +493,7 @@
             <span class="agent-mode"><span class="tag front">Front 模式 · 自主</span></span>
             <span class="agent-task">IDLE · ready</span>
           </div>
-          <div class="agent-row">
+          <div class="agent-row working">
             <span class="agent-avatar">
               <svg class="robot working" viewBox="0 0 24 24" aria-hidden="true">
                 <g class="antenna">
@@ -536,7 +564,7 @@
             <span class="agent-mode"><span class="tag flow">Work · 工作流</span></span>
             <span class="agent-task">IDLE · ready</span>
           </div>
-          <div class="agent-row">
+          <div class="agent-row working">
             <span class="agent-avatar">
               <svg class="robot working" viewBox="0 0 24 24" aria-hidden="true">
                 <g class="antenna">
