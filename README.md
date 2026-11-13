@@ -2210,3 +2210,14 @@ Capital Market    资本市场
 2. **所有会变的东西都放配置。** 看见硬编码的数字就问一句「这是不是该进 yaml」。
 3. **每加一个功能，先加测试。** 经济系统的 bug 很隐蔽，光看余额查不出来。
 4. **不要跳过失败的测试。** 先分析原因，改代码，再往下走。
+
+---
+
+## License
+
+AI Economy OS is licensed under the **Apache License 2.0**.
+
+- [`LICENSE`](LICENSE)
+- [`NOTICE`](NOTICE)
+
+Copyright 2026 AI Economy OS contributors.
