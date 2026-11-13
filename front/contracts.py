@@ -189,9 +189,7 @@ class FrontDecision:
         ):
             if not str(self.task_id or "").strip():
                 raise ValueError(f"{self.intent} 必须带 task_id")
-        if self.intent == FrontIntent.COMMIT_CONFIRM:
-            if not str(self.commit_code or "").strip():
-                raise ValueError("commit_confirm 必须带 commit_code")
+
         if self.intent == FrontIntent.CLARIFY:
             if not str(self.question or "").strip():
                 self.question = "我需要再确认一下你的目标，能具体说明吗？"

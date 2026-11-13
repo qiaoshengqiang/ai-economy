@@ -794,3 +794,16 @@ def test_front_prompt_explains_role_injection_scope():
     assert "只有 Work 模式 = workflow" in prompt
     assert "Work 模式 = autonomous 时" in prompt
     assert "direct 阶段也不注入 Role" in prompt
+
+
+def test_commit_confirm_accepts_natural_language_without_code():
+    decision, error = parse_front_decision(
+        '{"intent":"commit_confirm","task_id":"task_x","reply":"提交中"}',
+        human_text="提交吧",
+        completed_task_ids=["task_x"],
+    )
+    assert error == ""
+    assert decision is not None
+    assert decision.intent == FrontIntent.COMMIT_CONFIRM
+    assert decision.task_id == "task_x"
+    assert decision.commit_code == ""

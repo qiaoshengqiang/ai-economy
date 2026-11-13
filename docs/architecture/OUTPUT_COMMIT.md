@@ -172,10 +172,10 @@ Controller
 OutputCommitService
 ```
 
-- Front 只转达确认，不执行 git；
-- Front 不能发起提交；
+- Front 负责转达确认；git 由系统 `OutputCommitService` 执行；
+- 提交请求来自人类确认或预授权策略；
 - Worker 看不到 `commit_mode`；
-- 提交结果不进 Worker 私有记忆 / Task summary / Shared Context Decision。
+- 提交结果留在 `commit_requests` / 审计 / 输出仓库。
 
 如果以后需要让 Worker 知道提交结果，应作为**外部事实**注入，而不是自我评价。
 

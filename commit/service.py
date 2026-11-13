@@ -160,31 +160,33 @@ class OutputCommitService:
     ) -> CommitRequest:
         """人类确认后执行 manual 请求。"""
         code = str(code or "").strip().lower()
-        if len(code) < 6:
-            raise CommitError("确认码太短；请使用完成消息里的 8 位快照码")
         requests = self.store.list_for_task(str(task.task_id))
         pending = [
             item for item in requests
             if item.status == CommitStatus.AWAITING_HUMAN.value
             and (
-                item.snapshot_commit.lower().startswith(code)
+                not code
+                or item.snapshot_commit.lower().startswith(code)
                 or item.snapshot_tree.lower().startswith(code)
             )
         ]
         if not pending:
-            done = [
-                item for item in requests
-                if item.status == CommitStatus.COMMITTED.value
-                and (
-                    item.snapshot_commit.lower().startswith(code)
-                    or item.snapshot_tree.lower().startswith(code)
-                )
-            ]
-            if done:
-                return done[0]
+            if code:
+                done = [
+                    item for item in requests
+                    if item.status == CommitStatus.COMMITTED.value
+                    and (
+                        item.snapshot_commit.lower().startswith(code)
+                        or item.snapshot_tree.lower().startswith(code)
+                    )
+                ]
+                if done:
+                    return done[0]
             raise CommitError("没有匹配的待确认提交请求")
         if len(pending) > 1:
-            raise CommitError("确认码匹配到多个请求；请使用更长的快照码")
+            raise CommitError(
+                "这个任务有多个待确认版本；请告诉我提交哪一个，"
+                "或给出快照短码")
         request = pending[0]
         if (
             int(getattr(task, "iteration", 1) or 1) != request.iteration

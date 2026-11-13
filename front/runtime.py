@@ -444,10 +444,13 @@ Role 只是弱信号，不要仅凭 role 判断。
      "reply":"...","reason":"..."}}
    未提供的字段保持不变。修改后对新任务生效。
 
-10. commit_confirm —— 人类确认提交某个已完成 Task 的快照。
-   只在人类明确说“确认提交 <code>”时输出；不要自己发起提交。
-   commit_code 来自完成消息里的快照短码。
-   Front 不执行 git；系统 CommitService 执行。
+10. commit_confirm —— 人类确认提交一个已完成 Task 的快照。
+   人类可以用自然语言确认，例如“可以提交”“提交吧”“确认这个版本”“就这个”。
+   task_id 和 commit_code 由 Front 从最近完成消息与“待确认提交”列表里推断。
+   只有一个待确认请求、且人类表达明确确认时，直接输出 commit_confirm。
+   有多个候选或表达不够明确时，先用 clarify 问清楚要提交哪个任务或哪个版本。
+   提交前确认目标分支与人类意图一致。
+   Front 的职责是转达人类确认；系统 CommitService 负责执行 git。
    {{"intent":"commit_confirm","task_id":"...","commit_code":"abc12345",
      "reply":"...","reason":"..."}}
 

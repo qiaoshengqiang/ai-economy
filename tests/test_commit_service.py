@@ -296,3 +296,16 @@ def test_output_repo_cannot_be_aieos_project_root(db, tmp_path):
     assert request is not None
     assert request.status == "BLOCKED"
     assert "主仓库" in request.error
+
+
+def test_confirm_without_code_uses_the_only_pending_request(db, tmp_path):
+    manager, _directory, _record = _setup(tmp_path)
+    task = _task()
+    service = _service(db, manager, tmp_path / "output")
+    request = service.on_task_completed(task, mode="manual")
+    assert request is not None
+
+    done = service.confirm(task, "")
+
+    assert done.status == "COMMITTED"
+    assert done.commit_sha

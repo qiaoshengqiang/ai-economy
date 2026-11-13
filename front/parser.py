@@ -301,8 +301,6 @@ def parse_front_decision(
                 or payload.get("code") or "").strip()
             if task_id not in (active | completed):
                 return None, "commit_confirm_task_not_found"
-            if len(code) < 6:
-                return None, "commit_confirm_missing_code"
             return FrontDecision(
                 intent=raw_intent,
                 task_id=task_id,

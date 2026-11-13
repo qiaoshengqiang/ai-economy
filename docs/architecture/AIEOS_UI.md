@@ -103,17 +103,19 @@ Front 还有一个 `set_mode` 控制 intent，可以在对话里修改：
 ### Output Commit 确认
 
 Task 完成后，如果配置了输出仓库，Front 会看到待确认提交的短码。
-人类回复「确认提交 <code>」时，Front 输出：
+人类可以用自然语言确认，例如「提交吧」「可以」「就这个」。
+Front 从完成消息与待确认列表推断 `task_id` / `commit_code`；
+多个候选时先追问清楚。
 
 ```json
 {"intent":"commit_confirm","task_id":"task_x","commit_code":"abc12345",
  "reply":"已提交"}
 ```
 
-- Front 只转达人类确认，不执行 git；
+- Front 负责转达人类确认；
 - 实际提交由系统 `OutputCommitService` 执行；
-- Front 不能自己发起提交；
-- 提交结果不进入 Worker 私有记忆。
+- 提交请求来自人类确认或预授权策略；
+- 提交结果留在 `commit_requests` / 审计 / 输出仓库。
 
 ### 角色约束
 

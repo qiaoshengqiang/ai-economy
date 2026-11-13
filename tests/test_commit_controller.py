@@ -44,7 +44,7 @@ class _CommitService:
         return self.request
 
     def front_context(self, *, mode):
-        return f"当前提交模式：{mode}\n待确认提交：task_x"
+        return f"当前默认提交模式：{mode}\n待确认提交：task_x"
 
     def confirm(self, task, code, *, actor="human"):
         self.confirmed = (task.task_id, code, actor)
@@ -81,7 +81,7 @@ def test_completed_task_creates_manual_commit_prompt():
     try:
         controller._after_task_completed(job, "task_x")
         texts = [item["text"] for item in controller._messages]
-        assert any("确认提交" in text for text in texts)
+        assert any("提交" in text for text in texts)
         assert any("aaaaaaaa" in text for text in texts)
     finally:
         controller.close()
@@ -135,14 +135,14 @@ def test_controller_builds_real_commit_service_from_db(db, tmp_path):
         assert controller.commit_service is not None
         controller._after_task_completed(job, "task_real")
         texts = [item["text"] for item in controller._messages]
-        assert any("确认提交" in text for text in texts)
+        assert any("提交" in text for text in texts)
     finally:
         controller.close()
 
 
 def test_front_commit_confirm_routes_to_service():
     controller = _controller(_request("AWAITING_HUMAN"))
-    job = WorkJob(job_id="job_x", human_text="确认提交 aaaaaaaa")
+    job = WorkJob(job_id="job_x", human_text="提交吧")
     try:
         controller._apply_control_decision(
             job,

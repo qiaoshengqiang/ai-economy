@@ -2145,8 +2145,9 @@ class AIEOSController:
         if request.status == CommitStatus.AWAITING_HUMAN.value:
             self._message(
                 "system",
-                f"任务 {task_id} 已完成。可提交快照 {request.code}；"
-                f"回复「确认提交 {request.code}」提交到 {request.branch}。",
+                f"任务 {task_id} 已完成。快照 {request.code} "
+                f"可提交到任务分支 {request.branch}；"
+                "需要提交时直接说“提交”即可。",
                 job_id=job.job_id, task_id=task_id)
         elif request.status == CommitStatus.COMMITTED.value:
             if request.merge_sha:
