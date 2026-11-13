@@ -241,3 +241,18 @@ def test_validate_workdir_accepts_existing_project(tmp_path, db):
             controller._validate_workdir(str(tmp_path / "tasks" / "x"))
     finally:
         controller.close()
+
+
+def test_project_workdir_task_skips_output_commit():
+    controller = _controller(_request("AWAITING_HUMAN"))
+    task = controller.rt.tasks.get("task_x")
+    task.acceptance = {
+        "workspace_mode": "project",
+        "project_path": "/tmp/project",
+    }
+    job = WorkJob(job_id="job_x", human_text="测试")
+    try:
+        controller._after_task_completed(job, "task_x")
+        assert controller.commit_service.last_mode == ""
+    finally:
+        controller.close()

@@ -4,7 +4,7 @@
 > **日期：2026-11-13**
 > **阶段：开发中 / 观察实验**
 > **协议版本：`1`**
-> **测试基线：`5590 passed, 2 skipped, 30 deselected`**
+> **测试基线：`5591 passed, 2 skipped, 30 deselected`**
 
 本文记录**当前真实可用能力、推荐工作方式、已知限制和版本变化**。
 架构的长期权威仍然是
@@ -411,7 +411,8 @@ Pi 自主任务仍然可能消耗较多 token：
 - 同一项目同时只允许一个任务；
 - 非 Pi 引擎暂不支持 project 模式；
 - 还没有 Git worktree 隔离、项目分支提交、自动 merge；
-- 项目任务删除的文件只体现在 snapshot diff，不进入 artifacts。
+- 项目任务删除的文件只体现在 snapshot diff，不进入 artifacts；
+- Project 任务不创建 Output Repo 提交请求，代码已经直接落在项目目录。
 
 ---
 
@@ -490,7 +491,7 @@ Team 协作
 当前基线：
 
 ```text
-5590 passed, 2 skipped, 30 deselected
+5591 passed, 2 skipped, 30 deselected
 ```
 
 启动说明见 [`../START_AIEOS.md`](../START_AIEOS.md)。

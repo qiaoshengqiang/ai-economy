@@ -134,6 +134,7 @@ runs/project_locks/<sha256(project_path)>.lock
 - 项目目录必须由 Human 显式选择；
 - Front / Worker 不能自行选择项目路径；
 - 自动 commit / merge 仍属于后续阶段；
+- Project 任务完成后不创建 Output Repo 提交请求，因为代码已经直接落在项目目录；
 - 非 Pi 引擎暂不支持 project 模式。
 
 ---

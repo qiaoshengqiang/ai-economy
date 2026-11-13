@@ -2276,6 +2276,10 @@ class AIEOSController:
         acceptance = getattr(task, "acceptance", None) or {}
         if not isinstance(acceptance, dict):
             acceptance = {}
+        # Project 模式已经直接修改用户目录；不再把同一批变更复制到
+        # Output Repo。项目分支/提交属于 Project Repo Mode（FUTURE）。
+        if str(acceptance.get("workspace_mode") or "") == "project":
+            return
         mode = str(
             acceptance.get("commit_mode") or self.commit_mode
         ).strip().lower()
