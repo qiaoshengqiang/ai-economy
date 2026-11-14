@@ -353,8 +353,12 @@ rm -f runs/ui/launcher-state.json
 不要复制 `runs/ui/launcher.json` / `launcher-state.json`；
 它们包含本机的端口、路径和 PID，只对原机器有意义。
 
-`config/config.yaml` 里的 `agents.<id>` 是配置事实，会随仓库走；
-如果不想带走某个本机实验 Agent，删除对应 `agents.<id>` 块后重启。
+`config/config.yaml` 里的 `agents.<id>` 是**配置定义**：名字、模型/凭据引用、
+能力、初始余额等。它可以随安装包过去；新机器会据此创建**新的**
+身份、钱包和空记忆，不会带走原 Agent 的历史、记忆或资产。
+
+如果不想带走某个本机实验 Agent，删除对应 `agents.<id>` 块后重启；
+但 `runs/`、`tasks/`、`agents/*/memory/`、`agents/*/workspace/` 永远不要复制。
 
 
 ---

@@ -333,30 +333,109 @@ grep '^DEEPSEEK' .env
 
 ---
 
-## 7. 分享给朋友时不要带的东西
+## 7. 分享给朋友时：什么能带走，什么不能
 
-如果打包成 zip，务必排除：
+### 7.1 可以带走
+
+Agent 的**定义**可以随配置过去：
+
+```text
+config/config.yaml  agents.<id>
+  ├── name（例如 小肥鱼）
+  ├── brain.model / brain.credential（引用名）
+  ├── capabilities / economy.initial_balance
+  └── system_prompt / cognition
+```
+
+这代表“朋友那边也有一名叫小肥鱼的 Agent”，
+但**不是原 Agent 本身**。
+
+### 7.2 绝对不能带走
+
+```text
+.env                                ← API Key
+runs/                               ← UI 数据库 / 日志 / launcher 配置
+tasks/                              ← Task 历史 / Workspace / 快照
+data/*.db                           ← CLI 数据库
+logs/
+agents/*/memory/                    ← 私有记忆
+agents/*/workspace/                 ← 私有文件 / 产物
+```
+
+这些才是 Agent 的**历史、记忆、资产**：
+
+| 内容 | 存放位置 |
+|---|---|
+| 身份 / 钱包 / 余额 / 账本 | `runs/ui/aieos.db` / `data/economy.db` 的 `agents` / `wallets` / `ledger_transactions` |
+| Task 历史 / 验收 / 消息 | 数据库 + `tasks/<task_id>/` |
+| 私有记忆 | `agents/<id>/memory/` |
+| 私有文件 / 产物 | `agents/<id>/workspace/` |
+| 运行日志 / 快照 | `runs/`、`tasks/<task_id>/.aieos/` |
+
+### 7.3 新机器上会发生什么
+
+朋友拿到 `config/config.yaml` 里的 `agents.<id>` 后，第一次启动会：
+
+```text
+读取 Agent 定义（名字 / 模型 / 凭据引用 / initial_balance）
+        ↓
+创建新的 agents 身份行 + 新钱包
+        ↓
+按 economy.initial_balance 重新铸币
+        ↓
+创建空的 memory / workspace
+```
+
+所以：
+
+- 名字和配置过去了；
+- 历史、记忆、原余额、原账本没有过去；
+- 新 Agent 的初始余额来自配置，不是原 Agent 的资产。
+
+> ⚠️ 如果被带走的 Agent 引用了某个 credential profile（例如
+> `bailian_key_d`），而朋友的 `.env` 没有对应变量，设置页会显示“缺失”。
+> 要么在 `.env` 补 Key，要么删除这个 Agent 定义。
+
+### 7.4 分享用的排除清单
+
+如果打包成 zip，排除：
 
 ```text
 .venv/
 .env
 runs/
 tasks/
-data/*.db
 logs/
-agents/*/workspace/*
+data/*.db
 agents/*/memory/*
+agents/*/workspace/*
 experiments/*/results/
 resources/public/tools/playwright/node_modules/
 ```
 
-另外检查：
+只保留：
 
-- `config/config.yaml` 是否包含个人 Agent（例如本机的 `agent_f / 小肥鱼`）；
-- `config/llm.yaml` 是否包含个人本地 provider；
-- `runs/ui/` 是否包含数据库、日志、launcher 配置。
+```text
+源码
+config/config.yaml      ← 可以包含 Agent 定义
+config/llm.yaml         ← 只含 provider/model/credential 引用
+config/worker_roles.yaml
+ui/static/
+docs/
+tests/
+```
 
-这些属于机器本地数据，不应该随安装包发给朋友。
+`config/llm.yaml` 不含明文 Key；Key 永远只在 `.env`。
+
+### 7.5 检查项
+
+分享前确认：
+
+- `.env` 没有被放进压缩包；
+- `runs/`、`tasks/`、`data/*.db`、`logs/` 没有被放进压缩包；
+- `agents/*/memory/`、`agents/*/workspace/` 没有被放进压缩包；
+- 如果不想带走某个本机实验 Agent，删除 `config/config.yaml` 里对应的
+  `agents.<id>` 块即可；名字和配置本身可以保留。
 
 ---
 
