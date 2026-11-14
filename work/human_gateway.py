@@ -88,6 +88,7 @@ class HumanGateway:
         to_agent: str,
         job_id: str = "",
         conversation_id: str = "",
+        client_message_id: str = "",
     ) -> str:
         """Human → Front；返回 message_id。"""
         self.ensure_registered()
@@ -101,6 +102,7 @@ class HumanGateway:
                     "kind": "human_message",
                     "human_id": self.human_id,
                     "job_id": str(job_id or ""),
+                    "client_message_id": str(client_message_id or ""),
                 },
                 trace_id=str(job_id or ""),
                 conversation_id=(
@@ -178,5 +180,7 @@ class HumanGateway:
                 "message_id": str(row.get("message_id") or ""),
                 "at": str(row.get("created_at") or ""),
                 "human_id": str(payload.get("human_id") or ""),
+                "client_message_id": str(
+                    payload.get("client_message_id") or ""),
             })
         return out

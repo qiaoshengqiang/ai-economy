@@ -214,8 +214,14 @@ class Handler(BaseHTTPRequestHandler):
                 commit_repo = str(
                     payload.get("commit_repo") or "").strip()
                 workdir = str(payload.get("workdir") or "").strip()
+                client_message_id = str(
+                    payload.get("client_message_id") or "").strip()
                 job_id = self.controller.submit(
-                    text, commit_repo=commit_repo, workdir=workdir)
+                    text,
+                    commit_repo=commit_repo,
+                    workdir=workdir,
+                    client_message_id=client_message_id,
+                )
                 self._send_json({"ok": True, "job_id": job_id})
                 return
             if path == "/api/retry":

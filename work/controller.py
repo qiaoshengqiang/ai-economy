@@ -141,6 +141,8 @@ class WorkJob:
     #: Human Gateway 写入 Journal 后返回的消息 ID / 会话 ID。
     human_message_id: str = ""
     conversation_id: str = ""
+    #: UI 客户端幂等键；同一个键重试不会创建第二个 Job。
+    client_message_id: str = ""
     summary: str = ""
     error: str = ""
     tokens: int = 0
@@ -173,6 +175,7 @@ class WorkJob:
             "commit_repo": self.commit_repo,
             "human_message_id": self.human_message_id,
             "conversation_id": self.conversation_id,
+            "client_message_id": self.client_message_id,
             "summary": self.summary,
             "error": self.error,
             "tokens": self.tokens,
@@ -242,6 +245,9 @@ class AIEOSController:
         self.rt = runtime
         self.front_agent = str(front_agent)
         self.human_gateway = human_gateway
+        #: UI 客户端幂等：client_message_id → 已创建的 Job。
+        self._submit_lock = threading.Lock()
+        self._client_submissions: Dict[str, Dict[str, str]] = {}
         #: 当前阶段只允许一个 Agent 独立完成（不组队）。
         self.solo_only = bool(solo_only)
         self.max_parallel_teams = max(1, int(max_parallel_teams))
@@ -834,6 +840,7 @@ class AIEOSController:
         *,
         commit_repo: str = "",
         workdir: str = "",
+        client_message_id: str = "",
     ) -> str:
         text = str(human_text or "").strip()
         if not text:
@@ -845,38 +852,62 @@ class AIEOSController:
         target_repo = str(commit_repo or "").strip()
         if target_repo:
             target_repo = self._validate_commit_repo(target_repo)
-        job = WorkJob(
-            job_id=f"job_{uuid.uuid4().hex[:10]}",
-            human_text=text,
-            workdir=target_workdir,
-            commit_repo=target_repo,
-            created_at=_now(),
-            updated_at=_now(),
-        )
-        conversation_id = ""
-        human_message_id = ""
-        if self.human_gateway is not None:
-            try:
-                conversation_id = self.human_gateway.conversation_id(
-                    self.front_agent)
-                human_message_id = self.human_gateway.send_human_message(
-                    text,
-                    to_agent=self.front_agent,
-                    job_id=job.job_id,
-                    conversation_id=conversation_id,
-                )
-            except Exception as exc:                          # noqa: BLE001
-                logger.warning("Human Gateway 写入失败：%s", exc)
-        job.conversation_id = conversation_id
-        job.human_message_id = human_message_id
-        with self._lock:
-            self._jobs[job.job_id] = job
-            self._job_order.append(job.job_id)
-            self._message(
-                "human", text, job_id=job.job_id,
-                message_id=human_message_id)
-        self._executor.submit(self._run_job, job)
-        return job.job_id
+        client_id = str(client_message_id or "").strip()[:128]
+
+        with self._submit_lock:
+            if client_id:
+                existing = self._client_submissions.get(client_id)
+                if existing is not None:
+                    if (
+                        existing.get("text") != text
+                        or existing.get("workdir") != target_workdir
+                        or existing.get("commit_repo") != target_repo
+                    ):
+                        raise ValueError(
+                            "同一个 client_message_id 不能对应不同的提交内容")
+                    return existing["job_id"]
+
+            job = WorkJob(
+                job_id=f"job_{uuid.uuid4().hex[:10]}",
+                human_text=text,
+                workdir=target_workdir,
+                commit_repo=target_repo,
+                client_message_id=client_id,
+                created_at=_now(),
+                updated_at=_now(),
+            )
+            conversation_id = ""
+            human_message_id = ""
+            if self.human_gateway is not None:
+                try:
+                    conversation_id = self.human_gateway.conversation_id(
+                        self.front_agent)
+                    human_message_id = self.human_gateway.send_human_message(
+                        text,
+                        to_agent=self.front_agent,
+                        job_id=job.job_id,
+                        conversation_id=conversation_id,
+                        client_message_id=client_id,
+                    )
+                except Exception as exc:                      # noqa: BLE001
+                    logger.warning("Human Gateway 写入失败：%s", exc)
+            job.conversation_id = conversation_id
+            job.human_message_id = human_message_id
+            with self._lock:
+                self._jobs[job.job_id] = job
+                self._job_order.append(job.job_id)
+                self._message(
+                    "human", text, job_id=job.job_id,
+                    message_id=human_message_id)
+            if client_id:
+                self._client_submissions[client_id] = {
+                    "job_id": job.job_id,
+                    "text": text,
+                    "workdir": target_workdir,
+                    "commit_repo": target_repo,
+                }
+            self._executor.submit(self._run_job, job)
+            return job.job_id
 
     def answer_question(
         self, task_id: str, answer: str, *, option_id: str = "",

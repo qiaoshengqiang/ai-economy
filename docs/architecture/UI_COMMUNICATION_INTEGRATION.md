@@ -3,10 +3,9 @@
 > **状态：`CURRENT`（Phase 1）**
 >
 > 已实现：Human Gateway · Human → Front · Front → Human ·
-> Message Journal · UI 从 Journal 投影。
+> Message Journal · UI 从 Journal 投影 · 客户端幂等 / 重试去重。
 >
-> 未完成：UI 客户端幂等 / 重试去重；Front → Worker 与 Task 消息
-> 仍属于后续阶段。
+> 未完成：Front → Worker 与 Task 消息仍属于后续阶段。
 >
 > 相关文档：
 > [`COMMUNICATION_MODEL.md`](COMMUNICATION_MODEL.md) ·
@@ -105,7 +104,8 @@ communication_messages   ← Human / Front 的对话事实
 runs/ui/jobs/*.json      ← job / round 观测
 ```
 
-Phase 1 尚未做客户端幂等 / 重试去重；这一步仍在待办。
+客户端幂等 / 重试去重已接入：同一个 `client_message_id` 重试返回
+同一个 Job，不会重复写入 Human 消息。
 
 ---
 
@@ -337,7 +337,7 @@ Agent Runtime
 - [x] Human 消息写入 `communication_messages`；
 - [x] Front 回复写入同表；
 - [x] UI 重启后能从 Journal 恢复 Human / Front 对话；
-- [ ] 同一条消息重试不会产生重复（UI 客户端幂等键）；
+- [x] 同一条消息重试不会产生重复（UI 客户端幂等键）；
 - [x] Task 创建行为不变；
 - [x] `AIEOSController._messages` 不再是 Human / Front 对话的唯一事实源。
 

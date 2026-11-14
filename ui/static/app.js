@@ -64,6 +64,8 @@
   let workdirPath = "";
   let repoPickerCurrent = "";
   let repoPickerParent = "";
+  const PENDING_SUBMIT_KEY = "aieos.pendingSubmit";
+  let pendingSubmission = null;
 
   // 语音输入先在前端隐藏；代码保留，后续把开关打开即可恢复。
   const VOICE_INPUT_ENABLED = false;
@@ -960,6 +962,64 @@
     }
   }
 
+  function newClientMessageId() {
+    if (window.crypto && typeof window.crypto.randomUUID === "function") {
+      return window.crypto.randomUUID();
+    }
+    return `msg_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  }
+
+  function loadPendingSubmission() {
+    try {
+      const raw = localStorage.getItem(PENDING_SUBMIT_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (
+        !parsed
+        || typeof parsed.id !== "string"
+        || typeof parsed.text !== "string"
+        || Date.now() - Number(parsed.at || 0) > 24 * 60 * 60 * 1000
+      ) {
+        localStorage.removeItem(PENDING_SUBMIT_KEY);
+        return;
+      }
+      pendingSubmission = parsed;
+      if (!els.prompt.value.trim()) {
+        els.prompt.value = parsed.text;
+        showToast("已恢复上次未确认的提交，可直接重试");
+      }
+    } catch (_error) {
+      localStorage.removeItem(PENDING_SUBMIT_KEY);
+    }
+  }
+
+  function rememberPendingSubmission(text, workdir) {
+    if (
+      !pendingSubmission
+      || pendingSubmission.text !== text
+      || pendingSubmission.workdir !== workdir
+    ) {
+      pendingSubmission = {
+        id: newClientMessageId(),
+        text,
+        workdir,
+        at: Date.now(),
+      };
+      try {
+        localStorage.setItem(
+          PENDING_SUBMIT_KEY, JSON.stringify(pendingSubmission));
+      } catch (_error) {
+        // localStorage 不可用时，仍然保留内存里的幂等键。
+      }
+    }
+    return pendingSubmission;
+  }
+
+  function clearPendingSubmission() {
+    pendingSubmission = null;
+    try { localStorage.removeItem(PENDING_SUBMIT_KEY); } catch (_error) {}
+  }
+
   async function submitPrompt() {
     if (recognition) stopMic({ discard: true });
     const text = els.prompt.value.trim();
@@ -980,14 +1040,20 @@
         }
         workdir = info.path;
       }
+      const pending = rememberPendingSubmission(text, workdirPath);
       const submitted = await api("/api/submit", {
         method: "POST",
-        body: JSON.stringify({ text, workdir }),
+        body: JSON.stringify({
+          text,
+          workdir,
+          client_message_id: pending.id,
+        }),
       });
       pendingFront = {
         jobId: String(submitted.job_id || ""),
         startedAt,
       };
+      clearPendingSubmission();
       els.prompt.value = "";
       await refresh();
     } catch (error) {
@@ -1064,6 +1130,7 @@
     setWorkdir(savedWorkdir);
     validateWorkdir(savedWorkdir);
   }
+  loadPendingSubmission();
   refresh();
   setInterval(refresh, 1200);
 })();

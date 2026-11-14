@@ -51,10 +51,12 @@ class _FakeController:
             "running_jobs": 0,
         }
 
-    def submit(self, text, *, commit_repo="", workdir=""):
+    def submit(self, text, *, commit_repo="", workdir="",
+               client_message_id=""):
         self.submitted.append(text)
         self.submitted_repo = commit_repo
         self.submitted_workdir = workdir
+        self.submitted_client_message_id = client_message_id
         return "job_test"
 
     def workdir_info(self, path=""):
@@ -199,10 +201,14 @@ def test_task_detail_page_is_served(server):
 
 def test_submit_and_settings_api(server):
     fake, base = server
-    status, payload = _post(base + "/api/submit", {"text": "做个游戏"})
+    status, payload = _post(
+        base + "/api/submit",
+        {"text": "做个游戏", "client_message_id": "client-1"},
+    )
     assert status == 200
     assert payload["ok"] is True
     assert fake.submitted == ["做个游戏"]
+    assert fake.submitted_client_message_id == "client-1"
 
     status, payload = _post(base + "/api/settings",
                             {"front_agent": "agent_b"})
@@ -1964,6 +1970,17 @@ def test_styles_keep_copy_actions_from_blocking_selection():
     assert "::selection" in css
     assert "pointer-events: none" in css
     assert ".msg-actions .copy-btn { pointer-events: auto; }" in css
+
+
+def test_submit_uses_client_message_id_for_idempotency():
+    from pathlib import Path
+
+    js = (Path(__file__).resolve().parent.parent
+          / "ui" / "static" / "app.js").read_text(encoding="utf-8")
+    assert "client_message_id" in js
+    assert "aieos.pendingSubmit" in js
+    assert "rememberPendingSubmission" in js
+    assert "clearPendingSubmission" in js
 
 
 def test_composer_has_voice_input_button_before_workspace_chip():

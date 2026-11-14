@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from communication import CommunicationManager, LocalTransport
 from communication.recorder import CommunicationRecorder
 from storage.database import Database
@@ -32,7 +34,8 @@ def test_human_gateway_writes_journal():
     _db, _communication, gateway = _setup()
 
     human_id = gateway.send_human_message(
-        "你好", to_agent="agent_a", job_id="job_test")
+        "你好", to_agent="agent_a", job_id="job_test",
+        client_message_id="client-1")
     front_id = gateway.send_front_reply(
         "你好，我是 Front", front_agent="agent_a",
         job_id="job_test", reply_to=human_id)
@@ -42,7 +45,35 @@ def test_human_gateway_writes_journal():
     assert messages[0]["message_id"] == human_id
     assert messages[1]["message_id"] == front_id
     assert messages[0]["text"] == "你好"
+    assert messages[0]["client_message_id"] == "client-1"
     assert messages[1]["text"] == "你好，我是 Front"
+
+
+def test_submit_is_idempotent_by_client_message_id():
+    _db, _communication, gateway = _setup()
+    runtime = SimpleNamespace(
+        directory=_Directory(),
+        economy=SimpleNamespace(agent=lambda aid: SimpleNamespace(
+            has_brain=True, brain=None)),
+        tasks=SimpleNamespace(list_tasks=lambda limit=50: []),
+    )
+    controller = AIEOSController(
+        runtime, front_agent="agent_a", human_gateway=gateway)
+    controller._executor = SimpleNamespace(
+        submit=lambda *args, **kwargs: None,
+        shutdown=lambda **kwargs: None)
+    try:
+        first = controller.submit("你好", client_message_id="client-1")
+        second = controller.submit("你好", client_message_id="client-1")
+
+        assert first == second
+        assert len(controller._jobs) == 1
+        assert len(gateway.journal_messages(front_agent="agent_a")) == 1
+
+        with pytest.raises(ValueError):
+            controller.submit("不同的内容", client_message_id="client-1")
+    finally:
+        controller.close()
 
 
 def test_controller_messages_are_mirrored_and_projected():
