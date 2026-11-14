@@ -300,12 +300,15 @@ class Launcher:
         running = bool(pid and self._pid_alive(pid))
         if not url:
             url = self.display_url(config)
+        log_path = str(
+            state.get("log")
+            or (self.root / str(config.get("log") or "")))
         return {
             "running": running,
             "pid": pid,
             "url": url,
             "health": self._health(url) if running else False,
-            "log": str(self.root / str(config.get("log") or "")),
+            "log": log_path,
             "config": str(self.config_path),
         }
 
@@ -356,7 +359,9 @@ class Launcher:
 
     def logs(self, lines: int = 100, follow: bool = False) -> int:
         config = self.merge_config()
-        path = self.root / str(config.get("log") or "")
+        state = self.read_state()
+        raw_path = state.get("log") or (self.root / str(config.get("log") or ""))
+        path = Path(str(raw_path))
         if not path.exists():
             print(f"日志文件不存在：{path}", file=sys.stderr)
             return 1
