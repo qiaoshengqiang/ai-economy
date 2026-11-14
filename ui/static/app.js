@@ -268,6 +268,9 @@
     });
   }
 
+  // 设置页等模块复用同一个确认弹窗。
+  window.aieosConfirm = confirmDialog;
+
   document.addEventListener("selectstart", () => {
     pointerSelecting = true;
   });

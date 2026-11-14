@@ -22,6 +22,10 @@
 - **常规设置**写入 `runs/ui/ui_settings.json`，立即或新任务生效；
 - **Worker Roles** 写入 `config/worker_roles.yaml`，下一个任务生效。
 
+> 设置页统一使用「分组卡片 + 行式字段 + 底部保存栏」。
+> Agent 页采用主从编辑：顶部设置 Front / Work 协作模式，左侧选择 Agent，
+> 右侧编辑该 Agent 的启停与引擎。
+
 ## 2. 数据权威
 
 | 内容 | 唯一权威 | 生效 |
@@ -29,7 +33,7 @@
 | providers / models / credentials 引用 | `config/llm.yaml` | 重启 |
 | API Key 明文 | `.env`（0600） | 重启 |
 | Worker Roles | `config/worker_roles.yaml` | 下一个任务 |
-| Front Agent / 并行 / 引擎 / Agent 启停 | `runs/ui/ui_settings.json` | 立即 / 新任务 |
+| Front Agent / Front 模式 / Work 模式 / 并行 / 引擎 / Agent 启停 | `runs/ui/ui_settings.json` | 立即 / 新任务 |
 | Agent prompt / economy / cognition | `config/config.yaml` | 人工维护，V1 只读 |
 | 配置备份 | `runs/ui/config_backups/` | — |
 
@@ -112,12 +116,14 @@ profile / env / present / api_key（只写）
 
 ### 4.1 运行
 
-- Front Agent；
 - 最大并行任务数；
 - 单任务最大轮次；
 - **Work 总时长开关与秒数**（关闭后 Pi Work 不设总时限）；
+- **交付与提交**：输出仓库开关 / 路径、提交模式、基线分支、auto merge；
 - **Prompt 日志开关**（默认关闭）；
 - 设置立即生效，并持久化到 `ui_settings.json`。
+
+> Front Agent / Front 模式 / Work 模式属于 Agent 行为，已移到 Agent 页。
 
 Prompt 日志写入：
 
@@ -154,12 +160,15 @@ runs/ui/prompts/prompts-YYYY-MM-DD.jsonl
 
 | 设置 | 生效 |
 |---|---|
+| Front Agent / Front 模式 / Work 模式 | 新任务 |
 | 启用 / 停用 | 新任务 |
 | 引擎 Solo / Pi | 新任务 |
 | 模型 / 凭据 | 只读展示，来自系统设置 |
 | 思考强度 | Agent 卡片直接切换；Prototype 固定 max |
 | 状态 | 只读 |
 
+- Agent 页是主从编辑：顶部统一设置 Front / Work 协作模式，左侧选择 Agent，
+  右侧只显示该 Agent 的启停、引擎、模型、凭据与角色；
 - Agent 卡片的 Thinking 选项来自模型 `thinking_levels`；
 - **Prototype 固定 max**，卡片设置只影响 Engineering / Evolution；
 - `Auto` → Engineering high / Evolution medium；固定档位覆盖后续阶段；
@@ -224,5 +233,6 @@ context_window / max_output_tokens 解析与 Pi models.json 注入
 Worker Role 新增 / 归档 / 恢复默认 / 持久化
 Front Agent / 并行数 / 单任务轮次 / Agent 启停 API
 设置面板：7 个角色、5 个 Agent、系统/常规导航
+设置页统一分组卡片；Agent 主从编辑；底部保存栏带脏状态
 真实 Pi 任务 task_6fb3b194 COMPLETED，Pi contextWindow 128000
 ```

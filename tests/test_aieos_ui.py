@@ -2130,6 +2130,59 @@ def test_settings_page_has_pi_timeout_switch():
     assert "pi_timeout_enabled" in js
 
 
+def test_settings_pages_use_cards_and_agent_master_detail():
+    from pathlib import Path
+
+    static = Path(__file__).resolve().parent.parent / "ui" / "static"
+    html = (static / "index.html").read_text(encoding="utf-8")
+    js = (static / "settings.js").read_text(encoding="utf-8")
+    css = (static / "style.css").read_text(encoding="utf-8")
+    app_js = (static / "app.js").read_text(encoding="utf-8")
+
+    runtime_start = html.index(
+        '<section class="settings-pane" data-pane="regular-runtime"')
+    agent_start = html.index(
+        '<section class="settings-pane" data-pane="regular-agent"')
+    roles_start = html.index(
+        '<section class="settings-pane" data-pane="regular-roles"')
+    runtime_section = html[runtime_start:agent_start]
+    agent_section = html[agent_start:roles_start]
+
+    # 协作方式只在 Agent 页；运行页不再出现 Front / Work 模式。
+    assert 'id="front-select"' not in runtime_section
+    assert 'id="front-mode"' not in runtime_section
+    assert 'id="work-mode"' not in runtime_section
+    assert 'id="front-select"' in agent_section
+    assert 'id="front-mode"' in agent_section
+    assert 'id="work-mode"' in agent_section
+
+    # Agent 页是主从编辑：左侧列表 + 右侧选中 Agent 的详情。
+    assert 'id="agent-settings-list"' in agent_section
+    assert 'id="agent-detail-id"' in agent_section
+    assert 'id="agent-detail-model"' in agent_section
+
+    # 统一卡片 / 页脚保存。
+    assert 'id="settings-footer-state"' in html
+    assert 'id="settings-save"' in html
+    assert ".setting-card" in css
+    assert ".agent-list-item" in css
+    assert ".settings-footer" in css
+
+    # 保存职责拆分：协作字段跟 Agent 走，不再混进运行设置。
+    runtime_save = js[
+        js.index("async function saveRuntime"):
+        js.index("// Agent（主从编辑）")
+    ]
+    assert "front_agent" not in runtime_save
+    assert "front_mode" not in runtime_save
+    assert "work_mode" not in runtime_save
+    assert "front_agent: agentDraft.frontAgent" in js
+
+    # 危险操作复用统一确认弹窗。
+    assert "window.aieosConfirm = confirmDialog" in app_js
+    assert "window.aieosConfirm" in js
+
+
 def test_task_timeline_preserves_manual_open_state():
     from pathlib import Path
 

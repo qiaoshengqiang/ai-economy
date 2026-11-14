@@ -5,12 +5,35 @@
   const $ = (id) => document.getElementById(id);
   const modal = $("settings-modal");
   const nav = $("settings-nav");
-  const content = document.querySelector(".settings-content");
   if (!modal || !nav) return;
 
   let data = null;
   let currentPane = "system-providers";
   let editing = { provider: "", model: "", credential: "", role: "" };
+  let agentDraft = null;
+  let agentInitial = null;
+  let selectedAgent = "";
+  let runtimeInitial = null;
+  let providerInitial = null;
+  let modelInitial = null;
+  let credentialInitial = null;
+  let roleInitial = null;
+
+  const clone = (obj) => (
+    typeof structuredClone === "function"
+      ? structuredClone(obj)
+      : JSON.parse(JSON.stringify(obj))
+  );
+
+  const PANE_CONFIG = {
+    "system-providers": { save: "保存服务商", note: "修改后需重启 UI 进程" },
+    "system-models": { save: "保存模型", note: "修改后需重启 UI 进程" },
+    "system-credentials": { save: "保存凭据", note: "密钥只写入 .env" },
+    "system-info": { readonly: true },
+    "regular-runtime": { save: "保存运行设置", reset: true, kind: "run" },
+    "regular-agent": { save: "保存 Agent 设置", reset: true, kind: "agent" },
+    "regular-roles": { save: "保存角色", note: "对新任务生效" },
+  };
 
   async function api(path, options = {}) {
     const response = await fetch(path, {
@@ -55,8 +78,79 @@
 
   function clear(node) { node.innerHTML = ""; }
 
-  function paneButton(pane) {
-    return nav.querySelector(`[data-pane="${pane}"]`);
+  function checkedValue(name) {
+    const input = document.querySelector(`input[name="${name}"]:checked`);
+    return input ? input.value : "";
+  }
+
+  function setRadio(name, value) {
+    const input = document.querySelector(
+      `input[name="${name}"][value="${value}"]`);
+    if (input) input.checked = true;
+  }
+
+  function flatten(obj, prefix = "", out = {}) {
+    Object.entries(obj || {}).forEach(([key, value]) => {
+      const path = prefix ? `${prefix}.${key}` : key;
+      if (value && typeof value === "object") {
+        flatten(value, path, out);
+      } else {
+        out[path] = value;
+      }
+    });
+    return out;
+  }
+
+  function changedCount(a, b) {
+    const left = flatten(a);
+    const right = flatten(b);
+    return Object.keys(left).filter(
+      (key) => String(left[key]) !== String(right[key])).length;
+  }
+
+  function providerSnapshot() {
+    return {
+      name: $("provider-name").value.trim(),
+      adapter: $("provider-adapter").value,
+      base_url: $("provider-base-url").value.trim(),
+      timeout_seconds: Number($("provider-timeout").value || 300),
+      default_model: $("provider-default-model").value,
+      request: $("provider-request").value.trim(),
+    };
+  }
+
+  function modelSnapshot() {
+    return {
+      profile: $("model-profile").value.trim(),
+      provider: $("model-provider").value,
+      model_id: $("model-id").value.trim(),
+      context_window: Number($("model-context").value || 600000),
+      max_output_tokens: Number($("model-output").value || 16384),
+      supports_reasoning: $("model-reasoning").checked,
+      thinking_levels: [...document.querySelectorAll(
+        "#model-thinking-levels input:checked")].map((box) => box.value),
+    };
+  }
+
+  function credentialSnapshot() {
+    return {
+      profile: $("credential-profile").value.trim(),
+      env: $("credential-env").value.trim(),
+      api_key: $("credential-key").value,
+    };
+  }
+
+  function roleSnapshot() {
+    return {
+      role_id: $("role-id").value.trim(),
+      name: $("role-name").value.trim(),
+      description: $("role-description").value.trim(),
+      system_prompt: $("role-prompt").value.trim(),
+      prototype: $("role-prototype").value,
+      engineering: $("role-engineering").value,
+      evolution: $("role-evolution").value,
+      summary: $("role-summary").value,
+    };
   }
 
   function showPane(pane) {
@@ -64,9 +158,10 @@
     nav.querySelectorAll("[data-pane]").forEach((button) => {
       button.classList.toggle("active", button.dataset.pane === pane);
     });
-    content.querySelectorAll(".settings-pane").forEach((section) => {
+    document.querySelectorAll(".settings-pane").forEach((section) => {
       section.hidden = section.dataset.pane !== pane;
     });
+    updateFooter();
   }
 
   async function load() {
@@ -78,6 +173,7 @@
     newModel();
     newCredential();
     newRole();
+    updateFooter();
   }
 
   async function open() {
@@ -92,16 +188,6 @@
 
   function close() { modal.hidden = true; }
 
-  document.getElementById("settings-btn").addEventListener("click", open);
-  $("settings-close").addEventListener("click", close);
-  modal.addEventListener("click", (event) => {
-    if (event.target === modal) close();
-  });
-  nav.addEventListener("click", (event) => {
-    const button = event.target.closest("[data-pane]");
-    if (button) showPane(button.dataset.pane);
-  });
-
   // ------------------------------------------------------------
   // render
   // ------------------------------------------------------------
@@ -115,6 +201,7 @@
     renderRuntime();
     renderAgents();
     renderRoles();
+    updateFooter();
   }
 
   function card(title, meta, actions) {
@@ -232,82 +319,402 @@
     });
   }
 
+  // ------------------------------------------------------------
+  // 运行
+  // ------------------------------------------------------------
+  function runtimeSnapshot() {
+    const enabled = $("commit-output-enabled").checked;
+    return {
+      maxTeams: Number($("max-teams").value || 3),
+      maxSoloTurns: Number($("max-solo-turns").value || 24),
+      commitEnabled: enabled,
+      commitOutputRepo: enabled
+        ? $("commit-output-repo").value.trim() : "",
+      commitMode: checkedValue("commit-mode") || "manual",
+      commitBaseRef: $("commit-base-ref").value.trim(),
+      commitAutoMerge: enabled && $("commit-auto-merge").checked,
+      piTimeoutEnabled: $("pi-timeout-enabled").checked,
+      piTimeoutSeconds: Number($("pi-timeout-seconds").value || 7200),
+      promptLogEnabled: $("prompt-log-enabled").checked,
+    };
+  }
+
+  function humanDuration(seconds) {
+    const s = Math.max(0, Number(seconds) || 0);
+    if (s < 60) return `${s} 秒`;
+    if (s < 3600) return `≈ ${Math.round(s / 60)} 分钟`;
+    const hours = Math.floor(s / 3600);
+    const minutes = Math.round((s % 3600) / 60);
+    return minutes ? `≈ ${hours} 小时 ${minutes} 分钟` : `≈ ${hours} 小时`;
+  }
+
+  function updateRunSummary() {
+    const state = runtimeSnapshot();
+    const commitLabel = {
+      manual: "人类授权", limited: "有限自主", auto: "完全自主",
+    }[state.commitMode] || "—";
+    $("run-summary").innerHTML = [
+      ["并行", state.maxTeams],
+      ["单任务", `${state.maxSoloTurns} 轮`],
+      ["Work 时长", state.piTimeoutEnabled
+        ? humanDuration(state.piTimeoutSeconds) : "不限"],
+      ["提交", state.commitEnabled ? commitLabel : "未启用"],
+    ].map(([key, value]) => `<span><b>${key}</b>${value}</span>`).join("");
+  }
+
+  function updateRuntimeDependencies() {
+    const enabled = $("commit-output-enabled").checked;
+    $("commit-output-repo").disabled = !enabled;
+    document.querySelectorAll("#commit-mode input").forEach((input) => {
+      input.disabled = !enabled;
+      input.closest(".mode-card").classList.toggle("disabled", !enabled);
+    });
+    $("commit-base-ref").disabled = !enabled;
+
+    const mode = checkedValue("commit-mode");
+    const autoAllowed = enabled && mode === "auto";
+    $("commit-auto-merge").disabled = !autoAllowed;
+    $("commit-auto-merge-row").classList.toggle("disabled", !autoAllowed);
+    if (!autoAllowed) $("commit-auto-merge").checked = false;
+    $("commit-auto-merge-hint").textContent = !enabled
+      ? "启用输出仓库后才能配置自动合并。"
+      : (mode === "auto"
+        ? "「完全自主」允许在可快进时自动合并到基线。"
+        : "当前模式不会自动合并。");
+
+    $("pi-timeout-seconds").disabled = !$("pi-timeout-enabled").checked;
+    $("timeout-human").textContent = $("pi-timeout-enabled").checked
+      ? humanDuration($("pi-timeout-seconds").value)
+      : "已关闭：不设总时限";
+    updateRunSummary();
+  }
+
+  function applyRuntime(state) {
+    $("max-teams").value = String(state.maxTeams);
+    $("max-solo-turns").value = String(state.maxSoloTurns);
+    $("commit-output-enabled").checked = !!state.commitEnabled;
+    $("commit-output-repo").value = state.commitOutputRepo || "";
+    setRadio("commit-mode", state.commitMode || "manual");
+    $("commit-base-ref").value = state.commitBaseRef || "main";
+    $("commit-auto-merge").checked = !!state.commitAutoMerge;
+    $("pi-timeout-enabled").checked = state.piTimeoutEnabled !== false;
+    $("pi-timeout-seconds").value = String(state.piTimeoutSeconds || 7200);
+    $("prompt-log-enabled").checked = !!state.promptLogEnabled;
+    updateRuntimeDependencies();
+    updateFooter();
+  }
+
   function renderRuntime() {
     const regular = data.regular || {};
-    const agents = data.agents || [];
-    const front = $("front-select");
-    clear(front);
-    agents.forEach((agent) => option(
-      front, agent.agent_id, agent.agent_id,
-      agent.agent_id === regular.front_agent));
     $("max-teams").value = String(regular.max_parallel_teams || 3);
     $("max-solo-turns").value = String(regular.max_solo_turns || 24);
-    $("work-mode").value = regular.work_mode || "workflow";
-    $("front-mode").value = regular.front_mode || "autonomous";
-    $("commit-mode").value = regular.commit_mode || "manual";
+    $("commit-output-enabled").checked = !!String(
+      regular.commit_output_repo || "").trim();
     $("commit-output-repo").value = regular.commit_output_repo || "";
+    setRadio("commit-mode", regular.commit_mode || "manual");
     $("commit-base-ref").value = regular.commit_base_ref || "main";
     $("commit-auto-merge").checked = !!regular.commit_auto_merge;
     $("pi-timeout-enabled").checked = regular.pi_timeout_enabled !== false;
     $("pi-timeout-seconds").value = String(
       regular.pi_timeout_seconds || 7200);
-    $("pi-timeout-seconds").disabled = !$("pi-timeout-enabled").checked;
     $("prompt-log-enabled").checked = !!regular.prompt_log_enabled;
+    updateRuntimeDependencies();
+    runtimeInitial = clone(runtimeSnapshot());
+    updateFooter();
+  }
+
+  async function saveRuntime() {
+    const state = runtimeSnapshot();
+    try {
+      await api("/api/settings", {
+        method: "POST",
+        body: JSON.stringify({
+          max_parallel_teams: state.maxTeams,
+          max_solo_turns: state.maxSoloTurns,
+          commit_mode: state.commitMode,
+          commit_output_repo: state.commitOutputRepo,
+          commit_base_ref: state.commitBaseRef,
+          commit_auto_merge: state.commitAutoMerge,
+          pi_timeout_enabled: state.piTimeoutEnabled,
+          pi_timeout_seconds: state.piTimeoutSeconds,
+          prompt_log_enabled: state.promptLogEnabled,
+        }),
+      });
+      await load();
+      window.dispatchEvent(new CustomEvent("aieos:settings-saved"));
+      toast("运行设置已保存");
+    } catch (error) {
+      toast(`保存失败：${error.message}`, true);
+    }
+  }
+
+  // ------------------------------------------------------------
+  // Agent（主从编辑）
+  // ------------------------------------------------------------
+  function buildAgentState() {
+    const regular = data.regular || {};
+    const piAgents = new Set(regular.pi_work_agents || []);
+    const agents = {};
+    (data.agents || []).forEach((agent) => {
+      agents[agent.agent_id] = {
+        enabled: !!agent.enabled,
+        engine: piAgents.has(agent.agent_id) ? "pi" : "solo",
+        status: agent.status || "",
+        model: agent.model || "—",
+        credential: agent.credential || "—",
+      };
+    });
+    const ids = Object.keys(agents);
+    const frontAgent = agents[regular.front_agent]
+      ? regular.front_agent : (ids[0] || "");
+    return {
+      frontAgent,
+      frontMode: regular.front_mode || "autonomous",
+      workMode: regular.work_mode || "autonomous",
+      agents,
+    };
+  }
+
+  function renderAgentGlobal() {
+    const select = $("front-select");
+    clear(select);
+    Object.keys(agentDraft.agents).forEach((agentId) => option(
+      select, agentId, agentId, agentId === agentDraft.frontAgent));
+    setRadio("front-mode", agentDraft.frontMode);
+    setRadio("work-mode", agentDraft.workMode);
+  }
+
+  function renderAgentList() {
+    const box = $("agent-settings-list");
+    clear(box);
+    Object.keys(agentDraft.agents).forEach((agentId) => {
+      const agent = agentDraft.agents[agentId];
+      const isFront = agentDraft.frontAgent === agentId;
+      const button = el(
+        "button",
+        [
+          "agent-list-item",
+          agentId === selectedAgent ? "active" : "",
+          agent.enabled ? "" : "disabled",
+        ].filter(Boolean).join(" "),
+      );
+      button.type = "button";
+      button.dataset.agent = agentId;
+
+      button.appendChild(el(
+        "span", "agent-avatar", agentId.slice(-1).toUpperCase()));
+      const copy = el("span", "agent-list-copy");
+      const title = el("b", "", agentId);
+      if (isFront) title.appendChild(el("em", "", "FRONT"));
+      copy.appendChild(title);
+      copy.appendChild(el(
+        "small", "", agent.enabled ? agent.status : "已停用"));
+      button.appendChild(copy);
+      button.appendChild(el(
+        "span", "agent-list-engine", agent.engine === "pi" ? "Pi" : "Solo"));
+      box.appendChild(button);
+    });
+  }
+
+  function renderAgentDetail() {
+    const agent = agentDraft.agents[selectedAgent];
+    if (!agent) return;
+    const isFront = agentDraft.frontAgent === selectedAgent;
+    $("agent-detail-id").textContent = selectedAgent;
+    $("agent-detail-status").textContent = agent.enabled
+      ? agent.status : "已停用";
+    $("agent-detail-role").textContent = isFront ? "FRONT" : "WORKER";
+    $("agent-detail-role-text").textContent = isFront
+      ? "Front Agent（由上方 Front Agent 决定）" : "Worker";
+    $("agent-detail-model").textContent = agent.model;
+    $("agent-detail-credential").textContent = agent.credential;
+    $("agent-setting-enabled").checked = agent.enabled;
+    $("agent-setting-enabled").disabled = isFront;
+    $("agent-setting-enabled-note").textContent = isFront
+      ? "Front Agent 不能被停用；如需停用，先把 Front 切到别的 Agent。"
+      : "停用后不再接新任务；运行中的任务不受影响。";
+    document.querySelectorAll("#agent-engine input").forEach((input) => {
+      input.checked = input.value === agent.engine;
+    });
+  }
+
+  function updateAgentSummary() {
+    const frontLabel = agentDraft.frontMode === "autonomous"
+      ? "自主" : "只传达";
+    const workLabel = agentDraft.workMode === "autonomous"
+      ? "自主" : "工作流";
+    const piCount = Object.values(agentDraft.agents)
+      .filter((agent) => agent.engine === "pi").length;
+    $("agent-summary").innerHTML = [
+      ["Front", agentDraft.frontAgent],
+      ["Front 模式", frontLabel],
+      ["Work 模式", workLabel],
+      ["Pi Agent", `${piCount} 个`],
+    ].map(([key, value]) => `<span><b>${key}</b>${value}</span>`).join("");
   }
 
   function renderAgents() {
-    const box = $("agent-settings-list");
-    clear(box);
-    const regular = data.regular || {};
-    const piAgents = new Set(regular.pi_work_agents || []);
-    (data.agents || []).forEach((agent) => {
-      const row = el("div", "agent-setting-row");
-      const top = el("div", "agent-setting-main");
-      const enabled = el("input");
-      enabled.type = "checkbox";
-      enabled.checked = !!agent.enabled;
-      enabled.disabled = !!agent.is_front;
-      enabled.dataset.agentEnabled = agent.agent_id;
-      const name = el("span", "agent-setting-id", agent.agent_id);
-      top.appendChild(enabled);
-      top.appendChild(name);
-      if (agent.is_front) top.appendChild(el("span", "badge", "FRONT"));
-      top.appendChild(el("span", "muted", agent.status || ""));
-
-      const engine = el("select");
-      engine.dataset.agentEngine = agent.agent_id;
-      option(engine, "solo", "Solo", !piAgents.has(agent.agent_id));
-      option(engine, "pi", "Pi", piAgents.has(agent.agent_id));
-      top.appendChild(engine);
-
-      const facts = el("div", "agent-setting-facts");
-      facts.textContent =
-        `model ${agent.model || "—"} · credential ${agent.credential || "—"}`;
-      row.appendChild(top);
-      row.appendChild(facts);
-      box.appendChild(row);
-    });
+    agentDraft = buildAgentState();
+    selectedAgent = agentDraft.frontAgent;
+    agentInitial = clone(agentDraft);
+    renderAgentGlobal();
+    renderAgentList();
+    renderAgentDetail();
+    updateAgentSummary();
   }
 
-  function renderRoles() {
-    const list = $("role-list");
-    clear(list);
-    const roles = (data.roles && data.roles.roles) || [];
-    roles.forEach((role) => {
-      const actions = [["编辑", () => editRole(role.role_id)]];
-      if (role.builtin) {
-        actions.push(["恢复默认", () => resetRole(role.role_id), true]);
-      }
-      if (!role.archived && role.role_id !== "generalist") {
-        actions.push(["归档", () => archiveRole(role.role_id), true]);
-      }
-      list.appendChild(card(
-        `${role.name || role.role_id} (${role.role_id})`,
-        `${role.archived ? "已归档 · " : ""}${
-          role.builtin ? "内置" : "自定义"} · ${role.description || ""}`,
-        actions));
+  function selectAgent(agentId) {
+    if (!agentDraft.agents[agentId]) return;
+    selectedAgent = agentId;
+    renderAgentList();
+    renderAgentDetail();
+  }
+
+  function refreshAgentViews() {
+    renderAgentList();
+    renderAgentDetail();
+    updateAgentSummary();
+    updateFooter();
+  }
+
+  async function saveAgents() {
+    const pi = [];
+    const disabled = [];
+    Object.entries(agentDraft.agents).forEach(([agentId, agent]) => {
+      if (agent.engine === "pi") pi.push(agentId);
+      if (!agent.enabled) disabled.push(agentId);
     });
-    if (!roles.length) list.appendChild(el("div", "empty", "还没有角色。"));
+    try {
+      await api("/api/settings", {
+        method: "POST",
+        body: JSON.stringify({
+          front_agent: agentDraft.frontAgent,
+          front_mode: agentDraft.frontMode,
+          work_mode: agentDraft.workMode,
+          pi_work_agents: pi,
+          disabled_agents: disabled,
+        }),
+      });
+      await load();
+      toast("Agent 设置已保存；协作与引擎变更对新任务生效");
+    } catch (error) {
+      toast(`保存失败：${error.message}`, true);
+    }
+  }
+
+  // ------------------------------------------------------------
+  // 页脚 / 脏状态
+  // ------------------------------------------------------------
+  function updateFooter() {
+    const config = PANE_CONFIG[currentPane] || {};
+    const state = $("settings-footer-state");
+    const actions = $("settings-footer-actions");
+    const save = $("settings-save");
+    const reset = $("settings-reset");
+
+    if (config.readonly) {
+      state.textContent = "只读";
+      actions.hidden = true;
+      return;
+    }
+    actions.hidden = false;
+    reset.hidden = !config.reset;
+    save.textContent = config.save || "保存";
+
+    if (config.kind === "agent" && agentDraft && agentInitial) {
+      const changed = changedCount(agentDraft, agentInitial);
+      state.innerHTML = changed
+        ? `已修改 <b>${changed}</b> 项` : "没有未保存的修改";
+      save.disabled = !changed;
+    } else if (config.kind === "run" && runtimeInitial) {
+      const changed = changedCount(runtimeSnapshot(), runtimeInitial);
+      state.innerHTML = changed
+        ? `已修改 <b>${changed}</b> 项` : "没有未保存的修改";
+      save.disabled = !changed;
+    } else {
+      const panel = {
+        "system-providers": [providerSnapshot, providerInitial],
+        "system-models": [modelSnapshot, modelInitial],
+        "system-credentials": [credentialSnapshot, credentialInitial],
+        "regular-roles": [roleSnapshot, roleInitial],
+      }[currentPane];
+      if (panel && panel[1]) {
+        const changed = changedCount(panel[0](), panel[1]);
+        state.innerHTML = changed
+          ? `已修改 <b>${changed}</b> 项 · ${config.note || "保存后生效"}`
+          : "没有未保存的修改";
+        save.disabled = !changed;
+      } else {
+        state.textContent = config.note || "保存后生效";
+        save.disabled = false;
+      }
+    }
+  }
+
+  async function saveCurrentPane() {
+    if (currentPane === "system-providers") return saveProvider();
+    if (currentPane === "system-models") return saveModel();
+    if (currentPane === "system-credentials") return saveCredential();
+    if (currentPane === "regular-runtime") return saveRuntime();
+    if (currentPane === "regular-agent") return saveAgents();
+    if (currentPane === "regular-roles") return saveRole();
+    return undefined;
+  }
+
+  async function resetCurrentPane() {
+    if (currentPane === "regular-runtime") {
+      applyRuntime({
+        maxTeams: 3,
+        maxSoloTurns: 24,
+        commitEnabled: false,
+        commitOutputRepo: "",
+        commitMode: "manual",
+        commitBaseRef: "main",
+        commitAutoMerge: false,
+        piTimeoutEnabled: true,
+        piTimeoutSeconds: 7200,
+        promptLogEnabled: false,
+      });
+      toast("已恢复运行默认值（尚未保存）");
+      return;
+    }
+    if (currentPane === "regular-agent") {
+      const ids = Object.keys(agentDraft.agents);
+      const next = clone(agentDraft);
+      next.frontAgent = ids[0] || "";
+      next.frontMode = "autonomous";
+      next.workMode = "autonomous";
+      ids.forEach((agentId, index) => {
+        next.agents[agentId].enabled = true;
+        next.agents[agentId].engine = index === 0 ? "solo" : "pi";
+      });
+      agentDraft = next;
+      selectedAgent = next.frontAgent;
+      renderAgentGlobal();
+      renderAgentList();
+      renderAgentDetail();
+      updateAgentSummary();
+      updateFooter();
+      toast("已恢复 Agent 默认值（尚未保存）");
+    }
+  }
+
+  async function cancelCurrentPane() {
+    if (currentPane === "regular-agent") {
+      agentDraft = clone(agentInitial);
+      selectedAgent = agentDraft.frontAgent;
+      renderAgentGlobal();
+      renderAgentList();
+      renderAgentDetail();
+      updateAgentSummary();
+      updateFooter();
+      return;
+    }
+    if (currentPane === "regular-runtime") {
+      applyRuntime(runtimeInitial);
+      return;
+    }
+    await load();
   }
 
   // ------------------------------------------------------------
@@ -331,6 +738,8 @@
     });
     $("provider-request").value = raw.request
       ? JSON.stringify(raw.request, null, 2) : "";
+    providerInitial = clone(providerSnapshot());
+    updateFooter();
   }
 
   function newProvider() {
@@ -346,6 +755,8 @@
       option($("provider-default-model"), profile, profile);
     });
     $("provider-request").value = "";
+    providerInitial = clone(providerSnapshot());
+    updateFooter();
   }
 
   async function saveProvider() {
@@ -370,7 +781,11 @@
   }
 
   async function deleteProvider(name) {
-    if (!confirm(`删除服务商 ${name}？`)) return;
+    const ok = await askConfirm(
+      "删除服务商？",
+      "删除后引用该服务商的模型需要先调整，否则配置校验会失败。",
+      name, "danger", "删除服务商");
+    if (!ok) return;
     try {
       await api("/api/settings/system", {
         method: "POST",
@@ -402,6 +817,8 @@
     document.querySelectorAll("#model-thinking-levels input").forEach((box) => {
       box.checked = levels.has(box.value);
     });
+    modelInitial = clone(modelSnapshot());
+    updateFooter();
   }
 
   function newModel() {
@@ -416,6 +833,8 @@
     document.querySelectorAll("#model-thinking-levels input").forEach((box) => {
       box.checked = box.value === "off";
     });
+    modelInitial = clone(modelSnapshot());
+    updateFooter();
   }
 
   async function saveModel() {
@@ -443,7 +862,11 @@
   }
 
   async function deleteModel(profile) {
-    if (!confirm(`删除模型 ${profile}？`)) return;
+    const ok = await askConfirm(
+      "删除模型？",
+      "删除后引用该 profile 的 Agent 需要先调整，否则配置校验会失败。",
+      profile, "danger", "删除模型");
+    if (!ok) return;
     try {
       await api("/api/settings/system", {
         method: "POST",
@@ -468,6 +891,8 @@
     $("credential-profile").disabled = true;
     $("credential-env").value = raw.env || "";
     $("credential-key").value = "";
+    credentialInitial = clone(credentialSnapshot());
+    updateFooter();
   }
 
   function newCredential() {
@@ -476,6 +901,8 @@
     $("credential-profile").value = "";
     $("credential-env").value = "";
     $("credential-key").value = "";
+    credentialInitial = clone(credentialSnapshot());
+    updateFooter();
   }
 
   async function saveCredential() {
@@ -499,7 +926,11 @@
   }
 
   async function deleteCredential(profile) {
-    if (!confirm(`删除凭据 ${profile}？`)) return;
+    const ok = await askConfirm(
+      "删除 API 凭据？",
+      "删除后引用该 profile 的 Agent 需要先调整，否则配置校验会失败。",
+      profile, "danger", "删除凭据");
+    if (!ok) return;
     try {
       await api("/api/settings/system", {
         method: "POST",
@@ -515,62 +946,29 @@
   }
 
   // ------------------------------------------------------------
-  // regular runtime / agents
-  // ------------------------------------------------------------
-  async function saveRuntime() {
-    try {
-      await api("/api/settings", {
-        method: "POST",
-        body: JSON.stringify({
-          front_agent: $("front-select").value,
-          max_parallel_teams: Number($("max-teams").value || 3),
-          max_solo_turns: Number($("max-solo-turns").value || 24),
-          work_mode: $("work-mode").value,
-          front_mode: $("front-mode").value,
-          commit_mode: $("commit-mode").value,
-          commit_output_repo: $("commit-output-repo").value,
-          commit_base_ref: $("commit-base-ref").value,
-          commit_auto_merge: $("commit-auto-merge").checked,
-          pi_timeout_enabled: $("pi-timeout-enabled").checked,
-          pi_timeout_seconds: Number($("pi-timeout-seconds").value || 7200),
-          prompt_log_enabled: $("prompt-log-enabled").checked,
-        }),
-      });
-      await load();
-      window.dispatchEvent(new CustomEvent("aieos:settings-saved"));
-      toast("运行设置已保存");
-    } catch (error) {
-      toast(`保存失败：${error.message}`, true);
-    }
-  }
-
-  async function saveAgents() {
-    const pi = [];
-    const disabled = [];
-    document.querySelectorAll("[data-agent-engine]").forEach((select) => {
-      if (select.value === "pi") pi.push(select.dataset.agentEngine);
-    });
-    document.querySelectorAll("[data-agent-enabled]").forEach((checkbox) => {
-      if (!checkbox.checked) disabled.push(checkbox.dataset.agentEnabled);
-    });
-    try {
-      await api("/api/settings", {
-        method: "POST",
-        body: JSON.stringify({
-          pi_work_agents: pi,
-          disabled_agents: disabled,
-        }),
-      });
-      await load();
-      toast("Agent 设置已保存；引擎变更对新任务生效");
-    } catch (error) {
-      toast(`保存失败：${error.message}`, true);
-    }
-  }
-
-  // ------------------------------------------------------------
   // roles
   // ------------------------------------------------------------
+  function renderRoles() {
+    const list = $("role-list");
+    clear(list);
+    const roles = (data.roles && data.roles.roles) || [];
+    roles.forEach((role) => {
+      const actions = [["编辑", () => editRole(role.role_id)]];
+      if (role.builtin) {
+        actions.push(["恢复默认", () => resetRole(role.role_id), true]);
+      }
+      if (!role.archived && role.role_id !== "generalist") {
+        actions.push(["归档", () => archiveRole(role.role_id), true]);
+      }
+      list.appendChild(card(
+        `${role.name || role.role_id} (${role.role_id})`,
+        `${role.archived ? "已归档 · " : ""}${
+          role.builtin ? "内置" : "自定义"} · ${role.description || ""}`,
+        actions));
+    });
+    if (!roles.length) list.appendChild(el("div", "empty", "还没有角色。"));
+  }
+
   function editRole(roleId) {
     const role = ((data.roles && data.roles.roles) || [])
       .find((item) => item.role_id === roleId);
@@ -587,6 +985,8 @@
     $("role-evolution").value = (phase.evolution || []).join("\n");
     $("role-summary").value = (role.summary_sections || []).join("\n");
     $("role-preview").hidden = true;
+    roleInitial = clone(roleSnapshot());
+    updateFooter();
   }
 
   function newRole() {
@@ -601,6 +1001,8 @@
     $("role-evolution").value = "";
     $("role-summary").value = "";
     $("role-preview").hidden = true;
+    roleInitial = clone(roleSnapshot());
+    updateFooter();
   }
 
   async function saveRole() {
@@ -633,7 +1035,10 @@
   }
 
   async function archiveRole(roleId) {
-    if (!confirm(`归档角色 ${roleId}？历史任务仍可恢复。`)) return;
+    const ok = await askConfirm(
+      "归档角色？", "历史任务仍可恢复；新任务将不再使用这个角色。",
+      roleId, "warning", "归档角色");
+    if (!ok) return;
     try {
       await api("/api/settings/roles", {
         method: "POST",
@@ -647,7 +1052,10 @@
   }
 
   async function resetRole(roleId) {
-    if (!confirm(`把角色 ${roleId} 恢复为内置默认？`)) return;
+    const ok = await askConfirm(
+      "恢复默认角色？", "当前自定义内容会被内置默认值覆盖。",
+      roleId, "warning", "恢复默认");
+    if (!ok) return;
     try {
       await api("/api/settings/roles", {
         method: "POST",
@@ -688,19 +1096,128 @@
     box.hidden = false;
   }
 
+  async function askConfirm(title, message, target, tone, confirmText) {
+    if (typeof window.aieosConfirm === "function") {
+      return window.aieosConfirm({
+        tone,
+        title,
+        message,
+        target,
+        confirmText,
+        cancelText: "取消",
+      });
+    }
+    return window.confirm(message);
+  }
+
+  // ------------------------------------------------------------
   // events
-  $("provider-new").addEventListener("click", newProvider);
-  $("provider-save").addEventListener("click", saveProvider);
-  $("model-new").addEventListener("click", newModel);
-  $("model-save").addEventListener("click", saveModel);
-  $("credential-new").addEventListener("click", newCredential);
-  $("credential-save").addEventListener("click", saveCredential);
-  $("runtime-save").addEventListener("click", saveRuntime);
-  $("pi-timeout-enabled").addEventListener("change", () => {
-    $("pi-timeout-seconds").disabled = !$("pi-timeout-enabled").checked;
+  // ------------------------------------------------------------
+  $("settings-btn").addEventListener("click", open);
+  $("settings-close").addEventListener("click", close);
+  modal.addEventListener("click", (event) => {
+    if (event.target === modal) close();
   });
-  $("agents-save").addEventListener("click", saveAgents);
+  nav.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-pane]");
+    if (button) showPane(button.dataset.pane);
+  });
+
+  // 系统设置页的编辑表单：输入后实时更新页脚脏状态。
+  const systemPanes = new Set([
+    "system-providers", "system-models",
+    "system-credentials", "regular-roles",
+  ]);
+  const settingsContent = document.querySelector(".settings-content");
+  const refreshSystemFooter = () => {
+    if (systemPanes.has(currentPane)) updateFooter();
+  };
+  settingsContent.addEventListener("input", refreshSystemFooter);
+  settingsContent.addEventListener("change", refreshSystemFooter);
+
+  $("provider-new").addEventListener("click", newProvider);
+  $("model-new").addEventListener("click", newModel);
+  $("credential-new").addEventListener("click", newCredential);
   $("role-new").addEventListener("click", newRole);
-  $("role-save").addEventListener("click", saveRole);
   $("role-preview-btn").addEventListener("click", previewRole);
+
+  $("settings-save").addEventListener("click", saveCurrentPane);
+  $("settings-reset").addEventListener("click", resetCurrentPane);
+  $("settings-cancel").addEventListener("click", cancelCurrentPane);
+
+  $("commit-output-enabled").addEventListener("change", () => {
+    updateRuntimeDependencies();
+    updateFooter();
+  });
+  document.querySelectorAll("#commit-mode input").forEach((input) => {
+    input.addEventListener("change", () => {
+      updateRuntimeDependencies();
+      updateFooter();
+    });
+  });
+  $("commit-auto-merge").addEventListener("change", updateFooter);
+  $("pi-timeout-enabled").addEventListener("change", () => {
+    updateRuntimeDependencies();
+    updateFooter();
+  });
+  [
+    "max-teams", "max-solo-turns", "commit-output-repo",
+    "commit-base-ref", "pi-timeout-seconds", "prompt-log-enabled",
+  ].forEach((id) => {
+    const node = $(id);
+    node.addEventListener("change", () => {
+      updateRuntimeDependencies();
+      updateFooter();
+    });
+    node.addEventListener("input", () => {
+      updateRuntimeDependencies();
+      updateFooter();
+    });
+  });
+
+  $("front-select").addEventListener("change", () => {
+    const next = $("front-select").value;
+    if (!agentDraft.agents[next]) return;
+    agentDraft.frontAgent = next;
+    if (!agentDraft.agents[next].enabled) {
+      agentDraft.agents[next].enabled = true;
+    }
+    selectedAgent = next;
+    refreshAgentViews();
+  });
+  document.querySelectorAll('input[name="front-mode"]').forEach((input) => {
+    input.addEventListener("change", () => {
+      if (!input.checked) return;
+      agentDraft.frontMode = input.value;
+      updateAgentSummary();
+      updateFooter();
+    });
+  });
+  document.querySelectorAll('input[name="work-mode"]').forEach((input) => {
+    input.addEventListener("change", () => {
+      if (!input.checked) return;
+      agentDraft.workMode = input.value;
+      updateAgentSummary();
+      updateFooter();
+    });
+  });
+  $("agent-settings-list").addEventListener("click", (event) => {
+    const item = event.target.closest("[data-agent]");
+    if (item) selectAgent(item.dataset.agent);
+  });
+  $("agent-setting-enabled").addEventListener("change", () => {
+    if (agentDraft.frontAgent === selectedAgent) {
+      $("agent-setting-enabled").checked = true;
+      return;
+    }
+    agentDraft.agents[selectedAgent].enabled = $("agent-setting-enabled").checked;
+    refreshAgentViews();
+  });
+  document.querySelectorAll("#agent-engine input").forEach((input) => {
+    input.addEventListener("change", () => {
+      if (!input.checked) return;
+      agentDraft.agents[selectedAgent].engine = input.value;
+      refreshAgentViews();
+    });
+  });
 })();

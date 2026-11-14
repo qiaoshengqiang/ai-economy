@@ -69,7 +69,7 @@ Front Agent（固定）
 
 ### Front 模式
 
-`Front 模式` 是常规设置里的全局开关，影响之后所有 Front 决策：
+`Front 模式` 是 Agent 设置里的全局开关，影响之后所有 Front 决策：
 
 ```text
 autonomous  自主：可以补全 brief（goal / deliverables / constraints /
@@ -254,7 +254,7 @@ Workspace 事实重新 read / search。
 | Task 卡片点击 | **同一标签页**打开 `/task.html?task_id=...`：任务认知 + 每轮 decision / work / summary 的 thinking、输出、动作与结果；每个 phase 显示 **thinking 强度 + LLM 调用耗时**，round 标题显示本轮总耗时，动作显示**工具执行耗时**；外加执行历史、文件、公共 WM、LLM 汇总（calls / tokens / 总耗时 / 平均耗时 / AIC） |
 | Agent 状态 | `IDLE` / `WORKING` / `STOPPING` · `FRONT` / `WORKER`；Work Agent 卡片可直接切换思考强度（Prototype 固定 max） |
 | Agent 中途提问 | Agent 卡片显示气泡并播放提示音；点击气泡直接回答，不经过 Front；Task 保持 IN_PROGRESS |
-| 设置按钮 | **系统设置**：服务商 / 模型 / API 凭据 / 系统信息；**常规设置**：Front Agent / 最大并行任务 / 单任务轮次 / Work 总时长开关 / Agent 启停与引擎 / Worker Roles / Prompt 日志开关。详见 [`UI_SETTINGS_DESIGN.md`](UI_SETTINGS_DESIGN.md) |
+| 设置按钮 | **系统设置**：服务商 / 模型 / API 凭据 / 系统信息；**常规设置**：运行（执行限制 / 交付 / 诊断）、Agent（协作方式 + 主从编辑）、Worker Roles。详见 [`UI_SETTINGS_DESIGN.md`](UI_SETTINGS_DESIGN.md) |
 
 ---
 
@@ -323,7 +323,7 @@ GET  /api/health
 - 工具用法通过 `tool_help` 自查，文档源在
   `resources/public/tools/<tool>.md`，不在 prompt 里重复维护；
 - Team 路径的「运行中重新计划」仍沿用 `work_plan_update`（当前 UI 不触发）；
-- 常规设置中的最大并行任务数在进程内生效；Front Agent / 轮次 / Agent 启停 / 引擎写入 `runs/ui/ui_settings.json`；
+- 常规设置中的最大并行任务数在进程内生效；Front Agent / Front 模式 / Work 模式 / 轮次 / Agent 启停 / 引擎写入 `runs/ui/ui_settings.json`；
 - 系统设置写入 `config/llm.yaml` 与 `.env`，需要重启 UI 进程；UI 显示“重启后生效”；
 - Worker Roles 写入 `config/worker_roles.yaml`，下一个任务生效；删除使用归档；
 - Prompt 日志默认关闭；开启后写入 `runs/ui/prompts/prompts-YYYY-MM-DD.jsonl`，
