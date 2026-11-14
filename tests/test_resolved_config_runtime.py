@@ -429,7 +429,9 @@ class TestMigrationBaselineStillHolds:
                                / "config_migration_baseline.json").read_text(
                                    encoding="utf-8"))
         r = load_resolved_config(GLOBAL_CONFIG_FILE, adapter_specs=adapter_specs)
-        assert set(baseline) == set(r.agents)
+        # 用户可以随时通过 UI 新增 Agent；迁移基线只要求这 10 个
+        # 原始 Agent 仍然存在，不要求配置永远只有这 10 个。
+        assert set(baseline).issubset(set(r.agents))
         assert len(baseline) == 10
 
 

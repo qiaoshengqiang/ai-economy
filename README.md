@@ -6,7 +6,7 @@
 
 **当前版本：`v0.2.0`（开发中）**
 **当前最佳工作方式：Human → Front Agent → Pi Agent → 自主工作**
-**测试基线：`5677 passed, 2 skipped, 30 deselected`**
+**测试基线：`5685 passed, 2 skipped, 30 deselected`**
 
 > - 当前真实能力、推荐模式与已知限制：[`docs/PROJECT_STATUS.md`](docs/PROJECT_STATUS.md)
 > - 架构长期 Source of Truth：[`ARCHITECTURE_CONSTITUTION.md`](docs/architecture/ARCHITECTURE_CONSTITUTION.md)
@@ -66,6 +66,7 @@
 | Work | Front `autonomous` / `relay` · Pi `workflow` / `autonomous` · inbox/outbox · 恢复 / Reopen · 批量 handoff | `CURRENT` |
 | 交付 | Output Commit（manual / limited / auto）· Project Workdir（直接改已有项目） | `CURRENT` |
 | UI | AIEOS 浏览器界面 · Agent 状态 · Task 卡片（状态色 / 筛选 / 归档 / 删除）· 可复用确认弹窗 | `CURRENT` |
+| 启动器 | `./aieos`：启动 / 停止 / 重启 / 状态 / 参数 / 日志 / doctor | `CURRENT`（Phase 1） |
 | Agent 管理 | 中文名（canonical `agents.name`）· 新增 Agent（写配置 + 重启）· 归档 / 恢复 · 启停与引擎 | `CURRENT` |
 | 经济 | Wallet · Ledger · 余额推导 · LLM 成本入账 · 对账 | `CURRENT` |
 | 平台 | macOS `CURRENT` · Linux `UNVERIFIED` · Windows 适配层骨架 `DESIGNED` | — |
@@ -122,7 +123,7 @@ secret 只从 `.env` / 环境变量读取。
 ### 4. 启动 AIEOS（推荐）
 
 ```bash
-./start_aieos.sh start
+./aieos start
 ```
 
 打开：
@@ -134,14 +135,16 @@ http://127.0.0.1:8000/
 常用管理命令：
 
 ```bash
-./start_aieos.sh status
-./start_aieos.sh restart
-./start_aieos.sh stop
+./aieos status
+./aieos restart
+./aieos stop
+./aieos logs -f
 ```
 
 默认 Front 是 `小艾`（agent_a），Pi Agent 是 `小博`…`小伊`（agent_b…agent_e）。
-启动脚本会检查 `.venv`、Pi CLI 和端口；失败时打印最近日志。
-详见 [`START_AIEOS.md`](START_AIEOS.md)。
+`aieos` 会检查 `.venv`、Pi CLI 和端口；失败时打印最近日志。
+详见 [`START_AIEOS.md`](START_AIEOS.md) 和
+[`docs/architecture/AIEOS_CLI.md`](docs/architecture/AIEOS_CLI.md)。
 
 ### 5. 命令行入口
 
@@ -160,7 +163,9 @@ http://127.0.0.1:8000/
 
 | 目的 | 命令 |
 |---|---|
-| 启动 / 停止 UI | `./start_aieos.sh start` / `stop` / `restart` / `status` |
+| 启动 / 停止 UI | `./aieos start` / `stop` / `restart` / `status` |
+| 修改启动参数 | `./aieos config show` · `./aieos config set port 8001` |
+| 查看日志 | `./aieos logs -f` |
 | 前台启动 UI | `./dev.sh ui` |
 | 启动 CLI | `./dev.sh run` |
 | 跑全量测试 | `./dev.sh test` |
@@ -253,7 +258,7 @@ ai-economy/
 ├── resources/              ← 公共只读工具库
 ├── config/                 ← config.yaml + llm.yaml
 ├── docs/                   ← 架构文档 / ADR / 历史
-├── tests/                  ← 5677 个测试 + 30 个真实 API 测试
+├── tests/                  ← 5685 个测试 + 30 个真实 API 测试
 │
 ├── tasks/                  ← Task 运行目录（不进 git）
 ├── runs/                   ← UI / 日志 / 输出（不进 git）
@@ -319,7 +324,7 @@ LLM 调用是真实经营成本，会记 `LLM_COST` 并进入 Ledger。
 ./dev.sh test tests/test_ledger.py -k x    # 单个测试
 ```
 
-当前基线：**5677 passed, 2 skipped, 30 deselected**。
+当前基线：**5685 passed, 2 skipped, 30 deselected**。
 
 另有 30 个真实 API 测试，需要 Key 且会产生费用，单独运行：
 
@@ -423,6 +428,7 @@ Capital Market    资本市场
 | [`PLATFORM_COMPATIBILITY.md`](docs/architecture/PLATFORM_COMPATIBILITY.md) | **平台适配指南 / Windows 待办** | 做跨平台适配时 |
 | [`TOOL_RUNTIME_V1_DESIGN.md`](docs/architecture/TOOL_RUNTIME_V1_DESIGN.md) | **受控代码执行 / 测试** | 做代码执行时 |
 | [`PROTOCOL.md`](PROTOCOL.md) | 消息协议 | 改协议时 |
+| [`docs/architecture/AIEOS_CLI.md`](docs/architecture/AIEOS_CLI.md) | **AIEOS Launcher CLI · 启动 / 参数 / 日志 / doctor** | 启动、重启、改启动参数时 |
 | [`COMMANDS.md`](COMMANDS.md) | 全部命令 | 想知道能跑什么 |
 | [`docs/HISTORY.md`](docs/HISTORY.md) | **Step 1 → Workspace Phase 0 历史** | 想了解演进过程 |
 | [`docs/architecture/adr/`](docs/architecture/adr/README.md) | 架构决策记录 | 想知道「为什么这样设计」 |

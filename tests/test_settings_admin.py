@@ -103,19 +103,19 @@ def test_create_agent_appends_config_and_requires_restart(tmp_path):
     assert admin.snapshot()["restart_required"] is False
 
     snap = admin.apply("agent.create", {
-        "agent_id": "agent_f",
-        "name": "小福",
+        "agent_id": "agent_test_new",
+        "name": "小福测试",
         "model": "deepseek_chat",
         "credential": "deepseek_key_a",
         "initial_balance": 100,
     })
-    assert snap["created_agent"] == "agent_f"
+    assert snap["created_agent"] == "agent_test_new"
     assert snap["restart_required"] is True
 
     data = yaml.safe_load(
         (tmp_path / "config.yaml").read_text(encoding="utf-8"))
-    agent = data["agents"]["agent_f"]
-    assert agent["name"] == "小福"
+    agent = data["agents"]["agent_test_new"]
+    assert agent["name"] == "小福测试"
     assert agent["runtime"] is True
     assert agent["brain"]["model"] == "deepseek_chat"
     assert agent["brain"]["credential"] == "deepseek_key_a"
@@ -126,12 +126,12 @@ def test_create_agent_appends_config_and_requires_restart(tmp_path):
 
     resolved = load_resolved_config(
         tmp_path / "config.yaml", adapter_specs=adapter_specs)
-    assert "agent_f" in resolved.runtime_agents
-    assert resolved.agent("agent_f").name == "小福"
+    assert "agent_test_new" in resolved.runtime_agents
+    assert resolved.agent("agent_test_new").name == "小福测试"
 
     with pytest.raises(SettingsAdminError):
         admin.apply("agent.create", {
-            "agent_id": "agent_f",
+            "agent_id": "agent_test_new",
             "name": "重复",
             "model": "deepseek_chat",
             "credential": "deepseek_key_a",

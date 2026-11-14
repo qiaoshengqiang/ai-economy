@@ -1,11 +1,17 @@
 # AIEOS 启动说明
 
+> 推荐使用新的启动器：`./aieos`。
+> 它支持启动 / 停止 / 重启 / 状态 / 日志 / 参数持久化 / doctor。
+> 完整说明见 [`docs/architecture/AIEOS_CLI.md`](docs/architecture/AIEOS_CLI.md)。
+>
+> 底层 `start_aieos.sh` 仍然可用。
+
 ## 快速启动
 
 在项目根目录执行：
 
 ```bash
-./start_aieos.sh start
+./aieos start
 ```
 
 打开：
@@ -17,19 +23,25 @@ http://127.0.0.1:8000/
 停止：
 
 ```bash
-./start_aieos.sh stop
+./aieos stop
 ```
 
 重启：
 
 ```bash
-./start_aieos.sh restart
+./aieos restart
 ```
 
 查看状态：
 
 ```bash
-./start_aieos.sh status
+./aieos status
+```
+
+查看日志：
+
+```bash
+./aieos logs -f
 ```
 
 ## 默认参数
@@ -46,7 +58,27 @@ PID 文件：  runs/ui/aieos.pid
 
 ## 修改启动参数
 
-可以用环境变量覆盖：
+推荐持久化到 `runs/ui/launcher.json`：
+
+```bash
+./aieos config set port 8001
+./aieos config set pi-cli /opt/pi
+./aieos restart
+```
+
+查看当前参数：
+
+```bash
+./aieos config show
+```
+
+也可以临时覆盖，不写文件：
+
+```bash
+./aieos restart --port 8001
+```
+
+底层脚本仍支持环境变量：
 
 ```bash
 # 换端口
@@ -62,6 +94,19 @@ AIEOS_PI_CLI=/path/to/pi ./start_aieos.sh start
 AIEOS_OUTPUT_REPO=/path/to/aieos-output \
 AIEOS_COMMIT_MODE=manual \
 ./start_aieos.sh start
+```
+
+新增的底层环境变量：
+
+```text
+AIEOS_HOST
+AIEOS_DB
+AIEOS_TASK_ROOT
+AIEOS_EXPORT_DIR
+AIEOS_PI_PROVIDER
+AIEOS_PI_MODEL
+AIEOS_PI_AGENT_DIR
+AIEOS_COMMIT_AUTO_MERGE
 ```
 
 也可以组合：

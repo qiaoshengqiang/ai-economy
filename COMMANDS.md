@@ -44,10 +44,16 @@ python xxx          ❌ 错误 —— 会用到系统 Python，报 "No module na
 
 ## 1. 最常用
 
-这四条覆盖 90% 的日常。
+这些覆盖 90% 的日常。
 
 ```bash
-# 启动系统，看启动横幅
+# 启动 / 重启 / 状态（推荐入口）
+./aieos start
+./aieos restart
+./aieos status
+./aieos config show
+
+# 启动系统，看启动横幅（CLI）
 ./dev.sh run
 
 # 跑全部测试
@@ -68,12 +74,16 @@ python xxx          ❌ 错误 —— 会用到系统 Python，报 "No module na
 # Team：Leader 计划 / 成员并行 / 汇总（QA 由 Leader 决定）
 ./dev.sh work --team --members agent_b,agent_c --demand "做一个两模块项目"
 
-# AIEOS 浏览器交互界面（Human ↔ Front ↔ Team）
+# AIEOS 浏览器交互界面（前台）
 ./dev.sh ui
 
 # 看系统环境是否正常（出问题时先跑这个）
 ./dev.sh doctor
 ```
+
+> `./aieos` 负责后台启动 / 停止 / 重启 / 启动参数 / 日志；
+> `./dev.sh ui` 负责前台开发运行。
+> 完整说明见 [`docs/architecture/AIEOS_CLI.md`](docs/architecture/AIEOS_CLI.md)。
 
 ---
 

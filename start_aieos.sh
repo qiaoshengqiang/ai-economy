@@ -15,9 +15,14 @@
 #   pi CLI     experiments/pi_compare/pi_node/node_modules/.bin/pi
 #
 # 可用环境变量覆盖：
-#   AIEOS_PORT / AIEOS_PI_AGENTS / AIEOS_PI_CLI
+#   AIEOS_PORT / AIEOS_HOST / AIEOS_DB / AIEOS_PI_AGENTS / AIEOS_PI_CLI
+#   AIEOS_PI_PROVIDER / AIEOS_PI_MODEL / AIEOS_PI_AGENT_DIR
 #   AIEOS_COMMIT_MODE / AIEOS_OUTPUT_REPO / AIEOS_COMMIT_BASE_REF
+#   AIEOS_COMMIT_AUTO_MERGE / AIEOS_TASK_ROOT / AIEOS_EXPORT_DIR
 #   AIEOS_LOG / AIEOS_PID_FILE
+#
+# 日常推荐入口：./aieos
+#   ./aieos start|stop|restart|status|logs|config|doctor
 # ============================================================
 
 set -euo pipefail
@@ -26,15 +31,27 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
 
 PORT="${AIEOS_PORT:-8000}"
+HOST="${AIEOS_HOST:-127.0.0.1}"
 PI_AGENTS="${AIEOS_PI_AGENTS:-agent_b,agent_c,agent_d,agent_e}"
 PI_CLI="${AIEOS_PI_CLI:-$ROOT/experiments/pi_compare/pi_node/node_modules/.bin/pi}"
+PI_PROVIDER="${AIEOS_PI_PROVIDER:-}"
+PI_MODEL="${AIEOS_PI_MODEL:-}"
+PI_AGENT_DIR="${AIEOS_PI_AGENT_DIR:-}"
 COMMIT_MODE="${AIEOS_COMMIT_MODE:-manual}"
 OUTPUT_REPO="${AIEOS_OUTPUT_REPO:-}"
 COMMIT_BASE_REF="${AIEOS_COMMIT_BASE_REF:-main}"
+COMMIT_AUTO_MERGE="${AIEOS_COMMIT_AUTO_MERGE:-0}"
+DB="${AIEOS_DB:-}"
+TASK_ROOT="${AIEOS_TASK_ROOT:-}"
+EXPORT_DIR="${AIEOS_EXPORT_DIR:-}"
 LOG="${AIEOS_LOG:-$ROOT/runs/ui/server.log}"
 PID_FILE="${AIEOS_PID_FILE:-$ROOT/runs/ui/aieos.pid}"
 PYTHON="$ROOT/.venv/bin/python"
-URL="http://127.0.0.1:${PORT}"
+HEALTH_HOST="$HOST"
+if [ "$HEALTH_HOST" = "0.0.0.0" ] || [ "$HEALTH_HOST" = "::" ]; then
+  HEALTH_HOST="127.0.0.1"
+fi
+URL="http://${HEALTH_HOST}:${PORT}"
 
 mkdir -p "$(dirname "$LOG")" "$(dirname "$PID_FILE")"
 
@@ -89,7 +106,7 @@ start_service() {
 
   local pid
   if pid="$(running_pid)"; then
-    echo "AIEOS 已经在运行（PID $pid）"
+    echo "AIEOS 已经在运行（PID ${pid}）"
     echo "  $URL"
     exit 0
   fi
@@ -97,24 +114,38 @@ start_service() {
   local port_pid
   port_pid="$(lsof -tiTCP:"$PORT" -sTCP:LISTEN 2>/dev/null | head -1 || true)"
   if [ -n "$port_pid" ]; then
-    fail "端口 $PORT 已被其他进程占用（PID $port_pid）。
+    fail "端口 ${PORT} 已被其他进程占用（PID ${port_pid}）。
 先确认它是什么进程，或换端口：
   AIEOS_PORT=8001 ./start_aieos.sh start"
   fi
 
   echo "▶ 启动 AIEOS..."
+  echo "  host:      $HOST"
   echo "  port:      $PORT"
   echo "  Pi agents: $PI_AGENTS"
   echo "  Pi CLI:    $PI_CLI"
   echo "  log:       $LOG"
 
-  nohup "$PYTHON" -m ui.server \
-    --port "$PORT" \
-    --pi-agents "$PI_AGENTS" \
-    --pi-cli "$PI_CLI" \
-    --commit-mode "$COMMIT_MODE" \
-    --output-repo "$OUTPUT_REPO" \
-    --commit-base-ref "$COMMIT_BASE_REF" \
+  local args=(
+    --host "$HOST"
+    --port "$PORT"
+    --pi-agents "$PI_AGENTS"
+    --pi-cli "$PI_CLI"
+    --pi-provider "$PI_PROVIDER"
+    --pi-model "$PI_MODEL"
+    --commit-mode "$COMMIT_MODE"
+    --output-repo "$OUTPUT_REPO"
+    --commit-base-ref "$COMMIT_BASE_REF"
+  )
+  [ -n "$PI_AGENT_DIR" ] && args+=(--pi-agent-dir "$PI_AGENT_DIR")
+  [ -n "$DB" ] && args+=(--db "$DB")
+  [ -n "$TASK_ROOT" ] && args+=(--task-root "$TASK_ROOT")
+  [ -n "$EXPORT_DIR" ] && args+=(--export-dir "$EXPORT_DIR")
+  case "$COMMIT_AUTO_MERGE" in
+    1|true|TRUE|yes|YES|on|ON) args+=(--commit-auto-merge) ;;
+  esac
+
+  nohup "$PYTHON" -m ui.server "${args[@]}" \
     >"$LOG" 2>&1 &
   pid=$!
   echo "$pid" >"$PID_FILE"
@@ -152,7 +183,7 @@ stop_service() {
     return 0
   fi
 
-  echo "▶ 停止 AIEOS（PID $pid）..."
+  echo "▶ 停止 AIEOS（PID ${pid}）..."
   kill "$pid" 2>/dev/null || true
   for _ in $(seq 1 20); do
     kill -0 "$pid" 2>/dev/null || break
