@@ -29,7 +29,8 @@ Front：人类入口 + 结果回传
 目标不是增加更多协议，而是：
 
 - 具体工作时不再注入生活层的身份/经济/议价；
-- Work 层不再使用 Agent 间消息机制；
+- Work 层不依赖 Agent 间消息同步任务状态；
+- Task 生命周期消息只作为 Task Core 的协议触发入口（Phase 3）；
 - 多个 Team 可以并行执行不同 Task；
 - 保留 Task Core / Workspace / Memory / Draft / Tool Runtime 这些有效机制。
 
@@ -102,7 +103,7 @@ Work 层**不包含**：
 
 - 身份经济；
 - 钱包 / 价格 / 议价 / 支付；
-- Agent 间消息机制；
+- 用 Agent 间消息同步任务状态；
 - 生活层邀请协议。
 
 > 技术 Agent ID 仍用于 Workspace 权限、锁和审计；

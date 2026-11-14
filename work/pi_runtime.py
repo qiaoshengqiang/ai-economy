@@ -118,7 +118,11 @@ class PiWorkRuntime:
         self._recent_tool_results: List[str] = []
         self._resumed = False
         self._resume_reason = ""
-        self.lifecycle = WorkLifecycle(runtime.tasks)
+        self.lifecycle = WorkLifecycle(
+            runtime.tasks,
+            communication=getattr(runtime, "communication", None),
+            task_service=getattr(runtime, "task_service", None),
+        )
         self.memory = PiMemoryBridge(
             runtime,
             agent_id=task.contractor or task.creator,
@@ -956,7 +960,9 @@ Task Workspace 放本次任务的交付物和验收产物。
                 result.summary = task.note or "任务已经处于 COMPLETED"
                 return result
             if task.status in (TaskStatus.CREATED, TaskStatus.ACCEPTED):
-                self.lifecycle.start(task, actor=actor)
+                task = self.lifecycle.start(task, actor=actor)
+                self.task = task
+                result.status = task.status
             if task.status not in (
                 TaskStatus.IN_PROGRESS,
                 TaskStatus.SUBMITTED,
@@ -1236,6 +1242,8 @@ Task Workspace 放本次任务的交付物和验收产物。
                     },
                 ),
             )
+            task = self.rt.tasks.get(task.task_id)
+            self.task = task
             result.status = task.status
             return result
         except Exception as exc:                              # noqa: BLE001

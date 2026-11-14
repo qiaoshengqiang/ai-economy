@@ -1281,6 +1281,13 @@ def build_runtime(
     # 而不是让 Task 去 import communication，也不是让
     # communication 去 import Task。
     _wire_task_handlers(communication, task_service)
+    # Phase 3：生命周期消息的收件端点。它不是 Agent；
+    # 只提供一个信箱，TaskService 的 type handler 负责处理。
+    if not communication.registry.exists("task_service"):
+        communication.register(
+            "task_service",
+            metadata={"actor_kind": "task_service"},
+        )
 
     # ---- Workspace Core v1：接入组合根 ----
     #

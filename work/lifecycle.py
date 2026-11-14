@@ -1,10 +1,17 @@
 """
-Work Task Lifecycle —— 没有消息机制的执行生命周期
-===================================================
+Work Task Lifecycle —— Task 执行生命周期
+========================================
 
-Work 层不再使用 Agent 间消息。但 Task 的历史仍然必须可审计，
-所以这里直接调用 Task Core 的领域方法，并把事件写入
-`task_executions`（append-only）。
+Phase 3：注入 `CommunicationManager` + `TaskService` 时，
+生命周期消息走：
+
+    START / SUBMIT / VERIFY / COMPLETE
+      → Message（进入 communication_messages）
+      → TaskService handler
+      → Task Core
+
+没有注入两者时（旧测试 / CLI 降级路径），直接调用 Task Core。
+两种路径都只改 Task Core；`task_executions` 仍然是 append-only。
 
     Work 层动作          Task Core          执行记录
     ------------         ------------       ------------
@@ -36,6 +43,7 @@ from core.task_execution import (
     TaskVerification,
 )
 from core.task_store import TaskStore
+from work.task_lifecycle_client import TaskLifecycleClient
 
 
 class WorkLifecycleError(Exception):
@@ -45,8 +53,19 @@ class WorkLifecycleError(Exception):
 class WorkLifecycle:
     """Work 层的 Task 生命周期操作（无消息）。"""
 
-    def __init__(self, store: TaskStore):
+    def __init__(
+        self,
+        store: TaskStore,
+        *,
+        communication: Any = None,
+        task_service: Any = None,
+    ):
         self.store = store
+        self.client = (
+            TaskLifecycleClient(communication, task_service)
+            if communication is not None and task_service is not None
+            else None
+        )
 
     # ------------------------------------------------------------
     # 基本动作
@@ -58,6 +77,13 @@ class WorkLifecycle:
         if task.status not in (TaskStatus.CREATED, TaskStatus.ACCEPTED):
             raise WorkLifecycleError(
                 f"任务 {task.task_id} 当前是 {task.status}，不能 START。")
+
+        if self.client is not None:
+            try:
+                self.client.start(task.task_id, actor)
+            except Exception as exc:                          # noqa: BLE001
+                raise WorkLifecycleError(str(exc)) from exc
+            return self.store.get(task.task_id)
 
         if task.status == TaskStatus.CREATED:
             if not task.is_participant(actor):
@@ -80,6 +106,12 @@ class WorkLifecycle:
         """IN_PROGRESS → SUBMITTED。"""
         self._require_status(task, TaskStatus.IN_PROGRESS, "SUBMIT")
         self._require_contractor(task, actor, "SUBMIT")
+        if self.client is not None:
+            try:
+                self.client.submit(task.task_id, actor, result)
+            except Exception as exc:                          # noqa: BLE001
+                raise WorkLifecycleError(str(exc)) from exc
+            return self.store.get(task.task_id)
         task.submit()
         self.store.save(task)
         self._record(task, ExecutionEvent.SUBMIT, actor=actor, result=result)
@@ -107,6 +139,14 @@ class WorkLifecycle:
                 "Team Task 通过 complete_team() 进入 Work 完成路径。")
         self._require_status(task, TaskStatus.SUBMITTED, "VERIFY")
         self._require_contractor(task, actor, "VERIFY")
+        if self.client is not None:
+            try:
+                self.client.verify(
+                    task.task_id, actor,
+                    passed=passed, feedback=feedback)
+            except Exception as exc:                          # noqa: BLE001
+                raise WorkLifecycleError(str(exc)) from exc
+            return self.store.get(task.task_id)
 
         verification = TaskVerification(passed=passed, feedback=feedback)
         task.verify(passed=passed)
@@ -120,6 +160,12 @@ class WorkLifecycle:
         """VERIFIED → COMPLETED。"""
         self._require_status(task, TaskStatus.VERIFIED, "COMPLETE")
         self._require_contractor(task, actor, "COMPLETE")
+        if self.client is not None:
+            try:
+                self.client.complete(task.task_id, actor)
+            except Exception as exc:                          # noqa: BLE001
+                raise WorkLifecycleError(str(exc)) from exc
+            return self.store.get(task.task_id)
         task.complete()
         self.store.save(task)
         self._record(task, ExecutionEvent.COMPLETE, actor=actor)
@@ -171,13 +217,13 @@ class WorkLifecycle:
                 f"任务 {task.task_id} 当前是 {task.status}，不能完成。")
 
         if task.status == TaskStatus.IN_PROGRESS:
-            self.submit(task, actor=actor, result=result)
+            task = self.submit(task, actor=actor, result=result)
         if task.status == TaskStatus.SUBMITTED:
-            self.verify(
+            task = self.verify(
                 task, actor=actor, passed=True,
                 feedback=feedback or "Solo 自验收：按 DoD 完成")
         if task.status == TaskStatus.VERIFIED:
-            self.complete(task, actor=actor)
+            task = self.complete(task, actor=actor)
 
         return {
             "ok": True,

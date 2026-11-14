@@ -168,7 +168,11 @@ class SoloWorkRuntime:
         self._tool_docs: Dict[str, str] = {}
         #: Work 阶段真实注册的动作集合；认知阶段用它展示「下一阶段有什么」。
         self._work_dispatcher: Any = None
-        self.lifecycle = WorkLifecycle(runtime.tasks)
+        self.lifecycle = WorkLifecycle(
+            runtime.tasks,
+            communication=getattr(runtime, "communication", None),
+            task_service=getattr(runtime, "task_service", None),
+        )
         self.drafts = drafts or TaskDraftStore(
             task_id=task.task_id,
             workspace_of=self._workspace_of,
@@ -195,7 +199,9 @@ class SoloWorkRuntime:
                 result.summary = task.note or "任务已经处于 COMPLETED"
                 return result
             if task.status in (TaskStatus.CREATED, TaskStatus.ACCEPTED):
-                self.lifecycle.start(task, actor=actor)
+                task = self.lifecycle.start(task, actor=actor)
+                self.task = task
+                result.status = task.status
             if task.status not in (
                 TaskStatus.IN_PROGRESS,
                 TaskStatus.SUBMITTED,
@@ -676,10 +682,10 @@ class SoloWorkRuntime:
                     recovered = self._force_action(
                         actor, agent, dispatcher, result,
                         last_content=last_content, turn=turn)
-                    if recovered and task.status == TaskStatus.COMPLETED:
-                        result.status = task.status
+                    if recovered and self.task.status == TaskStatus.COMPLETED:
+                        result.status = self.task.status
                         result.summary = (
-                            result.summary or task.note or "任务完成")
+                            result.summary or self.task.note or "任务完成")
                         return result
                     if recovered:
                         empty_streak = 0
@@ -690,8 +696,8 @@ class SoloWorkRuntime:
             else:
                 empty_streak = 0
 
-        result.status = task.status
-        if not result.error and task.status != TaskStatus.COMPLETED:
+        result.status = self.task.status
+        if not result.error and self.task.status != TaskStatus.COMPLETED:
             result.error = f"达到 max_turns={self.max_turns}，任务尚未完成"
         return result
 
@@ -812,8 +818,11 @@ class SoloWorkRuntime:
                 summary=summary,
                 metadata=dict(metadata or {}),
             )
-            return self.lifecycle.complete_solo(
+            result = self.lifecycle.complete_solo(
                 self.task, actor=actor, result=ref, feedback=feedback)
+            if result.get("ok"):
+                self.task = self.rt.tasks.get(self.task.task_id)
+            return result
         except (WorkLifecycleError, ValueError) as exc:
             return {"ok": False, "code": "solo_complete_rejected",
                     "message": str(exc)}

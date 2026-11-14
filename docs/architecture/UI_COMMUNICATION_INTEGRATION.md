@@ -1,12 +1,12 @@
-# UI 通信接入设计（Phase 1 / Phase 2）
+# UI 通信接入设计（Phase 1–3）
 
-> **状态：`CURRENT`（Phase 1 + Phase 2）**
+> **状态：`CURRENT`（Phase 1 + Phase 2 + Phase 3）**
 >
 > 已实现：Human Gateway · Human ↔ Front · Front ↔ Worker handoff ·
+> Task 生命周期消息（START / SUBMIT / VERIFY / COMPLETE）·
 > Message Journal · UI 从 Journal 投影 · 客户端幂等 / 重试去重。
 >
-> 未完成：Task 生命周期消息（Phase 3）；Worker ↔ Worker 与
-> Pi inbox/outbox（Phase 4）。
+> 未完成：Worker ↔ Worker 与 Pi inbox/outbox（Phase 4）。
 >
 > 相关文档：
 > [`COMMUNICATION_MODEL.md`](COMMUNICATION_MODEL.md) ·
@@ -70,14 +70,21 @@ Front → Human
   → UI Journal 投影
 ```
 
-仍然没有接入：
+Phase 2 / Phase 3 已接入：
 
 ```text
 Front → Worker
-  TaskCreationService / TaskStore 直接调用
+  TASK_OFFER / ACCEPT / REJECT
+
+Worker → Task Core
+  START / SUBMIT / VERIFY / COMPLETE
+  → Message
+  → TaskService handler
+  → Task Core
 
 Worker → Front
   Pi CLI stdout / prompt / result
+  仍由 Job / FrontResult 回传
 
 Worker ↔ Worker
   当前没有显式消息
@@ -291,6 +298,11 @@ Front ↔ Worker:
 
 Worker ↔ Worker:
   conversation_id = "conv_<task_id>_<agent_a>_<agent_b>"
+
+Task 生命周期:
+  conversation_id = "conv_task_<task_id>"
+  from_agent = contractor / initiator
+  to_agent   = task_service
 ```
 
 `conversation_id` 只是消息分组，不是 Task 状态。
@@ -355,11 +367,15 @@ Agent Runtime
   `HandoffRuntime` 代表 Worker 侧执行创建并回 `ACCEPT`；
 - V1 的 Worker 侧是 Runtime 适配器；Pi inbox/outbox 仍在 Phase 4。
 
-### Phase 3：Task 生命周期消息
+### Phase 3：Task 生命周期消息（`CURRENT`）
 
-- `START / SUBMIT / VERIFY / COMPLETE` 走 Task handler；
-- UI 不再直接调用 Task 状态方法；
-- Task Core 仍是唯一权威。
+- [x] `START / SUBMIT / VERIFY / COMPLETE` 走 Task handler；
+- [x] `WorkLifecycle` 通过 `TaskLifecycleClient` 发送 Message，并调用
+  `TaskService` handler；
+- [x] `task_executions.message_id` 与真实 `communication_messages.message_id`
+  对齐；
+- [x] Task Core 仍是唯一权威；
+- Team 的 `complete_team` 仍保留直接路径；Phase 3 覆盖 Solo UI 链路。
 
 ### Phase 4：Worker ↔ Worker + Pi bridge
 
