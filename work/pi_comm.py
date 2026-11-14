@@ -37,11 +37,16 @@ class PiInboxBridge:
         communication: Any,
         *,
         agent_id: str,
-        aieos_dir: Path,
+        aieos_dir: Optional[Path] = None,
+        inbox_dir: Optional[Path] = None,
     ) -> None:
         self.communication = communication
         self.agent_id = str(agent_id or "").strip()
-        self.root = Path(aieos_dir)
+        # 持久模式使用 agents/<id>/inbox；任务内旧模式使用 .aieos。
+        root = inbox_dir if inbox_dir is not None else aieos_dir
+        if root is None:
+            raise ValueError("PiInboxBridge 需要 aieos_dir 或 inbox_dir")
+        self.root = Path(root)
         self.inbox_md = self.root / "pi-inbox.md"
         self.inbox_jsonl = self.root / "pi-inbox.jsonl"
         self.archive_md = self.root / "pi-inbox-archive.md"
@@ -50,6 +55,10 @@ class PiInboxBridge:
         self._thread: Optional[threading.Thread] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._previous_handler: Any = None
+
+    @property
+    def directory(self) -> Path:
+        return self.root
 
     def start(self) -> bool:
         if self.communication is None or not self.agent_id:

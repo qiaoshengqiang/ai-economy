@@ -1,9 +1,10 @@
 # Agent Inbox V1 —— Runtime 收件箱接入设计
 
-> **状态：Phase 0/1 `CURRENT`；Phase 2–5 `DESIGNED`（2026-11-15）**
+> **状态：Phase 0/1/2 `CURRENT`；Phase 3–5 `DESIGNED`（2026-11-15）**
 >
-> Phase 0（边界 / flag / legacy cutover）与 Phase 1（持久化 Inbox Core /
-> 统计 / API）已实现；**Agent 常驻收件箱消费仍为 `DESIGNED`**。
+> Phase 0（边界 / flag / legacy cutover）、Phase 1（持久化 Inbox Core /
+> 统计 / API）与 Phase 2（Pi 持久 Inbox）已实现；
+> **Front 常驻收件箱消费仍为 `DESIGNED`**。
 >
 > 相关文档：
 > [`COMMUNICATION_MODEL.md`](../COMMUNICATION_MODEL.md) ·
@@ -19,13 +20,14 @@
 |---|---|---|
 | Phase 0：边界与迁移准备 | **`CURRENT`** | `runtime.inbox_enabled` · `communication_inbox_state` · legacy cutover |
 | Phase 1：持久化 Inbox Core | **`CURRENT`** | pending / IGNORED / stats / startup recovery / `/api/inbox` |
-| Phase 2：Pi 持久 Inbox | `DESIGNED` | 尚未启动常驻 Pi Adapter |
+| Phase 2：Pi 持久 Inbox | **`CURRENT`** | `PiInboxService` 常驻消费；写入 `agents/<id>/inbox/` |
 | Phase 3：Front Inbox-first | `DESIGNED` | Human 仍走 controller 直接路径 |
 | Phase 4：Solo 入队 / Life | `DESIGNED` | 尚未启用 Solo 自动处理 |
 | Phase 5：Life 通信 | `FUTURE` | 社交 / 经济 / Conversation |
 
 > Phase 1 的 `communication_inbox_state` 是第 **30** 张表。
-> `runtime.inbox_enabled` 当前为 `false`，不启动消费者。
+> Phase 2 的 `runtime.inbox_enabled` 当前为 `true`；
+> 只启动 **Pi Agent** 的常驻 Inbox，Front 仍未接入。
 
 ---
 
@@ -378,12 +380,14 @@ Task lifecycle 消息驱动的改造属于后续独立阶段。
 [ ] 无消费者时 pending 数量正确
 ```
 
-### Phase 2：Pi 持久 Inbox
+### Phase 2：Pi 持久 Inbox（`CURRENT`）
 
-- 把 `PiInboxBridge` 从任务期间临时启动改为 Agent 级持久 Adapter；
-- 空闲 Pi Agent 收到消息 → 落盘；
+- `PiInboxService` 在 UI 组合根启动；
+- 每个 Pi Agent 一个常驻 `PiInboxBridge`；
+- 空闲 Pi Agent 收到消息 → `agents/<id>/inbox/pi-inbox.md`；
 - Pi 下一次 phase / turn 读取；
-- 只启用 Pi Agent 的 `communication_inbox_state.enabled`。
+- 只启用 Pi Agent 的 `communication_inbox_state.enabled`；
+- Front / Solo 状态仍为 disabled。
 
 **验收**：
 

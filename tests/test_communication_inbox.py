@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from communication import (
@@ -14,6 +16,8 @@ from communication import (
 )
 from tests.communication_helpers import FakeAgent
 from work.comm_bridge import run_coro
+from work.pi_comm import PiInboxBridge
+from work.pi_inbox_service import PiInboxService
 from core.identity import utc_now_iso
 
 
@@ -182,3 +186,41 @@ def test_inbox_state_table_is_part_of_schema(wired):
     columns = journal.db.columns_of("communication_inbox_state")
     assert columns == [
         "agent_id", "enabled", "cutover_at", "last_seen_at", "updated_at"]
+
+
+def test_pi_inbox_bridge_persists_messages_while_idle(wired, tmp_path):
+    manager, journal, _agent_a, _agent_b = wired
+    bridge = PiInboxBridge(
+        manager,
+        agent_id="agent_b",
+        inbox_dir=tmp_path / "inbox",
+    )
+    assert bridge.start() is True
+    try:
+        message = run_coro(manager.send(
+            "agent_a", "agent_b", text="idle hello"))
+        deadline = time.time() + 3.0
+        while time.time() < deadline and not bridge.inbox_md.exists():
+            time.sleep(0.05)
+        assert bridge.inbox_md.exists()
+        assert "idle hello" in bridge.inbox_md.read_text(encoding="utf-8")
+        assert journal.get_message(message.message_id)["processed_once"] == 1
+
+        drained = bridge.drain_for_prompt()
+        assert "idle hello" in drained
+        assert not bridge.inbox_md.exists()
+    finally:
+        bridge.stop()
+
+
+def test_pi_inbox_service_starts_and_stops_agents(wired, tmp_path):
+    manager, journal, _agent_a, _agent_b = wired
+    service = PiInboxService(manager, agents_dir=tmp_path / "agents")
+    service.sync(["agent_b"])
+    try:
+        assert service.bridge_for("agent_b") is not None
+        assert journal.get_inbox_state("agent_b")["enabled"] is True
+    finally:
+        service.sync([])
+        assert service.bridge_for("agent_b") is None
+        assert journal.get_inbox_state("agent_b")["enabled"] is False

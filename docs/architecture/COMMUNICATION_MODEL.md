@@ -12,7 +12,7 @@
 
 > **Inbox 的实施设计**：
 > [`implementation/AGENT_INBOX_V1_DESIGN.md`](implementation/AGENT_INBOX_V1_DESIGN.md)
-> （Phase 0/1 `CURRENT`；Phase 2–5 `DESIGNED`）。
+> （Phase 0/1/2 `CURRENT`；Phase 3–5 `DESIGNED`）。
 
 ---
 

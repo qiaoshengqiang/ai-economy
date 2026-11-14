@@ -85,6 +85,7 @@ class PiWorkRuntime:
         pi_agent_dir: Optional[Path] = None,
         use_llm_proxy: bool = True,
         upstream_base_url: str = "",
+        inbox_bridge: Any = None,
         role_prompt: str = "",
         role: Any = None,
         extra_args: Optional[List[str]] = None,
@@ -147,14 +148,16 @@ class PiWorkRuntime:
         self._resume_reason = ""
         communication = getattr(runtime, "communication", None)
         actor = task.contractor or task.creator
-        self._inbox_bridge = (
-            PiInboxBridge(
+        # Phase 2：UI 会注入一个 Agent 级常驻 Inbox Bridge。
+        # 没注入时（测试 / 旧调用）仍使用任务级临时 bridge。
+        self._owns_inbox_bridge = inbox_bridge is None
+        self._inbox_bridge = inbox_bridge
+        if self._inbox_bridge is None and communication is not None:
+            self._inbox_bridge = PiInboxBridge(
                 communication,
                 agent_id=actor,
                 aieos_dir=task_directory.aieos,
             )
-            if communication is not None else None
-        )
         self._outbox_bridge = (
             PiOutboxBridge(
                 communication,
@@ -1124,7 +1127,7 @@ Task Workspace 放本次任务的交付物和验收产物。
                 return result
 
             self.task_directory.ensure()
-            if self._inbox_bridge is not None:
+            if self._owns_inbox_bridge and self._inbox_bridge is not None:
                 inbox_started = self._inbox_bridge.start()
             self.task_directory.write_meta(
                 "TASK.md",

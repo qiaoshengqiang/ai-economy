@@ -556,3 +556,44 @@ def test_last_assistant_error_surfaces_upstream_message():
     ]
     assert PiWorkRuntime._last_assistant_error(events) == (
         "401: Authentication Fails")
+
+
+def test_pi_runtime_accepts_persistent_inbox_bridge(tmp_path):
+    task = Task.create(
+        task_id="T-PEERSISTENT-INBOX",
+        creator="agent_c",
+        description="persistent inbox",
+        workspace_id="WS-INBOX",
+        participants=["agent_c"],
+        mode=TaskMode.SOLO,
+    )
+    directory = TaskDirectoryManager(tmp_path / "tasks").for_task(task.task_id)
+
+    class _Inbox:
+        inbox_md = tmp_path / "inbox" / "pi-inbox.md"
+
+        def start(self):
+            raise AssertionError("persistent inbox 不应由 PiWorkRuntime 启动")
+
+        def stop(self):
+            raise AssertionError("persistent inbox 不应由 PiWorkRuntime 停止")
+
+        def drain_for_prompt(self):
+            return ""
+
+    inbox = _Inbox()
+    runtime = SimpleNamespace(
+        tasks=SimpleNamespace(),
+        economy=SimpleNamespace(agent=lambda _aid: SimpleNamespace(
+            has_brain=True, brain=_FakeBrain(),
+            workspace=_FakeWorkspace(tmp_path / "agent_c"))),
+        communication=None,
+    )
+    runner = PiWorkRuntime(
+        runtime, task,
+        task_directory=directory,
+        use_llm_proxy=False,
+        inbox_bridge=inbox,
+    )
+    assert runner._owns_inbox_bridge is False
+    assert runner._inbox_bridge is inbox

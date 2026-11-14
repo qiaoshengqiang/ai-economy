@@ -1156,7 +1156,9 @@ def build_runtime(
         # 之后只记录状态，不覆盖已有 cutover。
         journal.initialize_inbox(
             str(agent.agent_id),
-            enabled=bool(resolved.inbox_enabled),
+            # per-agent 开关由具体 Runtime 设置：
+            # Phase 2 只由 PiInboxService 打开 Pi Agent。
+            enabled=False,
         )
 
     # Task Core 的持久化（Step 4A）。

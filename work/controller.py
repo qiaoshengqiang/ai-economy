@@ -66,6 +66,7 @@ from work.front_actions import (
     build_front_dispatcher, execute_front_actions,
 )
 from work.handoff import HandoffRuntime
+from work.pi_inbox_service import PiInboxService
 from work.pi_runtime import PiWorkRuntime
 from work.project_context import render_project_context
 from work.project_lock import ProjectLockManager
@@ -363,9 +364,12 @@ class AIEOSController:
         )
         self._active_jobs = 0
         self._closed = False
+        #: Phase 2：Pi Agent 的常驻收件箱服务。
+        self._pi_inbox_service: Optional[PiInboxService] = None
         #: Front 自己的持久草稿（按 agent 私有空间隔离）。
         self._front_drafts_store: Optional[TaskDraftStore] = None
         self._load_settings()
+        self._sync_pi_inbox_service()
         self._apply_prompt_log_config()
         if commit_service is not None:
             self.commit_service = commit_service
@@ -627,6 +631,7 @@ class AIEOSController:
                     raise ValueError("commit_max_total_bytes 必须 > 0")
                 self.commit_max_total_bytes = value
             self._persist_settings()
+            self._sync_pi_inbox_service()
             self._configure_front_brain()
             self._notify()
             return self.settings_dict()
@@ -1533,6 +1538,27 @@ class AIEOSController:
     def _pi_enabled(self, agent_id: str) -> bool:
         return str(agent_id or "") in self.pi_work_agents
 
+    def _sync_pi_inbox_service(self) -> None:
+        """按当前设置启停 Pi Agent 的常驻 Inbox。"""
+        resolved = getattr(self.rt, "resolved_config", None)
+        enabled = bool(getattr(resolved, "inbox_enabled", False))
+        communication = getattr(self.rt, "communication", None)
+        if not enabled or communication is None:
+            if self._pi_inbox_service is not None:
+                self._pi_inbox_service.stop_all()
+                self._pi_inbox_service = None
+            return
+        if self._pi_inbox_service is None:
+            self._pi_inbox_service = PiInboxService(communication)
+        wanted = sorted(
+            aid for aid in self.pi_work_agents
+            if aid in self._agent_ids
+            and aid != self.front_agent
+            and aid not in self.disabled_agents
+            and aid not in self.archived_agents
+        )
+        self._pi_inbox_service.sync(wanted)
+
     def _pi_runner(
         self,
         task: Any,
@@ -1559,6 +1585,11 @@ class AIEOSController:
             should_stop=should_stop or (lambda: False),
             round_sink=round_sink,
             pi_agent_dir=self.pi_agent_dir,
+            inbox_bridge=(
+                self._pi_inbox_service.bridge_for(
+                    task.contractor or task.creator)
+                if self._pi_inbox_service is not None else None
+            ),
             role_prompt=role_prompt,
             role=role,
             thinking=self._thinking_for_agent(
@@ -3910,6 +3941,9 @@ class AIEOSController:
     def close(self) -> None:
         with self._lock:
             self._closed = True
+        if self._pi_inbox_service is not None:
+            self._pi_inbox_service.stop_all()
+            self._pi_inbox_service = None
         self._notify()
         self._executor.shutdown(wait=False, cancel_futures=True)
         prompt_log.clear_job()
