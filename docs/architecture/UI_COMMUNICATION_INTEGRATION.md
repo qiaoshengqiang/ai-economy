@@ -27,7 +27,8 @@
 
 - Task Core 是 Task 状态的唯一权威；
 - Workspace / Shared Context 是工作事实的唯一来源；
-- Human 不被当成普通 Agent；
+- Human 作为系统原有协作角色的定义不变；
+- 前端人类消息只是接入消息通道，不重新定义 Human；
 - Workspace Event 不自动变成 Agent Message。
 
 ---
@@ -151,70 +152,91 @@ Human ≠ Agent
 
 ---
 
-## 5. Human Gateway
+## 5. Human 与“前端人类消息”
 
-### 5.1 为什么需要
+### 5.1 先区分两个概念
 
-`CommunicationManager` 当前的 `Message` 是 Agent-to-Agent 模型：
+**Human（领域角色）** 是系统原本就有的设计：
 
 ```text
-from_agent
-to_agent
+Demand Provider
+Feedback Provider
+Optional Collaborator
+Governance Authority
 ```
 
-Human 不是 Agent，不能直接把 `human` 当成 Agent ID，否则会混掉：
+边界不变（见 ADR-0022 / ADR-0024）：
 
 ```text
 Human ≠ Task Creator
-Identity ≠ Address
+Human Demand ≠ Task
 ```
 
-### 5.2 定位
+本次**不重新设计 Human**，不改 Human 的权限、需求、验收或治理模型。
+
+**前端人类消息** 只是 Human 在 UI 里的一次输入：
+
+```text
+Human 在输入框说了一句话
+  → 一条 Message 进入 CommunicationManager
+  → Front 看到它
+```
+
+它是**消息通道的接入**，不是新的 Human 实体，也不是新的 Human 协议。
+
+### 5.2 Human Gateway 是 UI 端点，不是 Agent
 
 ```text
 UI
  ↓
-Human Gateway（Life 层端点）
+Human Gateway（通信端点）
  ↓ Message
 Front Agent
 ```
 
-Human Gateway 负责：
+Human Gateway 的职责只有：
 
-- 人类身份 / 会话；
-- 将 UI 输入转成 `Message`；
-- 将 Front 回复投影回 UI；
-- 不创建 Task；
-- 不持有钱包；
-- 不参与 Agent Directory / Availability。
+- 把 UI 输入转成 `Message`；
+- 把 Front 的回复投影回 UI；
+- 携带 `human_id` / `conversation_id`；
+- 保证 UI 不能任意伪造发送方。
 
-### 5.3 待确认：Gateway 的 Actor 模型
+它**不是**：
 
-两种候选：
+- 普通 Agent；
+- 经济主体；
+- Task Creator；
+- Agent Directory / Availability 的成员；
+- 钱包或 Ledger 的参与者。
 
-**A. 通信层增加 `ActorKind`**
+### 5.3 Phase 1 的 Actor 方案
 
-```text
-Message.from_actor = ActorRef(kind=agent|human, id=...)
-```
-
-- 语义最干净；
-- 需要协议升级（`protocol_version`）；
-- 影响所有 Message 调用方。
-
-**B. Human Gateway 注册为技术端点**
+Phase 1 不引入 `ActorKind`，不改 `protocol_version`，复用现有 Message：
 
 ```text
-from_agent = "human:local"
-metadata = {"actor_kind": "human"}
+from_agent = "human_gateway"
+to_agent   = "agent_a"
+payload    = {
+  "human_id": "local",
+  "human_message_id": "...",
+  "kind": "human_message",
+  "text": "..."
+}
+conversation_id = "conv_local_agent_a"
 ```
 
-- 不改协议；
-- 但 `AgentRegistry` / `AgentDirectory` 需要明确排除 Human；
-- 发送方校验仍要求注册，需新增 `register_endpoint` 或类似入口。
+`human_gateway` 是**技术端点**，不是 Agent：
 
-> 推荐 Phase 1 先用 B 的技术端点方案，但必须加
-> `actor_kind=human` 并在 Agent Directory 中过滤；长期再评估 A。
+- 只在通信层注册；
+- 不进入 `AgentDirectory`；
+- 不参与 `AgentAvailability`；
+- 不参与经济 / Task / Workspace 权限。
+
+如果未来要多用户或跨机器，再讨论：
+
+- 多个 `human_id` 的认证；
+- Human Gateway 的网络地址；
+- 是否升级为正式 `ActorRef` / `ActorKind`。
 
 ---
 
@@ -279,9 +301,9 @@ Agent Runtime
 
 ### 7.1 做
 
-- Human Gateway；
-- Human → Front 的 Message；
-- Front → Human 的 Reply Message；
+- Human Gateway（技术端点，不是 Agent）；
+- Human → Front 的 Message（`kind=human_message`）；
+- Front → Human 的 Reply Message（`kind=front_reply`）；
 - `conversation_id` / `reply_to` / `trace_id`；
 - UI 从 Message Journal 读取历史；
 - 失败重试 / 去重。
@@ -290,6 +312,7 @@ Agent Runtime
 
 - 不改 Front → Worker handoff；
 - 不改 Task 创建 / 状态机；
+- 不改 Human 的领域角色 / 权限 / Demand 模型；
 - 不做 Worker ↔ Worker；
 - 不做 Pi inbox/outbox；
 - 不迁移旧 UI 对话；
@@ -359,25 +382,48 @@ UI conversation projection ← 只读缓存 / 展示
 
 ---
 
-## 11. 待确认问题
+## 11. 已确认与后续
 
-Phase 1 开始前需要确认：
+### 11.1 已确认（Phase 1 前）
 
-1. **Human 身份模型**：单本地 Human，还是多用户？
-   Actor ID 用什么格式（`human:local` / `user_<id>`）？
-2. **Human Gateway 注册方式**：技术端点（不改协议）还是
-   `ActorKind`（协议升级）？
-3. **Phase 1 是否只做 Human ↔ Front**，还是同时镜像系统事件？
-4. **UI 事实源切换策略**：先双写，还是一次性切到 Journal？
-5. **Conversation ID 语义**：一个 UI 会话一个，还是 Human+Front 长期一个？
-6. **历史保留**：UI 对话保留多久？是否需要分页/归档？
-7. **Front 空闲收件**：轮询、wakeup，还是只在下一次输入时处理？
-8. **消息类型**：复用 `TEXT` + payload，还是新增
-   `HUMAN_MESSAGE` / `FRONT_REPLY`？
-9. **Worker ↔ Worker**：只允许显式消息，确认不做自动广播？
-10. **Pi bridge**：inbox/outbox 用文件、JSON-RPC 还是数据库？
-11. **旧 UI 对话 / 测试任务**：迁移、保留，还是清空？
-12. **多用户 / 跨机器**：Phase 1 是否只支持本机单用户？
+1. **区分 Human 领域角色与“前端人类消息”**：
+   本次只把 UI 的人类消息接入 Message 机制，不重新设计 Human，
+   不改 Human 的 Demand / 反馈 / 协作 / 治理角色。
+2. **Human Gateway 是技术端点，不是 Agent**：
+   不进入 Agent Directory / Availability / 经济 / Task 权限。
+3. **Phase 1 只做 Human ↔ Front**：
+   不改 Front → Worker handoff，不改 Task 创建 / 状态机，
+   不做 Worker ↔ Worker，不做 Pi inbox/outbox。
+4. **Phase 1 只支持本机单 Human**：
+   多用户认证、跨机器 Human Gateway 后续再做。
+5. **复用现有协议**：
+   `TEXT` + `payload.kind=human_message/front_reply`；
+   不改 `protocol_version`。
+6. **先双写，再切投影**：
+   Phase 1 先写 Message，同时保留 `AIEOSController._messages` 缓存；
+   验收后再让 UI 以 Journal 为事实源。
+7. **Conversation ID**：
+   `conv_<human_id>_<front_agent>`；
+   新会话再生成新的 `conversation_id`。
+8. **Front 空闲收件**：
+   Phase 1 在下一次 turn 检查 inbox；不做实时 wakeup。
+9. **旧 UI 对话保留为 legacy**：
+   不迁移到 Message Journal；新消息从接入后开始进入 Journal。
+10. **Worker ↔ Worker 只做显式消息**：
+    不做 Workspace 自动广播（Phase 4 再实现）。
+11. **Pi inbox/outbox 放到 Phase 4**：
+    优先文件方案，具体格式后续定。
+12. **Phase 1 不自动清理消息**：
+    归档 / 分页 / 保留策略后续再加。
+
+### 11.2 不阻塞 Phase 1 的后续问题
+
+- 多用户认证与 Human 权限；
+- 跨机器 Human Gateway / Transport；
+- 是否引入正式 `ActorRef` / `ActorKind`；
+- Pi inbox/outbox 的文件或 JSON-RPC 格式；
+- 消息归档、分页、保留期限；
+- 旧 UI 对话是否需要一次性导入 Journal。
 
 ---
 
