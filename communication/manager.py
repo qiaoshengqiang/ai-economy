@@ -508,6 +508,17 @@ class CommunicationManager:
             # 那需要 ACK 机制，本步骤不实现（状态常量已留好）。
             return InboundResult(status=ReceiveStatus.TIMEOUT, detail="没有等到消息")
 
+        # --- Inbox 明确忽略的消息：连 RECEIVED 都不该覆盖 IGNORED ---
+        if self.recorder is not None:
+            state = self.recorder.processing_state(message.message_id)
+            if (state is not None
+                    and str(state.get("status") or "") == MessageStatus.IGNORED):
+                return InboundResult(
+                    status=ReceiveStatus.DUPLICATE,
+                    message=message,
+                    detail="消息已被 Inbox 标记为 IGNORED，不再处理",
+                )
+
         # --- 日志：从信箱取出 ---
         self._journal(
             message, MessageStatus.RECEIVED,

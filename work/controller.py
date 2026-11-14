@@ -868,6 +868,75 @@ class AIEOSController:
             })
         return facts
 
+    # ------------------------------------------------------------
+    # Agent Inbox V1：只读观测（Phase 1 不启动消费者）
+    # ------------------------------------------------------------
+    def _inbox_recorder(self) -> Any:
+        communication = getattr(self.rt, "communication", None)
+        return getattr(communication, "recorder", None)
+
+    @staticmethod
+    def _inbox_payload(row: Dict[str, Any]) -> Any:
+        payload = row.get("payload")
+        if isinstance(payload, str):
+            try:
+                return json.loads(payload)
+            except (TypeError, ValueError):
+                return payload
+        return payload
+
+    def inbox_stats(self) -> Dict[str, Any]:
+        recorder = self._inbox_recorder()
+        resolved = getattr(self.rt, "resolved_config", None)
+        enabled = bool(getattr(resolved, "inbox_enabled", False))
+        agents: Dict[str, Any] = {}
+        if recorder is not None:
+            for agent_id in sorted(self._agent_ids):
+                try:
+                    agents[agent_id] = recorder.inbox_stats(agent_id)
+                except Exception as exc:                      # noqa: BLE001
+                    agents[agent_id] = {
+                        "agent_id": agent_id,
+                        "error": f"{type(exc).__name__}: {exc}",
+                    }
+        return {"enabled": enabled, "agents": agents}
+
+    def inbox_pending(
+        self, agent_id: str, *, limit: int = 50,
+    ) -> Dict[str, Any]:
+        key = str(agent_id or "").strip()
+        if key not in self._agent_ids:
+            raise ValueError(f"未知 Agent：{key!r}")
+        recorder = self._inbox_recorder()
+        if recorder is None:
+            return {
+                "agent_id": key,
+                "stats": {},
+                "messages": [],
+            }
+        rows = recorder.list_pending(key, limit=max(1, min(200, int(limit))))
+        messages = [
+            {
+                "message_id": row.get("message_id"),
+                "from_agent": row.get("from_agent"),
+                "to_agent": row.get("to_agent"),
+                "message_type": row.get("message_type"),
+                "status": row.get("status"),
+                "created_at": row.get("created_at"),
+                "processed_once": bool(int(row.get("processed_once") or 0)),
+                "processed_at": row.get("processed_at"),
+                "error_code": row.get("error_code"),
+                "error_message": row.get("error_message"),
+                "payload": self._inbox_payload(row),
+            }
+            for row in rows
+        ]
+        return {
+            "agent_id": key,
+            "stats": recorder.inbox_stats(key),
+            "messages": messages,
+        }
+
     def apply_system_settings(
         self, action: str, payload: Dict[str, Any],
     ) -> Dict[str, Any]:

@@ -326,6 +326,9 @@ class ResolvedRuntimeConfig:
     message_claim_lease_seconds: Optional[int] = None
     #: 「没有显式指定 provider」时用哪个。🔒 Runtime 的**唯一**来源。
     default_provider: str = ""
+    #: Agent Inbox V1：是否启用 Runtime 收件箱消费者。
+    #: 默认 false —— Phase 1 只做持久化与观测，不启动消费者。
+    inbox_enabled: bool = False
     #: dotted key → 这个值最终来自哪里（GUI / 排障用）
     sources: Mapping[str, str] = field(default_factory=dict)
     #: 启动时要装配的 Agent（`agents.<id>.runtime: true`）。
@@ -371,6 +374,7 @@ class ResolvedRuntimeConfig:
                 "message_claim_lease_seconds":
                     self.message_claim_lease_seconds,
                 "default_provider": self.default_provider,
+                "inbox_enabled": bool(self.inbox_enabled),
                 "agents": list(self.runtime_agents),
             },
             "economy": dict(self.economy), "task": dict(self.task),
@@ -1008,6 +1012,7 @@ class ConfigResolver:
                 else None
             ),
             default_provider=str(runtime.get("default_provider") or ""),
+            inbox_enabled=bool(runtime.get("inbox_enabled", False)),
             economy=dict(self.canonical.get("economy") or {}),
             task=dict(self.canonical.get("task") or {}),
             system=dict(self.canonical.get("system") or {}),

@@ -707,6 +707,8 @@ class TestNoImplementation:
             "agent_short_term_memory",
             "agent_short_term_memory_archive",
             "agent_long_term_memory",
+            # Agent Inbox V1（2026-11-15 任务书授权）
+            "communication_inbox_state",
         }
         assert expected_workspace_tables <= names, (
             f"Workspace Core 的 5 张表不全，缺少 "
@@ -730,8 +732,9 @@ class TestNoImplementation:
         # + 2（Public Working Memory）
         # + 2（Private Working Memory）
         # + 3（Private Short / Long-Term Memory）
-        # + 1（Commit Requests）= 29
-        assert len(names) == 29, (
-            f"表数应为 13 + 5 + 3 + 2 + 2 + 3 + 1 = 29，"
+        # + 1（Commit Requests）
+        # + 1（Agent Inbox State）= 30
+        assert len(names) == 30, (
+            f"表数应为 13 + 5 + 3 + 2 + 2 + 3 + 1 + 1 = 30，"
             f"实际 {len(names)}：{sorted(names)}"
         )

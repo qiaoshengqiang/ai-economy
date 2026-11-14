@@ -76,6 +76,7 @@ from communication.errors import (
     TransportError,
 )
 from communication.local_transport import LocalTransport
+from communication.inbox import InboxOutcome
 from communication.manager import (
     CommunicationManager,
     InboundResult,
@@ -112,6 +113,8 @@ __all__ = [
     "AgentRegistry",
     "CommunicationManager",
     "SeenMessageTracker",
+    # Inbox Runtime 契约
+    "InboxOutcome",
     # 通信日志
     "CommunicationRecorder",
     "DEFAULT_CLAIM_LEASE_SECONDS",

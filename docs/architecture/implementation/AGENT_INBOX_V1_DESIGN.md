@@ -1,9 +1,9 @@
 # Agent Inbox V1 —— Runtime 收件箱接入设计
 
-> **状态：`DESIGNED`（2026-11-15）**
+> **状态：Phase 0/1 `CURRENT`；Phase 2–5 `DESIGNED`（2026-11-15）**
 >
-> 本文是**实施设计**，不是 `CURRENT` 行为声明。
-> 当前基础 Message 已实现；**Agent 常驻收件箱消费仍为 `DESIGNED`**。
+> Phase 0（边界 / flag / legacy cutover）与 Phase 1（持久化 Inbox Core /
+> 统计 / API）已实现；**Agent 常驻收件箱消费仍为 `DESIGNED`**。
 >
 > 相关文档：
 > [`COMMUNICATION_MODEL.md`](../COMMUNICATION_MODEL.md) ·
@@ -13,7 +13,23 @@
 
 ---
 
-## 0. 一句话
+## 0. 实施状态
+
+| 阶段 | 状态 | 说明 |
+|---|---|---|
+| Phase 0：边界与迁移准备 | **`CURRENT`** | `runtime.inbox_enabled` · `communication_inbox_state` · legacy cutover |
+| Phase 1：持久化 Inbox Core | **`CURRENT`** | pending / IGNORED / stats / startup recovery / `/api/inbox` |
+| Phase 2：Pi 持久 Inbox | `DESIGNED` | 尚未启动常驻 Pi Adapter |
+| Phase 3：Front Inbox-first | `DESIGNED` | Human 仍走 controller 直接路径 |
+| Phase 4：Solo 入队 / Life | `DESIGNED` | 尚未启用 Solo 自动处理 |
+| Phase 5：Life 通信 | `FUTURE` | 社交 / 经济 / Conversation |
+
+> Phase 1 的 `communication_inbox_state` 是第 **30** 张表。
+> `runtime.inbox_enabled` 当前为 `false`，不启动消费者。
+
+---
+
+## 0.1 一句话
 
 把 Inbox 从「通信层有一个 `receive()` API」提升为
 **由 Agent Runtime 持有、持久化、可在 checkpoint 处理的收件箱**，
@@ -220,7 +236,7 @@ mark_ignored(message_id, reason)
 inbox_stats(to_agent)
 ```
 
-### 5.2 新增 `communication_inbox_state`
+### 5.2 `communication_inbox_state`（`CURRENT`）
 
 每个 Agent 一行，控制是否启用与 legacy 边界：
 
@@ -459,14 +475,16 @@ Task 完成通知仍然是 **system message**，不是 Agent 消息。
 
 ---
 
-## 10. UI 与观测
+## 10. UI 与观测（Phase 1 `CURRENT`）
 
-V1 增加：
+已提供：
 
 ```text
 GET /api/inbox/<agent_id>
 GET /api/inbox/stats
 ```
+
+API 只读；不会启动消费者。
 
 Agent 卡片显示：
 

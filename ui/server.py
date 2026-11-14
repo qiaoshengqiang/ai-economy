@@ -163,6 +163,28 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(
                     {"ok": False, "error": str(exc)}, status=400)
             return
+        if path == "/api/inbox/stats":
+            self._send_json(self.controller.inbox_stats())
+            return
+        if path.startswith("/api/inbox/"):
+            agent_id = path[len("/api/inbox/"):].strip()
+            if not agent_id or not re.fullmatch(
+                    r"[A-Za-z0-9_]+", agent_id):
+                self.send_error(400)
+                return
+            query = parse_qs(parsed.query)
+            try:
+                limit = int(
+                    str((query.get("limit") or ["50"])[0]) or "50")
+            except (TypeError, ValueError):
+                limit = 50
+            try:
+                self._send_json(self.controller.inbox_pending(
+                    agent_id, limit=limit))
+            except ValueError as exc:
+                self._send_json(
+                    {"ok": False, "error": str(exc)}, status=404)
+            return
         if path.startswith("/api/task/"):
             task_id = path[len("/api/task/"):].strip()
             if not task_id or not re.fullmatch(r"[A-Za-z0-9_.:-]+", task_id):

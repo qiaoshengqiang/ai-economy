@@ -123,6 +123,20 @@ class _FakeController:
             "agents": [],
         }
 
+    def inbox_stats(self):
+        return {"enabled": False, "agents": {
+            "agent_a": {"agent_id": "agent_a", "pending": 0},
+        }}
+
+    def inbox_pending(self, agent_id, *, limit=50):
+        if agent_id != "agent_a":
+            raise ValueError(f"未知 Agent：{agent_id!r}")
+        return {
+            "agent_id": agent_id,
+            "stats": {"agent_id": agent_id, "pending": 0},
+            "messages": [],
+        }
+
     def apply_system_settings(self, action, payload):
         return {"action": action, "payload": payload, "restart_required": True}
 
@@ -250,6 +264,25 @@ def test_settings_snapshot_and_system_roles_api(server):
     })
     assert status == 200
     assert payload["roles"]["action"] == "upsert"
+
+
+def test_inbox_stats_and_pending_api(server):
+    _fake, base = server
+    status, body = _get(base + "/api/inbox/stats")
+    assert status == 200
+    payload = json.loads(body)
+    assert payload["enabled"] is False
+    assert "agent_a" in payload["agents"]
+
+    status, body = _get(base + "/api/inbox/agent_a?limit=10")
+    assert status == 200
+    payload = json.loads(body)
+    assert payload["agent_id"] == "agent_a"
+    assert payload["messages"] == []
+
+    with pytest.raises(urllib.error.HTTPError) as excinfo:
+        _get(base + "/api/inbox/no_such_agent")
+    assert excinfo.value.code == 404
 
 
 def test_task_detail_api(server):

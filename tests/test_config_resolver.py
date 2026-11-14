@@ -734,7 +734,9 @@ class TestNoDuplicateFacts:
         raw = ConfigLoader.from_file(GLOBAL_CONFIG_FILE).raw
         assert set(raw["runtime"]) == {
             "log_level", "database_path",
-            "message_claim_lease_seconds", "default_provider"}, raw["runtime"]
+            "message_claim_lease_seconds", "default_provider",
+            "inbox_enabled"}, raw["runtime"]
+        assert raw["runtime"]["inbox_enabled"] is False
 
     def test_no_duplicate_top_level_keys(self):
         """

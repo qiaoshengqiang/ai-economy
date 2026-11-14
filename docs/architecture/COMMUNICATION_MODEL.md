@@ -12,7 +12,7 @@
 
 > **Inbox 的实施设计**：
 > [`implementation/AGENT_INBOX_V1_DESIGN.md`](implementation/AGENT_INBOX_V1_DESIGN.md)
-> （`DESIGNED`：Runtime 持有、持久化、checkpoint 消费）。
+> （Phase 0/1 `CURRENT`；Phase 2–5 `DESIGNED`）。
 
 ---
 

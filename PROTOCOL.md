@@ -105,7 +105,7 @@ address    "local://agent_b"   ← 位置：现在怎么找到它（可以变）
 | 消息结构 | ✅ 已实现 | 无损序列化往返 |
 | 地址格式 | ✅ 已实现 | 4 种 scheme；未知 scheme 不拒绝 |
 | 链路 ID（trace / conversation） | ✅ 已实现 | 回复自动继承 |
-| 生命周期状态 | ⚠️ **部分** | 11 个已定义，**6 个常规发出**（见 [8.2](#82-定义-vs-实际发出)） |
+| 生命周期状态 | ⚠️ **部分** | 12 个已定义，**6 个常规发出**（见 [8.2](#82-定义-vs-实际发出)） |
 | 消息类型 | ⚠️ **部分** | 12 个已注册，**4 个在用**（见 [6](#6-消息类型登记表)） |
 | 结构化 payload | ⚠️ **已定义未实现** | 本文定义形状，代码**不校验**（见 [7](#7-结构化-payload-规范)） |
 | 线上传输 | ⚠️ **仅内存** | 只有 `LocalTransport`，消息不过网络 |
@@ -1004,13 +1004,13 @@ A ──ACCEPT────────→ B     price  =  25 AIC        「成�
 
 ### 8.2 定义 vs 实际发出
 
-> **「协议定义了 11 个状态」不等于「Runtime 会发出 11 个状态」。**
+> **「协议定义了 12 个状态」不等于「Runtime 会发出 12 个状态」。**
 
-**已定义（`MessageStatus` 里的全部 11 个）：**
+**已定义（`MessageStatus` 里的全部 12 个）：**
 
 ```
 CREATED  QUEUED  SENT  DELIVERED  RECEIVED  PROCESSING  PROCESSED
-FAILED   DUPLICATE  TIMEOUT  RETRY
+FAILED   DUPLICATE  TIMEOUT  RETRY  IGNORED
 ```
 
 **实际会发出的（实测）：**
@@ -1025,14 +1025,15 @@ FAILED   DUPLICATE  TIMEOUT  RETRY
 | `PROCESSED` | 处理函数正常返回 | ✅ 成功流程 |
 | `FAILED` | 投递失败 **或** 处理函数抛异常 | ✅ 失败流程 |
 | `DUPLICATE` | 同一 `message_id` 再次到达且已处理过 | ✅ 重复流程 |
+| `IGNORED` | Inbox 明确不处理（legacy / 人工忽略） | ✅ Inbox Phase 1 |
 | `QUEUED` | —— | ❌ **永不发出**（本地传输无独立队列阶段） |
 | `TIMEOUT` | —— | ❌ **永不发出**（无 ACK 机制） |
 | `RETRY` | —— | ❌ **永不发出**（无重试逻辑） |
 
-> **后三个是「已定义未实现」。** 不要以为日志里会出现它们。
+> **后三个（QUEUED / TIMEOUT / RETRY）是「已定义未实现」。**
 > 未来实现 ACK / 重试后，它们才会开始出现。
 
-**终态**：`PROCESSED` / `FAILED` / `DUPLICATE`
+**终态**：`PROCESSED` / `FAILED` / `DUPLICATE` / `IGNORED`
 
 ### 8.3 四个易混状态的精确语义
 

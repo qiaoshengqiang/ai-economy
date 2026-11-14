@@ -67,6 +67,11 @@ runtime:
   #    （默认值 mock 是**声明**，不是兜底。）
   default_provider: mock
 
+  # Agent Inbox V1：是否启用 Runtime 收件箱消费者。
+  # Phase 0/1 默认 false：只持久化 / 观测，不启动消费循环。
+  # 真正启用 Front / Pi 消费时再改为 true。
+  inbox_enabled: false
+
 # 【注意：SQLite 的 busy_timeout 不在这里】
 #
 #     它更低层，默认值 DEFAULT_BUSY_TIMEOUT_MS 定义在 storage/database.py，

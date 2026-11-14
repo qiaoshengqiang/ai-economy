@@ -1151,6 +1151,14 @@ def build_runtime(
         # 它因此永远不知道消息是走内存还是走网络。
         agent.attach_communication(communication)
 
+        # Agent Inbox V1：建立每个 Agent 的消费边界。
+        # 第一次建立时把 cutover 之前的 legacy 消息标记为 IGNORED；
+        # 之后只记录状态，不覆盖已有 cutover。
+        journal.initialize_inbox(
+            str(agent.agent_id),
+            enabled=bool(resolved.inbox_enabled),
+        )
+
     # Task Core 的持久化（Step 4A）。
     #
     # 【注意 Task 和 Economy 的关系】

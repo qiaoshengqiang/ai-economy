@@ -75,7 +75,11 @@ from datetime import timedelta
 from communication.dedup import ClaimStatus, MessageClaim
 from communication.message import Message
 from storage.database import Database
-from storage.models import TABLE_COMM_EVENTS, TABLE_COMM_MESSAGES
+from storage.models import (
+    TABLE_COMM_EVENTS,
+    TABLE_COMM_INBOX_STATE,
+    TABLE_COMM_MESSAGES,
+)
 
 logger = get_logger(__name__)
 
@@ -148,6 +152,9 @@ class MessageStatus:
     DUPLICATE = "DUPLICATE"
     TIMEOUT = "TIMEOUT"
     RETRY = "RETRY"
+    #: Runtime 明确不处理（例如接入 Inbox 之前的 legacy 消息）。
+    #: 保留审计；processed_once 仍然为 0，绝不伪造「已处理」。
+    IGNORED = "IGNORED"
 
     @classmethod
     def all(cls) -> List[str]:
@@ -160,7 +167,7 @@ class MessageStatus:
     @classmethod
     def is_terminal(cls, status: str) -> bool:
         """终态：走到这里就不会再变了。"""
-        return status in {cls.PROCESSED, cls.FAILED, cls.DUPLICATE}
+        return status in {cls.PROCESSED, cls.FAILED, cls.DUPLICATE, cls.IGNORED}
 
 
 # 状态 → 消息表里的时间戳列。
@@ -890,7 +897,8 @@ class CommunicationRecorder:
             # --- 2) 先看一眼当前状态（用于区分「已处理」和「别人在处理」）---
             before = conn.execute(
                 f"""
-                SELECT processed_once, claim_id, claimed_at, failure_count
+                SELECT processed_once, claim_id, claimed_at,
+                       failure_count, status
                   FROM {TABLE_COMM_MESSAGES}
                  WHERE message_id = ?
                 """,
@@ -905,6 +913,17 @@ class CommunicationRecorder:
                     claimed_at=before["claimed_at"],
                     failure_count=int(before["failure_count"] or 0),
                     detail="这条消息以前已经成功处理过（持久化事实）",
+                )
+
+            if (before is not None
+                    and str(before["status"] or "") == MessageStatus.IGNORED):
+                return MessageClaim(
+                    status=ClaimStatus.DUPLICATE,
+                    message_id=message.message_id,
+                    owner=before["claim_id"],
+                    claimed_at=before["claimed_at"],
+                    failure_count=int(before["failure_count"] or 0),
+                    detail="消息已被 Inbox 标记为 IGNORED，不再处理",
                 )
 
             previous_owner = before["claim_id"] if before is not None else None
@@ -927,13 +946,17 @@ class CommunicationRecorder:
                    SET claim_id = ?, claimed_at = ?, updated_at = ?
                  WHERE message_id = ?
                    AND processed_once = 0
+                   AND status != ?
                    AND (
                         claim_id IS NULL
                         OR claimed_at IS NULL
                         OR claimed_at < ?
                    )
                 """,
-                (owner, timestamp, timestamp, message.message_id, cutoff),
+                (
+                    owner, timestamp, timestamp, message.message_id,
+                    MessageStatus.IGNORED, cutoff,
+                ),
             )
 
             if cursor.rowcount == 1:
@@ -1144,6 +1167,334 @@ class CommunicationRecorder:
             "failure_count": int(row["failure_count"] or 0),
             "error_code": row["error_code"],
             "error_message": row["error_message"],
+        }
+
+    # ============================================================
+    # Agent Inbox V1：Runtime 消费边界
+    # ============================================================
+    def get_inbox_state(self, agent_id: str) -> Optional[Dict[str, Any]]:
+        """读取一个 Agent 的 Inbox 运行时状态。"""
+        key = str(agent_id or "").strip()
+        if not key:
+            return None
+        row = self.db.fetchone(
+            f"SELECT * FROM {TABLE_COMM_INBOX_STATE} WHERE agent_id = ?",
+            (key,),
+        )
+        if row is None:
+            return None
+        out = dict(row)
+        out["enabled"] = bool(int(out.get("enabled") or 0))
+        return out
+
+    def list_inbox_states(self) -> List[Dict[str, Any]]:
+        rows = self.db.fetchall(
+            f"SELECT * FROM {TABLE_COMM_INBOX_STATE} ORDER BY agent_id")
+        out: List[Dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            item["enabled"] = bool(int(item.get("enabled") or 0))
+            out.append(item)
+        return out
+
+    def initialize_inbox(
+        self,
+        agent_id: str,
+        *,
+        enabled: bool = False,
+        cutover_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """为 Agent 建立 Inbox 状态；只在第一次建立时标记 legacy。
+
+        🔒 这是**一次性 cutover**：
+           - 已有 state 的 Agent 不会重复标记历史消息；
+           - cutover 之前未处理的消息 -> IGNORED；
+           - processed_once 保持 0，不伪造「已处理」。
+        """
+        key = str(agent_id or "").strip()
+        if not key:
+            raise ValueError("agent_id 不能为空")
+        existing = self.get_inbox_state(key)
+        if existing is not None:
+            return existing
+
+        now = utc_now_iso()
+        cutoff = str(cutover_at or now)
+        with self.db.transaction() as conn:
+            conn.execute(
+                f"""
+                INSERT INTO {TABLE_COMM_INBOX_STATE} (
+                    agent_id, enabled, cutover_at, last_seen_at, updated_at
+                ) VALUES (?, ?, ?, NULL, ?)
+                ON CONFLICT(agent_id) DO NOTHING
+                """,
+                (key, 1 if enabled else 0, cutoff, now),
+            )
+
+        # 首次建立状态时清理 legacy。失败不应该阻止启动：
+        # 消息仍在，pending 查询也会按 cutover 过滤。
+        try:
+            self.ignore_pending_before(
+                key, cutoff, reason="legacy_inbox_cutover")
+        except Exception:  # noqa: BLE001
+            logger.warning("Inbox legacy 标记失败：%s", key, exc_info=True)
+
+        state = self.get_inbox_state(key)
+        return state or {
+            "agent_id": key,
+            "enabled": bool(enabled),
+            "cutover_at": cutoff,
+            "last_seen_at": None,
+            "updated_at": now,
+        }
+
+    def set_inbox_enabled(
+        self,
+        agent_id: str,
+        enabled: bool,
+        *,
+        cutover_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """打开/关闭某个 Agent 的 Inbox 消费；不删除任何消息。"""
+        key = str(agent_id or "").strip()
+        if not key:
+            raise ValueError("agent_id 不能为空")
+        state = self.get_inbox_state(key)
+        if state is None:
+            return self.initialize_inbox(
+                key, enabled=enabled, cutover_at=cutover_at)
+        now = utc_now_iso()
+        with self.db.transaction() as conn:
+            if cutover_at:
+                conn.execute(
+                    f"""
+                    UPDATE {TABLE_COMM_INBOX_STATE}
+                       SET enabled = ?, cutover_at = ?, updated_at = ?
+                     WHERE agent_id = ?
+                    """,
+                    (1 if enabled else 0, str(cutover_at), now, key),
+                )
+            else:
+                conn.execute(
+                    f"""
+                    UPDATE {TABLE_COMM_INBOX_STATE}
+                       SET enabled = ?, updated_at = ?
+                     WHERE agent_id = ?
+                    """,
+                    (1 if enabled else 0, now, key),
+                )
+        return self.get_inbox_state(key) or state
+
+    def touch_inbox(self, agent_id: str) -> None:
+        key = str(agent_id or "").strip()
+        if not key:
+            return
+        with self.db.transaction() as conn:
+            conn.execute(
+                f"""
+                UPDATE {TABLE_COMM_INBOX_STATE}
+                   SET last_seen_at = ?, updated_at = ?
+                 WHERE agent_id = ?
+                """,
+                (utc_now_iso(), utc_now_iso(), key),
+            )
+
+    def list_pending(
+        self,
+        agent_id: str,
+        *,
+        limit: int = 50,
+    ) -> List[Dict[str, Any]]:
+        """列出 cutover 之后、尚未被 Runtime 消费的消息。"""
+        key = str(agent_id or "").strip()
+        state = self.get_inbox_state(key)
+        if state is None:
+            return []
+        cutoff = str(state.get("cutover_at") or "")
+        rows = self.db.fetchall(
+            f"""
+            SELECT * FROM {TABLE_COMM_MESSAGES}
+             WHERE to_agent = ?
+               AND processed_once = 0
+               AND status IN (?, ?)
+               AND created_at >= ?
+             ORDER BY created_at ASC, rowid ASC
+             LIMIT ?
+            """,
+            (
+                key,
+                MessageStatus.DELIVERED,
+                MessageStatus.FAILED,
+                cutoff,
+                max(1, int(limit)),
+            ),
+        )
+        return [dict(row) for row in rows]
+
+    def mark_ignored(
+        self, message_id: str, *, reason: str = "inbox_ignored",
+    ) -> bool:
+        """把一条消息标记为 IGNORED；保留 payload 和事件历史。"""
+        key = str(message_id or "").strip()
+        row = self.get_message(key)
+        if row is None:
+            return False
+        if str(row.get("status") or "") == MessageStatus.IGNORED:
+            return False
+        if int(row.get("processed_once") or 0) == 1:
+            return False
+
+        now = utc_now_iso()
+        safe_reason = _redact_string(str(reason or "inbox_ignored"))
+        event_id = new_message_id("evt")
+        with self.db.transaction() as conn:
+            conn.execute(
+                f"""
+                UPDATE {TABLE_COMM_MESSAGES}
+                   SET status = ?,
+                       claim_id = NULL,
+                       claimed_at = NULL,
+                       error_code = 'INBOX_IGNORED',
+                       error_message = ?,
+                       updated_at = ?
+                 WHERE message_id = ?
+                """,
+                (MessageStatus.IGNORED, safe_reason, now, key),
+            )
+            conn.execute(
+                f"""
+                INSERT INTO {TABLE_COMM_EVENTS} (
+                    event_id, message_id, trace_id, conversation_id,
+                    status, actor, transport, address, detail,
+                    error_code, error_message,
+                    payload_size, payload_hash, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    event_id,
+                    key,
+                    row.get("trace_id"),
+                    row.get("conversation_id"),
+                    MessageStatus.IGNORED,
+                    "inbox",
+                    row.get("transport"),
+                    row.get("address"),
+                    safe_reason,
+                    "INBOX_IGNORED",
+                    safe_reason,
+                    row.get("payload_size"),
+                    row.get("payload_hash"),
+                    now,
+                ),
+            )
+        self.event_count += 1
+        return True
+
+    def ignore_pending_before(
+        self,
+        agent_id: str,
+        cutover_at: str,
+        *,
+        reason: str = "legacy_inbox_cutover",
+    ) -> int:
+        """把 cutover 之前、尚未处理的消息标记为 legacy IGNORED。"""
+        key = str(agent_id or "").strip()
+        cutoff = str(cutover_at or "").strip()
+        if not key or not cutoff:
+            return 0
+        rows = self.db.fetchall(
+            f"""
+            SELECT message_id FROM {TABLE_COMM_MESSAGES}
+             WHERE to_agent = ?
+               AND processed_once = 0
+               AND status NOT IN (?, ?, ?)
+               AND created_at < ?
+            """,
+            (
+                key,
+                MessageStatus.PROCESSED,
+                MessageStatus.DUPLICATE,
+                MessageStatus.IGNORED,
+                cutoff,
+            ),
+        )
+        ignored = 0
+        for row in rows:
+            if self.mark_ignored(
+                str(row["message_id"]), reason=reason):
+                ignored += 1
+        return ignored
+
+    def inbox_stats(self, agent_id: str) -> Dict[str, Any]:
+        """给 UI / Runtime 用的 Inbox 统计。"""
+        key = str(agent_id or "").strip()
+        state = self.get_inbox_state(key)
+        total_row = self.db.fetchone(
+            f"SELECT COUNT(*) AS n FROM {TABLE_COMM_MESSAGES} WHERE to_agent = ?",
+            (key,),
+        )
+        total = int(total_row["n"]) if total_row else 0
+        if state is None:
+            return {
+                "agent_id": key,
+                "initialized": False,
+                "enabled": False,
+                "cutover_at": None,
+                "pending": 0,
+                "failed": 0,
+                "processing": 0,
+                "processed": 0,
+                "ignored": 0,
+                "legacy": total,
+                "total": total,
+            }
+
+        cutoff = str(state.get("cutover_at") or "")
+        row = self.db.fetchone(
+            f"""
+            SELECT
+                COUNT(*) AS total,
+                SUM(CASE WHEN processed_once = 1 THEN 1 ELSE 0 END) AS processed,
+                SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) AS ignored,
+                SUM(CASE WHEN processed_once = 0
+                          AND status IN (?, ?)
+                          AND created_at >= ? THEN 1 ELSE 0 END) AS pending,
+                SUM(CASE WHEN processed_once = 0
+                          AND status = ?
+                          AND created_at >= ? THEN 1 ELSE 0 END) AS failed,
+                SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) AS processing,
+                SUM(CASE WHEN processed_once = 0
+                          AND created_at < ?
+                          AND status != ? THEN 1 ELSE 0 END) AS legacy
+              FROM {TABLE_COMM_MESSAGES}
+             WHERE to_agent = ?
+            """,
+            (
+                MessageStatus.IGNORED,
+                MessageStatus.DELIVERED,
+                MessageStatus.FAILED,
+                cutoff,
+                MessageStatus.FAILED,
+                cutoff,
+                MessageStatus.PROCESSING,
+                cutoff,
+                MessageStatus.IGNORED,
+                key,
+            ),
+        )
+        data = dict(row) if row is not None else {}
+        return {
+            "agent_id": key,
+            "initialized": True,
+            "enabled": bool(state.get("enabled")),
+            "cutover_at": cutoff,
+            "pending": int(data.get("pending") or 0),
+            "failed": int(data.get("failed") or 0),
+            "processing": int(data.get("processing") or 0),
+            "processed": int(data.get("processed") or 0),
+            "ignored": int(data.get("ignored") or 0),
+            "legacy": int(data.get("legacy") or 0),
+            "total": int(data.get("total") or total),
         }
 
     def count_processed(self) -> int:

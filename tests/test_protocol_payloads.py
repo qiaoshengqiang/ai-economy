@@ -942,10 +942,10 @@ class TestLifecycleHonesty:
 
         assert emitted <= defined, f"发出了未定义的状态：{emitted - defined}"
 
-    def test_eleven_states_defined(self):
-        """协议文档说「11 个已定义」—— 数量要对得上。"""
-        assert len(MessageStatus.all()) == 11
-        assert len(set(MessageStatus.all())) == 11
+    def test_twelve_states_defined(self):
+        """协议文档说「12 个已定义」—— 数量要对得上。"""
+        assert len(MessageStatus.all()) == 12
+        assert len(set(MessageStatus.all())) == 12
 
     def test_delivered_and_sent_timestamps_are_nearly_identical_locally(
         self, db, run_async

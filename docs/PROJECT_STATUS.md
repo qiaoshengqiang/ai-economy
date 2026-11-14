@@ -1,10 +1,10 @@
 # AIEOS 当前版本与现状
 
 > **版本：`v0.2.0`**
-> **日期：2026-11-13**
+> **日期：2026-11-15**
 > **阶段：开发中 / 观察实验**
 > **协议版本：`1`**
-> **测试基线：`5704 passed, 2 skipped, 30 deselected`**
+> **测试基线：`5713 passed, 2 skipped, 30 deselected`**
 
 本文记录**当前真实可用能力、推荐工作方式、已知限制和版本变化**。
 架构的长期权威仍然是
@@ -35,7 +35,9 @@
 - Front 可以通过对话切换模式（`set_mode`）；
 - Web Search / Fetch 接入 Front 与 Pi；
 - UI 改为紧凑 Agent 列表、模式可见、Front 回复计时、工作中 Agent 动态边框；
-- 修复中断恢复、超时分类、跨迭代 session、错误记录等问题。
+- 修复中断恢复、超时分类、跨迭代 session、错误记录等问题；
+- Agent Inbox Phase 0/1：持久化 Inbox 状态、legacy cutover、统计与只读 API；
+  常驻收件箱消费者仍为 `DESIGNED`（`runtime.inbox_enabled = false`）。
 
 ---
 
@@ -513,7 +515,7 @@ Team 协作
 当前基线：
 
 ```text
-5704 passed, 2 skipped, 30 deselected
+5713 passed, 2 skipped, 30 deselected
 ```
 
 启动说明见 [`../START_AIEOS.md`](../START_AIEOS.md)。

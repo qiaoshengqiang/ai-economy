@@ -36,6 +36,9 @@ TABLE_LEDGER: Final = "ledger_transactions"
 TABLE_LLM_CALLS: Final = "llm_calls"
 TABLE_COMM_MESSAGES: Final = "communication_messages"
 TABLE_COMM_EVENTS: Final = "communication_events"
+#: 每个 Agent 的 Inbox 运行时状态：是否启用 + legacy cutover 边界。
+#: 🔒 这是「Runtime 是否消费收件箱」的事实，不是消息本体。
+TABLE_COMM_INBOX_STATE: Final = "communication_inbox_state"
 TABLE_TASKS: Final = "tasks"
 TABLE_TASK_OFFERS: Final = "task_offers"
 TABLE_TASK_AGREEMENTS: Final = "task_agreements"
@@ -418,6 +421,8 @@ SCHEMA_STATEMENTS: Final[tuple[str, ...]] = (
     "CREATE INDEX IF NOT EXISTS idx_comm_msg_status ON communication_messages (status)",
     "CREATE INDEX IF NOT EXISTS idx_comm_msg_from   ON communication_messages (from_agent)",
     "CREATE INDEX IF NOT EXISTS idx_comm_msg_to     ON communication_messages (to_agent)",
+    "CREATE INDEX IF NOT EXISTS idx_comm_msg_inbox_pending "
+    "ON communication_messages (to_agent, status, created_at)",
 
     # --------------------------------------------------------
     # communication_events —— 通信日志：状态【事件流】
@@ -473,6 +478,31 @@ SCHEMA_STATEMENTS: Final[tuple[str, ...]] = (
     "CREATE INDEX IF NOT EXISTS idx_comm_evt_conv    ON communication_events (conversation_id)",
     "CREATE INDEX IF NOT EXISTS idx_comm_evt_status  ON communication_events (status)",
     "CREATE INDEX IF NOT EXISTS idx_comm_evt_time    ON communication_events (created_at)",
+
+    # --------------------------------------------------------
+    # communication_inbox_state —— Agent Inbox 运行时状态
+    #
+    # 【为什么需要这张表】
+    #     消息本身已经在 communication_messages 里持久化；
+    #     但 Runtime 还需要知道：
+    #         · 这个 Agent 是否启用 inbox 消费
+    #         · 哪条时间线之前的历史消息不重放（cutover）
+    #
+    # 🔒 它不是消息状态，也不是 Task 状态。
+    #    它只控制「Runtime 从哪里开始消费」。
+    # --------------------------------------------------------
+    """
+    CREATE TABLE IF NOT EXISTS communication_inbox_state (
+        agent_id      TEXT PRIMARY KEY,
+        enabled       INTEGER NOT NULL DEFAULT 0,
+        cutover_at    TEXT NOT NULL,
+        last_seen_at  TEXT,
+        updated_at    TEXT NOT NULL
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_comm_inbox_enabled "
+    "ON communication_inbox_state (enabled)",
+
     # --------------------------------------------------------
     # tasks —— 任务主体
     #
