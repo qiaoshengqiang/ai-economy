@@ -1011,6 +1011,36 @@ class CommunicationRecorder:
                 ),
             )
 
+    def mark_processed_id(self, message_id: str, owner: str) -> bool:
+        """按 message_id 标记处理成功；给没有 Message 对象的 checkpoint 用。"""
+        key = str(message_id or "").strip()
+        if not key:
+            return False
+        owner = str(owner)
+        now = utc_now_iso()
+        with self.db.transaction() as conn:
+            cursor = conn.execute(
+                f"""
+                UPDATE {TABLE_COMM_MESSAGES}
+                   SET processed_once = 1,
+                       processed_at  = COALESCE(processed_at, ?),
+                       updated_at    = ?
+                 WHERE message_id = ?
+                   AND processed_once = 0
+                """,
+                (now, now, key),
+            )
+            first_time = cursor.rowcount == 1
+            conn.execute(
+                f"""
+                UPDATE {TABLE_COMM_MESSAGES}
+                   SET claim_id = NULL, claimed_at = NULL
+                 WHERE message_id = ? AND claim_id = ?
+                """,
+                (key, owner),
+            )
+        return first_time
+
     def mark_processed(self, message: Message, owner: str) -> bool:
         """
         把「成功处理过」变成**持久化事实**。
@@ -1032,34 +1062,7 @@ class CommunicationRecorder:
 
         返回是否真的从 0 翻到了 1（第一次成功）。
         """
-        owner = str(owner)
-        now = utc_now_iso()
-
-        with self.db.transaction() as conn:
-            cursor = conn.execute(
-                f"""
-                UPDATE {TABLE_COMM_MESSAGES}
-                   SET processed_once = 1,
-                       processed_at  = COALESCE(processed_at, ?),
-                       updated_at    = ?
-                 WHERE message_id = ?
-                   AND processed_once = 0
-                """,
-                (now, now, message.message_id),
-            )
-            first_time = cursor.rowcount == 1
-
-            # 释放认领：处理完了，别人不该再认为「有人在处理」
-            conn.execute(
-                f"""
-                UPDATE {TABLE_COMM_MESSAGES}
-                   SET claim_id = NULL, claimed_at = NULL
-                 WHERE message_id = ? AND claim_id = ?
-                """,
-                (message.message_id, owner),
-            )
-
-        return first_time
+        return self.mark_processed_id(message.message_id, owner)
 
     def mark_failed(
         self,

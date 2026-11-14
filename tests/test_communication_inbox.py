@@ -11,6 +11,7 @@ from communication import (
     CommunicationRecorder,
     InboxConsumer,
     InboxOutcome,
+    InboxPolicy,
     LocalTransport,
     MessageStatus,
     ReceiveStatus,
@@ -131,6 +132,11 @@ def test_uninitialized_inbox_reports_legacy(wired):
 
 
 def test_inbox_outcome_contract():
+    assert InboxPolicy().reply_mode == "never"
+    assert InboxPolicy(reply_mode="manual").reply_mode == "manual"
+    with pytest.raises(ValueError):
+        InboxPolicy(reply_mode="always")
+
     assert InboxOutcome.processed().action == "processed"
     assert InboxOutcome.deferred(next_checkpoint="task_end").action == (
         "deferred")
@@ -279,5 +285,60 @@ def test_controller_submit_dispatches_through_front_inbox(wired):
             time.sleep(0.05)
         assert dispatched == [job_id]
         assert controller._front_inbox_consumer is not None
+    finally:
+        controller.close()
+
+
+def test_solo_runtime_drains_inbox_to_checkpoint(wired):
+    from types import SimpleNamespace
+    from work.runtime import SoloWorkRuntime
+
+    manager, journal, _agent_a, _agent_b = wired
+    journal.initialize_inbox(
+        "agent_b",
+        enabled=True,
+        cutover_at="2000-01-01T00:00:00+00:00",
+    )
+    message = run_coro(manager.send(
+        "agent_a", "agent_b", text="solo hello"))
+
+    runner = SoloWorkRuntime.__new__(SoloWorkRuntime)
+    runner.rt = SimpleNamespace(communication=manager)
+    text = runner._drain_inbox("agent_b")
+
+    assert "Agent 收件箱" in text
+    assert "solo hello" in text
+    assert journal.get_message(message.message_id)["processed_once"] == 1
+    assert runner._drain_inbox("agent_b") == ""
+
+
+def test_controller_enables_solo_inbox_without_consumer(wired):
+    from types import SimpleNamespace
+    from work.controller import AIEOSController
+
+    manager, journal, _agent_a, _agent_b = wired
+
+    class _Directory:
+        def all(self):
+            return [
+                SimpleNamespace(agent_id="agent_a"),
+                SimpleNamespace(agent_id="agent_b"),
+            ]
+
+    runtime = SimpleNamespace(
+        directory=_Directory(),
+        economy=SimpleNamespace(
+            agent=lambda _aid: SimpleNamespace(has_brain=True)),
+        tasks=SimpleNamespace(list_tasks=lambda limit=50: []),
+        communication=manager,
+        resolved_config=SimpleNamespace(inbox_enabled=True),
+    )
+    controller = AIEOSController(
+        runtime, front_agent="agent_a", pi_work_agents=[])
+    try:
+        assert controller._pi_inbox_service is not None
+        assert controller._pi_inbox_service.active_agents == []
+        assert controller._front_inbox_consumer is None
+        assert journal.get_inbox_state("agent_b")["enabled"] is True
     finally:
         controller.close()

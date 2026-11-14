@@ -1593,31 +1593,59 @@ class AIEOSController:
             self._pi_inbox_service.sync(wanted)
 
         # ---- Front Inbox（Phase 3）----
-        if not enabled or communication is None or self.human_gateway is None:
+        if (not enabled or communication is None
+                or self.human_gateway is None):
             self._stop_front_inbox()
+        else:
+            current = self._front_inbox_consumer
+            if current is not None and (
+                not current.running or current.agent_id != self.front_agent
+            ):
+                self._stop_front_inbox()
+            if self._front_inbox_consumer is None:
+                consumer = InboxConsumer(
+                    communication,
+                    agent_id=self.front_agent,
+                    handler=self._on_front_inbox_message,
+                    name="front-inbox",
+                )
+                if consumer.start():
+                    self._front_inbox_consumer = consumer
+                    recorder = self._inbox_recorder()
+                    if recorder is not None:
+                        try:
+                            recorder.set_inbox_enabled(
+                                self.front_agent, True)
+                        except Exception:                 # noqa: BLE001
+                            logger.warning(
+                                "Front inbox state 开启失败：%s",
+                                self.front_agent, exc_info=True)
+
+        # ---- Solo Inbox（Phase 4）----
+        # Solo 只入队 / 观测，不启动消费者，也不自动调用 Brain。
+        if communication is None:
             return
-        current = self._front_inbox_consumer
-        if current is not None and (
-            not current.running or current.agent_id != self.front_agent
-        ):
-            self._stop_front_inbox()
-        if self._front_inbox_consumer is None:
-            consumer = InboxConsumer(
-                communication,
-                agent_id=self.front_agent,
-                handler=self._on_front_inbox_message,
-                name="front-inbox",
+        recorder = self._inbox_recorder()
+        if recorder is None:
+            return
+        for agent_id in sorted(self._agent_ids):
+            if agent_id == self.front_agent:
+                continue
+            if agent_id in self.pi_work_agents:
+                continue
+            desired = (
+                enabled
+                and agent_id not in self.disabled_agents
+                and agent_id not in self.archived_agents
             )
-            if consumer.start():
-                self._front_inbox_consumer = consumer
-                recorder = self._inbox_recorder()
-                if recorder is not None:
-                    try:
-                        recorder.set_inbox_enabled(self.front_agent, True)
-                    except Exception:                     # noqa: BLE001
-                        logger.warning(
-                            "Front inbox state 开启失败：%s",
-                            self.front_agent, exc_info=True)
+            try:
+                state = recorder.get_inbox_state(agent_id)
+                if state is None or bool(state.get("enabled")) != desired:
+                    recorder.set_inbox_enabled(agent_id, desired)
+            except Exception:                             # noqa: BLE001
+                logger.warning(
+                    "Solo inbox state 更新失败：%s", agent_id,
+                    exc_info=True)
 
     def _on_front_inbox_message(self, message: Any) -> None:
         """Front Inbox → 把 human_message 对应的 Job 交给执行器。"""

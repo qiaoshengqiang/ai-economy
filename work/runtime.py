@@ -157,6 +157,8 @@ class SoloWorkRuntime:
         self._write_counts: Dict[str, int] = {}
         #: 启动时生成的任务认知报告；注入后续所有 Work prompt。
         self._cognition_report = ""
+        #: 本次 run 开始时从 Solo Inbox 注入的消息（Phase 4）。
+        self._initial_inbox = ""
         self._cognition_tokens = 0
         #: 本任务已经查过的工具文档（tool → 全文）。
         #:
@@ -213,6 +215,10 @@ class SoloWorkRuntime:
                 return result
 
             result.status = task.status
+            # Phase 4：Solo Agent 的收件箱在 run 开始 / 每轮 work 前
+            # 作为 checkpoint 注入，不启动常驻消费者，也不自动回复。
+            if not self._initial_inbox:
+                self._initial_inbox = self._drain_inbox(actor)
             # 先把 Work 阶段真实注册的动作建好：认知阶段要展示同一份事实。
             if self._work_dispatcher is None:
                 self._work_dispatcher = self._build_work_dispatcher()
@@ -277,7 +283,8 @@ class SoloWorkRuntime:
                     available_actions=dispatcher.action_types,
                     next_actions=getattr(
                         self._work_dispatcher, "action_types", ()),
-                    resume_context=self.resume_context,
+                    resume_context="\n".join(filter(None, [
+                        self.resume_context, self._initial_inbox])),
                 ),
             }]
             seen_reads: set = set()
@@ -481,6 +488,13 @@ class SoloWorkRuntime:
                     + self.resume_context + "\n")
             if self.role_prompt:
                 resume_text = self.role_prompt + "\n" + resume_text
+            inbox_now = self._drain_inbox(actor)
+            inbox_text = "\n".join(filter(None, [
+                self._initial_inbox if turn == 1 else "",
+                inbox_now,
+            ]))
+            if inbox_text:
+                resume_text = inbox_text + "\n" + resume_text
             prompt = build_work_prompt(
                 context,
                 task_description=task.description,
@@ -735,6 +749,47 @@ class SoloWorkRuntime:
     # ------------------------------------------------------------
     # 上下文
     # ------------------------------------------------------------
+    def _drain_inbox(self, actor: str) -> str:
+        """把 Solo 收件箱的消息转成 checkpoint 文本，并标记已交给 Agent。"""
+        communication = getattr(self.rt, "communication", None)
+        recorder = getattr(communication, "recorder", None)
+        if recorder is None:
+            return ""
+        try:
+            rows = recorder.list_pending(actor, limit=20)
+        except Exception:                                     # noqa: BLE001
+            return ""
+        lines: List[str] = []
+        for row in rows:
+            payload = row.get("payload")
+            if isinstance(payload, str):
+                try:
+                    payload = json.loads(payload)
+                except (TypeError, ValueError):
+                    payload = {"text": payload}
+            if not isinstance(payload, dict):
+                payload = {"text": str(payload or "")}
+            text = str(
+                payload.get("text")
+                or payload.get("message")
+                or payload.get("summary")
+                or ""
+            ).strip()
+            if not text:
+                text = json.dumps(
+                    payload, ensure_ascii=False, default=str)[:500]
+            lines.append(
+                f"- 来自 {row.get('from_agent') or '?'} "
+                f"· {row.get('message_type') or '?'}: {text}")
+            try:
+                recorder.mark_processed_id(
+                    str(row.get("message_id") or ""), actor)
+            except Exception:                                 # noqa: BLE001
+                pass
+        if not lines:
+            return ""
+        return "========== Agent 收件箱 ==========\n" + "\n".join(lines)
+
     def _context(self, actor: str) -> WorkContext:
         task = self.task
         workspace_id = task.workspace_id or ""

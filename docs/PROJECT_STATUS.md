@@ -4,7 +4,7 @@
 > **日期：2026-11-15**
 > **阶段：开发中 / 观察实验**
 > **协议版本：`1`**
-> **测试基线：`5718 passed, 2 skipped, 30 deselected`**
+> **测试基线：`5720 passed, 2 skipped, 30 deselected`**
 
 本文记录**当前真实可用能力、推荐工作方式、已知限制和版本变化**。
 架构的长期权威仍然是
@@ -36,9 +36,10 @@
 - Web Search / Fetch 接入 Front 与 Pi；
 - UI 改为紧凑 Agent 列表、模式可见、Front 回复计时、工作中 Agent 动态边框；
 - 修复中断恢复、超时分类、跨迭代 session、错误记录等问题；
-- Agent Inbox Phase 0/1/2/3：持久化 Inbox 状态、legacy cutover、统计与只读 API；
+- Agent Inbox Phase 0/1/2/3/4：持久化 Inbox 状态、legacy cutover、统计与只读 API；
   Pi Agent 与 Front 已接入常驻收件箱（`runtime.inbox_enabled = true`），
-  Human → Front 改为 Inbox-first；Solo 自动消费仍为 `DESIGNED`。
+  Human → Front 改为 Inbox-first；Solo 只入队，并在 work checkpoint 注入，
+  默认 `reply_mode = never`。
 
 ---
 
@@ -516,7 +517,7 @@ Team 协作
 当前基线：
 
 ```text
-5718 passed, 2 skipped, 30 deselected
+5720 passed, 2 skipped, 30 deselected
 ```
 
 启动说明见 [`../START_AIEOS.md`](../START_AIEOS.md)。

@@ -1,10 +1,11 @@
 # Agent Inbox V1 —— Runtime 收件箱接入设计
 
-> **状态：Phase 0/1/2/3 `CURRENT`；Phase 4–5 `DESIGNED`（2026-11-15）**
+> **状态：Phase 0/1/2/3/4 `CURRENT`；Phase 5 `DESIGNED`（2026-11-15）**
 >
 > Phase 0（边界 / flag / legacy cutover）、Phase 1（持久化 Inbox Core /
-> 统计 / API）、Phase 2（Pi 持久 Inbox）与 Phase 3（Front Inbox-first）
-> 已实现；Solo 自动消费仍为 `DESIGNED`。
+> 统计 / API）、Phase 2（Pi 持久 Inbox）、Phase 3（Front Inbox-first）
+> 与 Phase 4（Solo 入队 / checkpoint）已实现；
+> Life 自主通信仍为 `DESIGNED`。
 >
 > 相关文档：
 > [`COMMUNICATION_MODEL.md`](../COMMUNICATION_MODEL.md) ·
@@ -22,12 +23,12 @@
 | Phase 1：持久化 Inbox Core | **`CURRENT`** | pending / IGNORED / stats / startup recovery / `/api/inbox` |
 | Phase 2：Pi 持久 Inbox | **`CURRENT`** | `PiInboxService` 常驻消费；写入 `agents/<id>/inbox/` |
 | Phase 3：Front Inbox-first | **`CURRENT`** | Human → Front inbox → Job dispatch |
-| Phase 4：Solo 入队 / Life | `DESIGNED` | 尚未启用 Solo 自动处理 |
+| Phase 4：Solo 入队 / Life | **`CURRENT`** | Solo 只入队；work checkpoint 注入；默认不自动回复 |
 | Phase 5：Life 通信 | `FUTURE` | 社交 / 经济 / Conversation |
 
 > Phase 1 的 `communication_inbox_state` 是第 **30** 张表。
 > `runtime.inbox_enabled` 当前为 `true`；
-> Front 与 Pi Agent 已启用，Solo 仍未自动消费。
+> Front 与 Pi Agent 已启用常驻消费，Solo 只入队 / checkpoint 注入。
 
 ---
 
@@ -417,12 +418,14 @@ Task lifecycle 消息驱动的改造属于后续独立阶段。
 [ ] UI 能显示 pending / processing
 ```
 
-### Phase 4：Solo 入队与 Life 准备
+### Phase 4：Solo 入队与 Life 准备（`CURRENT`）
 
 - Solo Agent 启用 inbox 后只记录 unread；
-- 任务结束后在 checkpoint 注入；
-- 增加默认 `reply_mode = never`；
-- 增加 Agent 级 inbox 策略配置结构，但默认不自动回复。
+- 不启动常驻消费者；
+- `SoloWorkRuntime` 在 run 开始 / 每轮 work 前 drain pending；
+- 注入后 `mark_processed_id()`；
+- 新增 `InboxPolicy`（默认 `reply_mode = never`），但尚未自动回复；
+- Solo 消息不会被自动转成 Task 或 Brain 调用。
 
 **验收**：
 

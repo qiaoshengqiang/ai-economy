@@ -17,6 +17,26 @@ ACTIONS = frozenset({
     "reply_sent",
     "failed",
 })
+REPLY_MODES = frozenset({"never", "manual", "auto"})
+
+
+@dataclass(frozen=True)
+class InboxPolicy:
+    """Agent 级 Inbox 行为策略；V1 默认不自动回复。"""
+
+    reply_mode: str = "never"
+    max_auto_replies_per_conversation: int = 3
+    max_cost_per_message: float = 0.0
+
+    def __post_init__(self) -> None:
+        mode = str(self.reply_mode or "never").strip().lower()
+        if mode not in REPLY_MODES:
+            raise ValueError(f"未知 InboxPolicy.reply_mode：{self.reply_mode!r}")
+        object.__setattr__(self, "reply_mode", mode)
+        if self.max_auto_replies_per_conversation < 0:
+            raise ValueError("max_auto_replies_per_conversation 不能为负")
+        if self.max_cost_per_message < 0:
+            raise ValueError("max_cost_per_message 不能为负")
 
 
 @dataclass(frozen=True)
@@ -55,4 +75,4 @@ class InboxOutcome:
         return cls(action="failed", error=str(error or ""))
 
 
-__all__ = ["ACTIONS", "InboxOutcome"]
+__all__ = ["ACTIONS", "REPLY_MODES", "InboxOutcome", "InboxPolicy"]
