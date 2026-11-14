@@ -78,3 +78,13 @@ def test_wildcard_host_uses_loopback_url(tmp_path):
     launcher = _launcher(tmp_path)
     config = launcher.merge_config({"host": "0.0.0.0"}, use_env=False)
     assert launcher.display_url(config) == "http://127.0.0.1:8000"
+
+
+def test_environ_resolves_relative_paths(tmp_path):
+    launcher = _launcher(tmp_path)
+    config = launcher.merge_config(use_env=False)
+    env = launcher.environ(config)
+    assert env["AIEOS_PI_CLI"] == str(
+        tmp_path / "experiments/pi_compare/pi_node/node_modules/.bin/pi")
+    assert env["AIEOS_LOG"] == str(tmp_path / "runs/ui/server.log")
+    assert env["AIEOS_PID_FILE"] == str(tmp_path / "runs/ui/aieos.pid")

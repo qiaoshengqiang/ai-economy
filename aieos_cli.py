@@ -205,7 +205,12 @@ class Launcher:
     def environ(self, config: Dict[str, Any]) -> Dict[str, str]:
         env = os.environ.copy()
         for key, env_name in ENV_KEYS.items():
-            env[env_name] = str(config.get(key, DEFAULTS[key]))
+            value: Any = config.get(key, DEFAULTS[key])
+            if key in PATH_KEYS and value:
+                path = Path(str(value))
+                if not path.is_absolute():
+                    value = self.root / path
+            env[env_name] = str(value)
         return env
 
     def _run_start_script(
