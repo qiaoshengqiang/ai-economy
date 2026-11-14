@@ -68,8 +68,10 @@
   );
 
   const PANE_CONFIG = {
-    "system-providers": { save: "保存服务商", note: "修改后需重启 UI 进程" },
-    "system-models": { save: "保存模型", note: "修改后需重启 UI 进程" },
+    "system-providers": {
+      save: "保存服务商",
+      note: "模型使用「保存模型」单独保存",
+    },
     "system-credentials": { save: "保存凭据", note: "密钥只写入 .env" },
     "system-info": { readonly: true },
     "regular-runtime": { save: "保存运行设置", reset: true, kind: "run" },
@@ -136,15 +138,20 @@
     const hint = $("provider-base-url-hint");
     if (!select || !input || !hint) return;
     const spec = adapterSpec(select.value);
-    if (spec && spec.default_base_url) {
-      input.placeholder = spec.default_base_url;
-      hint.textContent = `可留空，默认使用 ${spec.default_base_url}`;
-    } else if (spec && spec.requires_base_url) {
-      input.placeholder = "https://api.example.com";
-      hint.textContent = "这个 Adapter 必须填写 Base URL。";
-    } else {
+    const current = input.value.trim().replace(/\/+$/, "");
+    if (spec && !spec.requires_base_url && !spec.default_base_url) {
       input.placeholder = "https://api.example.com";
       hint.textContent = "这个 Adapter 不需要 Base URL。";
+    } else if (current) {
+      input.placeholder = spec && spec.default_base_url
+        ? spec.default_base_url : "https://api.example.com";
+      hint.textContent = `请求会发往 ${current}/chat/completions`;
+    } else if (spec && spec.default_base_url) {
+      input.placeholder = spec.default_base_url;
+      hint.textContent = `可留空，默认使用 ${spec.default_base_url}`;
+    } else {
+      input.placeholder = "https://api.example.com";
+      hint.textContent = "这个 Adapter 必须填写 Base URL。";
     }
     const preset = PROVIDER_PRESETS[$("provider-preset").value];
     $("provider-preset-hint").textContent = preset
@@ -212,7 +219,7 @@
   function modelSnapshot() {
     return {
       profile: $("model-profile").value.trim(),
-      provider: $("model-provider").value,
+      provider: editing.provider,
       model_id: $("model-id").value.trim(),
       context_window: Number($("model-context").value || 600000),
       max_output_tokens: Number($("model-output").value || 16384),
@@ -254,13 +261,28 @@
     updateFooter();
   }
 
-  async function load() {
+  async function load(preferredProvider = "") {
     data = await api("/api/settings");
     renderAll();
-    // 每次打开 / 保存后回到“新建”表单，避免上一次编辑状态残留。
+    // 每次打开 / 保存后重新选中一个有效服务商；没有服务商时回到新建表单。
     editing = { provider: "", model: "", credential: "", role: "" };
-    newProvider();
-    newModel();
+    const providers = (data.system && data.system.providers) || {};
+    const models = (data.system && data.system.models) || {};
+    const names = Object.keys(providers);
+    const withModels = names.filter((name) => Object.values(models).some(
+      (model) => String((model || {}).provider || "") === name));
+    const target = names.includes(preferredProvider)
+      ? preferredProvider
+      : (withModels.find((name) => name !== "mock")
+        || withModels[0]
+        || names.find((name) => name !== "mock")
+        || names[0]
+        || "");
+    if (target) {
+      editProvider(target);
+    } else {
+      newProvider();
+    }
     newCredential();
     newRole();
     updateFooter();
@@ -314,21 +336,55 @@
   function renderProviders() {
     const list = $("provider-list");
     const providers = (data.system && data.system.providers) || {};
+    const models = (data.system && data.system.models) || {};
     clear(list);
     const names = Object.keys(providers);
+    $("provider-count").textContent = `${names.length} 个`;
     if (!names.length) {
       list.appendChild(el("div", "empty", "还没有服务商。"));
     }
     names.forEach((name) => {
       const raw = providers[name] || {};
-      list.appendChild(card(
-        name,
-        `adapter ${raw.adapter || "?"} · ${raw.base_url || "(no base_url)"}`,
-        [
-          ["编辑", () => editProvider(name)],
-          ["删除", () => deleteProvider(name), true],
-        ]));
+      const count = Object.values(models).filter(
+        (model) => String((model || {}).provider || "") === name).length;
+      const item = el(
+        "div",
+        `settings-item provider-list-item${
+          editing.provider === name ? " active" : ""}`);
+      item.tabIndex = 0;
+      item.setAttribute("role", "button");
+      item.setAttribute("aria-pressed",
+        editing.provider === name ? "true" : "false");
+
+      const body = el("div", "settings-item-body");
+      body.appendChild(el("div", "settings-item-title", name));
+      body.appendChild(el("div", "settings-item-meta",
+        `adapter ${raw.adapter || "?"} · ${count} 个模型`));
+      item.appendChild(body);
+
+      const tools = el("div", "settings-item-actions");
+      const remove = el("button", "mini-btn danger", "删除");
+      remove.type = "button";
+      remove.addEventListener("click", (event) => {
+        event.stopPropagation();
+        deleteProvider(name);
+      });
+      tools.appendChild(remove);
+      item.appendChild(tools);
+
+      const choose = () => {
+        if (editing.provider !== name) editProvider(name);
+      };
+      item.addEventListener("click", choose);
+      item.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          choose();
+        }
+      });
+      list.appendChild(item);
     });
+
     const select = $("provider-adapter");
     clear(select);
     const adapters = (data.system && data.system.adapters) || [];
@@ -341,27 +397,36 @@
   function renderModels() {
     const list = $("model-list");
     const models = (data.system && data.system.models) || {};
+    const provider = editing.provider;
+    const providerRaw = ((data.system && data.system.providers) || {})[
+      provider] || {};
     clear(list);
-    const profiles = Object.keys(models);
-    if (!profiles.length) {
-      list.appendChild(el("div", "empty", "还没有模型。"));
+    const entries = Object.entries(models).filter(
+      ([, raw]) => String((raw || {}).provider || "") === provider);
+    if (!provider) {
+      list.appendChild(el("div", "empty", "先保存服务商，再添加模型。"));
+    } else if (!entries.length) {
+      list.appendChild(el("div", "empty", "这个服务商还没有模型。"));
     }
-    profiles.forEach((profile) => {
-      const raw = models[profile] || {};
+    entries.forEach(([profile, raw]) => {
+      const isDefault = providerRaw.default_model === profile;
       list.appendChild(card(
-        profile,
-        `${raw.provider || "?"} · ${raw.model_id || "?"} · ` +
-          `context ${raw.context_window || "?"} / output ${
-            raw.max_output_tokens || "?"}`,
+        isDefault ? `${profile} · 默认` : profile,
+        `${(raw || {}).model_id || "?"} · context ${
+          (raw || {}).context_window || "?"} / output ${
+          (raw || {}).max_output_tokens || "?"}`,
         [
           ["编辑", () => editModel(profile)],
           ["删除", () => deleteModel(profile), true],
         ]));
     });
-    const providerSelect = $("model-provider");
-    clear(providerSelect);
-    Object.keys((data.system && data.system.providers) || {}).forEach(
-      (name) => option(providerSelect, name, name));
+    $("model-new").disabled = !provider;
+    $("provider-model-hint").textContent = !provider
+      ? "先保存服务商，再添加模型。"
+      : (entries.length
+        ? "模型 profile 只在当前服务商下可见。"
+        : "还没有模型；添加后 Agent 才能引用这个服务商。");
+    if (!provider) hideModelEditor();
   }
 
   function renderCredentials() {
@@ -1045,7 +1110,6 @@
     } else {
       const panel = {
         "system-providers": [providerSnapshot, providerInitial],
-        "system-models": [modelSnapshot, modelInitial],
         "system-credentials": [credentialSnapshot, credentialInitial],
         "regular-roles": [roleSnapshot, roleInitial],
       }[currentPane];
@@ -1064,7 +1128,6 @@
 
   async function saveCurrentPane() {
     if (currentPane === "system-providers") return saveProvider();
-    if (currentPane === "system-models") return saveModel();
     if (currentPane === "system-credentials") return saveCredential();
     if (currentPane === "regular-runtime") return saveRuntime();
     if (currentPane === "regular-agent") return saveAgents();
@@ -1141,6 +1204,8 @@
   function editProvider(name) {
     const raw = (data.system.providers || {})[name] || {};
     editing.provider = name;
+    renderProviders();
+    $("provider-form-title").textContent = `编辑服务商 · ${name}`;
     $("provider-preset").value = "";
     $("provider-name").value = name;
     $("provider-name").disabled = true;
@@ -1158,6 +1223,8 @@
     });
     $("provider-request").value = raw.request
       ? JSON.stringify(raw.request, null, 2) : "";
+    hideModelEditor();
+    renderModels();
     updateProviderHints();
     providerInitial = clone(providerSnapshot());
     updateFooter();
@@ -1165,6 +1232,8 @@
 
   function newProvider() {
     editing.provider = "";
+    renderProviders();
+    $("provider-form-title").textContent = "新建服务商";
     $("provider-preset").value = "";
     $("provider-name").disabled = false;
     $("provider-name").value = "";
@@ -1184,6 +1253,8 @@
     clear($("provider-default-model"));
     option($("provider-default-model"), "", "(无)");
     $("provider-request").value = "";
+    hideModelEditor();
+    renderModels();
     updateProviderHints();
     providerInitial = clone(providerSnapshot());
     updateFooter();
@@ -1219,7 +1290,7 @@
         method: "POST",
         body: JSON.stringify({ action: "provider.upsert", data: payload }),
       });
-      await load();
+      await load(payload.name);
       toast("服务商已保存；重启后生效");
     } catch (error) {
       toast(`保存失败：${error.message}`, true);
@@ -1227,6 +1298,13 @@
   }
 
   async function deleteProvider(name) {
+    const models = Object.entries((data.system && data.system.models) || {})
+      .filter(([, raw]) => String((raw || {}).provider || "") === name)
+      .map(([profile]) => profile);
+    if (models.length) {
+      toast(`先删除这个服务商下的模型：${models.join("、")}`, true);
+      return;
+    }
     const ok = await askConfirm(
       "删除服务商？",
       "删除后引用该服务商的模型需要先调整，否则配置校验会失败。",
@@ -1249,12 +1327,22 @@
   // ------------------------------------------------------------
   // model form
   // ------------------------------------------------------------
+  function hideModelEditor() {
+    editing.model = "";
+    $("model-editor").hidden = true;
+  }
+
   function editModel(profile) {
+    const provider = editing.provider;
     const raw = (data.system.models || {})[profile] || {};
+    if (String(raw.provider || "") !== provider) {
+      toast("这个模型不属于当前服务商。", true);
+      return;
+    }
     editing.model = profile;
     $("model-profile").value = profile;
     $("model-profile").disabled = true;
-    $("model-provider").value = raw.provider || "";
+    $("model-provider-name").textContent = provider;
     $("model-id").value = raw.model_id || "";
     $("model-context").value = String(raw.context_window || 600000);
     $("model-output").value = String(raw.max_output_tokens || 16384);
@@ -1263,15 +1351,21 @@
     document.querySelectorAll("#model-thinking-levels input").forEach((box) => {
       box.checked = levels.has(box.value);
     });
+    $("model-editor-title").textContent = `编辑模型 · ${profile}`;
+    $("model-editor").hidden = false;
     modelInitial = clone(modelSnapshot());
-    updateFooter();
+    $("model-editor").scrollIntoView({ block: "nearest" });
   }
 
   function newModel() {
+    if (!editing.provider) {
+      toast("先保存服务商，再添加模型。", true);
+      return;
+    }
     editing.model = "";
     $("model-profile").disabled = false;
     $("model-profile").value = "";
-    $("model-provider").selectedIndex = 0;
+    $("model-provider-name").textContent = editing.provider;
     $("model-id").value = "";
     $("model-context").value = "600000";
     $("model-output").value = "16384";
@@ -1279,14 +1373,20 @@
     document.querySelectorAll("#model-thinking-levels input").forEach((box) => {
       box.checked = box.value === "off";
     });
+    $("model-editor-title").textContent = "添加模型";
+    $("model-editor").hidden = false;
     modelInitial = clone(modelSnapshot());
-    updateFooter();
+    $("model-editor").scrollIntoView({ block: "nearest" });
   }
 
   async function saveModel() {
+    if (!editing.provider) {
+      toast("先保存服务商，再保存模型。", true);
+      return;
+    }
     const payload = {
       profile: $("model-profile").value.trim(),
-      provider: $("model-provider").value,
+      provider: editing.provider,
       model_id: $("model-id").value.trim(),
       context_window: Number($("model-context").value || 600000),
       max_output_tokens: Number($("model-output").value || 16384),
@@ -1300,7 +1400,7 @@
         method: "POST",
         body: JSON.stringify({ action: "model.upsert", data: payload }),
       });
-      await load();
+      await load(editing.provider);
       toast("模型已保存；重启后生效");
     } catch (error) {
       toast(`保存失败：${error.message}`, true);
@@ -1308,6 +1408,7 @@
   }
 
   async function deleteModel(profile) {
+    const provider = editing.provider;
     const ok = await askConfirm(
       "删除模型？",
       "删除后引用该 profile 的 Agent 需要先调整，否则配置校验会失败。",
@@ -1320,7 +1421,7 @@
           action: "model.delete", data: { profile },
         }),
       });
-      await load();
+      await load(provider);
       toast("模型已删除；重启后生效");
     } catch (error) {
       toast(`删除失败：${error.message}`, true);
@@ -1571,7 +1672,7 @@
 
   // 系统设置页的编辑表单：输入后实时更新页脚脏状态。
   const systemPanes = new Set([
-    "system-providers", "system-models",
+    "system-providers",
     "system-credentials", "regular-roles",
   ]);
   const settingsContent = document.querySelector(".settings-content");
@@ -1594,8 +1695,11 @@
     updateProviderHints();
     updateFooter();
   });
+  $("provider-base-url").addEventListener("input", updateProviderHints);
   $("provider-new").addEventListener("click", newProvider);
   $("model-new").addEventListener("click", newModel);
+  $("model-save").addEventListener("click", saveModel);
+  $("model-cancel").addEventListener("click", hideModelEditor);
   $("credential-new").addEventListener("click", newCredential);
   $("role-new").addEventListener("click", newRole);
   $("role-preview-btn").addEventListener("click", previewRole);

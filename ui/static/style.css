@@ -1988,3 +1988,80 @@ details.advanced .setting-row:first-of-type { padding-top: 8px; }
 @media (max-width: 700px) {
   .target-chip { max-width: 150px; }
 }
+
+/* ---------- 服务商与模型（合并页） ---------- */
+.provider-workspace {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 16px;
+  padding-top: 10px;
+}
+.provider-side {
+  min-width: 0;
+  padding-right: 12px;
+  border-right: 1px solid rgba(35, 48, 68, .55);
+}
+.provider-side-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 2px 4px;
+  color: var(--muted);
+  font-size: 10px;
+}
+.provider-side .settings-list { padding-top: 4px; }
+.provider-main { min-width: 0; }
+.provider-main .setting-row { grid-template-columns: 150px minmax(0, 1fr); }
+.provider-form-head {
+  padding: 1px 0 8px;
+  border-bottom: 1px solid rgba(35, 48, 68, .45);
+}
+.provider-form-head h5 {
+  margin: 0 0 2px;
+  font-size: 12px;
+  font-family: var(--mono);
+}
+.provider-form-head small { color: var(--muted); font-size: 9.5px; }
+.provider-list-item {
+  cursor: pointer;
+  align-items: flex-start;
+}
+.provider-list-item:hover { border-color: rgba(94, 224, 255, .35); }
+.provider-list-item.active {
+  border-color: rgba(94, 224, 255, .42);
+  background: linear-gradient(90deg, rgba(94,224,255,.10), rgba(94,224,255,.015));
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.provider-list-item .settings-item-title { font-size: 11px; }
+.provider-list-item .settings-item-meta { font-size: 9.5px; }
+.provider-models-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+  padding: 12px 0 8px;
+  border-top: 1px solid rgba(35, 48, 68, .55);
+}
+.provider-models-head h5 { margin: 0 0 2px; font-size: 12px; }
+.provider-models-head small { color: var(--muted); font-size: 9.5px; }
+.model-editor {
+  margin-top: 10px;
+  padding: 14px 14px 8px;
+  background: rgba(94, 224, 255, .025);
+  border-color: rgba(94, 224, 255, .18);
+}
+.model-editor .setting-row { grid-template-columns: 140px minmax(0, 1fr); }
+.model-editor .form-actions { padding: 8px 0 4px; }
+.model-editor .switch-row { padding: 8px 0; }
+
+@media (max-width: 960px) {
+  .provider-workspace { grid-template-columns: 1fr; }
+  .provider-side {
+    padding-right: 0;
+    padding-bottom: 10px;
+    border-right: 0;
+    border-bottom: 1px solid rgba(35, 48, 68, .55);
+  }
+}

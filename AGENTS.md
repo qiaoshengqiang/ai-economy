@@ -30,7 +30,7 @@
 | | |
 |---|---|
 | **阶段** | **`v0.2.0`** · Workspace Core V1 已冻结 · Agent Core V1 · Tool Runtime V1 · Vision V1 · Demand Entry V1 · Pi Work（workflow / autonomous）· Output Commit V1 · Project Workdir V1 · 观察实验 |
-| **测试基线** | 以 `./dev.sh test` 当前输出为准（最近：**5695 passed, 2 skipped, 30 deselected**） |
+| **测试基线** | 以 `./dev.sh test` 当前输出为准（最近：**5696 passed, 2 skipped, 30 deselected**） |
 | **协议版本** | `protocol_version = "1"` |
 | **命令数** | 25（`./dev.sh` 查看全部） |
 | **数据库表** | **29** |

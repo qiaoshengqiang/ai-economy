@@ -185,8 +185,7 @@
       <div class="settings-body">
         <nav class="settings-nav" id="settings-nav">
           <div class="settings-group">系统设置</div>
-          <button type="button" data-pane="system-providers">服务商</button>
-          <button type="button" data-pane="system-models">模型</button>
+          <button type="button" data-pane="system-providers">服务商与模型</button>
           <button type="button" data-pane="system-credentials">API 凭据</button>
           <button type="button" data-pane="system-info">系统信息</button>
           <div class="settings-group">常规设置</div>
@@ -201,13 +200,13 @@
           </div>
 
           <!-- ================================================== -->
-          <!-- 服务商                                              -->
+          <!-- 服务商与模型                                        -->
           <!-- ================================================== -->
           <section class="settings-pane" data-pane="system-providers">
             <div class="pane-title-row">
               <div>
-                <h3>服务商</h3>
-                <p>模型服务商的连接信息。保存后需要重启 UI 进程。</p>
+                <h3>服务商与模型</h3>
+                <p>选中服务商后，在同页编辑连接信息和它下面的模型；保存时整体校验。</p>
               </div>
               <span class="scope-badge restart">重启后生效</span>
             </div>
@@ -215,171 +214,171 @@
             <section class="setting-card">
               <div class="setting-card-head">
                 <div>
-                  <h4>已有服务商</h4>
-                  <p>Adapter 决定用哪种协议连接；Base URL 由服务商提供。</p>
+                  <h4>服务商</h4>
+                  <p>Adapter 决定协议；模型 profile 是 Agent 引用模型的唯一名称。</p>
                 </div>
-                <button type="button" class="mini-btn" id="provider-new">+ 新建</button>
-              </div>
-              <div class="settings-list" id="provider-list"></div>
-            </section>
-
-            <section class="setting-card">
-              <div class="setting-card-head">
-                <div>
-                  <h4>编辑服务商</h4>
-                  <p>新建或修改一个服务商连接。</p>
-                </div>
+                <button type="button" class="mini-btn" id="provider-new">+ 新建服务商</button>
               </div>
 
-              <div class="setting-row">
-                <div class="setting-label">
-                  <span>快速填充</span>
-                  <small>选择常见服务商，自动填 Adapter 和 Base URL。</small>
-                </div>
-                <div class="setting-control">
-                  <select id="provider-preset">
-                    <option value="">自定义</option>
-                    <option value="opencode">OpenCode Go（订阅）</option>
-                    <option value="opencode_zen">OpenCode Zen（按量付费）</option>
-                    <option value="deepseek">DeepSeek</option>
-                    <option value="doubao">豆包（火山方舟）</option>
-                    <option value="bailian">阿里云百炼</option>
-                  </select>
-                  <p class="hint" id="provider-preset-hint"></p>
-                </div>
-              </div>
-              <div class="setting-row">
-                <div class="setting-label">
-                  <span>服务商 ID</span>
-                  <small>保存后作为 provider 名称。</small>
-                </div>
-                <div class="setting-control">
-                  <input id="provider-name" placeholder="opencode" />
-                </div>
-              </div>
-              <div class="setting-row">
-                <div class="setting-label"><span>Adapter</span><small>决定使用哪种协议。</small></div>
-                <div class="setting-control"><select id="provider-adapter"></select></div>
-              </div>
-              <div class="setting-row">
-                <div class="setting-label"><span>Base URL</span></div>
-                <div class="setting-control">
-                  <input id="provider-base-url" placeholder="https://api.example.com" />
-                  <p class="hint" id="provider-base-url-hint"></p>
-                </div>
-              </div>
-              <div class="setting-row">
-                <div class="setting-label"><span>Timeout</span><small>单次请求超时。</small></div>
-                <div class="setting-control">
-                  <div class="inline-control">
-                    <input id="provider-timeout" type="number" min="1" value="300" />
-                    <span class="unit">秒</span>
+              <div class="provider-workspace">
+                <aside class="provider-side">
+                  <div class="provider-side-head">
+                    <span>服务商列表</span>
+                    <small id="provider-count">0 个</small>
                   </div>
-                </div>
-              </div>
-              <div class="setting-row">
-                <div class="setting-label">
-                  <span>默认模型</span>
-                  <small>可留空；这里只应选属于当前服务商的模型。</small>
-                </div>
-                <div class="setting-control"><select id="provider-default-model"></select></div>
-              </div>
-              <div class="setting-row">
-                <div class="setting-label">
-                  <span>高级 request</span>
-                  <small>JSON，可空；用于服务商特有参数。</small>
-                </div>
-                <div class="setting-control">
-                  <textarea id="provider-request" rows="3" class="wide-control"
-                    placeholder='{"max_tokens_field":"max_completion_tokens"}'></textarea>
-                </div>
-              </div>
-            </section>
-          </section>
+                  <div class="settings-list" id="provider-list"></div>
+                </aside>
 
-          <!-- ================================================== -->
-          <!-- 模型                                                -->
-          <!-- ================================================== -->
-          <section class="settings-pane" data-pane="system-models" hidden>
-            <div class="pane-title-row">
-              <div>
-                <h3>模型</h3>
-                <p>同一 model profile 的所有 Agent 共享上下文窗口与最大输出 tokens。</p>
-              </div>
-              <span class="scope-badge restart">重启后生效</span>
-            </div>
-
-            <section class="setting-card">
-              <div class="setting-card-head">
-                <div>
-                  <h4>模型 Profile</h4>
-                  <p>Profile 是 Agent 引用模型的唯一名称。</p>
-                </div>
-                <button type="button" class="mini-btn" id="model-new">+ 新建</button>
-              </div>
-              <div class="settings-list" id="model-list"></div>
-            </section>
-
-            <section class="setting-card">
-              <div class="setting-card-head">
-                <div>
-                  <h4>编辑模型</h4>
-                  <p>真实 Model ID 由服务商定义；Profile 是 AIEOS 内部名称。</p>
-                </div>
-              </div>
-
-              <div class="setting-row">
-                <div class="setting-label"><span>Model Profile</span></div>
-                <div class="setting-control"><input id="model-profile" placeholder="deepseek_chat" /></div>
-              </div>
-              <div class="setting-row">
-                <div class="setting-label"><span>服务商</span></div>
-                <div class="setting-control"><select id="model-provider"></select></div>
-              </div>
-              <div class="setting-row">
-                <div class="setting-label"><span>真实 Model ID</span></div>
-                <div class="setting-control"><input id="model-id" placeholder="deepseek-chat" /></div>
-              </div>
-              <div class="setting-row">
-                <div class="setting-label"><span>上下文窗口</span></div>
-                <div class="setting-control">
-                  <div class="inline-control">
-                    <input id="model-context" type="number" min="1" value="600000" />
-                    <span class="unit">tokens</span>
+                <div class="provider-main">
+                  <div class="provider-form-head">
+                    <div>
+                      <h5 id="provider-form-title">编辑服务商</h5>
+                      <small>模型列表只显示当前服务商下的 profile。</small>
+                    </div>
                   </div>
-                </div>
-              </div>
-              <div class="setting-row">
-                <div class="setting-label"><span>最大输出 tokens</span></div>
-                <div class="setting-control">
-                  <div class="inline-control">
-                    <input id="model-output" type="number" min="1" value="16384" />
-                    <span class="unit">tokens</span>
+
+                  <div class="setting-row">
+                    <div class="setting-label">
+                      <span>快速填充</span>
+                      <small>选择常见服务商，自动填 Adapter 和 Base URL。</small>
+                    </div>
+                    <div class="setting-control">
+                      <select id="provider-preset">
+                        <option value="">自定义</option>
+                        <option value="opencode">OpenCode Go（订阅）</option>
+                        <option value="opencode_zen">OpenCode Zen（按量付费）</option>
+                        <option value="deepseek">DeepSeek</option>
+                        <option value="doubao">豆包（火山方舟）</option>
+                        <option value="bailian">阿里云百炼</option>
+                      </select>
+                      <p class="hint" id="provider-preset-hint"></p>
+                    </div>
                   </div>
-                </div>
-              </div>
-              <div class="switch-row">
-                <label class="switch">
-                  <input id="model-reasoning" type="checkbox" />
-                  <span class="switch-track"><span class="switch-thumb"></span></span>
-                  <span class="switch-copy">
-                    <b>支持 reasoning</b>
-                    <small>关闭后该模型只接受普通对话请求。</small>
-                  </span>
-                </label>
-              </div>
-              <div class="setting-row" style="display:block;">
-                <div class="setting-label" style="margin-bottom:7px;">
-                  <span>支持的思考强度</span>
-                </div>
-                <div class="chip-row" id="model-thinking-levels">
-                  <label class="chip"><input type="checkbox" value="off" /> off</label>
-                  <label class="chip"><input type="checkbox" value="minimal" /> minimal</label>
-                  <label class="chip"><input type="checkbox" value="low" /> low</label>
-                  <label class="chip"><input type="checkbox" value="medium" /> medium</label>
-                  <label class="chip"><input type="checkbox" value="high" /> high</label>
-                  <label class="chip"><input type="checkbox" value="xhigh" /> xhigh</label>
-                  <label class="chip"><input type="checkbox" value="max" /> max</label>
+                  <div class="setting-row">
+                    <div class="setting-label">
+                      <span>服务商 ID</span>
+                      <small>保存后作为 provider 名称。</small>
+                    </div>
+                    <div class="setting-control">
+                      <input id="provider-name" placeholder="opencode" />
+                    </div>
+                  </div>
+                  <div class="setting-row">
+                    <div class="setting-label"><span>Adapter</span><small>决定使用哪种协议。</small></div>
+                    <div class="setting-control"><select id="provider-adapter"></select></div>
+                  </div>
+                  <div class="setting-row">
+                    <div class="setting-label"><span>Base URL</span></div>
+                    <div class="setting-control">
+                      <input id="provider-base-url" placeholder="https://api.example.com" />
+                      <p class="hint" id="provider-base-url-hint"></p>
+                    </div>
+                  </div>
+                  <div class="setting-row">
+                    <div class="setting-label"><span>Timeout</span><small>单次请求超时。</small></div>
+                    <div class="setting-control">
+                      <div class="inline-control">
+                        <input id="provider-timeout" type="number" min="1" value="300" />
+                        <span class="unit">秒</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="setting-row">
+                    <div class="setting-label">
+                      <span>默认模型</span>
+                      <small>可留空；只列出当前服务商自己的模型。</small>
+                    </div>
+                    <div class="setting-control"><select id="provider-default-model"></select></div>
+                  </div>
+                  <div class="setting-row">
+                    <div class="setting-label">
+                      <span>高级 request</span>
+                      <small>JSON，可空；用于服务商特有参数。</small>
+                    </div>
+                    <div class="setting-control">
+                      <textarea id="provider-request" rows="3" class="wide-control"
+                        placeholder='{"max_tokens_field":"max_completion_tokens"}'></textarea>
+                    </div>
+                  </div>
+
+                  <div class="provider-models-head">
+                    <div>
+                      <h5>模型</h5>
+                      <small id="provider-model-hint">先保存服务商，再添加模型。</small>
+                    </div>
+                    <button type="button" class="mini-btn" id="model-new" disabled>+ 添加模型</button>
+                  </div>
+                  <div class="settings-list" id="model-list"></div>
+
+                  <section class="setting-card model-editor" id="model-editor" hidden>
+                    <div class="setting-card-head">
+                      <div>
+                        <h4 id="model-editor-title">编辑模型</h4>
+                        <p>真实 Model ID 由服务商定义；Profile 是 AIEOS 内部名称。</p>
+                      </div>
+                      <button type="button" class="mini-btn" id="model-cancel">取消</button>
+                    </div>
+
+                    <div class="setting-row">
+                      <div class="setting-label"><span>Model Profile</span></div>
+                      <div class="setting-control"><input id="model-profile" placeholder="deepseek_chat" /></div>
+                    </div>
+                    <div class="setting-row">
+                      <div class="setting-label"><span>服务商</span></div>
+                      <div class="setting-control">
+                        <span class="readonly-value" id="model-provider-name">—</span>
+                      </div>
+                    </div>
+                    <div class="setting-row">
+                      <div class="setting-label"><span>真实 Model ID</span></div>
+                      <div class="setting-control"><input id="model-id" placeholder="deepseek-chat" /></div>
+                    </div>
+                    <div class="setting-row">
+                      <div class="setting-label"><span>上下文窗口</span></div>
+                      <div class="setting-control">
+                        <div class="inline-control">
+                          <input id="model-context" type="number" min="1" value="600000" />
+                          <span class="unit">tokens</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="setting-row">
+                      <div class="setting-label"><span>最大输出 tokens</span></div>
+                      <div class="setting-control">
+                        <div class="inline-control">
+                          <input id="model-output" type="number" min="1" value="16384" />
+                          <span class="unit">tokens</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="switch-row">
+                      <label class="switch">
+                        <input id="model-reasoning" type="checkbox" />
+                        <span class="switch-track"><span class="switch-thumb"></span></span>
+                        <span class="switch-copy">
+                          <b>支持 reasoning</b>
+                          <small>关闭后该模型只接受普通对话请求。</small>
+                        </span>
+                      </label>
+                    </div>
+                    <div class="setting-row" style="display:block;">
+                      <div class="setting-label" style="margin-bottom:7px;">
+                        <span>支持的思考强度</span>
+                      </div>
+                      <div class="chip-row" id="model-thinking-levels">
+                        <label class="chip"><input type="checkbox" value="off" /> off</label>
+                        <label class="chip"><input type="checkbox" value="minimal" /> minimal</label>
+                        <label class="chip"><input type="checkbox" value="low" /> low</label>
+                        <label class="chip"><input type="checkbox" value="medium" /> medium</label>
+                        <label class="chip"><input type="checkbox" value="high" /> high</label>
+                        <label class="chip"><input type="checkbox" value="xhigh" /> xhigh</label>
+                        <label class="chip"><input type="checkbox" value="max" /> max</label>
+                      </div>
+                    </div>
+                    <div class="form-actions">
+                      <button type="button" class="cd-btn primary" id="model-save">保存模型</button>
+                    </div>
+                  </section>
                 </div>
               </div>
             </section>

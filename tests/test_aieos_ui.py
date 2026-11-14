@@ -2179,6 +2179,29 @@ def test_settings_provider_preview_is_available():
     assert "不会写入" in html
 
 
+def test_settings_provider_and_model_are_one_page():
+    from pathlib import Path
+
+    static = Path(__file__).resolve().parent.parent / "ui" / "static"
+    html = (static / "index.html").read_text(encoding="utf-8")
+    js = (static / "settings.js").read_text(encoding="utf-8")
+
+    assert 'data-pane="system-models"' not in html
+    assert 'data-pane="system-providers"' in html
+    assert "服务商与模型" in html
+    assert 'id="provider-list"' in html
+    assert 'id="model-list"' in html
+    assert 'id="model-new"' in html
+    assert 'id="model-save"' in html
+    assert 'id="provider-model-hint"' in html
+    assert "model-provider-name" in html
+
+    assert "function renderModels()" in js
+    assert "function hideModelEditor()" in js
+    assert 'action: "model.upsert"' in js
+    assert "await load(editing.provider)" in js
+
+
 def test_agent_question_bubble_and_answer_ui():
     from pathlib import Path
 
