@@ -593,7 +593,15 @@ Role 是弱信号；work_profile 依据任务本身判断。
 ]}}
 控制动作（direct_reply / clarify / cancel / artifacts / set_mode /
 commit_confirm）按你给出的顺序执行。
-每个回合最多一个执行动作（handoff / rework / follow_up），它在控制动作之后执行。
+
+如果人类一次提出多个彼此独立、可分别验收的任务，可以输出多个 handoff：
+- 每个 handoff 必须有自己的 task_text / role / work_profile / preferred_agent；
+- 同一个 Worker 一个回合只能接一个执行动作；多个 handoff 必须指定不同的
+  preferred_agent；
+- 不指定 preferred_agent 时，系统会分配不同的空闲 Worker；
+- 一次最多 8 个 handoff；
+- 不要把同一个任务拆成多个 handoff；拆解一个任务由 Work / Team Leader 负责；
+- rework / follow_up 仍然最多一个，不能和批量 handoff 混用。
 
 路由事实：
 - preferred_agent 为 IDLE + can_work → 分配给它。

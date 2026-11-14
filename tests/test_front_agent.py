@@ -296,6 +296,8 @@ def test_front_prompt_is_human_facing_and_does_not_invent_constraints():
     assert "follow_up 可以恢复它" in prompt
     assert "artifacts" in prompt
     assert "一个回合内多个动作" in prompt
+    assert "同一个 Worker 一个回合只能接一个执行动作" in prompt
+    assert "一次最多 8 个 handoff" in prompt
     # 旧版的强行为约束不应再出现。
     assert "Do not replace the Work Agent" not in prompt
     assert "not the task planner" not in prompt

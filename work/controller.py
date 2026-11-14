@@ -95,12 +95,18 @@ class JobStatus:
     CANCELLED = "CANCELLED"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
+    #: 父 Job：一次派发多个子任务，自己不执行 Task。
+    BATCH_DISPATCHED = "BATCH_DISPATCHED"
     #: LLM 超时/中断：Task 仍是 IN_PROGRESS，后续可以 follow_up 续跑。
     INTERRUPTED = "INTERRUPTED"
     #: Agent 在 Work 中途等待人类回答；Task / 阶段都保持原状态。
     WAITING_HUMAN = "WAITING_HUMAN"
     DIRECT_REPLY = "DIRECT_REPLY"
     CLARIFY = "CLARIFY"
+
+
+#: 一次 Front 回合最多派发多少个独立 Task。
+MAX_BATCH_TASKS = 8
 
 
 #: Job 仍占用 Task 的状态；其余状态下的开放 Task 视为「已中断」。
@@ -123,6 +129,7 @@ _ENDED_JOB_STATUSES = frozenset({
     JobStatus.WAITING_HUMAN,
     JobStatus.DIRECT_REPLY,
     JobStatus.CLARIFY,
+    JobStatus.BATCH_DISPATCHED,
 })
 
 
@@ -135,6 +142,15 @@ class WorkJob:
     leader: str = ""
     members: List[str] = field(default_factory=list)
     task_id: str = ""
+    #: 批量派发：父 Job ID / 子 Job 序号；普通 Job 为空。
+    batch_id: str = ""
+    parent_job_id: str = ""
+    batch_index: int = 0
+    batch_size: int = 0
+    #: 批量派发时预先占用的 Worker；子 Job 不再重新竞争。
+    assigned_worker: str = ""
+    #: 子 Job 直接使用的 FrontDecision（跳过再次调用 Front）。
+    precomputed_decision: Any = None
     #: project 模式：Agent 直接编辑的用户项目目录；空 = Task Workspace。
     workdir: str = ""
     #: 本次 Task 选定的输出仓库；空 = 使用全局默认。
@@ -175,6 +191,10 @@ class WorkJob:
             "leader": self.leader,
             "members": list(self.members),
             "task_id": self.task_id,
+            "batch_id": self.batch_id,
+            "parent_job_id": self.parent_job_id,
+            "batch_index": self.batch_index,
+            "batch_size": self.batch_size,
             "workdir": self.workdir,
             "commit_repo": self.commit_repo,
             "human_message_id": self.human_message_id,
@@ -1138,7 +1158,7 @@ class AIEOSController:
         return False
 
     def _run_job(self, job: WorkJob) -> None:
-        leader = ""
+        leader = str(getattr(job, "assigned_worker", "") or "")
         members: List[str] = []
         admitted = False
         prompt_log.bind_job(job.job_id)
@@ -1146,6 +1166,12 @@ class AIEOSController:
             if not self._admit_job(job):
                 return
             admitted = True
+            # 批量派发的子 Job：Front 已在本轮完成决策，直接执行 handoff。
+            precomputed = getattr(job, "precomputed_decision", None)
+            if precomputed is not None:
+                self._set_job(job, JobStatus.RUNNING)
+                self._run_handoff_solo(job, precomputed, None)
+                return
             self._set_job(job, JobStatus.FRONT_ANALYZING)
             front = self._front_runtime(self._front_project_root(job))
             if front is None:
@@ -1215,13 +1241,14 @@ class AIEOSController:
                 or [])
             self._set_job(job, job.status)
 
-            # 控制类动作可以先执行多个；执行类动作最多一个。
+            # 控制类动作可以先执行多个；执行类动作：
+            #   · 一个 worker 一回合最多一个；
+            #   · 多个 handoff 走批量派发（每个 worker 一个）；
+            #   · rework / follow_up 仍然最多一个。
             for item in control:
                 self._apply_control_decision(job, item)
             if len(work) > 1:
-                self._fail(
-                    job, "一次最多只能有一个执行类动作"
-                    "（handoff / rework / follow_up）")
+                self._dispatch_batch(job, work)
                 return
             if not work:
                 return
@@ -1798,6 +1825,172 @@ class AIEOSController:
         brief.files = []
         brief.fallback = False
 
+    def _batch_eligible_workers(self) -> List[str]:
+        return [
+            aid for aid in self._agent_ids
+            if aid != self.front_agent
+            and aid not in self.disabled_agents
+            and aid not in self.archived_agents
+            and self._agent_has_brain(aid)
+        ]
+
+    def _dispatch_batch(self, job: WorkJob, decisions: List[Any]) -> None:
+        """一次 Front 回合派发多个 handoff；每个 Worker 只接一个。
+
+        🔒 不创建“多 Task Job”。父 Job 只负责派发，子 Job 各走现有
+           `_run_handoff_solo()`，Task Core 仍然是每个 Task 的权威。
+        """
+        if len(decisions) > MAX_BATCH_TASKS:
+            self._fail(
+                job, f"一次最多派发 {MAX_BATCH_TASKS} 个任务")
+            return
+        if any(item.intent != FrontIntent.HANDOFF for item in decisions):
+            self._fail(
+                job, "批量派发只支持 handoff；"
+                "rework / follow_up 一次只能一个")
+            return
+        if not self.solo_only:
+            self._fail(job, "批量 handoff 仅在 Solo 模式可用")
+            return
+        if str(getattr(job, "workdir", "") or "").strip():
+            self._fail(
+                job,
+                "同一项目目录一次只能运行一个任务；"
+                "请拆成多轮，或使用 Task Workspace")
+            return
+
+        eligible = self._batch_eligible_workers()
+        if not eligible:
+            self._fail(job, "没有可用的 Worker")
+            return
+
+        # 先校验所有 decision，再占用 Worker；避免部分派发。
+        preferred: Dict[int, str] = {}
+        for index, item in enumerate(decisions):
+            role = self.worker_roles.resolve(getattr(item, "role", ""))
+            if role is None:
+                self._fail(
+                    job,
+                    f"Front 选择了未知 Worker 角色："
+                    f"{getattr(item, 'role', '')!r}")
+                return
+            item.role = role.role_id
+            profile = str(
+                getattr(item, "work_profile", "") or "standard").strip()
+            if profile not in ("direct", "standard", "creative_product"):
+                self._fail(job, f"未知 work_profile：{profile!r}")
+                return
+            item.work_profile = profile
+
+            agent = str(
+                getattr(item, "preferred_agent", "") or "").strip()
+            if not agent:
+                continue
+            if agent not in eligible:
+                self._fail(
+                    job, f"preferred_agent_unavailable: {agent}")
+                return
+            if agent in preferred.values():
+                self._fail(
+                    job,
+                    f"preferred_agent_duplicate: {agent}；"
+                    "同一 Worker 一回合只能接一个执行动作")
+                return
+            preferred[index] = agent
+
+        assigned: List[str] = [""] * len(decisions)
+        acquired: List[str] = []
+        explicit = set(preferred.values())
+
+        def abort(message: str) -> None:
+            for agent_id in acquired:
+                self.availability.release(agent_id)
+            self._fail(job, message)
+
+        # 1) 显式指定的 Worker 先占位；忙则整批拒绝。
+        for index, agent_id in preferred.items():
+            if not self.availability.try_acquire(agent_id):
+                abort(f"preferred_agent_busy: {agent_id}")
+                return
+            assigned[index] = agent_id
+            acquired.append(agent_id)
+
+        # 2) 没有显式指定的 handoff：分配不同的空闲 Worker。
+        auto_candidates = [
+            aid for aid in sorted(eligible) if aid not in explicit
+        ]
+        for index, _item in enumerate(decisions):
+            if assigned[index]:
+                continue
+            chosen = ""
+            for agent_id in auto_candidates:
+                if agent_id in acquired:
+                    continue
+                if self.availability.try_acquire(agent_id):
+                    chosen = agent_id
+                    break
+            if not chosen:
+                abort(
+                    "没有足够的空闲 Worker 承接全部任务；"
+                    "请减少任务数或先释放 Worker")
+                return
+            assigned[index] = chosen
+            acquired.append(chosen)
+
+        job.status = JobStatus.BATCH_DISPATCHED
+        job.batch_id = job.job_id
+        job.batch_size = len(decisions)
+        job.summary = f"已派发 {len(decisions)} 个任务"
+        job.front_intent = "batch"
+        lines = []
+        for index, (item, agent_id) in enumerate(
+                zip(decisions, assigned), 1):
+            brief = getattr(item, "brief", None)
+            goal = str(
+                getattr(brief, "goal", "")
+                or getattr(brief, "task_text", "")
+                or "任务"
+            ).strip()
+            lines.append(
+                f"{index}. {goal[:80]} → "
+                f"{self._agent_name(agent_id)}（{agent_id}）")
+        reply = str(
+            getattr(decisions[0], "reply", "") or "").strip()
+        headline = reply or "好，我把这次需求拆成多个任务："
+        self._message(
+            "front", headline + "\n\n" + "\n".join(lines),
+            job_id=job.job_id)
+
+        for index, (item, agent_id) in enumerate(
+                zip(decisions, assigned), 1):
+            child = WorkJob(
+                job_id=f"{job.job_id}_b{index}",
+                human_text=job.human_text,
+                status=JobStatus.QUEUED,
+                front_intent=FrontIntent.HANDOFF,
+                workdir=job.workdir,
+                commit_repo=job.commit_repo,
+                human_message_id=job.human_message_id,
+                conversation_id=job.conversation_id,
+                batch_id=job.job_id,
+                parent_job_id=job.job_id,
+                batch_index=index,
+                batch_size=len(decisions),
+                assigned_worker=agent_id,
+                precomputed_decision=item,
+                front_thinking=job.front_thinking,
+                created_at=_now(),
+                updated_at=_now(),
+            )
+            child.front_decision = item.to_dict()
+            with self._lock:
+                self._jobs[child.job_id] = child
+                self._job_order.append(child.job_id)
+            self._executor.submit(self._run_job, child)
+
+        self._touch(job)
+        self._notify()
+
     def _run_handoff_solo(
         self,
         job: WorkJob,
@@ -1826,7 +2019,22 @@ class AIEOSController:
         role_prompt = self.worker_roles.render(role)
         preferred = str(
             getattr(decision, "preferred_agent", "") or "").strip()
-        if preferred:
+        assigned = str(
+            getattr(job, "assigned_worker", "") or "").strip()
+        if assigned:
+            if (
+                assigned not in self._agent_ids
+                or assigned in self.disabled_agents
+                or assigned in self.archived_agents
+                or assigned == self.front_agent
+                or not self._agent_has_brain(assigned)
+            ):
+                self._fail(
+                    job, f"assigned_worker_unavailable: {assigned}")
+                return "", []
+            # 批量派发时 Worker 已在派发前占位；这里不再重复 acquire。
+            worker = assigned
+        elif preferred:
             worker = self._acquire_preferred_worker(job, preferred)
         else:
             worker = self._acquire_worker(job)
@@ -1867,7 +2075,7 @@ class AIEOSController:
         task_id = str(created["task_id"])
         job.task_id = task_id
         self._bind_task_to_agents([worker], task_id)
-        if decision.reply:
+        if decision.reply and not job.parent_job_id:
             self._message(
                 "front", decision.reply,
                 job_id=job.job_id, task_id=task_id,
