@@ -1,10 +1,10 @@
 # Agent Inbox V1 —— Runtime 收件箱接入设计
 
-> **状态：Phase 0/1/2 `CURRENT`；Phase 3–5 `DESIGNED`（2026-11-15）**
+> **状态：Phase 0/1/2/3 `CURRENT`；Phase 4–5 `DESIGNED`（2026-11-15）**
 >
 > Phase 0（边界 / flag / legacy cutover）、Phase 1（持久化 Inbox Core /
-> 统计 / API）与 Phase 2（Pi 持久 Inbox）已实现；
-> **Front 常驻收件箱消费仍为 `DESIGNED`**。
+> 统计 / API）、Phase 2（Pi 持久 Inbox）与 Phase 3（Front Inbox-first）
+> 已实现；Solo 自动消费仍为 `DESIGNED`。
 >
 > 相关文档：
 > [`COMMUNICATION_MODEL.md`](../COMMUNICATION_MODEL.md) ·
@@ -21,13 +21,13 @@
 | Phase 0：边界与迁移准备 | **`CURRENT`** | `runtime.inbox_enabled` · `communication_inbox_state` · legacy cutover |
 | Phase 1：持久化 Inbox Core | **`CURRENT`** | pending / IGNORED / stats / startup recovery / `/api/inbox` |
 | Phase 2：Pi 持久 Inbox | **`CURRENT`** | `PiInboxService` 常驻消费；写入 `agents/<id>/inbox/` |
-| Phase 3：Front Inbox-first | `DESIGNED` | Human 仍走 controller 直接路径 |
+| Phase 3：Front Inbox-first | **`CURRENT`** | Human → Front inbox → Job dispatch |
 | Phase 4：Solo 入队 / Life | `DESIGNED` | 尚未启用 Solo 自动处理 |
 | Phase 5：Life 通信 | `FUTURE` | 社交 / 经济 / Conversation |
 
 > Phase 1 的 `communication_inbox_state` 是第 **30** 张表。
-> Phase 2 的 `runtime.inbox_enabled` 当前为 `true`；
-> 只启动 **Pi Agent** 的常驻 Inbox，Front 仍未接入。
+> `runtime.inbox_enabled` 当前为 `true`；
+> Front 与 Pi Agent 已启用，Solo 仍未自动消费。
 
 ---
 
@@ -398,12 +398,13 @@ Task lifecycle 消息驱动的改造属于后续独立阶段。
 [ ] 消息处理后 status / processed_at 正确
 ```
 
-### Phase 3：Front Inbox-first
+### Phase 3：Front Inbox-first（`CURRENT`）
 
-- `AIEOSController.submit()` 不再直接 `executor.submit(_run_job)`；
-- 只创建 Job + 发送 human_message；
-- Front Inbox Handler 收到消息后，把 Job 交给 executor；
-- 删除 controller 里的直接 `decide_turn` 双路径；
+- `AIEOSController.submit()` 在 Front Inbox 可用时只创建 Job + 发送 human_message；
+- `InboxConsumer` 常驻消费 Front 信箱；
+- `_on_front_inbox_message()` 按 `job_id` 找到 Job，再交给 executor；
+- 重复消息通过 `job.status != RECEIVED` 防重；
+- 没有 Front Consumer 时保留 direct executor 回退（测试 / CLI）；
 - 启用 Front 的 `communication_inbox_state.enabled`。
 
 **验收**：

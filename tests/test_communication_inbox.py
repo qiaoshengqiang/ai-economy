@@ -9,6 +9,7 @@ import pytest
 from communication import (
     CommunicationManager,
     CommunicationRecorder,
+    InboxConsumer,
     InboxOutcome,
     LocalTransport,
     MessageStatus,
@@ -224,3 +225,59 @@ def test_pi_inbox_service_starts_and_stops_agents(wired, tmp_path):
         service.sync([])
         assert service.bridge_for("agent_b") is None
         assert journal.get_inbox_state("agent_b")["enabled"] is False
+
+
+def test_inbox_consumer_dispatches_messages_to_handler(wired):
+    manager, _journal, _agent_a, _agent_b = wired
+    seen = []
+    consumer = InboxConsumer(
+        manager, agent_id="agent_b", handler=seen.append)
+    assert consumer.start() is True
+    try:
+        run_coro(manager.send("agent_a", "agent_b", text="inbox"))
+        deadline = time.time() + 3.0
+        while time.time() < deadline and not seen:
+            time.sleep(0.05)
+        assert seen
+        assert seen[0].payload["text"] == "inbox"
+    finally:
+        consumer.stop()
+
+
+def test_controller_submit_dispatches_through_front_inbox(wired):
+    from types import SimpleNamespace
+    from work.controller import AIEOSController
+    from work.human_gateway import HumanGateway
+
+    manager, _journal, _agent_a, _agent_b = wired
+    gateway = HumanGateway(manager)
+    gateway.ensure_registered()
+
+    class _Directory:
+        def all(self):
+            return [
+                SimpleNamespace(agent_id="agent_a"),
+                SimpleNamespace(agent_id="agent_b"),
+            ]
+
+    runtime = SimpleNamespace(
+        directory=_Directory(),
+        economy=SimpleNamespace(
+            agent=lambda _aid: SimpleNamespace(has_brain=True)),
+        tasks=SimpleNamespace(list_tasks=lambda limit=50: []),
+        communication=manager,
+        resolved_config=SimpleNamespace(inbox_enabled=True),
+    )
+    controller = AIEOSController(
+        runtime, front_agent="agent_a", human_gateway=gateway)
+    dispatched = []
+    controller._run_job = lambda job: dispatched.append(job.job_id)
+    try:
+        job_id = controller.submit("hello")
+        deadline = time.time() + 3.0
+        while time.time() < deadline and job_id not in dispatched:
+            time.sleep(0.05)
+        assert dispatched == [job_id]
+        assert controller._front_inbox_consumer is not None
+    finally:
+        controller.close()

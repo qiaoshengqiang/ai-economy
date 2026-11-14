@@ -57,6 +57,7 @@ from front import (
     FRONT_SYSTEM_PROMPT, FrontAgentRuntime, FrontIntent, FrontResult,
     FrontTurn, FrontUnavailableError,
 )
+from communication.inbox_runtime import InboxConsumer
 from work.availability import AgentAvailability
 from work.checkpoint import (
     RunCheckpoint, checkpoint_from_rounds, dumps as checkpoint_dumps,
@@ -366,10 +367,12 @@ class AIEOSController:
         self._closed = False
         #: Phase 2：Pi Agent 的常驻收件箱服务。
         self._pi_inbox_service: Optional[PiInboxService] = None
+        #: Phase 3：Front 的常驻收件箱消费者。
+        self._front_inbox_consumer: Optional[InboxConsumer] = None
         #: Front 自己的持久草稿（按 agent 私有空间隔离）。
         self._front_drafts_store: Optional[TaskDraftStore] = None
         self._load_settings()
-        self._sync_pi_inbox_service()
+        self._sync_inbox_services()
         self._apply_prompt_log_config()
         if commit_service is not None:
             self.commit_service = commit_service
@@ -631,7 +634,7 @@ class AIEOSController:
                     raise ValueError("commit_max_total_bytes 必须 > 0")
                 self.commit_max_total_bytes = value
             self._persist_settings()
-            self._sync_pi_inbox_service()
+            self._sync_inbox_services()
             self._configure_front_brain()
             self._notify()
             return self.settings_dict()
@@ -1025,12 +1028,19 @@ class AIEOSController:
                 created_at=_now(),
                 updated_at=_now(),
             )
+            # 先登记 Job，再发消息：Front Inbox Handler 可能立刻消费，
+            # 必须能按 payload.job_id 找到它。
+            with self._lock:
+                self._jobs[job.job_id] = job
+                self._job_order.append(job.job_id)
+
             conversation_id = ""
             human_message_id = ""
             if self.human_gateway is not None:
                 try:
                     conversation_id = self.human_gateway.conversation_id(
                         self.front_agent)
+                    job.conversation_id = conversation_id
                     human_message_id = self.human_gateway.send_human_message(
                         text,
                         to_agent=self.front_agent,
@@ -1043,8 +1053,6 @@ class AIEOSController:
             job.conversation_id = conversation_id
             job.human_message_id = human_message_id
             with self._lock:
-                self._jobs[job.job_id] = job
-                self._job_order.append(job.job_id)
                 self._message(
                     "human", text, job_id=job.job_id,
                     message_id=human_message_id)
@@ -1055,6 +1063,14 @@ class AIEOSController:
                     "workdir": target_workdir,
                     "commit_repo": target_repo,
                 }
+
+            # Phase 3：Front Inbox 消费到 human_message 后派发 Job。
+            # 没有 Front consumer / Gateway 失败时保留直连回退，
+            # 避免测试、CLI 和老部署中的 Job 卡死。
+            if (self._front_inbox_consumer is not None
+                    and self._front_inbox_consumer.running
+                    and human_message_id):
+                return job.job_id
             self._executor.submit(self._run_job, job)
             return job.job_id
 
@@ -1538,26 +1554,96 @@ class AIEOSController:
     def _pi_enabled(self, agent_id: str) -> bool:
         return str(agent_id or "") in self.pi_work_agents
 
-    def _sync_pi_inbox_service(self) -> None:
-        """按当前设置启停 Pi Agent 的常驻 Inbox。"""
+    def _stop_front_inbox(self) -> None:
+        consumer = self._front_inbox_consumer
+        if consumer is None:
+            return
+        agent_id = consumer.agent_id
+        consumer.stop()
+        self._front_inbox_consumer = None
+        recorder = self._inbox_recorder()
+        if recorder is not None:
+            try:
+                recorder.set_inbox_enabled(agent_id, False)
+            except Exception:                                 # noqa: BLE001
+                logger.warning(
+                    "Front inbox state 关闭失败：%s", agent_id, exc_info=True)
+
+    def _sync_inbox_services(self) -> None:
+        """按当前设置启停 Pi 常驻 Inbox 与 Front Inbox。"""
         resolved = getattr(self.rt, "resolved_config", None)
         enabled = bool(getattr(resolved, "inbox_enabled", False))
         communication = getattr(self.rt, "communication", None)
+
+        # ---- Pi Agent 持久 Inbox ----
         if not enabled or communication is None:
             if self._pi_inbox_service is not None:
                 self._pi_inbox_service.stop_all()
                 self._pi_inbox_service = None
+        else:
+            if self._pi_inbox_service is None:
+                self._pi_inbox_service = PiInboxService(communication)
+            wanted = sorted(
+                aid for aid in self.pi_work_agents
+                if aid in self._agent_ids
+                and aid != self.front_agent
+                and aid not in self.disabled_agents
+                and aid not in self.archived_agents
+            )
+            self._pi_inbox_service.sync(wanted)
+
+        # ---- Front Inbox（Phase 3）----
+        if not enabled or communication is None or self.human_gateway is None:
+            self._stop_front_inbox()
             return
-        if self._pi_inbox_service is None:
-            self._pi_inbox_service = PiInboxService(communication)
-        wanted = sorted(
-            aid for aid in self.pi_work_agents
-            if aid in self._agent_ids
-            and aid != self.front_agent
-            and aid not in self.disabled_agents
-            and aid not in self.archived_agents
-        )
-        self._pi_inbox_service.sync(wanted)
+        current = self._front_inbox_consumer
+        if current is not None and (
+            not current.running or current.agent_id != self.front_agent
+        ):
+            self._stop_front_inbox()
+        if self._front_inbox_consumer is None:
+            consumer = InboxConsumer(
+                communication,
+                agent_id=self.front_agent,
+                handler=self._on_front_inbox_message,
+                name="front-inbox",
+            )
+            if consumer.start():
+                self._front_inbox_consumer = consumer
+                recorder = self._inbox_recorder()
+                if recorder is not None:
+                    try:
+                        recorder.set_inbox_enabled(self.front_agent, True)
+                    except Exception:                     # noqa: BLE001
+                        logger.warning(
+                            "Front inbox state 开启失败：%s",
+                            self.front_agent, exc_info=True)
+
+    def _on_front_inbox_message(self, message: Any) -> None:
+        """Front Inbox → 把 human_message 对应的 Job 交给执行器。"""
+        payload = getattr(message, "payload", None) or {}
+        if not isinstance(payload, dict):
+            return
+        if str(payload.get("kind") or "") != "human_message":
+            return
+        job_id = str(payload.get("job_id") or "").strip()
+        if not job_id:
+            return
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                logger.warning("Front Inbox：找不到 Job %s", job_id)
+                return
+            if job.status != JobStatus.RECEIVED:
+                # 重复消息 / 已经派发：不重复执行。
+                return
+            job.status = JobStatus.QUEUED
+            self._touch(job)
+        try:
+            self._executor.submit(self._run_job, job)
+        except Exception as exc:                              # noqa: BLE001
+            self._fail(
+                job, f"Front Inbox 派发 Job 失败：{type(exc).__name__}: {exc}")
 
     def _pi_runner(
         self,
