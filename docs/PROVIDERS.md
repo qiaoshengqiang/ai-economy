@@ -222,17 +222,35 @@ Go 订阅不覆盖 Zen 的请求。
 ### 5.1 OpenCode Go（已实测）
 
 ```text
+✅ deepseek-v4.1-flash
+✅ deepseek-v4-pro
 ✅ glm-5.3
 ✅ kimi-k3
 ✅ minimax-m3
 ✅ qwen3.8-max
 ```
 
+DeepSeek Harness 自带的 `opencode-go` 模型表使用：
+
+```text
+baseUrl: https://opencode.ai/inference/go/v1
+model:   deepseek-v4.1-flash / deepseek-v4-pro
+header:  x-opencode-session
+```
+
+AIEOS 当前使用：
+
+```text
+https://opencode.ai/inference/go/openai/v1/chat/completions
+```
+
+两者都能调用 DeepSeek；区别只是路径前缀。AIEOS 的代理层
+会把 Pi 的 `/v1/chat/completions` 映射到 provider 的
+`base_url + chat_path`，不会重复拼 `/v1`。
+
 以下情况在 Go 上会失败：
 
 ```text
-❌ deepseek-v4.1-flash   模型托管在欧/美之外，需要在 Console 把
-                        region 设为 Global
 ❌ mistral-large-4       不包含在 Go 订阅里
 ```
 
@@ -319,8 +337,9 @@ x-opencode-session: ses_...
 
 ### `This OpenCode Go model is hosted outside Europe and the United States`
 
-该模型在 Go 上需要先在 Console 设置 region = Global。
-换用 `glm-5.3` / `kimi-k3` / `minimax-m3` / `qwen3.8-max` 可避开。
+该模型在 Go 上可能要求 Console 的 region = Global。
+如果已设为 Global 仍然报这个错，换用
+`glm-5.3` / `kimi-k3` / `minimax-m3` / `qwen3.8-max` 可避开。
 
 ### `401` / `403`
 
@@ -329,7 +348,9 @@ x-opencode-session: ses_...
 
 ### `404`
 
-模型 ID 不存在，或 Base URL 少了 `/openai/v1`。
+模型 ID 不存在，或 Base URL 不是 provider 的 Base URL。
+OpenCode Go 可用 `.../inference/go/v1` 或
+`.../inference/go/openai/v1`。
 
 ### 请求发到了错误的路径
 
