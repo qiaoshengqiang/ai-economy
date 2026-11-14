@@ -4,7 +4,7 @@
 > **日期：2026-11-13**
 > **阶段：开发中 / 观察实验**
 > **协议版本：`1`**
-> **测试基线：`5631 passed, 2 skipped, 30 deselected`**
+> **测试基线：`5633 passed, 2 skipped, 30 deselected`**
 
 本文记录**当前真实可用能力、推荐工作方式、已知限制和版本变化**。
 架构的长期权威仍然是
@@ -273,6 +273,7 @@ task_text
 |---|---|
 | Human ↔ Front 对话 | `CURRENT` |
 | Human ↔ Front 走 `CommunicationManager` / Journal 投影 | `CURRENT`（Phase 1；含客户端幂等） |
+| Front ↔ Worker handoff（`TASK_OFFER` / `ACCEPT` / `REJECT`） | `CURRENT`（Phase 2；Worker 侧 Runtime 适配器） |
 | Agent 紧凑列表 + 机器人空闲/工作动画 | `CURRENT` |
 | Agent 工作中顺时针虚线边框 | `CURRENT` |
 | Front / Work 模式显示 | `CURRENT` |
@@ -503,7 +504,7 @@ Team 协作
 当前基线：
 
 ```text
-5631 passed, 2 skipped, 30 deselected
+5633 passed, 2 skipped, 30 deselected
 ```
 
 启动说明见 [`../START_AIEOS.md`](../START_AIEOS.md)。

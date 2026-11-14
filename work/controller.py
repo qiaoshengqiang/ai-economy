@@ -65,6 +65,7 @@ from work.drafts import TaskDraftStore
 from work.front_actions import (
     build_front_dispatcher, execute_front_actions,
 )
+from work.handoff import HandoffRuntime
 from work.pi_runtime import PiWorkRuntime
 from work.project_context import render_project_context
 from work.project_lock import ProjectLockManager
@@ -141,6 +142,9 @@ class WorkJob:
     #: Human Gateway 写入 Journal 后返回的消息 ID / 会话 ID。
     human_message_id: str = ""
     conversation_id: str = ""
+    #: Front → Worker 的 TASK_OFFER 消息 ID / handoff 会话 ID。
+    handoff_message_id: str = ""
+    handoff_conversation_id: str = ""
     #: UI 客户端幂等键；同一个键重试不会创建第二个 Job。
     client_message_id: str = ""
     summary: str = ""
@@ -175,6 +179,8 @@ class WorkJob:
             "commit_repo": self.commit_repo,
             "human_message_id": self.human_message_id,
             "conversation_id": self.conversation_id,
+            "handoff_message_id": self.handoff_message_id,
+            "handoff_conversation_id": self.handoff_conversation_id,
             "client_message_id": self.client_message_id,
             "summary": self.summary,
             "error": self.error,
@@ -1792,7 +1798,19 @@ class AIEOSController:
             self._fail(job, "项目目录模式只支持 Pi Work")
             return worker, []
 
-        created = self._create_solo_task(job, worker, decision)
+        handoff = HandoffRuntime(
+            getattr(self.rt, "communication", None),
+            front_agent=self.front_agent,
+            worker=worker,
+            job=job,
+        )
+        created = handoff.negotiate(
+            decision,
+            lambda: self._create_solo_task(job, worker, decision),
+        )
+        job.handoff_message_id = str(
+            getattr(handoff.offer_message, "message_id", "") or "")
+        job.handoff_conversation_id = handoff.conversation_id
         if not created.get("ok"):
             self._fail(job, created.get("message") or "Task 创建失败")
             return worker, []

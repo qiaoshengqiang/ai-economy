@@ -1,11 +1,12 @@
-# UI 通信接入设计（Phase 1 前）
+# UI 通信接入设计（Phase 1 / Phase 2）
 
-> **状态：`CURRENT`（Phase 1）**
+> **状态：`CURRENT`（Phase 1 + Phase 2）**
 >
-> 已实现：Human Gateway · Human → Front · Front → Human ·
+> 已实现：Human Gateway · Human ↔ Front · Front ↔ Worker handoff ·
 > Message Journal · UI 从 Journal 投影 · 客户端幂等 / 重试去重。
 >
-> 未完成：Front → Worker 与 Task 消息仍属于后续阶段。
+> 未完成：Task 生命周期消息（Phase 3）；Worker ↔ Worker 与
+> Pi inbox/outbox（Phase 4）。
 >
 > 相关文档：
 > [`COMMUNICATION_MODEL.md`](COMMUNICATION_MODEL.md) ·
@@ -284,7 +285,8 @@ Human ↔ Front:
   conversation_id = "conv_<human_id>_<front_agent>"
 
 Front ↔ Worker:
-  conversation_id = "conv_<task_id>"（或 handoff 专用会话）
+  conversation_id = "conv_handoff_<job_id>"
+  TASK_OFFER 在 Task 创建前发出；ACCEPT 携带 task_id
   task_id 可选
 
 Worker ↔ Worker:
@@ -345,11 +347,13 @@ Agent Runtime
 
 ## 8. Phase 2–4
 
-### Phase 2：Front ↔ Worker
+### Phase 2：Front ↔ Worker（`CURRENT`）
 
-- `TASK_OFFER` / `ACCEPT` / `REJECT` 接入；
-- Worker 仍通过 Task Core 创建 Task；
-- Front 不再直接调用 `TaskCreationService`。
+- [x] `TASK_OFFER` / `ACCEPT` / `REJECT` 接入；
+- [x] Worker 仍通过 Task Core 创建 Task；
+- [x] Front 侧不再直接调用 `TaskCreationService`，由
+  `HandoffRuntime` 代表 Worker 侧执行创建并回 `ACCEPT`；
+- V1 的 Worker 侧是 Runtime 适配器；Pi inbox/outbox 仍在 Phase 4。
 
 ### Phase 3：Task 生命周期消息
 

@@ -36,7 +36,7 @@
 | [LOCK_MODEL.md](LOCK_MODEL.md) | 中 | **Directory/File Lock · Explicit/Implicit · Effective Lock · Edit Session · Handoff**（`FUTURE`） | 做 Lock / 并行修改 / 交接时 |
 | [RECOVERY_MODEL.md](RECOVERY_MODEL.md) | 中 | **异常检测 ≠ 治理决策 · Human Confirmation · 未来 AI Governance**（`FUTURE`） | 做 Agent 异常 / Recovery / 治理时 |
 | [COMMUNICATION_MODEL.md](COMMUNICATION_MODEL.md) | 中 | **Communication 是 Agent 基础能力（不绑 Task）· Workspace Event ≠ Agent Message · Runtime Inbox** | 做通信 / Conversation / Inbox 时 |
-| [UI_COMMUNICATION_INTEGRATION.md](UI_COMMUNICATION_INTEGRATION.md) | 中 | **UI 通信接入 · Human↔Front Journal 投影**（Phase 1 `CURRENT`） | 做 UI 消息 / Front↔Worker 通信时 |
+| [UI_COMMUNICATION_INTEGRATION.md](UI_COMMUNICATION_INTEGRATION.md) | 中 | **UI 通信接入 · Human↔Front · Front↔Worker handoff**（Phase 1 + 2 `CURRENT`） | 做 UI 消息 / Front↔Worker 通信时 |
 | [TOOL_RUNTIME_V1_DESIGN.md](TOOL_RUNTIME_V1_DESIGN.md) | 中 | **受控代码执行 / 测试 · 公共只读工具库 · 独立 run 目录**（`CURRENT`） | 做代码执行 / 测试 / 工具时 |
 | [OUTPUT_COMMIT.md](OUTPUT_COMMIT.md) | 中 | **任务完成后提交到独立输出仓库 · manual / limited / auto**（`CURRENT`） | 做提交 / 交付 / 输出仓库时 |
 | [PROJECT_WORKDIR.md](PROJECT_WORKDIR.md) | 中 | **Project Workdir · 直接修改已有项目目录 · shadow snapshot · 项目锁**（Phase 1 `CURRENT`） | 做直接改项目 / 项目目录 / 项目锁时 |
@@ -90,7 +90,7 @@ ADR            ← 单个决策的历史与理由（中）
 |---|---|
 | **版本** | **`v0.2.0`**（当前状态见 [`../PROJECT_STATUS.md`](../PROJECT_STATUS.md)） |
 | **阶段** | Post-Change-Pipeline-Phase-1 · Agent Core V1 · Tool Runtime V1 · Pi Work（workflow / autonomous）已实现 |
-| **测试** | 以 `./dev.sh test` 当前输出为准（最近：5631 passed, 2 skipped, 30 deselected） |
+| **测试** | 以 `./dev.sh test` 当前输出为准（最近：5633 passed, 2 skipped, 30 deselected） |
 | **协议** | v1 |
 | **Memory 四层** | Layer 1 `DESIGNED` · **Layer 2 `CURRENT`** · Layer 3/4 `FUTURE`（见 AGENTS.md §4） |
 | **Task Workspace** | `TaskWorkspaceRef` 仍是纯引用；**Workspace Core v1 已实现**（资源树 / 锁 / 版本，ADR-0029） |

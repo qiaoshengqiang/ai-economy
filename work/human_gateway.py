@@ -12,12 +12,12 @@ Phase 1 只做本机单 Human；多用户 / 跨机器后续再扩展。
 
 from __future__ import annotations
 
-import asyncio
 import json
 import threading
 from typing import Any, Dict, Optional
 
 from communication import Message, MessageType
+from work.comm_bridge import run_coro
 
 
 class HumanGateway:
@@ -44,27 +44,7 @@ class HumanGateway:
     @staticmethod
     def _run(coro: Any) -> Any:
         """在同步 UI 线程里执行 CommunicationManager 的协程。"""
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            return asyncio.run(coro)
-
-        # 调用方本身在事件循环里：换一个线程 + 新 loop 执行，避免嵌套。
-        result = []
-        error = []
-
-        def _target() -> None:
-            try:
-                result.append(asyncio.run(coro))
-            except Exception as exc:                          # noqa: BLE001
-                error.append(exc)
-
-        thread = threading.Thread(target=_target, daemon=True)
-        thread.start()
-        thread.join()
-        if error:
-            raise error[0]
-        return result[0] if result else None
+        return run_coro(coro)
 
     def ensure_registered(self) -> None:
         with self._lock:
