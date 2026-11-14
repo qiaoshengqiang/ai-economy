@@ -424,6 +424,30 @@ class Database:
         """
         return self._session().conn
 
+    def close_thread_session(self) -> None:
+        """关闭当前线程的连接。
+
+        🔒 UI 的 HTTP 每个请求都在新线程里执行；如果每个线程都永久保留
+           一个 SQLite 连接，进程会累积到文件句柄上限。这个方法是给
+           **短生命周期线程**用的：请求结束时释放当前线程 session。
+           长生命周期线程（Pi inbox / Front inbox / job worker）不要调用。
+        """
+        if self.is_memory:
+            return
+        session = getattr(self._local, "session", None)
+        if session is None:
+            return
+        self._local.session = None
+        with self._sessions_lock:
+            try:
+                self._sessions.remove(session)
+            except ValueError:
+                pass
+        try:
+            session.conn.close()
+        except Exception:            # pragma: no cover - 防御
+            logger.debug("关闭线程数据库连接时出错（忽略）", exc_info=True)
+
     def close(self) -> None:
         """
         关掉**所有线程**的连接。

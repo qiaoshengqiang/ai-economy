@@ -119,9 +119,36 @@ class Handler(BaseHTTPRequestHandler):
         }
 
     # ------------------------------------------------------------
+    # 短生命周期请求：结束后释放当前线程的数据库连接
+    # ------------------------------------------------------------
+    def _release_db_session(self) -> None:
+        controller = getattr(self, "controller", None)
+        runtime = getattr(controller, "rt", None)
+        economy = getattr(runtime, "economy", None)
+        db = getattr(economy, "db", None)
+        release = getattr(db, "close_thread_session", None)
+        if callable(release):
+            try:
+                release()
+            except Exception:                                 # noqa: BLE001
+                pass
+
+    def do_GET(self):
+        try:
+            self._do_get()
+        finally:
+            self._release_db_session()
+
+    def do_POST(self):
+        try:
+            self._do_post()
+        finally:
+            self._release_db_session()
+
+    # ------------------------------------------------------------
     # GET
     # ------------------------------------------------------------
-    def do_GET(self):
+    def _do_get(self):
         parsed = urlparse(self.path)
         path = unquote(parsed.path)
         if path in ("/", "/index.html"):
@@ -203,7 +230,7 @@ class Handler(BaseHTTPRequestHandler):
     # ------------------------------------------------------------
     # POST
     # ------------------------------------------------------------
-    def do_POST(self):
+    def _do_post(self):
         parsed = urlparse(self.path)
         path = unquote(parsed.path)
         payload = self._read_json()

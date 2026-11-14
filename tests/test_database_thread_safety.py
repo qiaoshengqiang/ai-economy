@@ -720,3 +720,19 @@ class TestInMemoryIsSingleConnectionByNature:
             f"共享缓存的写入应当大量丢失（期望远小于 100），实际 {total}"
         )
         setup.close()
+
+
+def test_close_thread_session_releases_connection(tmp_path):
+    db = Database(tmp_path / "release.db")
+    db.initialize()
+    try:
+        assert db.fetchone("SELECT 1")[0] == 1
+        assert db.open_connection_count >= 1
+
+        db.close_thread_session()
+        assert db.open_connection_count == 0
+
+        # 关闭后当前线程再查询会重新建立连接。
+        assert db.fetchone("SELECT 1")[0] == 1
+    finally:
+        db.close()
