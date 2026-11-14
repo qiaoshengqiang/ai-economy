@@ -30,7 +30,7 @@
 | | |
 |---|---|
 | **阶段** | **`v0.2.0`** · Workspace Core V1 已冻结 · Agent Core V1 · Tool Runtime V1 · Vision V1 · Demand Entry V1 · Pi Work（workflow / autonomous）· Output Commit V1 · Project Workdir V1 · 观察实验 |
-| **测试基线** | 以 `./dev.sh test` 当前输出为准（最近：**5625 passed, 2 skipped, 30 deselected**） |
+| **测试基线** | 以 `./dev.sh test` 当前输出为准（最近：**5627 passed, 2 skipped, 30 deselected**） |
 | **协议版本** | `protocol_version = "1"` |
 | **命令数** | 25（`./dev.sh` 查看全部） |
 | **数据库表** | **29** |
@@ -394,7 +394,7 @@ AGENTS.md → 判断任务领域 → 只读相关 Specification → 必要时读
 | **SQLite / 并发 / 事务** | ADR-0012 · ADR-0014 · §3 · §11 | TASK_SHARED_CONTEXT.md |
 | **Negotiation / DecisionPolicy** | §6.1 · `core/decision_policy.py` · `task_negotiation_service.py` | Workspace 相关 |
 | **Execution（START/SUBMIT/…）** | `task_execution_service.py` · `core/task_execution.py` · `core/task.py` | Alignment 设计 |
-| **Communication / 协议** | [`PROTOCOL.md`](PROTOCOL.md) · `communication/` · ADR-0002 · ADR-0003 | Economy |
+| **Communication / 协议 / UI 消息** | [`PROTOCOL.md`](PROTOCOL.md) · `communication/` · [`UI_COMMUNICATION_INTEGRATION.md`](docs/architecture/UI_COMMUNICATION_INTEGRATION.md) · ADR-0002 · ADR-0003 | Economy |
 | **Workspace / Lifecycle / Human** | [`TASK_WORKSPACE.md`](docs/architecture/TASK_WORKSPACE.md) + ADR-0020/0021/0022（§4.1 · §7 · §14.5 · §15） | TASK_SHARED_CONTEXT.md |
 | **Task Origin / Task Lineage** | [`TASK_ORIGIN_LINEAGE.md`](docs/architecture/TASK_ORIGIN_LINEAGE.md) + **ADR-0023** —— 概念已定（`SETTLED`），**实现为 `FUTURE`** | — |
 | **代码执行 / 测试工具** | [`TOOL_RUNTIME_V1_DESIGN.md`](docs/architecture/TOOL_RUNTIME_V1_DESIGN.md) + **ADR-0040** · `tool_runtime/` · `resources/public/tools/` | 与 Task Execution 无关 |
