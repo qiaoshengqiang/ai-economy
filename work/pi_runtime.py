@@ -32,6 +32,7 @@ from core.task_execution import TaskResultRef
 from llm.base import LLMResponse, TOKEN_SOURCE_API
 from work.llm_proxy import AIEOSLLMProxy
 from work.lifecycle import WorkLifecycle
+from work.pi_comm import PiInboxBridge, PiOutboxBridge
 from work.pi_memory import PiMemoryBridge
 from work.pi_rpc import PiRpcClient, PiRunResult
 from work.roles import WorkResult
@@ -118,9 +119,28 @@ class PiWorkRuntime:
         self._recent_tool_results: List[str] = []
         self._resumed = False
         self._resume_reason = ""
+        communication = getattr(runtime, "communication", None)
+        actor = task.contractor or task.creator
+        self._inbox_bridge = (
+            PiInboxBridge(
+                communication,
+                agent_id=actor,
+                aieos_dir=task_directory.aieos,
+            )
+            if communication is not None else None
+        )
+        self._outbox_bridge = (
+            PiOutboxBridge(
+                communication,
+                actor=actor,
+                task_id=task.task_id,
+                aieos_dir=task_directory.aieos,
+            )
+            if communication is not None else None
+        )
         self.lifecycle = WorkLifecycle(
             runtime.tasks,
-            communication=getattr(runtime, "communication", None),
+            communication=communication,
             task_service=getattr(runtime, "task_service", None),
         )
         self.memory = PiMemoryBridge(
@@ -435,6 +455,20 @@ Task Workspace 放本次任务的交付物和验收产物。
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(str(content), encoding="utf-8")
 
+    def _communication_section(self) -> str:
+        if self._inbox_bridge is None or self._outbox_bridge is None:
+            return ""
+        return f"""
+========== Agent 通信 ==========
+- 每轮开始前读取 `{self._inbox_bridge.inbox_md}`；
+  里面是其他 Agent 发来的消息。
+- 需要给其他 Agent 发消息时，在 `{self._outbox_bridge.pending}` 下
+  写一个独立 JSON 文件（文件名任意唯一，例如 msg-<时间戳>.json）：
+  {{"to":"agent_c","text":"...","task_id":"{self.task.task_id}"}}
+- 一条消息一个文件；不要写进 Task Workspace。
+- 消息只用于 Agent 沟通；Task 状态仍由 Task Core 负责。
+"""
+
     def _autonomous_system_prompt(self) -> str:
         """自主模式的最小系统提示：环境边界、私有空间用途与工具使用。"""
         paths = self.memory.paths()
@@ -454,6 +488,7 @@ Task Workspace 放本次任务的交付物和验收产物。
 直接使用原生 read/write/edit/bash/grep/find/ls 工具在{scope}中完成工作。
 读取 `{paths['memory_dir']}/context.md` 获取记忆快照。
 {search_section}
+{self._communication_section()}
 """
 
     def _minimal_system_prompt(self) -> str:
@@ -479,6 +514,7 @@ Task Workspace 放本次任务的交付物和验收产物。
 请直接使用原生 read/write/edit/bash/grep/find/ls 工具在{scope}中完成工作。
 读取 `{paths['memory_dir']}/context.md` 获取记忆快照。
 {search_section}
+{self._communication_section()}
 
 如果任务中确实需要人类确认（需求歧义、关键设计选择、不可逆操作），
 请写 `{question_path}`，格式：
@@ -936,6 +972,15 @@ Task Workspace 放本次任务的交付物和验收产物。
                 pass
             return None
 
+    def _dispatch_event(self, event: Dict[str, Any]) -> None:
+        if (
+            self._outbox_bridge is not None
+            and self._outbox_bridge.has_pending()
+        ):
+            self._outbox_bridge.drain_and_send()
+        if self.event_sink is not None:
+            self.event_sink(event)
+
     # ------------------------------------------------------------
     def run(self) -> WorkResult:
         task = self.task
@@ -946,6 +991,7 @@ Task Workspace 放本次任务的交付物和验收产物。
             iteration=task.iteration,
         )
         lock = None
+        inbox_started = False
         if self.project_mode and self.project_lock_manager is not None:
             try:
                 lock = self.project_lock_manager.acquire(self.workdir)
@@ -974,6 +1020,8 @@ Task Workspace 放本次任务的交付物和验收产物。
                 return result
 
             self.task_directory.ensure()
+            if self._inbox_bridge is not None:
+                inbox_started = self._inbox_bridge.start()
             self.task_directory.write_meta(
                 "TASK.md",
                 f"# Task {task.task_id}\n\n{task.description or ''}\n")
@@ -1050,7 +1098,14 @@ Task Workspace 放本次任务的交付物和验收产物。
 
                 for phase in phase_plan:
                     thinking = self._phase_thinking(phase)
+                    inbox_text = ""
+                    if self._inbox_bridge is not None:
+                        inbox_text = self._inbox_bridge.drain_for_prompt()
                     prompt = self._phase_prompt(phase, memory_context)
+                    if inbox_text:
+                        prompt = (
+                            "========== Agent 消息 ==========\n"
+                            + inbox_text + "\n\n" + prompt)
                     self._write_work_state(
                         phase, status="running", thinking=thinking)
                     client = PiRpcClient(
@@ -1069,7 +1124,7 @@ Task Workspace 放本次任务的交付物和验收产物。
                         prompt,
                         timeout_seconds=self.timeout_seconds,
                         should_stop=self.should_stop,
-                        event_sink=self.event_sink,
+                        event_sink=self._dispatch_event,
                     )
                     all_events.extend(run.events)
                     self._remember_tool_results(run.events)
@@ -1254,6 +1309,10 @@ Task Workspace 放本次任务的交付物和验收产物。
             result.status = task.status
             return result
         finally:
+            if self._outbox_bridge is not None:
+                self._outbox_bridge.drain_and_send()
+            if inbox_started and self._inbox_bridge is not None:
+                self._inbox_bridge.stop()
             if lock is not None:
                 lock.release()
 

@@ -264,6 +264,21 @@ class CommunicationManager:
         logger.debug("已接入通信层：%s @ %s", agent_id, info.address)
         return info
 
+    def replace_handler(self, agent_id: str, handler: Any) -> Any:
+        """临时替换某个 Agent 的本地消息处理函数，返回旧函数。"""
+        key = str(agent_id).strip()
+        previous = self._handlers.get(key)
+        self._handlers[key] = handler
+        return previous
+
+    def restore_handler(self, agent_id: str, previous: Any) -> None:
+        """恢复 `replace_handler` 之前的处理函数。"""
+        key = str(agent_id).strip()
+        if previous is None:
+            self._handlers.pop(key, None)
+        else:
+            self._handlers[key] = previous
+
     def register_remote(
         self,
         agent_id: str,

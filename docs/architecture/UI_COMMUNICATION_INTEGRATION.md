@@ -1,12 +1,14 @@
-# UI 通信接入设计（Phase 1–3）
+# UI 通信接入设计（Phase 1–4）
 
-> **状态：`CURRENT`（Phase 1 + Phase 2 + Phase 3）**
+> **状态：`CURRENT`（Phase 1–4）**
 >
 > 已实现：Human Gateway · Human ↔ Front · Front ↔ Worker handoff ·
 > Task 生命周期消息（START / SUBMIT / VERIFY / COMPLETE）·
+> Worker ↔ Worker 显式消息 · Pi inbox/outbox ·
 > Message Journal · UI 从 Journal 投影 · 客户端幂等 / 重试去重。
 >
-> 未完成：Worker ↔ Worker 与 Pi inbox/outbox（Phase 4）。
+> 剩余 hardening：长任务下的通用 Claim Lease 续租（Pi inbox 当前是
+> 短 handler，不长时间占用消息 claim）。
 >
 > 相关文档：
 > [`COMMUNICATION_MODEL.md`](COMMUNICATION_MODEL.md) ·
@@ -87,7 +89,9 @@ Worker → Front
   仍由 Job / FrontResult 回传
 
 Worker ↔ Worker
-  当前没有显式消息
+  TEXT + payload.kind=agent_message
+  Pi outbox → CommunicationManager
+  Pi inbox  ← CommunicationManager
 ```
 
 ### 2.3 数据事实
@@ -320,8 +324,21 @@ Agent Runtime
 - Inbox 由 **Runtime** 持有，不由 LLM invocation 持有；
 - 消息在 turn 边界注入，不打断当前 LLM 调用；
 - Front 空闲时也要能接收消息；
-- Pi CLI 需要 Runtime-owned inbox/outbox 桥；
-- 长任务需要考虑 Claim Lease 续租（当前技术债）。
+- Pi CLI 使用 Runtime-owned 文件桥：
+
+```text
+Inbox:
+  tasks/<task_id>/.aieos/pi-inbox.md
+  （Runtime handler 写入；Pi 在 turn 边界读取）
+
+Outbox:
+  tasks/<task_id>/.aieos/pi-outbox/*.json
+  （Pi 每条消息写一个文件；Runtime 读取并发送）
+```
+
+- `pi-inbox.md` 不是 `memory/pi/inbox/*.md`；后者是私有记忆候选；
+- 长任务下的通用 Claim Lease 续租仍是后续 hardening；Pi inbox 的
+  handler 只写文件，不长时间占用 claim。
 
 ---
 
@@ -377,12 +394,13 @@ Agent Runtime
 - [x] Task Core 仍是唯一权威；
 - Team 的 `complete_team` 仍保留直接路径；Phase 3 覆盖 Solo UI 链路。
 
-### Phase 4：Worker ↔ Worker + Pi bridge
+### Phase 4：Worker ↔ Worker + Pi bridge（`CURRENT`）
 
-- Worker 显式消息走 `TEXT` / `payload.kind=agent_message`；
-- Pi Runtime 增加 inbox/outbox；
-- 不做 Workspace 自动广播；
-- 长任务 lease 续期。
+- [x] Worker 显式消息走 `TEXT` / `payload.kind=agent_message`；
+- [x] Pi Runtime 增加 inbox/outbox 文件桥；
+- [x] 不做 Workspace 自动广播；
+- [ ] 长任务通用 Claim Lease 续租（后续 hardening；Pi inbox
+  handler 本身是短 handler）。
 
 ---
 
