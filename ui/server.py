@@ -263,6 +263,7 @@ class Handler(BaseHTTPRequestHandler):
                     max_solo_turns=payload.get("max_solo_turns"),
                     pi_work_agents=payload.get("pi_work_agents"),
                     disabled_agents=payload.get("disabled_agents"),
+                    archived_agents=payload.get("archived_agents"),
                     prompt_log_enabled=payload.get("prompt_log_enabled"),
                     agent_thinking=payload.get("agent_thinking"),
                     pi_timeout_enabled=payload.get("pi_timeout_enabled"),

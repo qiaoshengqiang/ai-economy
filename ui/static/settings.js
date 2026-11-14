@@ -750,17 +750,17 @@
     const next = activeAgentIds()[0] || "";
     selectedAgent = next;
     refreshAgentViews();
-    toast("已归档（尚未保存）");
+    await saveAgents("Agent 已归档并保存");
   }
 
-  function restoreSelectedAgent() {
+  async function restoreSelectedAgent() {
     const agent = agentDraft.agents[selectedAgent];
     if (!agent || !agent.archived) return;
     agent.archived = false;
     agent.enabled = false;
     showArchivedAgents = false;
     refreshAgentViews();
-    toast("已恢复；启用后接新任务（尚未保存）");
+    await saveAgents("Agent 已恢复（仍为停用）并保存");
   }
 
   function openAgentCreate() {
@@ -850,7 +850,9 @@
     }
   }
 
-  async function saveAgents() {
+  async function saveAgents(
+    message = "Agent 设置已保存；协作与引擎变更对新任务生效",
+  ) {
     const pi = [];
     const disabled = [];
     const archived = [];
@@ -872,7 +874,7 @@
         }),
       });
       await load();
-      toast("Agent 设置已保存；协作与引擎变更对新任务生效");
+      toast(message);
     } catch (error) {
       toast(`保存失败：${error.message}`, true);
     }

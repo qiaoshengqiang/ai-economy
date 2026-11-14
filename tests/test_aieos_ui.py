@@ -86,7 +86,8 @@ class _FakeController:
 
     def update_settings(self, *, front_agent=None, max_parallel_teams=None,
                         max_solo_turns=None, pi_work_agents=None,
-                        disabled_agents=None, prompt_log_enabled=None,
+                        disabled_agents=None, archived_agents=None,
+                        prompt_log_enabled=None,
                         agent_thinking=None, pi_timeout_enabled=None,
                         pi_timeout_seconds=None, work_mode=None,
                         front_mode=None, **commit_settings):
@@ -101,6 +102,8 @@ class _FakeController:
             self.settings["pi_work_agents"] = pi_work_agents
         if disabled_agents is not None:
             self.settings["disabled_agents"] = disabled_agents
+        if archived_agents is not None:
+            self.settings["archived_agents"] = archived_agents
         if prompt_log_enabled is not None:
             self.settings["prompt_log_enabled"] = prompt_log_enabled
         if agent_thinking is not None:
@@ -214,6 +217,13 @@ def test_submit_and_settings_api(server):
                             {"front_agent": "agent_b"})
     assert status == 200
     assert payload["settings"]["front_agent"] == "agent_b"
+
+    # 归档列表必须真的穿过 HTTP 层进入 controller；
+    # 之前漏了这个字段，导致「归档」只改了前端草稿。
+    status, payload = _post(base + "/api/settings",
+                            {"archived_agents": ["agent_a"]})
+    assert status == 200
+    assert payload["settings"]["archived_agents"] == ["agent_a"]
 
     status, payload = _post(base + "/api/retry", {"job_id": "job_failed"})
     assert status == 200
@@ -2154,6 +2164,21 @@ def test_provider_form_has_safe_defaults_and_opencode_preset():
     assert 'option($("provider-default-model"), "", "(无)")' in block
 
 
+def test_settings_provider_preview_is_available():
+    from pathlib import Path
+
+    static = Path(__file__).resolve().parent.parent / "ui" / "static"
+    html = (static / "settings_provider_preview.html").read_text(
+        encoding="utf-8")
+
+    assert "服务商与模型" in html
+    assert 'id="provider-list"' in html
+    assert 'id="provider-detail"' in html
+    assert "https://opencode.ai/inference/go/openai/v1" in html
+    # 预览只读，不应写入真实配置。
+    assert "不会写入" in html
+
+
 def test_agent_question_bubble_and_answer_ui():
     from pathlib import Path
 
@@ -2224,6 +2249,7 @@ def test_settings_pages_use_cards_and_agent_master_detail():
     assert "archived_agents" in js
     assert "function createAgent(" in js
     assert "function archiveSelectedAgent(" in js
+    assert 'await saveAgents("Agent 已归档并保存")' in js
     assert "agent.name" in js
 
     # 保存职责拆分：协作字段跟 Agent 走，不再混进运行设置。
