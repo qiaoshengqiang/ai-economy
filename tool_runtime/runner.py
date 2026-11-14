@@ -30,7 +30,6 @@ import functools
 import http.server
 import os
 import shutil
-import signal
 import subprocess
 import threading
 import time
@@ -39,6 +38,11 @@ from datetime import date
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from core.platform_support import (
+    PlatformAdapter,
+    PlatformCapabilityError,
+    default_platform,
+)
 from tool_runtime.library import ToolLibrary, ToolLibraryError, ToolSpec
 from tool_runtime.workspace import (
     RunWorkspace, materialize_private_workspace, materialize_task_workspace,
@@ -196,11 +200,14 @@ class ToolRunner:
     """按公共工具清单执行命令。"""
 
     def __init__(self, library: ToolLibrary, *, run_root: Path,
-                 max_timeout_seconds: int = 300):
+                 max_timeout_seconds: int = 300,
+                 platform: Optional[PlatformAdapter] = None):
         self.library = library
         self.run_root = Path(run_root).resolve()
         self.run_root.mkdir(parents=True, exist_ok=True)
         self.max_timeout_seconds = int(max_timeout_seconds)
+        #: 平台能力边界：进程组 / 杀进程树由适配器负责。
+        self.platform = platform or default_platform()
 
     # ================================================================
     # public
@@ -424,7 +431,7 @@ class ToolRunner:
                     encoding="utf-8",
                     errors="replace",
                     shell=False,
-                    start_new_session=True,
+                    **self.platform.spawn_kwargs(),
                 )
             except FileNotFoundError as exc:
                 return self._pre_run_failure(
@@ -584,7 +591,7 @@ class ToolRunner:
                     encoding="utf-8",
                     errors="replace",
                     shell=False,
-                    start_new_session=True,
+                    **self.platform.spawn_kwargs(),
                 )
             except Exception as exc:                          # noqa: BLE001
                 return {
@@ -775,11 +782,13 @@ class ToolRunner:
         env.update({str(k): str(v) for k, v in spec.env.items()})
         return env
 
-    @staticmethod
-    def _kill_group(proc: subprocess.Popen) -> None:
+    def _kill_group(self, proc: subprocess.Popen) -> None:
         """超时后杀掉整个进程组，避免子进程残留。"""
         try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            self.platform.kill_tree(proc)
+        except PlatformCapabilityError:
+            # 能力缺失必须显式失败：只杀父进程会留下孤儿进程。
+            raise
         except Exception:                                     # noqa: BLE001
             try:
                 proc.kill()

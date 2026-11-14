@@ -34,6 +34,7 @@ from core.config_resolver import (
 from core.paths import (
     ENV_FILE, GLOBAL_CONFIG_FILE, GLOBAL_LLM_CONFIG_FILE,
 )
+from core.platform_support import default_platform
 from llm.router import adapter_specs
 
 _ENV_NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
@@ -62,7 +63,7 @@ def _atomic_write(path: Path, text: str, *, mode: Optional[int] = None) -> None:
     tmp.write_text(text, encoding="utf-8")
     if mode is not None:
         try:
-            os.chmod(tmp, mode)
+            default_platform().chmod(tmp, mode)
         except OSError:
             pass
     tmp.replace(path)

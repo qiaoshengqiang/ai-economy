@@ -4,28 +4,184 @@
 >
 > - **macOS**：当前主要开发 / 验证环境（`CURRENT`）
 > - **Linux**：预期可用，尚未建立完整 CI（`UNVERIFIED`）
-> - **Windows 原生**：**未支持**（`UNSUPPORTED`）
+> - **Windows 原生**：**未支持**；适配层骨架 `DESIGNED`（实现入口见 §0）
 > - **WSL**：需要单独处理路径语义（`EXPERIMENTAL`）
 >
-> 本文列出从 macOS 迁移到其他平台时需要改动的真实位置。
-> 当前阶段不实现 Windows 兼容；开源后欢迎 Windows 开发者按本文逐项完善。
+> 本文是跨平台适配的**唯一入口**：
+> 既列出真实差异，也说明适配代码应该写在哪、怎么验收。
+> 当前阶段不承诺 Windows 可用；骨架已就位，欢迎按 §0 逐项完善。
+
+---
+
+## 0. Windows 开发者入口（先读这一节）
+
+> **一句话：不是复制一套程序，而是新增一个适配器。**
+>
+> 平台差异已经收敛到 `core/platform_support/`。业务代码不判断
+> 操作系统，只调用能力接口。你在 Windows 上的工作，基本只碰一个文件。
+
+### 0.1 架构
+
+```text
+main.py 启动
+  └── select_platform()                 ← 唯一一次平台判断
+        ├── PosixAdapter                ← macOS / Linux（CURRENT）
+        └── WindowsAdapter              ← 骨架（DESIGNED）
+              ↓
+        PlatformAdapter（接口）
+        ├── spawn_kwargs()              子进程启动参数
+        ├── kill_tree()                 超时终止整棵进程树
+        ├── file_lock()                 项目锁 / Snapshot 锁
+        ├── file_unlock()
+        ├── create_symlink()            快照恢复
+        └── chmod()                     权限位（Windows 有意 no-op）
+```
+
+启动日志会打印：
+
+```text
+平台适配：adapter=posix
+平台适配未完成：adapter=windows 缺失=kill_tree（WIN-PROC-1）, ...
+```
+
+### 0.2 你要改哪些文件
+
+| 文件 | 做什么 | 优先级 |
+|---|---|---|
+| `core/platform_support/windows.py` | 实现 3 个 TODO 能力 | **P0** |
+| `tests/test_platform_support.py` | 补 Windows 行为测试 | P0（随实现一起） |
+| `start_aieos.ps1` / `start_aieos.bat` | Windows 启动脚本 | P1 |
+| `ui/static/app.js` / `ui/server.py` | 路径显示 / 盘符 / UNC | P1 |
+| 本文档 | 更新状态表与验收清单 | 每个 PR |
+
+**不要改**：Task Core、Ledger、协议、数据库 schema、`shell=False` 的
+Tool Runtime 边界、`workspace` 权限模型。
+
+### 0.3 三个 TODO
+
+| TODO | 能力 | 必须满足 | 建议实现 |
+|---|---|---|---|
+| **WIN-PROC-1** | `kill_tree` | 终止整棵进程树，不留孤儿 | `taskkill /F /T /PID <pid>`，或 Windows Job Object |
+| **WIN-LOCK-1** | `file_lock` / `file_unlock` | 保持互斥；`blocking=False` 拿不到锁时抛 `BlockingIOError` | `msvcrt.locking(fd, LK_NBLCK / LK_LOCK, 1)`；释放用 `LK_UNLCK` |
+| **WIN-FS-1** | `create_symlink` | 成功，或给出可操作的错误 | `os.symlink`；权限不足时提示开启开发者模式 / 用 WSL |
+
+实现骨架：
+
+```python
+# core/platform_support/windows.py
+def file_lock(self, handle, *, blocking=True):
+    import msvcrt
+    handle.seek(0)                       # locking 从当前文件位置开始
+    mode = msvcrt.LK_LOCK if blocking else msvcrt.LK_NBLCK
+    try:
+        msvcrt.locking(handle.fileno(), mode, 1)
+    except OSError as exc:
+        if not blocking:
+            raise BlockingIOError(str(exc)) from exc
+        raise
+
+def file_unlock(self, handle):
+    import msvcrt
+    handle.seek(0)
+    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+```
+
+> ⚠️ `msvcrt.locking` 是按字节范围加锁，且要求文件至少有 1 字节可锁。
+> `LK_LOCK` 会重试约 10 秒后失败，不是无限阻塞；如果语义要求无限等待，
+> 需要自己加重试循环。实现后必须用两个句柄做互斥测试，确认第二个
+> `blocking=False` 真的失败。
+
+### 0.4 失败语义（硬要求）
+
+- 未实现的能力**抛 `PlatformCapabilityError`，不能 no-op**。
+- 不允许“先跑起来再说”的降级：
+  - 项目锁 no-op → 两个 Task 同时写坏用户项目；
+  - 只杀父进程 → 子进程残留、端口占用；
+  - symlink 改成复制 → 快照语义改变。
+- 实现完成后，`WindowsAdapter.missing_capabilities()` 应返回空列表。
+
+### 0.5 验证步骤
+
+```bash
+# 1. 适配器契约（在 Windows 上跑）
+python -m pytest tests/test_platform_support.py -q
+
+# 2. 平台边界守卫（必须零违规）
+python -m pytest tests/test_platform_guards.py -q
+
+# 3. 全量测试（macOS 基线也不能退化）
+./dev.sh test
+```
+
+> 当前 `tests/test_platform_support.py` 里只有 POSIX 行为测试带
+> `@POSIX_ONLY` 标记；平台选择、Windows 骨架、守卫测试在 Windows
+> 主机上可以直接运行。`./dev.sh test` 需要 Git Bash / WSL；
+> 原生 PowerShell 先补 `dev.ps1`（P1）。
+
+### 0.6 守卫规则
+
+`tests/test_platform_guards.py` 用 AST 扫描生产代码，以下内容
+**只允许出现在 `core/platform_support/`**：
+
+```text
+import fcntl / msvcrt / winreg / pwd / grp / resource
+os.killpg / os.getpgid / os.symlink / os.chmod / os.getuid ...
+os.name / sys.platform / platform.system
+subprocess.Popen(..., start_new_session=True)
+```
+
+违反 → 测试变红。这样 Windows 特判不会散落回业务代码。
+
+### 0.7 PR 拆分建议
+
+```text
+fork → branch feat/windows-support
+  PR 1  file_lock / file_unlock          ← 先解除最严重的硬阻断
+  PR 2  kill_tree
+  PR 3  create_symlink
+  PR 4  start_aieos.ps1 + dev.ps1
+  PR 5  UI 路径 / 盘符 / UNC
+  PR 6  windows-latest CI
+```
+
+每个 PR 的合并条件：
+
+1. macOS 全量测试仍为基线通过；
+2. 只改允许的范围；
+3. 更新本文状态表；
+4. 不引入未讨论的新依赖。
+
+### 0.8 当前不能承诺什么
+
+- P0 未完成前，README / UI 不得写“支持 Windows”。
+- WSL 与原生 Windows 是两套目标，不能混在一起验收。
+- Windows 上的 Pi CLI、bash 工具、语音输入仍属于未验证区域。
 
 ---
 
 ## 1. 总览
 
-当前代码大量假设：
+当前代码里仍存在的平台假设：
 
 ```text
 POSIX 路径 / 大小写敏感
-fcntl.flock
 bash / nohup / lsof / ps
 .venv/bin/python
 node_modules/.bin/pi
 符号链接 / chmod
 ```
 
-这些假设在 macOS / Linux 成立，在 Windows 原生环境不成立。
+已收敛到 `core/platform_support/` 的假设：
+
+```text
+fcntl.flock        → PlatformAdapter.file_lock
+os.killpg          → PlatformAdapter.kill_tree
+os.symlink         → PlatformAdapter.create_symlink
+os.chmod           → PlatformAdapter.chmod
+start_new_session  → PlatformAdapter.spawn_kwargs
+```
+
+这些在 Windows 原生环境仍然不成立，但**不会再散落在业务代码里**。
 
 | 区域 | Windows 风险 | 优先级 |
 |---|---|---|
@@ -151,49 +307,38 @@ Git snapshot 已设置 `longpaths = true`，但 Python / Pi / Git 组合仍需�
 
 ## 3. 文件锁（最严重）
 
-### 3.1 ProjectLock 在 Windows 上不生效
+### 3.1 ProjectLock：接口已统一，Windows 实现待补
 
 位置：
 
 ```text
 work/project_lock.py
+core/platform_support/base.py
+core/platform_support/posix.py
+core/platform_support/windows.py
 ```
 
-当前：
+当前（`CURRENT`）：
 
 ```python
-try:
-    import fcntl
-except ImportError:
-    fcntl = None
-
-if fcntl is not None:
-    fcntl.flock(...)
+# work/project_lock.py
+self.platform.file_lock(handle, blocking=False)   # 拿不到锁 → BlockingIOError
 ```
 
-Windows 没有 `fcntl`，所以：
+- POSIX：`fcntl.flock(LOCK_EX | LOCK_NB)`
+- Windows：`WindowsAdapter.file_lock` **尚未实现**，会抛
+  `PlatformCapabilityError`，**不会静默跳过**
+- 第二个任务拿不到锁时，`ProjectLockManager` 仍然抛 `ProjectBusyError`
 
-```text
-不会加锁
-```
+历史问题（已修复）：旧实现用 `if fcntl is not None` 包住加锁，
+Windows 上会直接跳过，导致两个 Task 同时修改同一个项目目录而无任何报错。
 
-结果：
+待做：
 
-```text
-两个 Task 可以同时修改同一个项目目录
-```
+- [ ] Windows：`msvcrt.locking`（或等价实现）
+- [ ] 保持 `blocking=False` 时抛 `BlockingIOError` 的契约
 
-这是 Windows 支持的**硬阻断**。
-
-需要：
-
-- POSIX：`fcntl.flock`
-- Windows：`msvcrt.locking`
-- 统一抽象为 `FileLock`
-- `ProjectLockManager` 与 `TaskSnapshotStore` 共用
-- 第二个任务失败时返回 `ProjectBusyError`
-
-### 3.2 TaskSnapshotStore 的锁同样失效
+### 3.2 TaskSnapshotStore：同样走统一接口
 
 位置：
 
@@ -201,25 +346,30 @@ Windows 没有 `fcntl`，所以：
 work/task_snapshot.py  TaskSnapshotStore._lock()
 ```
 
-Windows 上同样会跳过锁。
+当前：与 ProjectLock 共用 `PlatformAdapter.file_lock`。
+Windows 上会显式抛 `PlatformCapabilityError`，不会在无锁状态下写快照。
 
-需要与 ProjectLock 共用跨平台锁实现。
+待做：
 
-### 3.3 `fcntl` 的静默降级
+- [ ] Windows 实现后，验证 snapshot capture / restore
+- [ ] 验证并发 capture 不会写坏 index
 
-当前是：
+### 3.3 静默降级已移除
+
+旧实现是：
 
 ```text
 没有 fcntl → 不锁
 ```
 
-Windows 支持时应改为：
+现在（`CURRENT`）：
 
 ```text
-没有 msvcrt → 启动失败 / 明确禁用并发
+Windows → PlatformCapabilityError（显式失败）
 ```
 
-不能静默地“看起来有锁，实际上没有”。
+不能静默地“看起来有锁，实际上没有”。启动日志会列出缺失能力，
+任务在真正用到该能力时失败，并在异常信息里指向本文档。
 
 ---
 
@@ -356,24 +506,30 @@ Windows 虚拟环境路径是：
 `work/task_snapshot.py` 恢复文件时：
 
 ```python
-os.chmod(target, 0o755 if mode == "100755" else 0o644)
+self.platform.chmod(target, 0o755 if mode == "100755" else 0o644)
 ```
 
-Windows 没有 POSIX 执行位语义，需要验证：
+- POSIX：`os.chmod`，行为与之前一致。
+- Windows：`WindowsAdapter.chmod` 是**有意的 no-op**。
+  Windows 没有 POSIX mode，权限由 ACL 管理；不要把它当安全边界。
+
+需要验证：
 
 - `git ls-tree` 的模式；
-- `os.chmod` 在 Windows 的行为；
-- `.bat` / `.cmd` 是否需要可执行位。
+- `.bat` / `.cmd` 是否需要额外启动方式（不是 chmod 能解决的）。
 
 ### 6.2 符号链接
 
 `TaskSnapshotStore` 支持 `120000` symlink：
 
 ```python
-os.symlink(...)
+self.platform.create_symlink(data.decode("utf-8"), target)
 ```
 
-Windows 创建 symlink 需要权限 / 开发者模式；需要降级策略。
+- POSIX：`os.symlink`。
+- Windows：**尚未实现**，会显式抛 `PlatformCapabilityError`。
+  实现时不要静默改成“复制文件”——那会改变快照语义。
+  权限不足时应提示开启开发者模式，或明确要求 WSL。
 
 ### 6.3 `os.link`
 
@@ -451,7 +607,23 @@ fcntl
 shell 命令
 ```
 
-Windows 支持至少需要：
+已补（`CURRENT`）：
+
+```text
+tests/test_platform_support.py   ← 适配器契约测试（POSIX 行为）
+tests/test_platform_guards.py    ← AST 守卫：平台 API 不得出现在适配器外
+```
+
+守卫覆盖：
+
+```text
+import fcntl / msvcrt / winreg / pwd / grp / resource
+os.killpg / os.getpgid / os.symlink / os.chmod
+sys.platform
+subprocess.Popen(..., start_new_session=True)
+```
+
+仍缺：
 
 ```text
 GitHub Actions: windows-latest
@@ -477,19 +649,25 @@ Windows 开发者接手时，建议按顺序：
 
 ### P0
 
-- [ ] 跨平台 `FileLock`（fcntl / msvcrt）
-- [ ] ProjectLock 和 SnapshotLock 都不再静默失效
+- [x] 平台能力接口 `PlatformAdapter`（进程 / 锁 / 符号链接 / 权限）
+- [x] ProjectLock 与 SnapshotLock 在 Windows 上不再静默失效
+- [ ] `WindowsAdapter.file_lock` / `file_unlock`（`msvcrt.locking`）
+- [ ] `WindowsAdapter.kill_tree`（taskkill / Job Object）
+- [ ] `WindowsAdapter.create_symlink`（含权限错误提示）
 - [ ] 工作区 chip basename 同时支持 `/` 和 `\`
 - [ ] 目录浏览器盘符 / UNC
 - [ ] Pi CLI `.cmd` / `.exe` 解析
 - [ ] Pi bash shell 类型明确
+
+> 前两项是本次已完成的**架构准备**；Windows 上仍需实现三个
+> `WindowsAdapter` 方法，任务才能真正跑起来。
 
 ### P1
 
 - [ ] `start_aieos.ps1` 或 `.bat`
 - [ ] `.venv\Scripts\python.exe`
 - [ ] Git snapshot / patch / worktree
-- [ ] 符号链接 / hardlink / chmod 降级
+- [ ] hardlink / chmod 行为验证（symlink 已在 P0）
 - [ ] 长路径 / UNC
 - [ ] Windows CI smoke
 
@@ -573,12 +751,19 @@ Windows：不承诺；本文作为社区贡献入口。
 
 | 文件 | 作用 |
 |---|---|
-| `work/project_lock.py` | 项目锁，当前 fcntl-only |
+| `core/platform_support/base.py` | **平台能力接口**（进程 / 锁 / symlink / chmod） |
+| `core/platform_support/posix.py` | macOS / Linux 实现（`CURRENT`） |
+| `core/platform_support/windows.py` | Windows 骨架（`DESIGNED`）—— 你要改的文件 |
+| `work/project_lock.py` | 项目锁，调用 `PlatformAdapter.file_lock` |
 | `work/task_snapshot.py` | Snapshot 锁、symlink、chmod、hardlink |
+| `tool_runtime/runner.py` | 子进程启动参数、超时杀进程树 |
+| `work/settings_admin.py` | 配置文件权限位 |
 | `ui/server.py` | 目录浏览器 API、Pi 默认路径 |
 | `ui/static/app.js` | 工作区 chip、目录 picker |
 | `work/pi_rpc.py` | Pi 子进程 |
 | `work/pi_runtime.py` | Pi cwd / 环境变量 / shell 工具 |
 | `start_aieos.sh` | 当前唯一启动脚本 |
 | `tool_runtime/` | 受控工具执行 / Python 路径 |
+| `tests/test_platform_support.py` | 适配器契约测试 |
+| `tests/test_platform_guards.py` | 平台边界守卫（AST） |
 | `tests/` | POSIX 假设与 Windows CI 缺口 |

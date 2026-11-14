@@ -67,6 +67,7 @@ from llm.router import adapter_specs                            # noqa: E402
 from core.economy import AgentNotFoundError, Economy, EconomyError  # noqa: E402
 from core.ledger import LedgerError, format_amount              # noqa: E402
 from core.logging_setup import get_logger, setup_logging        # noqa: E402
+from core.platform_support import default_platform             # noqa: E402
 from core.agent_directory import AgentDirectory, LocalAgentDirectory  # noqa: E402
 from core.decision_policy import RuleBasedDecisionPolicy        # noqa: E402
 from core.money import Money                                    # noqa: E402
@@ -894,6 +895,19 @@ def build_runtime(
     #    `system.log_level` 已删除 —— 那曾经是同一事实的第二份定义。
     setup_logging(level=str(resolved.log_level))
 
+    # ---- 平台适配（启动时识别一次）----
+    # 🔒 业务代码不直接判断操作系统；进程组 / 文件锁 / 符号链接 / 权限位
+    #    都经 PlatformAdapter。缺失能力在这里显式暴露，不静默降级。
+    platform_adapter = default_platform()
+    missing_capabilities = platform_adapter.missing_capabilities()
+    if missing_capabilities:
+        logger.warning(
+            "平台适配未完成：adapter=%s 缺失=%s；"
+            "详见 docs/architecture/PLATFORM_COMPATIBILITY.md §0",
+            platform_adapter.name, ", ".join(missing_capabilities))
+    else:
+        logger.info("平台适配：adapter=%s", platform_adapter.name)
+
     economy = Economy.bootstrap(db_path=db_path, config=config)
 
     # --- LLM 层 ---
@@ -1334,6 +1348,7 @@ def build_runtime(
     tool_runner = ToolRunner(
         tool_library,
         run_root=PROJECT_ROOT / "data" / "tool_runs",
+        platform=platform_adapter,
     )
 
     return Runtime(

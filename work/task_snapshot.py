@@ -32,12 +32,8 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, Iterator, List, Optional, Sequence
 
+from core.platform_support import PlatformAdapter, default_platform
 from work.task_directory import TaskDirectory
-
-try:  # pragma: no cover - Windows 没有 fcntl
-    import fcntl
-except ImportError:  # pragma: no cover
-    fcntl = None  # type: ignore[assignment]
 
 
 SNAPSHOT_IGNORE = """\
@@ -112,6 +108,7 @@ class TaskSnapshotStore:
         git_binary: str = "git",
         max_file_bytes: int = 2 * 1024 * 1024,
         enabled: bool = True,
+        platform: Optional[PlatformAdapter] = None,
     ) -> None:
         self.directory = directory
         #: project 模式下是用户项目目录；否则是 Task Workspace。
@@ -126,6 +123,8 @@ class TaskSnapshotStore:
         self._git = shutil.which(self.git_binary)
         self.enabled = bool(enabled) and self._git is not None
         self._thread_lock = threading.RLock()
+        #: 平台能力边界：文件锁 / 符号链接 / 权限位。
+        self.platform = platform or default_platform()
 
     # ------------------------------------------------------------
     @property
@@ -543,12 +542,13 @@ class TaskSnapshotStore:
             else:
                 target.unlink()
         if mode == "120000":
-            os.symlink(data.decode("utf-8"), target)
+            self.platform.create_symlink(data.decode("utf-8"), target)
         elif mode == "160000":
             return
         else:
             target.write_bytes(data)
-            os.chmod(target, 0o755 if mode == "100755" else 0o644)
+            self.platform.chmod(
+                target, 0o755 if mode == "100755" else 0o644)
 
     def _remove(self, rel: str) -> None:
         target = self._resolve(rel)
@@ -721,13 +721,14 @@ class TaskSnapshotStore:
         with self._thread_lock:
             Path(self.directory.aieos).mkdir(parents=True, exist_ok=True)
             handle = open(self.lock_path, "a+")
+            locked = False
             try:
-                if fcntl is not None:
-                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+                self.platform.file_lock(handle, blocking=True)
+                locked = True
                 yield
             finally:
-                if fcntl is not None:
-                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                if locked:
+                    self.platform.file_unlock(handle)
                 handle.close()
 
 
