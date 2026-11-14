@@ -1,4 +1,4 @@
-# AIEOS UI —— Human ↔ Front ↔ Solo Agent
+# AIEOS UI —— Human ↔ Front ↔ Worker
 
 > **状态：`CURRENT`（2026-11-10）**
 >

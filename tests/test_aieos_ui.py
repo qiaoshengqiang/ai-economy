@@ -2019,6 +2019,27 @@ def test_danger_actions_use_reusable_confirm_dialog():
     assert ".cd-btn.danger" in css
 
 
+def test_chat_header_and_messages_are_compact():
+    from pathlib import Path
+
+    static = Path(__file__).resolve().parent.parent / "ui" / "static"
+    html = (static / "index.html").read_text(encoding="utf-8")
+    js = (static / "app.js").read_text(encoding="utf-8")
+
+    # 顶部拓扑：Human ↔ Front ↔ Worker
+    assert "Human ↔ Front ↔ Worker" in html
+    assert "Solo Agent" not in html
+
+    # 消息已有颜色 / 位置区分，不再重复「你」「Front Agent」标签
+    assert 'message.role === "human" ? "你"' not in js
+    assert 'message.role === "front" ? "Front Agent"' not in js
+    assert 'message.role === "task" ? "Task log"' in js
+
+    # 人类提交后强制滚动到底部
+    assert "forceMessagesScroll = true" in js
+    assert "scrollMessagesToBottom()" in js
+
+
 def test_submit_uses_client_message_id_for_idempotency():
     from pathlib import Path
 

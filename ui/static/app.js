@@ -67,6 +67,7 @@
   // pointerSelecting 覆盖“刚按下鼠标、选区还没形成”的瞬间。
   let pointerSelecting = false;
   let lastMessagesKey = "";
+  let forceMessagesScroll = false;
   let lastAgentsKey = "";
   let lastTasksKey = "";
   let taskFilter = "all";
@@ -651,13 +652,24 @@
     closeRepoPicker();
   }
 
+  function scrollMessagesToBottom() {
+    const box = els.messages;
+    if (!box) return;
+    box.scrollTop = box.scrollHeight;
+  }
+
   function renderMessages(messages) {
     const box = els.messages;
     const key = JSON.stringify(messages || []);
-    if (key === lastMessagesKey && box.childElementCount) return;
+    const forceScroll = forceMessagesScroll;
+    forceMessagesScroll = false;
+    if (key === lastMessagesKey && box.childElementCount) {
+      if (forceScroll) scrollMessagesToBottom();
+      return;
+    }
     lastMessagesKey = key;
-    const atBottom =
-      box.scrollTop + box.clientHeight >= box.scrollHeight - 40;
+    const atBottom = forceScroll
+      || box.scrollTop + box.clientHeight >= box.scrollHeight - 40;
     box.innerHTML = "";
     if (!messages || !messages.length) {
       const empty = document.createElement("div");
@@ -669,12 +681,17 @@
     messages.forEach((message) => {
       const item = document.createElement("div");
       item.className = `msg ${message.role || "system"}`;
-      const meta = document.createElement("span");
-      meta.className = "meta";
-      const role = message.role === "human" ? "你" :
-        message.role === "front" ? "Front Agent" :
-        message.role === "task" ? "Task log" : "系统";
-      meta.textContent = `${role}${message.task_id ? " · " + message.task_id : ""}`;
+      const metaLabel = message.role === "task" ? "Task log"
+        : (message.role === "system" ? "系统" : "");
+      const metaParts = [];
+      if (metaLabel) metaParts.push(metaLabel);
+      if (message.task_id) metaParts.push(message.task_id);
+      if (metaParts.length) {
+        const meta = document.createElement("span");
+        meta.className = "meta";
+        meta.textContent = metaParts.join(" · ");
+        item.appendChild(meta);
+      }
       const text = document.createElement("div");
       text.textContent = message.text || "";
       const actions = document.createElement("div");
@@ -722,7 +739,6 @@
         });
         actions.appendChild(retry);
       }
-      item.appendChild(meta);
       item.appendChild(text);
       const footerParts = [];
       const thinking = formatThinking(message.thinking);
@@ -738,7 +754,7 @@
       item.appendChild(actions);
       box.appendChild(item);
     });
-    if (atBottom) box.scrollTop = box.scrollHeight;
+    if (atBottom) scrollMessagesToBottom();
   }
 
   function robotMarkup(working, front) {
@@ -1272,7 +1288,9 @@
       };
       clearPendingSubmission();
       els.prompt.value = "";
+      forceMessagesScroll = true;
       await refresh();
+      if (forceMessagesScroll) scrollMessagesToBottom();
     } catch (error) {
       failFrontTiming();
       showToast(`提交失败：${error.message}`, true);
