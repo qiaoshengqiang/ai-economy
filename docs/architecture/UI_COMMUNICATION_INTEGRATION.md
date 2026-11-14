@@ -1,8 +1,12 @@
 # UI 通信接入设计（Phase 1 前）
 
-> **状态：`DESIGNED`**
+> **状态：`CURRENT`（Phase 1）**
 >
-> Phase 1 **尚未开始**；先记录设计、边界和待确认问题。
+> 已实现：Human Gateway · Human → Front · Front → Human ·
+> Message Journal · UI 从 Journal 投影。
+>
+> 未完成：UI 客户端幂等 / 重试去重；Front → Worker 与 Task 消息
+> 仍属于后续阶段。
 >
 > 相关文档：
 > [`COMMUNICATION_MODEL.md`](COMMUNICATION_MODEL.md) ·
@@ -49,49 +53,59 @@ CommunicationManager
 所以 Agent 本身具备 `send` / `receive` 能力，`TaskService` 的
 handler 也已注册到通信层。
 
-### 2.2 UI 链路没有走通信层
+### 2.2 UI 链路的当前接入范围
 
-`AIEOSController` 和 Work 层没有引用 `communication`：
-
-```text
-work/controller.py       无 communication
-work/runtime.py          无 communication
-work/pi_runtime.py       无 communication
-ui/server.py             无 communication
-```
-
-UI 实际使用的是：
+Phase 1 已接入：
 
 ```text
 Human → Front
-  AIEOSController._messages
-  → _conversation()
-  → Front prompt
+  HumanGateway
+  → CommunicationManager
+  → communication_messages
+  → UI Journal 投影
 
+Front → Human
+  CommunicationManager
+  → HumanGateway
+  → UI Journal 投影
+```
+
+仍然没有接入：
+
+```text
 Front → Worker
   TaskCreationService / TaskStore 直接调用
 
 Worker → Front
   Pi CLI stdout / prompt / result
+
+Worker ↔ Worker
+  当前没有显式消息
 ```
 
 ### 2.3 数据事实
 
-UI 数据库 `runs/ui/aieos.db`：
+Phase 1 之前：
 
 ```text
 communication_messages = 0 行
 ```
 
-UI 对话保存在：
+Phase 1 之后：
 
 ```text
-runs/ui/jobs/<job_id>.json
-  ├─ job
-  └─ messages
+Human / Front 对话 → communication_messages
+Work / Task / Pi  → runs/ui/jobs/<job_id>.json
 ```
 
-也就是说，UI 对话目前没有进入 Message Journal。
+UI 对话现在同时保留：
+
+```text
+communication_messages   ← Human / Front 的对话事实
+runs/ui/jobs/*.json      ← job / round 观测
+```
+
+Phase 1 尚未做客户端幂等 / 重试去重；这一步仍在待办。
 
 ---
 
@@ -320,12 +334,12 @@ Agent Runtime
 
 ### 7.3 Phase 1 验收
 
-- Human 消息写入 `communication_messages`；
-- Front 回复写入同表；
-- UI 刷新/重连后能从 Journal 恢复对话；
-- 同一条消息重试不会产生重复；
-- Task 创建行为不变；
-- `AIEOSController._messages` 不再是唯一事实源。
+- [x] Human 消息写入 `communication_messages`；
+- [x] Front 回复写入同表；
+- [x] UI 重启后能从 Journal 恢复 Human / Front 对话；
+- [ ] 同一条消息重试不会产生重复（UI 客户端幂等键）；
+- [x] Task 创建行为不变；
+- [x] `AIEOSController._messages` 不再是 Human / Front 对话的唯一事实源。
 
 ---
 

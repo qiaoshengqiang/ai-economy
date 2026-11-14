@@ -69,7 +69,6 @@ ARCH_FILES = sorted(ARCH_DIR.rglob("*.md")) + [AGENTS_FILE]
 #: Future 组件名（V1 不实现）
 FUTURE_COMPONENTS = (
     "Front Agent",
-    "Human Gateway",
     "Human-facing Agent",
     "Human Intent Agent",
     "Human Coordinator",

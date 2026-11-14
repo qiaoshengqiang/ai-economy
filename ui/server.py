@@ -345,6 +345,7 @@ def main(argv=None) -> int:
     )
     from ui.rounds import TaskRoundLog
     from work.controller import AIEOSController
+    from work.human_gateway import HumanGateway
     from work.settings_admin import SystemConfigAdmin
 
     setup_logging(level=os.environ.get("AI_ECONOMY_LOG_LEVEL", "INFO"))
@@ -374,6 +375,13 @@ def main(argv=None) -> int:
         print(f"Tool run 清理：{cleanup}", flush=True)
     except Exception as exc:                                  # noqa: BLE001
         print(f"Tool run 清理失败（已忽略）：{exc}", flush=True)
+
+    human_gateway = None
+    try:
+        human_gateway = HumanGateway(runtime.communication)
+        human_gateway.ensure_registered()
+    except Exception as exc:                                  # noqa: BLE001
+        print(f"Human Gateway 未启用：{exc}", flush=True)
 
     system_admin = SystemConfigAdmin(
         config_path=GLOBAL_CONFIG_FILE,
@@ -422,6 +430,7 @@ def main(argv=None) -> int:
         worker_roles_backup_dir=db_path.parent / "config_backups",
         prompt_log_path=db_path.parent / "prompts",
         system_settings=system_admin,
+        human_gateway=human_gateway,
     )
     Handler.controller = controller
     httpd = ThreadingHTTPServer((args.host, int(args.port)), Handler)

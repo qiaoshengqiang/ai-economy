@@ -29,6 +29,7 @@ AIEOSController —— Human → Front → Solo Agent 的持续运行控制面
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 import threading
@@ -75,6 +76,9 @@ from work.prompt import WORK_SYSTEM_PROMPT, build_lead_plan_prompt
 from work.roles import WorkContext, WorkRole
 from work.runtime import SoloWorkRuntime
 from work.team_runtime import TeamWorkRuntime
+
+
+logger = logging.getLogger(__name__)
 
 
 class JobStatus:
@@ -134,6 +138,9 @@ class WorkJob:
     workdir: str = ""
     #: 本次 Task 选定的输出仓库；空 = 使用全局默认。
     commit_repo: str = ""
+    #: Human Gateway 写入 Journal 后返回的消息 ID / 会话 ID。
+    human_message_id: str = ""
+    conversation_id: str = ""
     summary: str = ""
     error: str = ""
     tokens: int = 0
@@ -164,6 +171,8 @@ class WorkJob:
             "task_id": self.task_id,
             "workdir": self.workdir,
             "commit_repo": self.commit_repo,
+            "human_message_id": self.human_message_id,
+            "conversation_id": self.conversation_id,
             "summary": self.summary,
             "error": self.error,
             "tokens": self.tokens,
@@ -228,9 +237,11 @@ class AIEOSController:
         worker_roles_backup_dir: Optional[Path] = None,
         prompt_log_path: Optional[Path] = None,
         system_settings: Any = None,
+        human_gateway: Any = None,
     ) -> None:
         self.rt = runtime
         self.front_agent = str(front_agent)
+        self.human_gateway = human_gateway
         #: 当前阶段只允许一个 Agent 独立完成（不组队）。
         self.solo_only = bool(solo_only)
         self.max_parallel_teams = max(1, int(max_parallel_teams))
@@ -842,10 +853,28 @@ class AIEOSController:
             created_at=_now(),
             updated_at=_now(),
         )
+        conversation_id = ""
+        human_message_id = ""
+        if self.human_gateway is not None:
+            try:
+                conversation_id = self.human_gateway.conversation_id(
+                    self.front_agent)
+                human_message_id = self.human_gateway.send_human_message(
+                    text,
+                    to_agent=self.front_agent,
+                    job_id=job.job_id,
+                    conversation_id=conversation_id,
+                )
+            except Exception as exc:                          # noqa: BLE001
+                logger.warning("Human Gateway 写入失败：%s", exc)
+        job.conversation_id = conversation_id
+        job.human_message_id = human_message_id
         with self._lock:
             self._jobs[job.job_id] = job
             self._job_order.append(job.job_id)
-            self._message("human", text, job_id=job.job_id)
+            self._message(
+                "human", text, job_id=job.job_id,
+                message_id=human_message_id)
         self._executor.submit(self._run_job, job)
         return job.job_id
 
@@ -2643,7 +2672,7 @@ class AIEOSController:
                 for jid in reversed(self._job_order[-30:])
                 if jid in self._jobs
             ]
-            messages = list(self._messages[-100:])
+            messages = self._merged_messages()
             tasks = self._task_cards()
             return {
                 "front_agent": self.front_agent,
@@ -3003,7 +3032,7 @@ class AIEOSController:
     def _conversation(self, job: WorkJob) -> List[Dict[str, str]]:
         """最近 Human / Front 对话；不包含当前这条 Human 输入。"""
         with self._lock:
-            items = list(self._messages)
+            items = self._merged_messages()
         out: List[Dict[str, str]] = []
         for item in items:
             role = str(item.get("role") or "")
@@ -3026,13 +3055,20 @@ class AIEOSController:
         duration_ms: Optional[int] = None,
         thinking: Optional[Dict[str, Any]] = None,
         retryable: bool = False,
+        message_id: str = "",
     ) -> None:
+        if role == "front" and self.human_gateway is not None:
+            mirrored = self._mirror_front_message(
+                text, job_id=job_id, task_id=task_id)
+            if mirrored:
+                message_id = mirrored
         with self._lock:
             self._messages.append({
                 "role": role,
                 "text": str(text),
                 "job_id": job_id,
                 "task_id": task_id,
+                "message_id": str(message_id or ""),
                 "duration_ms": (
                     max(0, int(duration_ms))
                     if duration_ms is not None else None),
@@ -3041,6 +3077,58 @@ class AIEOSController:
                 "retryable": bool(retryable),
                 "at": _now(),
             })
+
+    def _mirror_front_message(
+        self, text: str, *, job_id: str, task_id: str,
+    ) -> str:
+        with self._lock:
+            job = self._jobs.get(str(job_id)) if job_id else None
+            conversation_id = (
+                getattr(job, "conversation_id", "") if job else "")
+            reply_to = (
+                getattr(job, "human_message_id", "") if job else "")
+        if not conversation_id:
+            conversation_id = self.human_gateway.conversation_id(
+                self.front_agent)
+        try:
+            return self.human_gateway.send_front_reply(
+                text,
+                front_agent=self.front_agent,
+                job_id=job_id,
+                task_id=task_id,
+                reply_to=reply_to,
+                conversation_id=conversation_id,
+            )
+        except Exception as exc:                              # noqa: BLE001
+            logger.warning("Front 回复写入 Human Gateway 失败：%s", exc)
+            return ""
+
+    def _journal_messages(self) -> list[Dict[str, Any]]:
+        if self.human_gateway is None:
+            return []
+        try:
+            return self.human_gateway.journal_messages(
+                front_agent=self.front_agent, limit=200)
+        except Exception as exc:                              # noqa: BLE001
+            logger.warning("读取 Human Gateway Journal 失败：%s", exc)
+            return []
+
+    def _merged_messages(self) -> list[Dict[str, Any]]:
+        base = list(self._messages[-100:])
+        seen = {
+            str(item.get("message_id") or "")
+            for item in base
+            if item.get("message_id")
+        }
+        for item in self._journal_messages():
+            message_id = str(item.get("message_id") or "")
+            if message_id and message_id in seen:
+                continue
+            base.append(item)
+            if message_id:
+                seen.add(message_id)
+        base.sort(key=lambda item: str(item.get("at") or ""))
+        return base[-100:]
 
     @staticmethod
     def _front_reply_text(decision: Any, fallback: str) -> str:
