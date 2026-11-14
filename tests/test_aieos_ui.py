@@ -2232,6 +2232,9 @@ def test_settings_pages_use_cards_and_agent_master_detail():
     assert 'id="agent-settings-list"' in agent_section
     assert 'id="agent-detail-id"' in agent_section
     assert 'id="agent-detail-model"' in agent_section
+    assert 'id="agent-detail-provider"' in agent_section
+    assert 'id="agent-detail-credential"' in agent_section
+    assert 'id="new-agent-provider"' in agent_section
     assert 'id="agent-create-new"' in agent_section
     assert 'id="agent-create-card"' in agent_section
     assert 'id="agent-archived-toggle"' in agent_section
@@ -2246,7 +2249,10 @@ def test_settings_pages_use_cards_and_agent_master_detail():
 
     # Agent 新增 / 归档走独立动作；保存时归档也会提交。
     assert "agent.create" in js
+    assert "agent.update" in js
     assert "archived_agents" in js
+    assert "fillModelOptions" in js
+    assert "agent-detail-provider" in js
     assert "function createAgent(" in js
     assert "function archiveSelectedAgent(" in js
     assert 'await saveAgents("Agent 已归档并保存")' in js

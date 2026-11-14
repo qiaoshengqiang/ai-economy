@@ -645,7 +645,7 @@
             <div class="pane-title-row">
               <div>
                 <h3>Agent</h3>
-                <p>先选一个 Agent，再改它的启停与引擎；Front / Work 协作模式在顶部统一设置。</p>
+                <p>先选一个 Agent，再改它的启停、引擎与模型；Front / Work 协作模式在顶部统一设置。</p>
               </div>
               <span class="scope-badge">新任务生效</span>
             </div>
@@ -676,6 +676,15 @@
                 </div>
                 <div class="setting-control">
                   <input id="new-agent-name" placeholder="小福" autocomplete="off" />
+                </div>
+              </div>
+              <div class="setting-row">
+                <div class="setting-label">
+                  <span>服务商</span>
+                  <small>先选服务商，再从它下面选模型。</small>
+                </div>
+                <div class="setting-control">
+                  <select id="new-agent-provider"></select>
                 </div>
               </div>
               <div class="setting-row">
@@ -714,7 +723,7 @@
               <div class="setting-card-head">
                 <div>
                   <h4>协作与 Agent</h4>
-                  <p>选中左侧 Agent 后，右侧只显示它自己的设置；模型与凭据来自系统设置，只读。</p>
+                  <p>选中左侧 Agent 后，右侧只显示它自己的设置；模型先选服务商，再选模型。</p>
                 </div>
                 <div class="agent-card-actions">
                   <span class="scope-badge">新任务生效</span>
@@ -793,16 +802,32 @@
                   </div>
 
                   <div class="setting-row">
-                    <div class="setting-label"><span>模型</span></div>
+                    <div class="setting-label">
+                      <span>服务商</span>
+                      <small>先选服务商，再选它下面的模型。</small>
+                    </div>
                     <div class="setting-control">
-                      <span class="readonly-value" id="agent-detail-model">—</span>
+                      <select id="agent-detail-provider"></select>
                     </div>
                   </div>
 
                   <div class="setting-row">
-                    <div class="setting-label"><span>凭据</span></div>
+                    <div class="setting-label">
+                      <span>模型</span>
+                      <small>模型决定上下文窗口与输出上限。</small>
+                    </div>
                     <div class="setting-control">
-                      <span class="readonly-value" id="agent-detail-credential">—</span>
+                      <select id="agent-detail-model"></select>
+                    </div>
+                  </div>
+
+                  <div class="setting-row">
+                    <div class="setting-label">
+                      <span>凭据</span>
+                      <small>保存后写入 config/config.yaml，重启生效。</small>
+                    </div>
+                    <div class="setting-control">
+                      <select id="agent-detail-credential"></select>
                     </div>
                   </div>
 

@@ -130,6 +130,51 @@ def test_opencode_provider_credential_and_models_round_trip(tmp_path):
     assert adapter["default_base_url"] == ""
 
 
+def test_update_agent_model_and_credential_preserves_config_text(tmp_path):
+    admin = _admin(tmp_path)
+    before_text = (tmp_path / "config.yaml").read_text(encoding="utf-8")
+    before = yaml.safe_load(before_text)
+    other_model = before["agents"]["agent_a"]["brain"]["model"]
+
+    snap = admin.apply("agent.update", {
+        "agent_id": "agent_b",
+        "model": "opencode_glm",
+        "credential": "opencode_key",
+    })
+    assert snap["updated_agent"] == "agent_b"
+    assert snap["restart_required"] is True
+
+    after_text = (tmp_path / "config.yaml").read_text(encoding="utf-8")
+    # 文本补丁不能抹掉文件头注释与手工排版。
+    assert "# AI Economy OS v0.2.0 - 全局配置" in after_text
+    after = yaml.safe_load(after_text)
+    assert after["agents"]["agent_b"]["brain"]["model"] == "opencode_glm"
+    assert after["agents"]["agent_b"]["brain"]["credential"] == "opencode_key"
+    assert after["agents"]["agent_a"]["brain"]["model"] == other_model
+
+    from core.config_resolver import load_resolved_config
+    from llm.router import adapter_specs
+
+    resolved = load_resolved_config(
+        tmp_path / "config.yaml", adapter_specs=adapter_specs)
+    agent = resolved.agent("agent_b")
+    assert agent.model_profile == "opencode_glm"
+    assert agent.credential_profile == "opencode_key"
+
+    with pytest.raises(SettingsAdminError):
+        admin.apply("agent.update", {
+            "agent_id": "agent_b",
+            "model": "no_such_model",
+            "credential": "opencode_key",
+        })
+    with pytest.raises(SettingsAdminError):
+        admin.apply("agent.update", {
+            "agent_id": "no_such_agent",
+            "model": "opencode_glm",
+            "credential": "opencode_key",
+        })
+
+
 def test_model_context_limits_are_validated(tmp_path):
     admin = _admin(tmp_path)
     with pytest.raises(SettingsAdminError):

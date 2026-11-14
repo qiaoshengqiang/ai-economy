@@ -542,19 +542,92 @@
   // ------------------------------------------------------------
   // Agent（主从编辑 + 新增 / 归档）
   // ------------------------------------------------------------
+  function systemModels() {
+    return (data && data.system && data.system.models) || {};
+  }
+
+  function systemProviders() {
+    return (data && data.system && data.system.providers) || {};
+  }
+
+  function systemCredentials() {
+    return (data && data.system && data.system.credentials) || {};
+  }
+
+  function modelsForProvider(provider) {
+    return Object.entries(systemModels())
+      .filter(([, raw]) => String((raw || {}).provider || "") === provider)
+      .map(([profile, raw]) => ({ profile, ...(raw || {}) }));
+  }
+
+  function agentProviderOf(agent) {
+    if (!agent) return "";
+    const model = systemModels()[agent.model] || {};
+    return String(model.provider || agent.provider || "");
+  }
+
+  function fillProviderOptions(select, current) {
+    clear(select);
+    option(select, "", "(未选择)");
+    const providers = systemProviders();
+    Object.keys(providers).forEach((name) => {
+      const count = modelsForProvider(name).length;
+      option(select, name, `${name} · ${count ? `${count} 个模型` : "无模型"}`);
+    });
+    if (current && !Object.prototype.hasOwnProperty.call(providers, current)) {
+      option(select, current, `${current} · 未知服务商`);
+    }
+    select.value = current && Array.from(select.options).some(
+      (item) => item.value === current) ? current : "";
+  }
+
+  function fillModelOptions(select, provider, current, autoSelect = false) {
+    clear(select);
+    const models = modelsForProvider(provider);
+    if (!models.length) {
+      option(select, "", provider ? "(该服务商还没有模型)" : "(请先选择服务商)");
+      select.value = "";
+      return;
+    }
+    option(select, "", "(请选择模型)");
+    models.forEach((model) => option(
+      select, model.profile,
+      `${model.profile} · ${model.model_id || "?"}`));
+    if (models.some((model) => model.profile === current)) {
+      select.value = current;
+    } else {
+      select.value = autoSelect ? models[0].profile : "";
+    }
+  }
+
+  function fillCredentialOptions(select, current) {
+    clear(select);
+    option(select, "", "(请选择凭据)");
+    Object.entries(systemCredentials()).forEach(([profile, raw]) => {
+      const env = String((raw || {}).env || "");
+      const state = raw && raw.present ? "已配置" : "缺失";
+      option(select, profile, `${profile} · ${env} · ${state}`);
+    });
+    select.value = current && Array.from(select.options).some(
+      (item) => item.value === current) ? current : "";
+  }
+
   function buildAgentState() {
     const regular = data.regular || {};
     const piAgents = new Set(regular.pi_work_agents || []);
     const agents = {};
     (data.agents || []).forEach((agent) => {
+      const model = String(agent.model || "");
+      const modelRaw = systemModels()[model] || {};
       agents[agent.agent_id] = {
         name: String(agent.name || agent.agent_id),
         enabled: !!agent.enabled,
         archived: !!agent.archived,
         engine: piAgents.has(agent.agent_id) ? "pi" : "solo",
         status: agent.status || "",
-        model: agent.model || "—",
-        credential: agent.credential || "—",
+        provider: String(modelRaw.provider || ""),
+        model,
+        credential: String(agent.credential || ""),
       };
     });
     const ids = Object.keys(agents);
@@ -648,8 +721,12 @@
       $("agent-detail-status").textContent = "—";
       $("agent-detail-role").textContent = "—";
       $("agent-detail-role-text").textContent = "—";
-      $("agent-detail-model").textContent = "—";
-      $("agent-detail-credential").textContent = "—";
+      clear($("agent-detail-provider"));
+      clear($("agent-detail-model"));
+      clear($("agent-detail-credential"));
+      $("agent-detail-provider").disabled = true;
+      $("agent-detail-model").disabled = true;
+      $("agent-detail-credential").disabled = true;
       $("agent-setting-enabled").checked = false;
       $("agent-setting-enabled").disabled = true;
       $("agent-archive-btn").hidden = true;
@@ -667,8 +744,13 @@
     $("agent-detail-role-text").textContent = agent.archived
       ? "已归档（历史保留）"
       : (isFront ? "Front Agent（由上方 Front Agent 决定）" : "Worker");
-    $("agent-detail-model").textContent = agent.model;
-    $("agent-detail-credential").textContent = agent.credential;
+    const provider = agentProviderOf(agent);
+    fillProviderOptions($("agent-detail-provider"), provider);
+    fillModelOptions($("agent-detail-model"), provider, agent.model);
+    fillCredentialOptions($("agent-detail-credential"), agent.credential);
+    $("agent-detail-provider").disabled = agent.archived;
+    $("agent-detail-model").disabled = agent.archived;
+    $("agent-detail-credential").disabled = agent.archived;
     $("agent-setting-enabled").checked = agent.enabled;
     $("agent-setting-enabled").disabled = isFront || agent.archived;
     $("agent-setting-enabled-note").textContent = agent.archived
@@ -763,6 +845,15 @@
     await saveAgents("Agent 已恢复（仍为停用）并保存");
   }
 
+  function populateNewAgentModels(current = "") {
+    fillModelOptions(
+      $("new-agent-model"),
+      $("new-agent-provider").value,
+      current,
+      true,
+    );
+  }
+
   function openAgentCreate() {
     const card = $("agent-create-card");
     card.hidden = false;
@@ -770,20 +861,29 @@
     $("new-agent-name").value = "";
     $("new-agent-balance").value = "100";
 
-    const modelSelect = $("new-agent-model");
-    clear(modelSelect);
-    Object.keys((data.system && data.system.models) || {}).forEach(
-      (profile) => option(modelSelect, profile, profile));
-    const credentialSelect = $("new-agent-credential");
-    clear(credentialSelect);
-    const credentials = (data.system && data.system.credentials) || {};
-    Object.entries(credentials).forEach(([profile, raw]) => option(
-      credentialSelect, profile,
-      `${profile}${raw.present ? "" : "（缺失）"}`,
-      !!raw.present));
-    const firstPresent = Object.entries(credentials)
-      .find(([, raw]) => raw.present);
-    if (firstPresent) credentialSelect.value = firstPresent[0];
+    const providerSelect = $("new-agent-provider");
+    clear(providerSelect);
+    const allProviders = Object.keys(systemProviders()).filter(
+      (name) => modelsForProvider(name).length);
+    let providerNames = allProviders.filter((name) => name !== "mock");
+    if (!providerNames.length) providerNames = allProviders;
+    if (!providerNames.length) {
+      option(providerSelect, "", "(还没有可用服务商)");
+    } else {
+      providerNames.forEach((name) => option(
+        providerSelect, name,
+        `${name} · ${modelsForProvider(name).length} 个模型`));
+      const preferred = agentProviderOf(agentDraft.agents[selectedAgent]);
+      providerSelect.value = providerNames.includes(preferred)
+        ? preferred : providerNames[0];
+    }
+    populateNewAgentModels();
+
+    fillCredentialOptions($("new-agent-credential"), "");
+    const firstPresent = Object.entries(systemCredentials())
+      .find(([, raw]) => raw && raw.present);
+    if (firstPresent) $("new-agent-credential").value = firstPresent[0];
+
     $("new-agent-id").focus();
     card.scrollIntoView({ block: "nearest" });
   }
@@ -807,7 +907,7 @@
       return;
     }
     if (!model || !credential) {
-      toast("请选择模型和凭据", true);
+      toast("请选择服务商、模型和凭据", true);
       return;
     }
     if (!Number.isFinite(balance) || balance < 0 || balance > 1000) {
@@ -850,18 +950,48 @@
     }
   }
 
-  async function saveAgents(
-    message = "Agent 设置已保存；协作与引擎变更对新任务生效",
-  ) {
+  async function saveAgents(message = "") {
     const pi = [];
     const disabled = [];
     const archived = [];
+    const modelChanges = [];
+    const missing = [];
     Object.entries(agentDraft.agents).forEach(([agentId, agent]) => {
       if (agent.engine === "pi") pi.push(agentId);
       if (agent.archived) archived.push(agentId);
       if (!agent.enabled || agent.archived) disabled.push(agentId);
+      const initial = (agentInitial.agents || {})[agentId] || {};
+      const changed = (
+        agent.model !== initial.model
+        || agent.credential !== initial.credential
+      );
+      if (!changed) return;
+      if (!agent.model || !agent.credential) {
+        missing.push(agent.name || agentId);
+        return;
+      }
+      modelChanges.push({
+        agent_id: agentId,
+        model: agent.model,
+        credential: agent.credential,
+      });
     });
+    if (missing.length) {
+      toast(`请为 ${missing.join("、")} 选择模型与凭据`, true);
+      return;
+    }
+    const keep = selectedAgent;
     try {
+      // 模型 / 凭据属于 canonical config.yaml，必须走系统设置写入口。
+      for (const change of modelChanges) {
+        await api("/api/settings/system", {
+          method: "POST",
+          body: JSON.stringify({
+            action: "agent.update",
+            data: change,
+          }),
+        });
+      }
       await api("/api/settings", {
         method: "POST",
         body: JSON.stringify({
@@ -874,7 +1004,10 @@
         }),
       });
       await load();
-      toast(message);
+      if (agentDraft.agents[keep]) selectAgent(keep);
+      toast(message || (modelChanges.length
+        ? "Agent 设置与模型已保存；模型改动重启后生效"
+        : "Agent 设置已保存；协作与引擎变更对新任务生效"));
     } catch (error) {
       toast(`保存失败：${error.message}`, true);
     }
@@ -963,9 +1096,13 @@
       next.frontMode = "autonomous";
       next.workMode = "autonomous";
       ids.forEach((agentId, index) => {
+        const initial = (agentInitial.agents || {})[agentId] || {};
         next.agents[agentId].enabled = true;
         next.agents[agentId].archived = false;
         next.agents[agentId].engine = index === 0 ? "solo" : "pi";
+        next.agents[agentId].model = initial.model || "";
+        next.agents[agentId].credential = initial.credential || "";
+        next.agents[agentId].provider = initial.provider || "";
       });
       agentDraft = next;
       showArchivedAgents = false;
@@ -1522,6 +1659,31 @@
       updateAgentSummary();
       updateFooter();
     });
+  });
+  $("agent-detail-provider").addEventListener("change", () => {
+    const agent = agentDraft.agents[selectedAgent];
+    if (!agent) return;
+    const provider = $("agent-detail-provider").value;
+    fillModelOptions($("agent-detail-model"), provider, "", true);
+    agent.provider = provider;
+    agent.model = $("agent-detail-model").value;
+    updateFooter();
+  });
+  $("agent-detail-model").addEventListener("change", () => {
+    const agent = agentDraft.agents[selectedAgent];
+    if (!agent) return;
+    agent.model = $("agent-detail-model").value;
+    agent.provider = agentProviderOf(agent);
+    updateFooter();
+  });
+  $("agent-detail-credential").addEventListener("change", () => {
+    const agent = agentDraft.agents[selectedAgent];
+    if (!agent) return;
+    agent.credential = $("agent-detail-credential").value;
+    updateFooter();
+  });
+  $("new-agent-provider").addEventListener("change", () => {
+    populateNewAgentModels();
   });
   $("agent-settings-list").addEventListener("click", (event) => {
     const item = event.target.closest("[data-agent]");

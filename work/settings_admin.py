@@ -71,6 +71,96 @@ def _atomic_write(path: Path, text: str, *, mode: Optional[int] = None) -> None:
     tmp.replace(path)
 
 
+def _patch_agent_brain(
+    text: str, agent_id: str, *, model: str, credential: str,
+) -> str:
+    """只改 `agents.<id>.brain.model / credential`，保留其余文本与注释。
+
+    为什么不 `yaml.safe_load` + `safe_dump` 整个 config.yaml：
+    那会把所有注释、空行和手工排版全部抹掉。配置文件是给人看的，
+    这里只需要替换两行，所以用最小文本补丁。
+    """
+    lines = text.splitlines()
+    agents_index = None
+    for index, line in enumerate(lines):
+        if re.fullmatch(r"agents:\s*", line):
+            agents_index = index
+            break
+    if agents_index is None:
+        raise SettingsAdminError("config.yaml 缺少顶层 agents: 段。")
+
+    agent_start = None
+    for index in range(agents_index + 1, len(lines)):
+        line = lines[index]
+        if (line.strip() and not line.startswith(" ")
+                and not line.lstrip().startswith("#")):
+            break
+        if re.fullmatch(rf"  {re.escape(agent_id)}:\s*", line):
+            agent_start = index
+            break
+    if agent_start is None:
+        raise SettingsAdminError(f"config.yaml 里找不到 Agent：{agent_id}")
+
+    agent_end = len(lines)
+    for index in range(agent_start + 1, len(lines)):
+        line = lines[index]
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        if (line.startswith("  ") and not line.startswith("    ")
+                and re.fullmatch(r"  [A-Za-z0-9_.-]+:\s*", line)):
+            agent_end = index
+            break
+        if not line.startswith(" "):
+            agent_end = index
+            break
+
+    brain_index = None
+    for index in range(agent_start + 1, agent_end):
+        if re.fullmatch(r"    brain:\s*", lines[index]):
+            brain_index = index
+            break
+    if brain_index is None:
+        raise SettingsAdminError(
+            f"Agent {agent_id} 的配置缺少 brain: 段。")
+
+    brain_end = agent_end
+    for index in range(brain_index + 1, agent_end):
+        line = lines[index]
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip(" "))
+        if indent <= 4:
+            brain_end = index
+            break
+
+    replaced_model = replaced_credential = False
+    new_brain: List[str] = []
+    for index in range(brain_index + 1, brain_end):
+        line = lines[index]
+        if re.match(r"      model:\s*", line):
+            new_brain.append(f"      model: {model}")
+            replaced_model = True
+        elif re.match(r"      credential:\s*", line):
+            new_brain.append(f"      credential: {credential}")
+            replaced_credential = True
+        else:
+            new_brain.append(line)
+
+    prefix: List[str] = []
+    if not replaced_model:
+        prefix.append(f"      model: {model}")
+    if not replaced_credential:
+        prefix.append(f"      credential: {credential}")
+    if prefix:
+        new_brain = prefix + new_brain
+    lines[brain_index + 1:brain_end] = new_brain
+
+    updated = "\n".join(lines)
+    if text.endswith("\n"):
+        updated += "\n"
+    return updated
+
+
 def _read_env(path: Path) -> Dict[str, str]:
     values: Dict[str, str] = {}
     if not path.exists():
@@ -257,6 +347,8 @@ class SystemConfigAdmin:
         payload = dict(payload or {})
         if action == "agent.create":
             return self._create_agent(payload)
+        if action == "agent.update":
+            return self._update_agent(payload)
         llm = self._llm_data()
         if action == "provider.upsert":
             self._upsert_provider(llm, payload)
@@ -364,6 +456,53 @@ class SystemConfigAdmin:
         self.restart_required = True
         result = self.snapshot()
         result["created_agent"] = agent_id
+        return result
+
+    def _update_agent(self, payload: Mapping[str, Any]) -> Dict[str, Any]:
+        """修改 Agent 的模型 / 凭据：只改 canonical `config.yaml`。"""
+        agent_id = str(payload.get("agent_id") or "").strip()
+        if not _AGENT_ID_RE.fullmatch(agent_id):
+            raise SettingsAdminError("Agent ID 不合法。")
+        model = str(payload.get("model") or "").strip()
+        credential = str(payload.get("credential") or "").strip()
+        if not model:
+            raise SettingsAdminError("model 不能为空。")
+        if not credential:
+            raise SettingsAdminError("credential 不能为空。")
+
+        llm = self._llm_data()
+        merged = self._merged(llm)
+        if agent_id not in (merged.get("agents") or {}):
+            raise SettingsAdminError(f"未知 Agent：{agent_id!r}")
+        models = dict(merged.get("models") or {})
+        credentials = dict(merged.get("credentials") or {})
+        if model not in models:
+            raise SettingsAdminError(f"未知 model profile：{model!r}")
+        if credential not in credentials:
+            raise SettingsAdminError(
+                f"未知 credential profile：{credential!r}")
+
+        try:
+            original = self.config_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise SettingsAdminError(
+                f"读取 {self.config_path} 失败：{exc}") from exc
+        updated = _patch_agent_brain(
+            original, agent_id, model=model, credential=credential)
+        if updated == original:
+            raise SettingsAdminError(
+                f"Agent {agent_id} 的模型配置没有发生变化。")
+
+        self._backup_config()
+        _atomic_write(self.config_path, updated)
+        try:
+            self._validate(llm)
+        except Exception:
+            _atomic_write(self.config_path, original)
+            raise
+        self.restart_required = True
+        result = self.snapshot()
+        result["updated_agent"] = agent_id
         return result
 
     def _upsert_provider(
