@@ -327,8 +327,13 @@ def adapter_specs() -> Dict[str, Dict[str, Any]]:
     for name, cls in adapter_classes().items():
         out[name] = {
             "class": cls,
+            "label": str(getattr(cls, "PROVIDER_LABEL", name) or name),
             "requires_base_url": bool(getattr(cls, "requires_base_url", True)),
             "requires_api_key": bool(getattr(cls, "requires_api_key", True)),
+            #: 这个 adapter 自带的默认端点。UI 用它做「留空即默认」提示，
+            #: 设置层也用它把空 base_url 补成显式值。
+            "default_base_url": str(
+                getattr(cls, "DEFAULT_BASE_URL", "") or "").strip(),
         }
     return out
 

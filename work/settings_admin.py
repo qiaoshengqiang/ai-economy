@@ -166,8 +166,11 @@ class SystemConfigAdmin:
         adapters = [
             {
                 "name": name,
+                "label": str(spec.get("label") or name),
                 "requires_base_url": bool(spec.get("requires_base_url", True)),
                 "requires_api_key": bool(spec.get("requires_api_key", True)),
+                "default_base_url": str(
+                    spec.get("default_base_url") or ""),
             }
             for name, spec in sorted(specs.items())
         ]
@@ -375,7 +378,13 @@ class SystemConfigAdmin:
             raise SettingsAdminError(
                 f"未知 adapter：{adapter!r}；已知：{sorted(specs)}")
         base_url = str(payload.get("base_url") or "").strip()
-        if specs[adapter].get("requires_base_url", True) and not base_url:
+        spec = specs[adapter]
+        if not base_url:
+            # 留空 = 使用 adapter 自带的默认端点。这样选择 deepseek /
+            # doubao / bailian 时不必重复抄一遍官方 URL；没有默认端点的
+            # openai_compatible / mock 仍然要求显式填写（或不需要）。
+            base_url = str(spec.get("default_base_url") or "").strip()
+        if spec.get("requires_base_url", True) and not base_url:
             raise SettingsAdminError(f"adapter {adapter} 需要 base_url。")
         timeout = float(payload.get("timeout_seconds") or 300)
         if timeout <= 0:

@@ -6,7 +6,7 @@
 
 **当前版本：`v0.2.0`（开发中）**
 **当前最佳工作方式：Human → Front Agent → Pi Agent → 自主工作**
-**测试基线：`5687 passed, 2 skipped, 30 deselected`**
+**测试基线：`5692 passed, 2 skipped, 30 deselected`**
 
 > - 当前真实能力、推荐模式与已知限制：[`docs/PROJECT_STATUS.md`](docs/PROJECT_STATUS.md)
 > - 架构长期 Source of Truth：[`ARCHITECTURE_CONSTITUTION.md`](docs/architecture/ARCHITECTURE_CONSTITUTION.md)
@@ -258,7 +258,7 @@ ai-economy/
 ├── resources/              ← 公共只读工具库
 ├── config/                 ← config.yaml + llm.yaml
 ├── docs/                   ← 架构文档 / ADR / 历史
-├── tests/                  ← 5687 个测试 + 30 个真实 API 测试
+├── tests/                  ← 5692 个测试 + 30 个真实 API 测试
 │
 ├── tasks/                  ← Task 运行目录（不进 git）
 ├── runs/                   ← UI / 日志 / 输出（不进 git）
@@ -324,7 +324,7 @@ LLM 调用是真实经营成本，会记 `LLM_COST` 并进入 Ledger。
 ./dev.sh test tests/test_ledger.py -k x    # 单个测试
 ```
 
-当前基线：**5687 passed, 2 skipped, 30 deselected**。
+当前基线：**5692 passed, 2 skipped, 30 deselected**。
 
 另有 30 个真实 API 测试，需要 Key 且会产生费用，单独运行：
 
@@ -423,6 +423,7 @@ Capital Market    资本市场
 | 文档 | 作用 | 什么时候读 |
 |---|---|---|
 | [`docs/INSTALL.md`](docs/INSTALL.md) | **源码安装 / 朋友安装 / AI 协助配置** | 第一次安装或换机器时 |
+| [`docs/PROVIDERS.md`](docs/PROVIDERS.md) | **服务商接入（OpenCode / DeepSeek / 豆包 / 百炼）** | 新增或排查模型服务商时 |
 | [`docs/PROJECT_STATUS.md`](docs/PROJECT_STATUS.md) | **当前版本真实状态、推荐模式、已知限制** | 想知道「现在到底能做什么」 |
 | [`AGENTS.md`](AGENTS.md) | **Developer Context / 入口** | 开始工作前 |
 | [`ARCHITECTURE_CONSTITUTION.md`](docs/architecture/ARCHITECTURE_CONSTITUTION.md) | **长期架构 Source of Truth** | 改架构之前 |

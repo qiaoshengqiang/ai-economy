@@ -6,9 +6,9 @@ providers:
     default_model: mock_model
   deepseek:
     adapter: deepseek
+    timeout_seconds: 300.0
     base_url: https://api.deepseek.com
-    timeout_seconds: 300
-    default_model: deepseek_chat
+    default_model: deepseek_flash
   doubao:
     adapter: doubao
     base_url: https://ark.cn-beijing.volces.com/api/v3
@@ -24,6 +24,13 @@ providers:
     base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
     timeout_seconds: 300
     default_model: qwen_fast
+  opencode:
+    adapter: openai_compatible
+    base_url: https://opencode.ai/inference/go/openai/v1
+    timeout_seconds: 300
+    request:
+      extra_headers:
+        x-opencode-session: ses_aieos_local
 models:
   deepseek_chat:
     provider: deepseek
@@ -77,6 +84,38 @@ models:
     - low
     - medium
     - high
+  opencode_glm:
+    provider: opencode
+    model_id: glm-5.3
+    context_window: 1000000
+    max_output_tokens: 32768
+    supports_reasoning: false
+    thinking_levels:
+    - 'off'
+  opencode_kimi:
+    provider: opencode
+    model_id: kimi-k3
+    context_window: 1048576
+    max_output_tokens: 32768
+    supports_reasoning: false
+    thinking_levels:
+    - 'off'
+  opencode_minimax:
+    provider: opencode
+    model_id: minimax-m3
+    context_window: 512000
+    max_output_tokens: 32768
+    supports_reasoning: false
+    thinking_levels:
+    - 'off'
+  opencode_qwen:
+    provider: opencode
+    model_id: qwen3.8-max
+    context_window: 262144
+    max_output_tokens: 32768
+    supports_reasoning: false
+    thinking_levels:
+    - 'off'
   mock_model:
     provider: mock
     model_id: mock-model-v1
@@ -102,3 +141,5 @@ credentials:
     env: BAILIAN_KEY_AGENT_D
   bailian_key_e:
     env: BAILIAN_KEY_AGENT_E
+  opencode_key:
+    env: OPENCODE_KEY

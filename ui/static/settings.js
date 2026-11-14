@@ -19,6 +19,47 @@
   let modelInitial = null;
   let credentialInitial = null;
   let roleInitial = null;
+  //: 上一次由「预设 / Adapter 默认值」自动写进 Base URL 的值。
+  //: 用户手动改过 Base URL 后，切换 Adapter 就不再覆盖它。
+  let providerAutoBaseUrl = "";
+
+  const PROVIDER_PRESETS = {
+    opencode: {
+      name: "opencode",
+      adapter: "openai_compatible",
+      base_url: "https://opencode.ai/inference/go/openai/v1",
+      hint: "OpenCode Go（订阅）。凭据环境变量用 OPENCODE_KEY；" +
+        "模型 ID 可用 glm-5.3 / kimi-k3 / minimax-m3 / qwen3.8-max。" +
+        "Go 端点要求 x-opencode-session 请求头，仓库里的 opencode " +
+        "服务商已经预置。",
+    },
+    opencode_zen: {
+      name: "opencode_zen",
+      adapter: "openai_compatible",
+      base_url: "https://opencode.ai/inference/openai/v1",
+      hint: "OpenCode Zen（按量付费）。凭据环境变量用 OPENCODE_KEY；" +
+        "需要先在 Console 充值。免费模型只允许 OpenCode 客户端调用，" +
+        "外部调用会返回 403。",
+    },
+    deepseek: {
+      name: "deepseek",
+      adapter: "deepseek",
+      base_url: "https://api.deepseek.com",
+      hint: "DeepSeek 官方端点。模型 ID 例如 deepseek-chat / deepseek-flash。",
+    },
+    doubao: {
+      name: "doubao",
+      adapter: "doubao",
+      base_url: "https://ark.cn-beijing.volces.com/api/v3",
+      hint: "豆包（火山方舟）。模型 ID 通常是控制台里的推理接入点 ID（ep-...）。",
+    },
+    bailian: {
+      name: "bailian",
+      adapter: "bailian",
+      base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      hint: "阿里云百炼。必须使用 compatible-mode/v1 这个 OpenAI 兼容入口。",
+    },
+  };
 
   const clone = (obj) => (
     typeof structuredClone === "function"
@@ -78,6 +119,54 @@
   }
 
   function clear(node) { node.innerHTML = ""; }
+
+  function adapterSpec(name) {
+    const adapters = (data && data.system && data.system.adapters) || [];
+    return adapters.find((item) => item.name === name) || null;
+  }
+
+  function adapterDefaultBaseUrl(name) {
+    const spec = adapterSpec(name);
+    return (spec && spec.default_base_url) || "";
+  }
+
+  function updateProviderHints() {
+    const select = $("provider-adapter");
+    const input = $("provider-base-url");
+    const hint = $("provider-base-url-hint");
+    if (!select || !input || !hint) return;
+    const spec = adapterSpec(select.value);
+    if (spec && spec.default_base_url) {
+      input.placeholder = spec.default_base_url;
+      hint.textContent = `可留空，默认使用 ${spec.default_base_url}`;
+    } else if (spec && spec.requires_base_url) {
+      input.placeholder = "https://api.example.com";
+      hint.textContent = "这个 Adapter 必须填写 Base URL。";
+    } else {
+      input.placeholder = "https://api.example.com";
+      hint.textContent = "这个 Adapter 不需要 Base URL。";
+    }
+    const preset = PROVIDER_PRESETS[$("provider-preset").value];
+    $("provider-preset-hint").textContent = preset
+      ? preset.hint
+      : "选择预设会自动填 Adapter 和 Base URL；也可以完全自定义。";
+  }
+
+  function applyProviderPreset(key) {
+    const preset = PROVIDER_PRESETS[key];
+    if (!preset) {
+      updateProviderHints();
+      return;
+    }
+    if (!$("provider-name").disabled) {
+      $("provider-name").value = preset.name;
+    }
+    $("provider-adapter").value = preset.adapter;
+    providerAutoBaseUrl = preset.base_url;
+    $("provider-base-url").value = preset.base_url;
+    updateProviderHints();
+    updateFooter();
+  }
 
   function checkedValue(name) {
     const input = document.querySelector(`input[name="${name}"]:checked`);
@@ -246,6 +335,7 @@
     adapters.forEach((item) => option(
       select, item.name,
       `${item.name}${item.requires_base_url ? "" : " (no base_url)"}`));
+    updateProviderHints();
   }
 
   function renderModels() {
@@ -912,10 +1002,12 @@
   function editProvider(name) {
     const raw = (data.system.providers || {})[name] || {};
     editing.provider = name;
+    $("provider-preset").value = "";
     $("provider-name").value = name;
     $("provider-name").disabled = true;
     $("provider-adapter").value = raw.adapter || "";
     $("provider-base-url").value = raw.base_url || "";
+    providerAutoBaseUrl = "";
     $("provider-timeout").value = String(raw.timeout_seconds || 300);
     const defaults = $("provider-default-model");
     clear(defaults);
@@ -927,23 +1019,33 @@
     });
     $("provider-request").value = raw.request
       ? JSON.stringify(raw.request, null, 2) : "";
+    updateProviderHints();
     providerInitial = clone(providerSnapshot());
     updateFooter();
   }
 
   function newProvider() {
     editing.provider = "";
+    $("provider-preset").value = "";
     $("provider-name").disabled = false;
     $("provider-name").value = "";
-    $("provider-adapter").selectedIndex = 0;
-    $("provider-base-url").value = "";
+    // 新建时默认用通用 OpenAI 兼容 adapter —— 不要默认成排序第一的
+    // bailian，否则用户只填名字就会收到「adapter bailian 需要 base_url」。
+    const adapters = (data.system && data.system.adapters) || [];
+    const names = adapters.map((item) => item.name);
+    const adapter = names.includes("openai_compatible")
+      ? "openai_compatible" : (names[0] || "");
+    $("provider-adapter").value = adapter;
+    providerAutoBaseUrl = adapterDefaultBaseUrl(adapter);
+    $("provider-base-url").value = providerAutoBaseUrl;
     $("provider-timeout").value = "300";
+    // 新服务商还没有自己的模型：默认模型只能是「无」。
+    // 列出全部模型会让用户把别的端点的 profile 挂到这里，
+    // 保存后重启时报「默认模型必须属于这个端点自己」。
     clear($("provider-default-model"));
     option($("provider-default-model"), "", "(无)");
-    Object.keys((data.system.models || {})).forEach((profile) => {
-      option($("provider-default-model"), profile, profile);
-    });
     $("provider-request").value = "";
+    updateProviderHints();
     providerInitial = clone(providerSnapshot());
     updateFooter();
   }
@@ -957,6 +1059,22 @@
       default_model: $("provider-default-model").value,
       request: $("provider-request").value.trim(),
     };
+    if (!payload.name) {
+      toast("请填写服务商 ID（例如 opencode）。", true);
+      return;
+    }
+    if (!payload.adapter) {
+      toast("请选择 Adapter。", true);
+      return;
+    }
+    const spec = adapterSpec(payload.adapter);
+    if (!payload.base_url && spec && spec.default_base_url) {
+      payload.base_url = spec.default_base_url;
+    }
+    if ((spec ? spec.requires_base_url : true) && !payload.base_url) {
+      toast(`Adapter ${payload.adapter} 需要 Base URL。`, true);
+      return;
+    }
     try {
       await api("/api/settings/system", {
         method: "POST",
@@ -1324,6 +1442,19 @@
   settingsContent.addEventListener("input", refreshSystemFooter);
   settingsContent.addEventListener("change", refreshSystemFooter);
 
+  $("provider-preset").addEventListener("change", () => {
+    applyProviderPreset($("provider-preset").value);
+  });
+  $("provider-adapter").addEventListener("change", () => {
+    const next = adapterDefaultBaseUrl($("provider-adapter").value);
+    const current = $("provider-base-url").value.trim();
+    if (!current || current === providerAutoBaseUrl) {
+      providerAutoBaseUrl = next;
+      $("provider-base-url").value = next;
+    }
+    updateProviderHints();
+    updateFooter();
+  });
   $("provider-new").addEventListener("click", newProvider);
   $("model-new").addEventListener("click", newModel);
   $("credential-new").addEventListener("click", newCredential);

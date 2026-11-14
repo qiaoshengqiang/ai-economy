@@ -2132,6 +2132,28 @@ def test_settings_page_has_prompt_log_toggle():
     assert "runs/ui/prompts/" in html
 
 
+def test_provider_form_has_safe_defaults_and_opencode_preset():
+    from pathlib import Path
+
+    static = Path(__file__).resolve().parent.parent / "ui" / "static"
+    html = (static / "index.html").read_text(encoding="utf-8")
+    js = (static / "settings.js").read_text(encoding="utf-8")
+
+    assert 'id="provider-preset"' in html
+    assert "OpenCode Zen" in html
+    assert "OpenCode Go" in html
+    assert "https://opencode.ai/inference/openai/v1" in js
+
+    start = js.index("function newProvider()")
+    end = js.index("async function saveProvider()", start)
+    block = js[start:end]
+    # 新建服务商默认用通用 OpenAI 兼容 adapter，而不是排序第一的 bailian。
+    assert '"openai_compatible"' in block
+    # 新建时不能把所有模型都列进「默认模型」。
+    assert "Object.keys((data.system.models" not in block
+    assert 'option($("provider-default-model"), "", "(无)")' in block
+
+
 def test_agent_question_bubble_and_answer_ui():
     from pathlib import Path
 

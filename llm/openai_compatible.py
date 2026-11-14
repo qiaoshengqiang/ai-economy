@@ -323,6 +323,15 @@ class OpenAICompatibleProvider(LLMProvider):
             dict(extra_body) if isinstance(extra_body, Mapping) else {}
         )
 
+        # 额外请求头（例如 OpenCode Go 必须带 x-opencode-session）。
+        # 🔒 这里只放路由 / 会话类 header；Authorization 永远只来自
+        #    Credential，不允许被配置覆盖。
+        extra_headers = cfg.get("extra_headers")
+        self.extra_headers: Dict[str, str] = (
+            {str(k): str(v) for k, v in extra_headers.items()}
+            if isinstance(extra_headers, Mapping) else {}
+        )
+
         # 可替换的 HTTP 层
         self._http_post: HTTPPost = http_post or default_http_post
 
@@ -486,11 +495,22 @@ class OpenAICompatibleProvider(LLMProvider):
 
     def build_headers(self) -> Dict[str, str]:
         """构造请求头。Key 只在这里出现，不会进日志。"""
-        return {
+        headers = {
             "Content-Type": "application/json",
             "Accept": "application/json",
+            # urllib 默认的 `Python-urllib/3.x` 会被部分网关的
+            # Cloudflare 规则拦成 403 / error code 1010（OpenCode Zen
+            # 实测如此）。显式 UA 既能让网关正常路由，也方便对方识别。
+            "User-Agent": "AIEOS/0.2",
             "Authorization": f"Bearer {self._api_key}",
         }
+        for name, value in self.extra_headers.items():
+            if name.strip().lower() in {"authorization", "x-api-key",
+                                        "api-key"}:
+                # 认证头只能来自 Credential，不能写进普通配置。
+                continue
+            headers[name] = value
+        return headers
 
     # ------------------------------------------------------------
     # 响应解析

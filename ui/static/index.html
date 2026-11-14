@@ -233,11 +233,28 @@
 
               <div class="setting-row">
                 <div class="setting-label">
+                  <span>快速填充</span>
+                  <small>选择常见服务商，自动填 Adapter 和 Base URL。</small>
+                </div>
+                <div class="setting-control">
+                  <select id="provider-preset">
+                    <option value="">自定义</option>
+                    <option value="opencode">OpenCode Go（订阅）</option>
+                    <option value="opencode_zen">OpenCode Zen（按量付费）</option>
+                    <option value="deepseek">DeepSeek</option>
+                    <option value="doubao">豆包（火山方舟）</option>
+                    <option value="bailian">阿里云百炼</option>
+                  </select>
+                  <p class="hint" id="provider-preset-hint"></p>
+                </div>
+              </div>
+              <div class="setting-row">
+                <div class="setting-label">
                   <span>服务商 ID</span>
                   <small>保存后作为 provider 名称。</small>
                 </div>
                 <div class="setting-control">
-                  <input id="provider-name" placeholder="deepseek" />
+                  <input id="provider-name" placeholder="opencode" />
                 </div>
               </div>
               <div class="setting-row">
@@ -246,7 +263,10 @@
               </div>
               <div class="setting-row">
                 <div class="setting-label"><span>Base URL</span></div>
-                <div class="setting-control"><input id="provider-base-url" placeholder="https://api.example.com" /></div>
+                <div class="setting-control">
+                  <input id="provider-base-url" placeholder="https://api.example.com" />
+                  <p class="hint" id="provider-base-url-hint"></p>
+                </div>
               </div>
               <div class="setting-row">
                 <div class="setting-label"><span>Timeout</span><small>单次请求超时。</small></div>
@@ -258,7 +278,10 @@
                 </div>
               </div>
               <div class="setting-row">
-                <div class="setting-label"><span>默认模型</span></div>
+                <div class="setting-label">
+                  <span>默认模型</span>
+                  <small>可留空；这里只应选属于当前服务商的模型。</small>
+                </div>
                 <div class="setting-control"><select id="provider-default-model"></select></div>
               </div>
               <div class="setting-row">

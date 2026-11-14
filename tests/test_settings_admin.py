@@ -72,6 +72,64 @@ def test_add_provider_model_and_credential(tmp_path):
         tmp_path / ".env").read_text(encoding="utf-8")
 
 
+def test_adapter_specs_expose_default_base_url():
+    from llm.router import adapter_specs
+
+    specs = adapter_specs()
+    assert specs["deepseek"]["default_base_url"] == "https://api.deepseek.com"
+    assert specs["bailian"]["default_base_url"].endswith(
+        "/compatible-mode/v1")
+    assert specs["openai_compatible"]["default_base_url"] == ""
+    assert specs["openai_compatible"]["label"]
+
+
+def test_provider_can_use_adapter_default_base_url(tmp_path):
+    admin = _admin(tmp_path)
+    admin.apply("provider.upsert", {
+        "name": "deepseek_local",
+        "adapter": "deepseek",
+        "timeout_seconds": 30,
+    })
+
+    data = yaml.safe_load(
+        (tmp_path / "llm.yaml").read_text(encoding="utf-8"))
+    assert data["providers"]["deepseek_local"]["base_url"] == (
+        "https://api.deepseek.com")
+
+
+def test_opencode_provider_credential_and_models_round_trip(tmp_path):
+    admin = _admin(tmp_path)
+    admin.apply("provider.upsert", {
+        "name": "opencode",
+        "adapter": "openai_compatible",
+        "base_url": "https://opencode.ai/inference/openai/v1",
+        "timeout_seconds": 300,
+    })
+    admin.apply("credential.upsert", {
+        "profile": "opencode_key",
+        "env": "OPENCODE_API_KEY",
+        "api_key": "oc_sk_test_secret",
+    })
+    admin.apply("model.upsert", {
+        "profile": "opencode_deepseek",
+        "provider": "opencode",
+        "model_id": "deepseek-v4.1-flash",
+        "context_window": 1000000,
+        "max_output_tokens": 32768,
+    })
+
+    snap = admin.snapshot()
+    assert snap["providers"]["opencode"]["adapter"] == "openai_compatible"
+    assert snap["providers"]["opencode"]["base_url"] == (
+        "https://opencode.ai/inference/openai/v1")
+    assert snap["models"]["opencode_deepseek"]["provider"] == "opencode"
+    assert snap["credentials"]["opencode_key"]["env"] == "OPENCODE_API_KEY"
+    adapter = next(
+        item for item in snap["adapters"]
+        if item["name"] == "openai_compatible")
+    assert adapter["default_base_url"] == ""
+
+
 def test_model_context_limits_are_validated(tmp_path):
     admin = _admin(tmp_path)
     with pytest.raises(SettingsAdminError):

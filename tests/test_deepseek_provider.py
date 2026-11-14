@@ -308,6 +308,27 @@ class TestRequestSerialization:
         headers = http.last_call["headers"]
         assert headers["Authorization"] == f"Bearer {FAKE_KEY}"
         assert headers["Content-Type"] == "application/json"
+        # 不能把 urllib 默认 UA 发给网关：OpenCode Zen 的 Cloudflare
+        # 规则会对 `Python-urllib/3.x` 返回 403 / error code 1010。
+        assert headers["User-Agent"].startswith("AIEOS/")
+
+    def test_extra_headers_are_sent_but_cannot_override_auth(self, monkeypatch):
+        http = FakeHTTP(HTTPResult(200, deepseek_success_body()))
+        provider = make_provider(
+            monkeypatch, http=http,
+            config={
+                "model": "deepseek-chat",
+                "extra_headers": {
+                    "x-opencode-session": "ses_test_123",
+                    "Authorization": "Bearer should-not-win",
+                },
+            })
+
+        provider.generate(messages="hi")
+
+        headers = http.last_call["headers"]
+        assert headers["x-opencode-session"] == "ses_test_123"
+        assert headers["Authorization"] == f"Bearer {FAKE_KEY}"
 
     def test_explicit_model_overrides_default(self, monkeypatch):
         http = FakeHTTP(HTTPResult(200, deepseek_success_body()))

@@ -200,6 +200,9 @@ http://127.0.0.1:8000/
 - Agent 列表是否正常；
 - 提交模式 / 输出仓库是否需要调整。
 
+需要新增模型服务商（例如 OpenCode）时见
+[`docs/PROVIDERS.md`](PROVIDERS.md)。
+
 ### 3.8 验证一次最小任务
 
 在 UI 输入：
@@ -462,6 +465,7 @@ tests/
 ## 9. 相关文档
 
 - [`START_AIEOS.md`](../START_AIEOS.md) —— 启动与端口
+- [`docs/PROVIDERS.md`](PROVIDERS.md) —— 服务商 / 凭据 / 模型接入（含 OpenCode）
 - [`docs/architecture/AIEOS_CLI.md`](architecture/AIEOS_CLI.md) —— `./aieos` 命令与配置
 - [`docs/architecture/PLATFORM_COMPATIBILITY.md`](architecture/PLATFORM_COMPATIBILITY.md) —— Windows / 平台差异
 - [`COMMANDS.md`](../COMMANDS.md) —— 全部命令
