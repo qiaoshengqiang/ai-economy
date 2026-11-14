@@ -4,6 +4,9 @@
 > 它支持启动 / 停止 / 重启 / 状态 / 日志 / 参数持久化 / doctor。
 > 完整说明见 [`docs/architecture/AIEOS_CLI.md`](docs/architecture/AIEOS_CLI.md)。
 >
+> 第一次安装 / 换机器 / 给朋友安装：
+> 见 [`docs/INSTALL.md`](docs/INSTALL.md)。
+>
 > 底层 `start_aieos.sh` 仍然可用。
 
 ## 快速启动

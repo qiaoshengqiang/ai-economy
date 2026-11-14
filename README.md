@@ -422,6 +422,7 @@ Capital Market    资本市场
 
 | 文档 | 作用 | 什么时候读 |
 |---|---|---|
+| [`docs/INSTALL.md`](docs/INSTALL.md) | **源码安装 / 朋友安装 / AI 协助配置** | 第一次安装或换机器时 |
 | [`docs/PROJECT_STATUS.md`](docs/PROJECT_STATUS.md) | **当前版本真实状态、推荐模式、已知限制** | 想知道「现在到底能做什么」 |
 | [`AGENTS.md`](AGENTS.md) | **Developer Context / 入口** | 开始工作前 |
 | [`ARCHITECTURE_CONSTITUTION.md`](docs/architecture/ARCHITECTURE_CONSTITUTION.md) | **长期架构 Source of Truth** | 改架构之前 |
