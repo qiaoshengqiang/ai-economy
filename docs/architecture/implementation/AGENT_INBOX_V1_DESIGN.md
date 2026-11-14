@@ -1,11 +1,12 @@
 # Agent Inbox V1 —— Runtime 收件箱接入设计
 
-> **状态：Phase 0/1/2/3/4 `CURRENT`；Phase 5 `DESIGNED`（2026-11-15）**
+> **状态：Phase 0–4 `CURRENT`；Phase 5 V1 `CURRENT`，其余 `DESIGNED`（2026-11-15）**
 >
 > Phase 0（边界 / flag / legacy cutover）、Phase 1（持久化 Inbox Core /
 > 统计 / API）、Phase 2（Pi 持久 Inbox）、Phase 3（Front Inbox-first）
 > 与 Phase 4（Solo 入队 / checkpoint）已实现；
-> Life 自主通信仍为 `DESIGNED`。
+> Phase 5 V1（空闲 Solo Agent 可选自动回复）已实现，
+> Conversation / 邀请 / 社交 / 经济通信仍为 `DESIGNED`。
 >
 > 相关文档：
 > [`COMMUNICATION_MODEL.md`](../COMMUNICATION_MODEL.md) ·
@@ -24,7 +25,7 @@
 | Phase 2：Pi 持久 Inbox | **`CURRENT`** | `PiInboxService` 常驻消费；写入 `agents/<id>/inbox/` |
 | Phase 3：Front Inbox-first | **`CURRENT`** | Human → Front inbox → Job dispatch |
 | Phase 4：Solo 入队 / Life | **`CURRENT`** | Solo 只入队；work checkpoint 注入；默认不自动回复 |
-| Phase 5：Life 通信 | `FUTURE` | 社交 / 经济 / Conversation |
+| Phase 5：Life 通信 | **V1 `CURRENT`** | 空闲 Solo Agent 可选自动回复；其余 `DESIGNED` |
 
 > Phase 1 的 `communication_inbox_state` 是第 **30** 张表。
 > `runtime.inbox_enabled` 当前为 `true`；
@@ -436,13 +437,38 @@ Task lifecycle 消息驱动的改造属于后续独立阶段。
 [ ] 重启后消息仍在
 ```
 
-### Phase 5：Life 层通信（FUTURE）
+### Phase 5：Life 层通信（V1 `CURRENT`）
 
-- 空闲 Agent 自主决定是否回复；
-- 邀请 / 社交 / 经济消息；
-- Conversation 管理；
-- 预算 / 频率 / 循环保护；
-- Life 与 Work 的显式状态切换。
+V1 已实现：
+
+- `LifeInboxService` 只处理 `payload.kind = "agent_message"`；
+- 只处理 **IDLE** 的非 Front / 非 Pi Agent；
+- 只有 Agent 配置 `inbox.reply_mode = auto` 才回复；
+- 默认 `reply_mode = never`；
+- 每个 conversation 最多 `max_auto_replies_per_conversation` 次；
+- 单条回复超过 `max_cost_per_message` 只记录 warning；
+- 回复通过 CommunicationManager 发出，不创建 Task，不改 Work 状态；
+- 连续失败 3 次后标记 IGNORED，避免无限重试。
+
+示例配置：
+
+```yaml
+agents:
+  agent_x:
+    inbox:
+      reply_mode: auto
+      max_auto_replies_per_conversation: 3
+      max_cost_per_message: 0.1
+```
+
+仍未实现：
+
+- Pi Agent 的空闲自动回复（Pi 持久 Inbox 已消费消息，V1 不叠加）；
+- Conversation Manager；
+- 邀请协议；
+- 社交 / 经济消息的专门策略；
+- Heartbeat / 定时唤醒；
+- 完整 Life / Work 状态切换。
 
 ---
 

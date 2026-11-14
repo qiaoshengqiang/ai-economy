@@ -40,7 +40,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 from llm import prompt_log
 from llm.web_search import WebSearchClient, WebSearchError
@@ -57,6 +57,7 @@ from front import (
     FRONT_SYSTEM_PROMPT, FrontAgentRuntime, FrontIntent, FrontResult,
     FrontTurn, FrontUnavailableError,
 )
+from communication.inbox import InboxPolicy
 from communication.inbox_runtime import InboxConsumer
 from work.availability import AgentAvailability
 from work.checkpoint import (
@@ -67,6 +68,7 @@ from work.front_actions import (
     build_front_dispatcher, execute_front_actions,
 )
 from work.handoff import HandoffRuntime
+from work.life_inbox_service import LifeInboxService
 from work.pi_inbox_service import PiInboxService
 from work.pi_runtime import PiWorkRuntime
 from work.project_context import render_project_context
@@ -369,6 +371,8 @@ class AIEOSController:
         self._pi_inbox_service: Optional[PiInboxService] = None
         #: Phase 3：Front 的常驻收件箱消费者。
         self._front_inbox_consumer: Optional[InboxConsumer] = None
+        #: Phase 5：Life 层空闲 Agent 的可选自动回复。
+        self._life_inbox_service: Optional[LifeInboxService] = None
         #: Front 自己的持久草稿（按 agent 私有空间隔离）。
         self._front_drafts_store: Optional[TaskDraftStore] = None
         self._load_settings()
@@ -1569,6 +1573,32 @@ class AIEOSController:
                 logger.warning(
                     "Front inbox state 关闭失败：%s", agent_id, exc_info=True)
 
+    def _inbox_policy_for(self, agent_id: str) -> InboxPolicy:
+        """从 Agent 原始配置读取 inbox 策略；缺省永不自动回复。"""
+        resolved = getattr(self.rt, "resolved_config", None)
+        if resolved is None:
+            return InboxPolicy()
+        try:
+            raw = getattr(resolved.agent(agent_id), "raw", None) or {}
+        except Exception:                                     # noqa: BLE001
+            return InboxPolicy()
+        block = raw.get("inbox") if isinstance(raw, Mapping) else None
+        if not isinstance(block, Mapping):
+            return InboxPolicy()
+        try:
+            return InboxPolicy(
+                reply_mode=str(block.get("reply_mode") or "never"),
+                max_auto_replies_per_conversation=int(
+                    block.get("max_auto_replies_per_conversation", 3)),
+                max_cost_per_message=float(
+                    block.get("max_cost_per_message", 0.0)),
+            )
+        except (TypeError, ValueError):
+            logger.warning(
+                "Agent inbox 策略不合法，回退 never：%s", agent_id,
+                exc_info=True)
+            return InboxPolicy()
+
     def _sync_inbox_services(self) -> None:
         """按当前设置启停 Pi 常驻 Inbox 与 Front Inbox。"""
         resolved = getattr(self.rt, "resolved_config", None)
@@ -1646,6 +1676,35 @@ class AIEOSController:
                 logger.warning(
                     "Solo inbox state 更新失败：%s", agent_id,
                     exc_info=True)
+
+        # ---- Life 层自动回复（Phase 5，默认 never）----
+        if not enabled or communication is None:
+            if self._life_inbox_service is not None:
+                self._life_inbox_service.stop()
+                self._life_inbox_service = None
+            return
+        auto_policies: Dict[str, InboxPolicy] = {}
+        for agent_id in sorted(self._agent_ids):
+            if agent_id == self.front_agent:
+                continue
+            if agent_id in self.pi_work_agents:
+                # Pi 的持久 Inbox 已由 PiInboxService 消费；
+                # Life 自动回复 V1 暂不与它叠加。
+                continue
+            if (agent_id in self.disabled_agents
+                    or agent_id in self.archived_agents):
+                continue
+            policy = self._inbox_policy_for(agent_id)
+            if policy.reply_mode == "auto":
+                auto_policies[agent_id] = policy
+        if auto_policies:
+            if self._life_inbox_service is None:
+                self._life_inbox_service = LifeInboxService(
+                    self.rt, self.availability)
+            self._life_inbox_service.sync(auto_policies)
+        elif self._life_inbox_service is not None:
+            self._life_inbox_service.stop()
+            self._life_inbox_service = None
 
     def _on_front_inbox_message(self, message: Any) -> None:
         """Front Inbox → 把 human_message 对应的 Job 交给执行器。"""

@@ -14,8 +14,11 @@ from communication import (
     InboxPolicy,
     LocalTransport,
     MessageStatus,
+    MessageType,
     ReceiveStatus,
 )
+from work.availability import AgentAvailability
+from work.life_inbox_service import LifeInboxService
 from tests.communication_helpers import FakeAgent
 from work.comm_bridge import run_coro
 from work.pi_comm import PiInboxBridge
@@ -342,3 +345,101 @@ def test_controller_enables_solo_inbox_without_consumer(wired):
         assert journal.get_inbox_state("agent_b")["enabled"] is True
     finally:
         controller.close()
+
+
+def test_life_inbox_auto_replies_to_agent_message(wired):
+    from types import SimpleNamespace
+
+    manager, journal, agent_a, agent_b = wired
+    journal.initialize_inbox(
+        "agent_b",
+        enabled=True,
+        cutover_at="2000-01-01T00:00:00+00:00",
+    )
+    agent_b.think = lambda *_args, **_kwargs: "pong"
+    agent_b.last_usage = {"cost_ai": 0.0}
+    availability = AgentAvailability()
+    availability.register("agent_b")
+
+    message = run_coro(manager.send(
+        "agent_a", "agent_b", text="ping",
+        message_type=MessageType.TEXT,
+        payload={"kind": "agent_message", "text": "ping"},
+    ))
+
+    runtime = SimpleNamespace(
+        communication=manager,
+        economy=SimpleNamespace(agent=lambda _aid: agent_b),
+    )
+    service = LifeInboxService(runtime, availability)
+    service.configure({"agent_b": InboxPolicy(
+        reply_mode="auto",
+        max_auto_replies_per_conversation=3,
+        max_cost_per_message=0.0,
+    )})
+    try:
+        assert service.process_once() == 1
+    finally:
+        service.stop()
+
+    assert journal.get_message(message.message_id)["processed_once"] == 1
+    inbound = run_coro(manager.receive("agent_a", timeout=0.1))
+    assert inbound.message is not None
+    assert inbound.message.payload["kind"] == "agent_message"
+    assert inbound.message.payload["text"] == "pong"
+    assert inbound.message.reply_to == message.message_id
+
+
+def test_life_inbox_does_not_reply_while_working(wired):
+    from types import SimpleNamespace
+
+    manager, journal, _agent_a, agent_b = wired
+    journal.initialize_inbox(
+        "agent_b",
+        enabled=True,
+        cutover_at="2000-01-01T00:00:00+00:00",
+    )
+    agent_b.think = lambda *_args, **_kwargs: "pong"
+    availability = AgentAvailability()
+    availability.register("agent_b")
+    availability.try_acquire("agent_b")
+
+    message = run_coro(manager.send(
+        "agent_a", "agent_b", text="ping",
+        message_type=MessageType.TEXT,
+        payload={"kind": "agent_message", "text": "ping"},
+    ))
+    runtime = SimpleNamespace(
+        communication=manager,
+        economy=SimpleNamespace(agent=lambda _aid: agent_b),
+    )
+    service = LifeInboxService(runtime, availability)
+    service.configure({"agent_b": InboxPolicy(reply_mode="auto")})
+    try:
+        assert service.process_once() == 0
+    finally:
+        service.stop()
+
+    assert journal.get_message(message.message_id)["processed_once"] == 0
+
+
+def test_controller_reads_agent_inbox_policy():
+    from types import SimpleNamespace
+    from work.controller import AIEOSController
+
+    controller = AIEOSController.__new__(AIEOSController)
+    controller.rt = SimpleNamespace(
+        resolved_config=SimpleNamespace(
+            agent=lambda _aid: SimpleNamespace(raw={
+                "inbox": {
+                    "reply_mode": "auto",
+                    "max_auto_replies_per_conversation": 2,
+                    "max_cost_per_message": 0.5,
+                }
+            })
+        )
+    )
+    policy = controller._inbox_policy_for("agent_b")
+    assert policy.reply_mode == "auto"
+    assert policy.max_auto_replies_per_conversation == 2
+    assert policy.max_cost_per_message == 0.5
