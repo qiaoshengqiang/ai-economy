@@ -265,16 +265,15 @@ def test_resolve_agent_id_by_exact_id(funded_agents):
 def test_resolve_agent_id_by_name(funded_agents):
     economy, _, _ = funded_agents
 
-    assert economy.resolve_agent_id("Agent A") == "agent_a"
-    assert economy.resolve_agent_id("Agent B") == "agent_b"
+    assert economy.resolve_agent_id("小艾") == "agent_a"
+    assert economy.resolve_agent_id("小博") == "agent_b"
 
 
 def test_resolve_agent_id_is_case_insensitive(funded_agents):
     economy, _, _ = funded_agents
 
     assert economy.resolve_agent_id("AGENT_A") == "agent_a"
-    assert economy.resolve_agent_id("agent a") == "agent_a"
-    assert economy.resolve_agent_id("AGENT A") == "agent_a"
+    assert economy.resolve_agent_id("Agent_A") == "agent_a"
 
 
 def test_resolve_agent_id_by_shorthand(funded_agents):

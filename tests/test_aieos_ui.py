@@ -287,6 +287,31 @@ def test_controller_state_marks_front_and_idle_agents():
         controller.close()
 
 
+def test_controller_archives_agent_and_forces_disable():
+    runtime = SimpleNamespace(
+        directory=_Directory(["agent_a", "agent_b"]),
+        economy=SimpleNamespace(
+            agent=lambda aid: SimpleNamespace(has_brain=True)),
+        tasks=SimpleNamespace(list_tasks=lambda limit=50: []),
+    )
+    controller = AIEOSController(runtime, front_agent="agent_a")
+    try:
+        controller.update_settings(archived_agents=["agent_b"])
+        assert "agent_b" in controller.archived_agents
+        assert "agent_b" in controller.disabled_agents
+        facts = {
+            item["agent_id"]: item
+            for item in controller.settings_snapshot()["agents"]
+        }
+        assert facts["agent_b"]["archived"] is True
+        assert facts["agent_b"]["enabled"] is False
+
+        with pytest.raises(ValueError):
+            controller.update_settings(archived_agents=["agent_a"])
+    finally:
+        controller.close()
+
+
 def test_leader_plan_can_assign_all_work_to_members():
     """单文件任务：Leader 只检查/汇总，不强制自己拥有 item。"""
     from front import FrontBrief
@@ -2160,6 +2185,10 @@ def test_settings_pages_use_cards_and_agent_master_detail():
     assert 'id="agent-settings-list"' in agent_section
     assert 'id="agent-detail-id"' in agent_section
     assert 'id="agent-detail-model"' in agent_section
+    assert 'id="agent-create-new"' in agent_section
+    assert 'id="agent-create-card"' in agent_section
+    assert 'id="agent-archived-toggle"' in agent_section
+    assert 'id="agent-archive-btn"' in agent_section
 
     # 统一卡片 / 页脚保存。
     assert 'id="settings-footer-state"' in html
@@ -2168,10 +2197,17 @@ def test_settings_pages_use_cards_and_agent_master_detail():
     assert ".agent-list-item" in css
     assert ".settings-footer" in css
 
+    # Agent 新增 / 归档走独立动作；保存时归档也会提交。
+    assert "agent.create" in js
+    assert "archived_agents" in js
+    assert "function createAgent(" in js
+    assert "function archiveSelectedAgent(" in js
+    assert "agent.name" in js
+
     # 保存职责拆分：协作字段跟 Agent 走，不再混进运行设置。
     runtime_save = js[
         js.index("async function saveRuntime"):
-        js.index("// Agent（主从编辑）")
+        js.index("// Agent（主从编辑")
     ]
     assert "front_agent" not in runtime_save
     assert "front_mode" not in runtime_save

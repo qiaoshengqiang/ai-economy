@@ -628,13 +628,78 @@
             </div>
             <div class="run-summary" id="agent-summary"></div>
 
+            <section class="setting-card" id="agent-create-card" hidden>
+              <div class="setting-card-head">
+                <div>
+                  <h4>新增 Agent</h4>
+                  <p>写入 config/config.yaml；重启 UI 后创建身份、钱包与初始资金。</p>
+                </div>
+                <button type="button" class="mini-btn" id="agent-create-close">取消</button>
+              </div>
+
+              <div class="setting-row">
+                <div class="setting-label">
+                  <span>Agent ID</span>
+                  <small>小写字母开头，只含小写字母/数字/下划线，3–32 位。</small>
+                </div>
+                <div class="setting-control">
+                  <input id="new-agent-id" placeholder="agent_f" autocomplete="off" />
+                </div>
+              </div>
+              <div class="setting-row">
+                <div class="setting-label">
+                  <span>中文名</span>
+                  <small>作为 Agent 身份名显示。</small>
+                </div>
+                <div class="setting-control">
+                  <input id="new-agent-name" placeholder="小福" autocomplete="off" />
+                </div>
+              </div>
+              <div class="setting-row">
+                <div class="setting-label"><span>模型 Profile</span></div>
+                <div class="setting-control">
+                  <select id="new-agent-model"></select>
+                </div>
+              </div>
+              <div class="setting-row">
+                <div class="setting-label"><span>凭据 Profile</span></div>
+                <div class="setting-control">
+                  <select id="new-agent-credential"></select>
+                </div>
+              </div>
+              <div class="setting-row">
+                <div class="setting-label">
+                  <span>初始余额</span>
+                  <small>重启后创世铸币；0–1000 AIC。</small>
+                </div>
+                <div class="setting-control">
+                  <div class="inline-control">
+                    <input id="new-agent-balance" type="number" min="0" max="1000" value="100" />
+                    <span class="unit">AIC</span>
+                  </div>
+                </div>
+              </div>
+              <div class="form-actions">
+                <button type="button" class="cd-btn primary" id="agent-create-submit">创建 Agent</button>
+              </div>
+              <div class="helper" style="padding-bottom:10px;">
+                新 Agent 重启后出现在列表；默认引擎为 Solo，可在重启后切换为 Pi。
+              </div>
+            </section>
+
             <section class="setting-card agent-workspace">
               <div class="setting-card-head">
                 <div>
                   <h4>协作与 Agent</h4>
                   <p>选中左侧 Agent 后，右侧只显示它自己的设置；模型与凭据来自系统设置，只读。</p>
                 </div>
-                <span class="scope-badge">新任务生效</span>
+                <div class="agent-card-actions">
+                  <span class="scope-badge">新任务生效</span>
+                  <button type="button" class="mini-btn" id="agent-create-new">+ 新增 Agent</button>
+                  <button type="button" class="mini-btn" id="agent-archived-toggle">
+                    已归档 <span id="agent-archived-count">0</span>
+                  </button>
+                </div>
               </div>
 
               <div class="agent-global-bar">
@@ -664,10 +729,17 @@
                 <div class="agent-detail">
                   <div class="agent-detail-head">
                     <div>
-                      <h5 id="agent-detail-id">—</h5>
-                      <small id="agent-detail-status">—</small>
+                      <h5 id="agent-detail-name">—</h5>
+                      <small>
+                        <span id="agent-detail-id">—</span> ·
+                        <span id="agent-detail-status">—</span>
+                      </small>
                     </div>
-                    <span class="agent-role" id="agent-detail-role">—</span>
+                    <div class="agent-detail-actions">
+                      <span class="agent-role" id="agent-detail-role">—</span>
+                      <button type="button" class="mini-btn danger" id="agent-archive-btn">归档</button>
+                      <button type="button" class="mini-btn" id="agent-restore-btn" hidden>恢复</button>
+                    </div>
                   </div>
 
                   <div class="setting-row">
@@ -716,6 +788,10 @@
                     <div class="setting-control">
                       <span class="readonly-value" id="agent-detail-role-text">—</span>
                     </div>
+                  </div>
+
+                  <div class="helper agent-archive-note">
+                    归档会停用 Agent 并隐藏，但保留身份、账本、任务和记忆。
                   </div>
                 </div>
               </div>

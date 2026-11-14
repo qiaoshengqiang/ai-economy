@@ -324,6 +324,9 @@ class ResolvedRuntimeConfig:
     default_provider: str = ""
     #: dotted key → 这个值最终来自哪里（GUI / 排障用）
     sources: Mapping[str, str] = field(default_factory=dict)
+    #: 启动时要装配的 Agent（`agents.<id>.runtime: true`）。
+    #: 空 = 旧配置 / 测试未声明，由组合根回退到 DEFAULT_AGENTS。
+    runtime_agents: Tuple[str, ...] = ()
 
     # ---- 查询（找不到就抛，**不返回 None**）----
     def provider(self, name: str) -> ResolvedProvider:
@@ -364,6 +367,7 @@ class ResolvedRuntimeConfig:
                 "message_claim_lease_seconds":
                     self.message_claim_lease_seconds,
                 "default_provider": self.default_provider,
+                "agents": list(self.runtime_agents),
             },
             "economy": dict(self.economy), "task": dict(self.task),
             "system": dict(self.system),
@@ -973,6 +977,11 @@ class ConfigResolver:
                        for c in (self.canonical.get("credentials") or {})}
         agents = {a: self.agent(a)
                   for a in (self.canonical.get("agents") or {})}
+        runtime_agents = tuple(
+            agent_id
+            for agent_id, agent in agents.items()
+            if bool((agent.raw or {}).get("runtime") is True)
+        )
 
         sources: Dict[str, str] = {}
         for name in providers:
@@ -1000,7 +1009,8 @@ class ConfigResolver:
             workspace=dict(self.canonical.get("workspace") or {}),
             cost=dict(self.canonical.get("cost") or {}),
             providers=providers, models=models,
-            credentials=credentials, agents=agents, sources=sources,
+            credentials=credentials, agents=agents,
+            runtime_agents=runtime_agents, sources=sources,
         )
 
 

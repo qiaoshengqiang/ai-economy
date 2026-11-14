@@ -857,6 +857,12 @@ button { cursor: pointer; }
   overflow-y: auto;
   min-height: 0;
 }
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 14px;
+}
 .settings-alert {
   padding: 9px 12px;
   margin-bottom: 12px;
@@ -1171,6 +1177,28 @@ button { cursor: pointer; }
 
 /* ---------- agent master-detail ---------- */
 .agent-workspace { padding-bottom: 14px; }
+.agent-card-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.agent-card-actions .mini-btn.active {
+  color: var(--accent);
+  border-color: rgba(94, 224, 255, .45);
+  background: rgba(94, 224, 255, .08);
+}
+.agent-detail-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.agent-archive-note {
+  margin-top: 4px;
+  padding-top: 9px;
+  border-top: 1px solid rgba(35, 48, 68, .5);
+}
 .agent-global-bar {
   display: flex;
   flex-wrap: wrap;
@@ -1249,6 +1277,10 @@ button { cursor: pointer; }
   background: rgba(94,224,255,.07);
 }
 .agent-list-item.disabled { opacity: .48; }
+.agent-list-item.archived {
+  opacity: .72;
+  border-style: dashed;
+}
 .agent-avatar {
   flex: 0 0 auto;
   width: 24px;
@@ -1278,6 +1310,7 @@ button { cursor: pointer; }
   font-style: normal;
   letter-spacing: .05em;
 }
+.agent-list-copy em.archived { color: var(--muted); }
 .agent-list-copy small {
   display: block;
   margin-top: 1px;

@@ -276,6 +276,8 @@ class AIEOSController:
         }
         #: 停用的 Agent 不再接新任务；运行中的任务继续完成。
         self.disabled_agents: set[str] = set()
+        #: 归档 Agent：从默认列表隐藏，并强制停用；历史保留。
+        self.archived_agents: set[str] = set()
         #: Agent 卡片选择的思考强度；"auto" = 阶段策略。
         self.agent_thinking: Dict[str, str] = {}
         #: Work 模式：workflow = 阶段化；autonomous = 单阶段自主工作。
@@ -400,6 +402,15 @@ class AIEOSController:
                 if str(item).strip() in self._agent_ids
                 and str(item).strip() != self.front_agent
             }
+        archived = data.get("archived_agents")
+        if isinstance(archived, list):
+            self.archived_agents = {
+                str(item).strip() for item in archived
+                if str(item).strip() in self._agent_ids
+                and str(item).strip() != self.front_agent
+            }
+        # 归档必须同时停用：否则调度器仍可能把任务给它。
+        self.disabled_agents |= set(self.archived_agents)
         self.prompt_log_enabled = bool(data.get("prompt_log_enabled", False))
         if "pi_timeout_enabled" in data:
             self.pi_timeout_enabled = bool(data.get("pi_timeout_enabled"))
@@ -457,6 +468,7 @@ class AIEOSController:
         max_solo_turns: Optional[int] = None,
         pi_work_agents: Optional[List[str]] = None,
         disabled_agents: Optional[List[str]] = None,
+        archived_agents: Optional[List[str]] = None,
         prompt_log_enabled: Optional[bool] = None,
         agent_thinking: Optional[Dict[str, str]] = None,
         pi_timeout_enabled: Optional[bool] = None,
@@ -513,6 +525,19 @@ class AIEOSController:
                 if self.front_agent in wanted:
                     raise ValueError("Front Agent 不能被停用")
                 self.disabled_agents = wanted
+            if archived_agents is not None:
+                wanted = {
+                    str(item).strip() for item in archived_agents
+                    if str(item).strip()
+                }
+                unknown = wanted - set(self._agent_ids)
+                if unknown:
+                    raise ValueError(
+                        f"未知 Agent：{sorted(unknown)}")
+                if self.front_agent in wanted:
+                    raise ValueError("Front Agent 不能被归档")
+                self.archived_agents = wanted
+                self.disabled_agents |= wanted - {self.front_agent}
             if prompt_log_enabled is not None:
                 self.prompt_log_enabled = bool(prompt_log_enabled)
                 self._apply_prompt_log_config()
@@ -594,6 +619,7 @@ class AIEOSController:
             "max_solo_turns": self.max_solo_turns,
             "pi_work_agents": sorted(self.pi_work_agents),
             "disabled_agents": sorted(self.disabled_agents),
+            "archived_agents": sorted(self.archived_agents),
             "prompt_log_enabled": bool(self.prompt_log_enabled),
             "agent_thinking": dict(self.agent_thinking),
             "pi_timeout_enabled": bool(self.pi_timeout_enabled),
@@ -775,6 +801,15 @@ class AIEOSController:
             return None
         return data if isinstance(data, dict) else None
 
+    def _agent_name(self, agent_id: str) -> str:
+        economy = getattr(self.rt, "economy", None)
+        if economy is None:
+            return str(agent_id)
+        try:
+            return str(economy.agent(str(agent_id)).name)
+        except Exception:                                     # noqa: BLE001
+            return str(agent_id)
+
     def _agent_settings_facts(self) -> List[Dict[str, Any]]:
         facts: List[Dict[str, Any]] = []
         from core.config_resolver import ConfigLoader
@@ -792,9 +827,15 @@ class AIEOSController:
             resolved_agents = {}
         for aid in self._agent_ids:
             info = resolved_agents.get(aid, {})
+            archived = aid in self.archived_agents
             facts.append({
                 "agent_id": aid,
-                "enabled": aid not in self.disabled_agents,
+                "name": self._agent_name(aid),
+                "enabled": (
+                    aid not in self.disabled_agents
+                    and not archived
+                ),
+                "archived": archived,
                 "is_front": aid == self.front_agent,
                 "engine": "pi" if self._pi_enabled(aid) else "solo",
                 "model": info.get("model", ""),
@@ -2714,11 +2755,16 @@ class AIEOSController:
                         state = "STOPPING"
                 agents.append({
                     "agent_id": aid,
+                    "name": self._agent_name(aid),
+                    "archived": aid in self.archived_agents,
                     "status": state,
                     "role": role,
                     "task_id": task.get("task_id", ""),
                     "has_brain": self._agent_has_brain(aid),
-                    "enabled": aid not in self.disabled_agents,
+                    "enabled": (
+                        aid not in self.disabled_agents
+                        and aid not in self.archived_agents
+                    ),
                     "thinking": self._thinking_for_agent(aid),
                     "thinking_levels": list(
                         self._agent_thinking_levels(aid)),

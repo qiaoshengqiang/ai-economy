@@ -26,8 +26,8 @@ def test_create_two_agents(funded_agents):
 
     assert agent_a.agent_id == "agent_a"
     assert agent_b.agent_id == "agent_b"
-    assert agent_a.name == "Agent A"
-    assert agent_b.name == "Agent B"
+    assert agent_a.name == "小艾"
+    assert agent_b.name == "小博"
 
 
 def test_agents_have_independent_identity(funded_agents):

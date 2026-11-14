@@ -283,6 +283,18 @@ class Economy:
         """
         existing = self._load_agent(agent_id)
         if existing is not None:
+            # 🔒 `agents.<id>.name` 是显示名的唯一权威。
+            #    配置改名后，启动时把 DB identity 同步过来；
+            #    不改历史记录，只改身份名。
+            desired_name = str(existing.config.agent_name or "").strip()
+            if desired_name and desired_name != existing.identity.name:
+                with self.db.transaction() as conn:
+                    conn.execute(
+                        f"UPDATE {TABLE_AGENTS} SET name = ? "
+                        "WHERE agent_id = ?",
+                        (desired_name, agent_id),
+                    )
+                existing.identity.name = desired_name
             logger.debug(
                 "恢复经济主体：%s（余额 %.4f %s）",
                 agent_id, existing.balance, self.currency)

@@ -138,8 +138,8 @@ def test_main_runs_as_script(tmp_path):
 
     output = result.stdout
     assert "AI Economy OS" in output
-    assert "Agent A" in output
-    assert "Agent B" in output
+    assert "小艾" in output
+    assert "小博" in output
     assert f"{format_amount(configured_initial_balance())} AI" in output
     assert "READY" in output
 
@@ -160,8 +160,8 @@ def test_main_quiet_mode(tmp_path):
     lines = [line for line in result.stdout.strip().splitlines() if line]
 
     expected = configured_initial_balance()
-    assert f"Agent A: {format_amount(expected)} AIC" in lines
-    assert f"Agent B: {format_amount(expected)} AIC" in lines
+    assert f"小艾: {format_amount(expected)} AIC" in lines
+    assert f"小博: {format_amount(expected)} AIC" in lines
 
 
 def test_main_reports_not_ready_when_only_one_agent(tmp_path):

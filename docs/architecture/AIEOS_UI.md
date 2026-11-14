@@ -253,8 +253,9 @@ Workspace 事实重新 read / search。
 | 危险操作确认 | 统一 `confirmDialog()` 组件（danger / warning / default），不调用浏览器原生 `confirm()`；默认焦点在「取消」，Esc、关闭按钮和点击遮罩都取消 |
 | Task 卡片点击 | **同一标签页**打开 `/task.html?task_id=...`：任务认知 + 每轮 decision / work / summary 的 thinking、输出、动作与结果；每个 phase 显示 **thinking 强度 + LLM 调用耗时**，round 标题显示本轮总耗时，动作显示**工具执行耗时**；外加执行历史、文件、公共 WM、LLM 汇总（calls / tokens / 总耗时 / 平均耗时 / AIC） |
 | Agent 状态 | `IDLE` / `WORKING` / `STOPPING` · `FRONT` / `WORKER`；Work Agent 卡片可直接切换思考强度（Prototype 固定 max） |
+| Agent 名称 | 显示 canonical `agents.name`（小艾 / 小博 / 小希 / 小迪 / 小伊），`agent_id` 保留用于引用 |
 | Agent 中途提问 | Agent 卡片显示气泡并播放提示音；点击气泡直接回答，不经过 Front；Task 保持 IN_PROGRESS |
-| 设置按钮 | **系统设置**：服务商 / 模型 / API 凭据 / 系统信息；**常规设置**：运行（执行限制 / 交付 / 诊断）、Agent（协作方式 + 主从编辑）、Worker Roles。详见 [`UI_SETTINGS_DESIGN.md`](UI_SETTINGS_DESIGN.md) |
+| 设置按钮 | **系统设置**：服务商 / 模型 / API 凭据 / 系统信息；**常规设置**：运行（执行限制 / 交付 / 诊断）、Agent（协作方式 + 主从编辑 + 新增 / 归档）、Worker Roles。详见 [`UI_SETTINGS_DESIGN.md`](UI_SETTINGS_DESIGN.md) |
 
 ---
 

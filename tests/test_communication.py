@@ -814,7 +814,7 @@ class TestRealAgentIntegration:
         sent, at_b, at_a = run_async(scenario())
 
         assert at_b.delivered is True
-        assert at_a.message.text == "Agent B 收到了「你好，B」"
+        assert at_a.message.text == "小博 收到了「你好，B」"
 
         # 消息也进了 Agent 自己的短期记忆
         assert agent_b.received_messages

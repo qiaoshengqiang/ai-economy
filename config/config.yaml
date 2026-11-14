@@ -165,7 +165,8 @@ cost:
   model_rates: {}
 agents:
   agent_a:
-    name: Agent A
+    name: 小艾
+    runtime: true
     # 🔴 2026-10-10：Agent 对**整个系统**的认知（用户要求）。
     #    「这是什么系统 / 我为什么在这里 / 长期会怎样」。
     #
@@ -228,7 +229,8 @@ agents:
       allow_outsourcing: true
       allow_bidding: true
   agent_b:
-    name: Agent B
+    name: 小博
+    runtime: true
     # 🔴 对**整个系统**的认知 —— 理由见 `agent_a` 上方的长注释。
     #    ⚠️ 这 5 段（a..e）**内容相同**，是为了让「这是什么系统」对
     #       所有 Agent 是**同一个事实**。改一段就要改五段 ——
@@ -278,7 +280,8 @@ agents:
       allow_outsourcing: false
       allow_bidding: true
   agent_c:
-    name: Agent C
+    name: 小希
+    runtime: true
     # 🔴 对**整个系统**的认知 —— 理由见 `agent_a` 上方的长注释。
     cognition:
       constitution: |
@@ -322,7 +325,8 @@ agents:
       allow_outsourcing: false
       allow_bidding: true
   agent_d:
-    name: Agent D
+    name: 小迪
+    runtime: true
     # 🔴 对**整个系统**的认知 —— 理由见 `agent_a` 上方的长注释。
     cognition:
       constitution: |
@@ -366,7 +370,8 @@ agents:
       allow_outsourcing: false
       allow_bidding: true
   agent_e:
-    name: Agent E
+    name: 小伊
+    runtime: true
     # 🔴 对**整个系统**的认知 —— 理由见 `agent_a` 上方的长注释。
     cognition:
       constitution: |

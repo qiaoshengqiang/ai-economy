@@ -39,6 +39,8 @@ from llm.router import adapter_specs
 
 _ENV_NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
 _PROFILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+_AGENT_ID_RE = re.compile(r"^[a-z][a-z0-9_]{2,31}$")
+_MAX_AGENT_INITIAL_BALANCE = 1000.0
 
 
 class SettingsAdminError(ValueError):
@@ -107,16 +109,19 @@ class SystemConfigAdmin:
         )
         self.adapter_specs_fn = adapter_specs_fn
         self.restart_required = False
-        self._initial_hash = self._hash_llm()
+        self._initial_hash = self._hash_sources()
 
     # ------------------------------------------------------------
     # read
     # ------------------------------------------------------------
-    def _hash_llm(self) -> str:
-        try:
-            return hashlib.sha256(self.llm_path.read_bytes()).hexdigest()
-        except OSError:
-            return ""
+    def _hash_sources(self) -> str:
+        digest = hashlib.sha256()
+        for path in (self.config_path, self.llm_path):
+            try:
+                digest.update(path.read_bytes())
+            except OSError:
+                continue
+        return digest.hexdigest()
 
     def _llm_data(self) -> Dict[str, Any]:
         data = _read_yaml(self.llm_path)
@@ -178,7 +183,8 @@ class SystemConfigAdmin:
             },
             "restart_required": bool(
                 self.restart_required
-                or (self._initial_hash and self._hash_llm() != self._initial_hash)
+                or (self._initial_hash
+                    and self._hash_sources() != self._initial_hash)
             ),
         }
 
@@ -246,6 +252,8 @@ class SystemConfigAdmin:
     # ------------------------------------------------------------
     def apply(self, action: str, payload: Mapping[str, Any]) -> Dict[str, Any]:
         payload = dict(payload or {})
+        if action == "agent.create":
+            return self._create_agent(payload)
         llm = self._llm_data()
         if action == "provider.upsert":
             self._upsert_provider(llm, payload)
@@ -269,6 +277,91 @@ class SystemConfigAdmin:
                 str(payload.get("profile") or "")) or {}).get("env") or "")
             self._write_secret(env, api_key)
         return self.snapshot()
+
+    def _backup_config(self) -> None:
+        if not self.config_path.exists():
+            return
+        self.backup_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        target = self.backup_dir / f"config.{stamp}.yaml"
+        try:
+            target.write_text(
+                self.config_path.read_text(encoding="utf-8"), encoding="utf-8")
+        except OSError:
+            pass
+
+    def _create_agent(self, payload: Mapping[str, Any]) -> Dict[str, Any]:
+        """新增 Agent：只写 canonical `config.yaml`，重启后装配。"""
+        agent_id = str(payload.get("agent_id") or "").strip()
+        if not _AGENT_ID_RE.fullmatch(agent_id):
+            raise SettingsAdminError(
+                "Agent ID 必须以小写字母开头，只包含小写字母/数字/下划线，"
+                "长度 3–32。")
+        name = str(payload.get("name") or "").strip()
+        if not name or len(name) > 40:
+            raise SettingsAdminError("Agent 名称不能为空，且不能超过 40 个字符。")
+        model = str(payload.get("model") or "").strip()
+        credential = str(payload.get("credential") or "").strip()
+        try:
+            balance = float(payload.get("initial_balance"))
+        except (TypeError, ValueError) as exc:
+            raise SettingsAdminError("初始余额必须是数字。") from exc
+        if balance < 0 or balance > _MAX_AGENT_INITIAL_BALANCE:
+            raise SettingsAdminError(
+                f"初始余额必须在 0–{_MAX_AGENT_INITIAL_BALANCE:g} AIC 之间。")
+
+        llm = self._llm_data()
+        merged = self._merged(llm)
+        agents = dict(merged.get("agents") or {})
+        if agent_id in agents:
+            raise SettingsAdminError(f"Agent 已存在：{agent_id}")
+        if model not in (merged.get("models") or {}):
+            raise SettingsAdminError(f"未知 model profile：{model!r}")
+        if credential not in (merged.get("credentials") or {}):
+            raise SettingsAdminError(f"未知 credential profile：{credential!r}")
+
+        block = {
+            "name": name,
+            "runtime": True,
+            "brain": {
+                "model": model,
+                "credential": credential,
+                "system_prompt": (
+                    f"你是 {name}，一个独立的经济主体。\n"
+                    "你有自己的钱包、记忆和声誉。\n"
+                    "你的智力来自外部 LLM，但经济决策必须遵守经济系统的规则。\n"
+                ),
+            },
+            "economy": {"initial_balance": balance},
+            "capabilities": {"skills": ["generalist"]},
+        }
+        snippet = yaml.safe_dump(
+            {agent_id: block}, allow_unicode=True, sort_keys=False, width=1000)
+        snippet = "\n".join(
+            "  " + line for line in snippet.splitlines()) + "\n"
+
+        try:
+            original = self.config_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise SettingsAdminError(f"读取 {self.config_path} 失败：{exc}") from exc
+        if not re.search(r"^agents:\s*$", original, re.MULTILINE):
+            raise SettingsAdminError("config.yaml 缺少顶层 agents: 段。")
+        updated = original
+        if not updated.endswith("\n"):
+            updated += "\n"
+        updated += "\n" + snippet
+
+        self._backup_config()
+        _atomic_write(self.config_path, updated)
+        try:
+            self._validate(llm)
+        except Exception:
+            _atomic_write(self.config_path, original)
+            raise
+        self.restart_required = True
+        result = self.snapshot()
+        result["created_agent"] = agent_id
+        return result
 
     def _upsert_provider(
         self, llm: Dict[str, Any], payload: Mapping[str, Any],

@@ -6,7 +6,7 @@
 
 **当前版本：`v0.2.0`（开发中）**
 **当前最佳工作方式：Human → Front Agent → Pi Agent → 自主工作**
-**测试基线：`5667 passed, 2 skipped, 30 deselected`**
+**测试基线：`5669 passed, 2 skipped, 30 deselected`**
 
 > - 当前真实能力、推荐模式与已知限制：[`docs/PROJECT_STATUS.md`](docs/PROJECT_STATUS.md)
 > - 架构长期 Source of Truth：[`ARCHITECTURE_CONSTITUTION.md`](docs/architecture/ARCHITECTURE_CONSTITUTION.md)
@@ -66,6 +66,7 @@
 | Work | Front `autonomous` / `relay` · Pi `workflow` / `autonomous` · inbox/outbox · 恢复 / Reopen | `CURRENT` |
 | 交付 | Output Commit（manual / limited / auto）· Project Workdir（直接改已有项目） | `CURRENT` |
 | UI | AIEOS 浏览器界面 · Agent 状态 · Task 卡片（状态色 / 筛选 / 归档 / 删除）· 可复用确认弹窗 | `CURRENT` |
+| Agent 管理 | 中文名（canonical `agents.name`）· 新增 Agent（写配置 + 重启）· 归档 / 恢复 · 启停与引擎 | `CURRENT` |
 | 经济 | Wallet · Ledger · 余额推导 · LLM 成本入账 · 对账 | `CURRENT` |
 | 平台 | macOS `CURRENT` · Linux `UNVERIFIED` · Windows 适配层骨架 `DESIGNED` | — |
 
@@ -138,7 +139,7 @@ http://127.0.0.1:8000/
 ./start_aieos.sh stop
 ```
 
-默认 Front 是 `agent_a`，Pi Agent 是 `agent_b`…`agent_e`。
+默认 Front 是 `小艾`（agent_a），Pi Agent 是 `小博`…`小伊`（agent_b…agent_e）。
 启动脚本会检查 `.venv`、Pi CLI 和端口；失败时打印最近日志。
 详见 [`START_AIEOS.md`](START_AIEOS.md)。
 
@@ -252,7 +253,7 @@ ai-economy/
 ├── resources/              ← 公共只读工具库
 ├── config/                 ← config.yaml + llm.yaml
 ├── docs/                   ← 架构文档 / ADR / 历史
-├── tests/                  ← 5667 个测试 + 30 个真实 API 测试
+├── tests/                  ← 5669 个测试 + 30 个真实 API 测试
 │
 ├── tasks/                  ← Task 运行目录（不进 git）
 ├── runs/                   ← UI / 日志 / 输出（不进 git）
@@ -318,7 +319,7 @@ LLM 调用是真实经营成本，会记 `LLM_COST` 并进入 Ledger。
 ./dev.sh test tests/test_ledger.py -k x    # 单个测试
 ```
 
-当前基线：**5667 passed, 2 skipped, 30 deselected**。
+当前基线：**5669 passed, 2 skipped, 30 deselected**。
 
 另有 30 个真实 API 测试，需要 Key 且会产生费用，单独运行：
 

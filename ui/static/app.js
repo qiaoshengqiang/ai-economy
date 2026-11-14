@@ -795,7 +795,7 @@
   }
 
   function renderAgents(agents, tasks) {
-    const list = agents || [];
+    const list = (agents || []).filter((agent) => !agent.archived);
     const settings = (state && state.settings) || {};
     const frontMode = settings.front_mode === "relay" ? "只传达" : "自主";
     const workMode = settings.work_mode === "autonomous" ? "自主" : "工作流";
@@ -841,7 +841,8 @@
 
       const id = document.createElement("span");
       id.className = "agent-id";
-      id.textContent = agent.agent_id;
+      id.textContent = agent.name || agent.agent_id;
+      id.title = agent.agent_id;
       row.appendChild(id);
 
       const engine = document.createElement("span");
@@ -1167,7 +1168,10 @@
     const settings = state.settings || {};
     const frontMode = settings.front_mode === "relay" ? "只传达" : "自主";
     const workAuto = settings.work_mode !== "workflow";
-    els.frontBadge.textContent = `Front: ${state.front_agent || "—"} · ${frontMode}`;
+    const frontAgent = (state.agents || []).find(
+      (agent) => agent.agent_id === state.front_agent);
+    const frontLabel = (frontAgent && frontAgent.name) || state.front_agent || "—";
+    els.frontBadge.textContent = `Front: ${frontLabel} · ${frontMode}`;
     els.frontBadge.classList.toggle("front-relay", frontMode === "只传达");
     els.workModeBadge.textContent = `Work: ${workAuto ? "自主" : "工作流"}`;
     els.workModeBadge.classList.toggle("work-auto", workAuto);

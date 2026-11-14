@@ -160,15 +160,24 @@ runs/ui/prompts/prompts-YYYY-MM-DD.jsonl
 
 | 设置 | 生效 |
 |---|---|
+| Agent 名称 | canonical `agents.<id>.name`；UI 显示中文名 |
 | Front Agent / Front 模式 / Work 模式 | 新任务 |
 | 启用 / 停用 | 新任务 |
 | 引擎 Solo / Pi | 新任务 |
 | 模型 / 凭据 | 只读展示，来自系统设置 |
 | 思考强度 | Agent 卡片直接切换；Prototype 固定 max |
+| 新增 Agent | 写 `config/config.yaml`；重启后装配 |
+| 归档 / 恢复 | `ui_settings.json`；归档即停用并隐藏 |
 | 状态 | 只读 |
 
 - Agent 页是主从编辑：顶部统一设置 Front / Work 协作模式，左侧选择 Agent，
   右侧只显示该 Agent 的启停、引擎、模型、凭据与角色；
+- 新增 Agent 的字段：`agent_id`、中文名、模型 profile、凭据 profile、初始余额；
+  - 写入 `agents.<id>`，并带 `runtime: true`；
+  - `build_runtime` 从 canonical `agents.<id>.runtime: true` 得到启动列表；
+  - 重启 UI 后创建身份、钱包、Workspace 与初始资金；
+  - 默认引擎 Solo，重启后可在 Agent 页切换 Pi；
+- 删除用归档替代：隐藏 + 停用，不删除身份、账本、任务、消息和记忆；
 - Agent 卡片的 Thinking 选项来自模型 `thinking_levels`；
 - **Prototype 固定 max**，卡片设置只影响 Engineering / Evolution；
 - `Auto` → Engineering high / Evolution medium；固定档位覆盖后续阶段；
@@ -196,6 +205,7 @@ runs/ui/prompts/prompts-YYYY-MM-DD.jsonl
 - secret 只存在于 `.env`，配置与 API 响应只包含变量名和 `present`；
 - 系统设置修改不热更新正在运行的 Runtime，UI 显示“重启后生效”；
 - 常规设置不使用“立即生效”伪装需要重启的字段；
+- 不提供 Agent 硬删除：归档保留身份、账本、任务、消息和记忆；
 - 不提供 Agent 删除、AIC 预算、Acceptance、权限/ACL 设置；
 - 不提供任意 YAML 文本编辑器；
 - 所有删除操作先做引用完整性检查。
@@ -215,7 +225,11 @@ POST /api/settings/roles           Worker Role action
 provider.upsert / provider.delete
 model.upsert    / model.delete
 credential.upsert / credential.delete
+agent.create
 ```
+
+`POST /api/settings` 额外接受 `archived_agents`；归档会同时加入
+`disabled_agents`，不会删除任何历史数据。
 
 角色 action：
 
@@ -234,5 +248,6 @@ Worker Role 新增 / 归档 / 恢复默认 / 持久化
 Front Agent / 并行数 / 单任务轮次 / Agent 启停 API
 设置面板：7 个角色、5 个 Agent、系统/常规导航
 设置页统一分组卡片；Agent 主从编辑；底部保存栏带脏状态
+Agent 中文名 / 新增（写配置 + 重启）/ 归档 / 恢复
 真实 Pi 任务 task_6fb3b194 COMPLETED，Pi contextWindow 128000
 ```

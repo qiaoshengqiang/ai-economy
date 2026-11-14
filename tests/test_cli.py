@@ -19,6 +19,7 @@ Test: 命令行界面
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -129,8 +130,8 @@ def test_bare_command_still_prints_banner(tmp_path, balance0):
 
     assert result.returncode == EXIT_OK
     assert "AI Economy OS" in result.stdout
-    assert "Agent A" in result.stdout
-    assert "Agent B" in result.stdout
+    assert "小艾" in result.stdout
+    assert "小博" in result.stdout
     assert f"{format_amount(balance0)} AIC" in result.stdout
     assert "READY" in result.stdout
 
@@ -139,8 +140,8 @@ def test_quiet_flag_still_works(tmp_path, balance0):
     result = run_cli("--quiet", db_path=tmp_path / "quiet.db")
 
     assert result.returncode == EXIT_OK
-    assert f"Agent A: {format_amount(balance0)} AIC" in result.stdout
-    assert f"Agent B: {format_amount(balance0)} AIC" in result.stdout
+    assert f"小艾: {format_amount(balance0)} AIC" in result.stdout
+    assert f"小博: {format_amount(balance0)} AIC" in result.stdout
 
 
 # ============================================================
@@ -189,9 +190,9 @@ def test_cli_transfer_accepts_shorthand(tmp_path, amount):
 
 
 def test_cli_transfer_accepts_name(tmp_path, amount):
-    """也可以用显示名 "Agent A"。"""
+    """也可以用显示名 "小艾"。"""
     result = run_cli(
-        "transfer", "Agent A", "Agent B", format_amount(amount),
+        "transfer", "小艾", "小博", format_amount(amount),
         db_path=tmp_path / "name.db",
     )
 
@@ -281,7 +282,7 @@ def test_cli_balances(tmp_path):
     result = run_cli("balances", db_path=tmp_path / "bal.db")
 
     assert result.returncode == EXIT_OK
-    assert "Agent A" in result.stdout
+    assert "小艾" in result.stdout
     assert "agent_a" in result.stdout
     assert "ACTIVE" in result.stdout
 
@@ -302,7 +303,7 @@ def test_cli_ledger_filters_by_agent(tmp_path, amount):
 
     assert result.returncode == EXIT_OK
     assert "TRANSFER" in result.stdout
-    assert "Agent A" in result.stdout
+    assert "小艾" in result.stdout
 
 
 def test_cli_audit_passes(tmp_path):
@@ -448,13 +449,13 @@ class TestProviderCommands:
         )
 
         assert result.returncode == EXIT_OK
-        assert "Agent B" in result.stdout
+        assert "小博" in result.stdout
 
     def test_ask_agent_shorthand(self, tmp_path):
         result = run_cli("ask", "--agent", "a", "hi", db_path=tmp_path / "askc.db")
 
         assert result.returncode == EXIT_OK
-        assert "Agent A" in result.stdout
+        assert "小艾" in result.stdout
 
     def test_ask_records_to_llm_calls(self, tmp_path):
         """
@@ -490,7 +491,7 @@ class TestProviderCommands:
 
         assert result.returncode == EXIT_OK, result.stdout + result.stderr
         # 链路的每一环都要显示出来
-        assert "Agent A" in result.stdout
+        assert "小艾" in result.stdout
         assert "Brain" in result.stdout
         assert "Router" in result.stdout
         assert "MockProvider" in result.stdout
@@ -531,7 +532,7 @@ class TestProviderCommands:
         )
 
         assert result.returncode == EXIT_OK
-        assert "Agent B" in result.stdout
+        assert "小博" in result.stdout
 
     def test_repeated_ask_accumulates_records(self, tmp_path):
         db_file = tmp_path / "multi.db"
@@ -847,7 +848,12 @@ class TestPositionalIdLookup:
             "communication-log", "--trace", trace_id, db_path=db_file
         )
 
-        assert positional.stdout == flagged.stdout
+        # 两次运行可能跨秒，日志前缀的时间戳会不同；比较正文。
+        def _body(text):
+            return re.sub(r"^\[\d{2}:\d{2}:\d{2}\]\s+", "",
+                          text, flags=re.MULTILINE)
+
+        assert _body(positional.stdout) == _body(flagged.stdout)
 
     def test_unknown_prefix_gives_guidance(self, tmp_path):
         """

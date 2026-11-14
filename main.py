@@ -129,6 +129,16 @@ logger = get_logger(__name__)
 DEFAULT_AGENTS = ["agent_a", "agent_b", "agent_c", "agent_d", "agent_e"]
 
 
+def _runtime_agent_ids(resolved) -> list:
+    """启动时要装配哪些 Agent。
+
+    🔒 canonical：`agents.<id>.runtime: true`。
+    旧配置 / 测试没有声明时回退到 `DEFAULT_AGENTS`，保持兼容。
+    """
+    configured = list(getattr(resolved, "runtime_agents", ()) or ())
+    return configured or list(DEFAULT_AGENTS)
+
+
 # ============================================================
 # 运行时容器
 # ============================================================
@@ -1089,7 +1099,9 @@ def build_runtime(
     #:    将来 Task/World 提供情境时，改这里一处即可。
     default_context_query = dict(ctx_cfg.get("default_query", {}) or {})
 
-    for agent_id in (agent_ids if agent_ids is not None else DEFAULT_AGENTS):
+    for agent_id in (
+        agent_ids if agent_ids is not None else _runtime_agent_ids(resolved)
+    ):
         # 🔒 启动语义：先恢复持久化经济数据；只有真正的新 Agent 才初始化。
         agent = economy.restore_or_create_agent(agent_id)
 

@@ -143,6 +143,9 @@ def isolate_from_local_agent_config(request, monkeypatch):
     # ① Agent 数量固定 —— 本地可能已经加到 3 个以上
     monkeypatch.setattr(main_module, "DEFAULT_AGENTS",
                         ["agent_a", "agent_b"])
+    monkeypatch.setattr(
+        main_module, "_runtime_agent_ids",
+        lambda resolved: ["agent_a", "agent_b"])
 
     # ② Agent 的大脑固定为 mock
     real_load = economy_module.load_agent_config

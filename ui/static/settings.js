@@ -13,6 +13,7 @@
   let agentDraft = null;
   let agentInitial = null;
   let selectedAgent = "";
+  let showArchivedAgents = false;
   let runtimeInitial = null;
   let providerInitial = null;
   let modelInitial = null;
@@ -449,7 +450,7 @@
   }
 
   // ------------------------------------------------------------
-  // Agent（主从编辑）
+  // Agent（主从编辑 + 新增 / 归档）
   // ------------------------------------------------------------
   function buildAgentState() {
     const regular = data.regular || {};
@@ -457,7 +458,9 @@
     const agents = {};
     (data.agents || []).forEach((agent) => {
       agents[agent.agent_id] = {
+        name: String(agent.name || agent.agent_id),
         enabled: !!agent.enabled,
+        archived: !!agent.archived,
         engine: piAgents.has(agent.agent_id) ? "pi" : "solo",
         status: agent.status || "",
         model: agent.model || "—",
@@ -465,8 +468,11 @@
       };
     });
     const ids = Object.keys(agents);
-    const frontAgent = agents[regular.front_agent]
+    let frontAgent = agents[regular.front_agent]
       ? regular.front_agent : (ids[0] || "");
+    if (agents[frontAgent] && agents[frontAgent].archived) {
+      frontAgent = ids.find((id) => !agents[id].archived) || "";
+    }
     return {
       frontAgent,
       frontMode: regular.front_mode || "autonomous",
@@ -475,67 +481,118 @@
     };
   }
 
+  function activeAgentIds() {
+    return Object.keys(agentDraft.agents)
+      .filter((agentId) => !agentDraft.agents[agentId].archived);
+  }
+
   function renderAgentGlobal() {
     const select = $("front-select");
     clear(select);
-    Object.keys(agentDraft.agents).forEach((agentId) => option(
-      select, agentId, agentId, agentId === agentDraft.frontAgent));
+    activeAgentIds().forEach((agentId) => option(
+      select, agentId, agentDraft.agents[agentId].name,
+      agentId === agentDraft.frontAgent));
     setRadio("front-mode", agentDraft.frontMode);
     setRadio("work-mode", agentDraft.workMode);
   }
 
   function renderAgentList() {
     const box = $("agent-settings-list");
+    const entries = Object.entries(agentDraft.agents)
+      .filter(([, agent]) => (
+        showArchivedAgents ? agent.archived : !agent.archived));
+    const archivedCount = Object.values(agentDraft.agents)
+      .filter((agent) => agent.archived).length;
+    $("agent-archived-count").textContent = String(archivedCount);
+    $("agent-archived-toggle").classList.toggle(
+      "active", showArchivedAgents);
     clear(box);
-    Object.keys(agentDraft.agents).forEach((agentId) => {
-      const agent = agentDraft.agents[agentId];
+
+    if (!entries.length) {
+      box.appendChild(el(
+        "div", "empty",
+        showArchivedAgents ? "没有已归档的 Agent。" : "没有可用的 Agent。"));
+      return;
+    }
+
+    entries.forEach(([agentId, agent]) => {
       const isFront = agentDraft.frontAgent === agentId;
       const button = el(
         "button",
         [
           "agent-list-item",
           agentId === selectedAgent ? "active" : "",
-          agent.enabled ? "" : "disabled",
+          agent.archived ? "archived" : "",
+          agent.enabled || agent.archived ? "" : "disabled",
         ].filter(Boolean).join(" "),
       );
       button.type = "button";
       button.dataset.agent = agentId;
 
-      button.appendChild(el(
-        "span", "agent-avatar", agentId.slice(-1).toUpperCase()));
+      const initial = agentId.slice(-1).toUpperCase();
+      button.appendChild(el("span", "agent-avatar", initial));
       const copy = el("span", "agent-list-copy");
-      const title = el("b", "", agentId);
+      const title = el("b", "", agent.name);
       if (isFront) title.appendChild(el("em", "", "FRONT"));
+      if (agent.archived) title.appendChild(el("em", "archived", "ARCHIVED"));
       copy.appendChild(title);
       copy.appendChild(el(
-        "small", "", agent.enabled ? agent.status : "已停用"));
+        "small", "",
+        `${agentId} · ${
+          agent.archived ? "已归档"
+            : (agent.enabled ? agent.status : "已停用")
+        }`));
       button.appendChild(copy);
       button.appendChild(el(
-        "span", "agent-list-engine", agent.engine === "pi" ? "Pi" : "Solo"));
+        "span", "agent-list-engine",
+        agent.engine === "pi" ? "Pi" : "Solo"));
       box.appendChild(button);
     });
   }
 
   function renderAgentDetail() {
     const agent = agentDraft.agents[selectedAgent];
-    if (!agent) return;
+    if (!agent) {
+      $("agent-detail-name").textContent = "—";
+      $("agent-detail-id").textContent = "—";
+      $("agent-detail-status").textContent = "—";
+      $("agent-detail-role").textContent = "—";
+      $("agent-detail-role-text").textContent = "—";
+      $("agent-detail-model").textContent = "—";
+      $("agent-detail-credential").textContent = "—";
+      $("agent-setting-enabled").checked = false;
+      $("agent-setting-enabled").disabled = true;
+      $("agent-archive-btn").hidden = true;
+      $("agent-restore-btn").hidden = true;
+      return;
+    }
     const isFront = agentDraft.frontAgent === selectedAgent;
+    $("agent-detail-name").textContent = agent.name;
     $("agent-detail-id").textContent = selectedAgent;
-    $("agent-detail-status").textContent = agent.enabled
-      ? agent.status : "已停用";
-    $("agent-detail-role").textContent = isFront ? "FRONT" : "WORKER";
-    $("agent-detail-role-text").textContent = isFront
-      ? "Front Agent（由上方 Front Agent 决定）" : "Worker";
+    $("agent-detail-status").textContent = agent.archived
+      ? "已归档"
+      : (agent.enabled ? agent.status : "已停用");
+    $("agent-detail-role").textContent = agent.archived
+      ? "ARCHIVED" : (isFront ? "FRONT" : "WORKER");
+    $("agent-detail-role-text").textContent = agent.archived
+      ? "已归档（历史保留）"
+      : (isFront ? "Front Agent（由上方 Front Agent 决定）" : "Worker");
     $("agent-detail-model").textContent = agent.model;
     $("agent-detail-credential").textContent = agent.credential;
     $("agent-setting-enabled").checked = agent.enabled;
-    $("agent-setting-enabled").disabled = isFront;
-    $("agent-setting-enabled-note").textContent = isFront
-      ? "Front Agent 不能被停用；如需停用，先把 Front 切到别的 Agent。"
-      : "停用后不再接新任务；运行中的任务不受影响。";
+    $("agent-setting-enabled").disabled = isFront || agent.archived;
+    $("agent-setting-enabled-note").textContent = agent.archived
+      ? "已归档的 Agent 不会接新任务；恢复后可重新启用。"
+      : (isFront
+        ? "Front Agent 不能被停用；如需停用，先把 Front 切到别的 Agent。"
+        : "停用后不再接新任务；运行中的任务不受影响。");
     document.querySelectorAll("#agent-engine input").forEach((input) => {
       input.checked = input.value === agent.engine;
+      input.disabled = agent.archived;
     });
+    $("agent-archive-btn").hidden = agent.archived;
+    $("agent-archive-btn").disabled = isFront;
+    $("agent-restore-btn").hidden = !agent.archived;
   }
 
   function updateAgentSummary() {
@@ -543,10 +600,12 @@
       ? "自主" : "只传达";
     const workLabel = agentDraft.workMode === "autonomous"
       ? "自主" : "工作流";
-    const piCount = Object.values(agentDraft.agents)
-      .filter((agent) => agent.engine === "pi").length;
+    const front = agentDraft.agents[agentDraft.frontAgent];
+    const active = activeAgentIds();
+    const piCount = active.filter(
+      (agentId) => agentDraft.agents[agentId].engine === "pi").length;
     $("agent-summary").innerHTML = [
-      ["Front", agentDraft.frontAgent],
+      ["Front", front ? front.name : "—"],
       ["Front 模式", frontLabel],
       ["Work 模式", workLabel],
       ["Pi Agent", `${piCount} 个`],
@@ -555,7 +614,9 @@
 
   function renderAgents() {
     agentDraft = buildAgentState();
-    selectedAgent = agentDraft.frontAgent;
+    showArchivedAgents = false;
+    selectedAgent = agentDraft.frontAgent
+      || Object.keys(agentDraft.agents)[0] || "";
     agentInitial = clone(agentDraft);
     renderAgentGlobal();
     renderAgentList();
@@ -571,18 +632,142 @@
   }
 
   function refreshAgentViews() {
+    renderAgentGlobal();
     renderAgentList();
     renderAgentDetail();
     updateAgentSummary();
     updateFooter();
   }
 
+  async function archiveSelectedAgent() {
+    const agent = agentDraft.agents[selectedAgent];
+    if (!agent) return;
+    if (agentDraft.frontAgent === selectedAgent) {
+      toast("Front Agent 不能被归档", true);
+      return;
+    }
+    const ok = await askConfirm(
+      "归档 Agent？",
+      "归档会停用并隐藏该 Agent；身份、账本、任务和记忆都会保留。",
+      `${agent.name} · ${selectedAgent}`,
+      "warning",
+      "归档 Agent",
+    );
+    if (!ok) return;
+    agent.archived = true;
+    agent.enabled = false;
+    showArchivedAgents = false;
+    const next = activeAgentIds()[0] || "";
+    selectedAgent = next;
+    refreshAgentViews();
+    toast("已归档（尚未保存）");
+  }
+
+  function restoreSelectedAgent() {
+    const agent = agentDraft.agents[selectedAgent];
+    if (!agent || !agent.archived) return;
+    agent.archived = false;
+    agent.enabled = false;
+    showArchivedAgents = false;
+    refreshAgentViews();
+    toast("已恢复；启用后接新任务（尚未保存）");
+  }
+
+  function openAgentCreate() {
+    const card = $("agent-create-card");
+    card.hidden = false;
+    $("new-agent-id").value = "";
+    $("new-agent-name").value = "";
+    $("new-agent-balance").value = "100";
+
+    const modelSelect = $("new-agent-model");
+    clear(modelSelect);
+    Object.keys((data.system && data.system.models) || {}).forEach(
+      (profile) => option(modelSelect, profile, profile));
+    const credentialSelect = $("new-agent-credential");
+    clear(credentialSelect);
+    const credentials = (data.system && data.system.credentials) || {};
+    Object.entries(credentials).forEach(([profile, raw]) => option(
+      credentialSelect, profile,
+      `${profile}${raw.present ? "" : "（缺失）"}`,
+      !!raw.present));
+    const firstPresent = Object.entries(credentials)
+      .find(([, raw]) => raw.present);
+    if (firstPresent) credentialSelect.value = firstPresent[0];
+    $("new-agent-id").focus();
+    card.scrollIntoView({ block: "nearest" });
+  }
+
+  function closeAgentCreate() {
+    $("agent-create-card").hidden = true;
+  }
+
+  async function createAgent() {
+    const agentId = $("new-agent-id").value.trim();
+    const name = $("new-agent-name").value.trim();
+    const model = $("new-agent-model").value;
+    const credential = $("new-agent-credential").value;
+    const balance = Number($("new-agent-balance").value || 0);
+    if (!/^[a-z][a-z0-9_]{2,31}$/.test(agentId)) {
+      toast("Agent ID 不合法：小写字母开头，3–32 位字母/数字/下划线", true);
+      return;
+    }
+    if (!name || name.length > 40) {
+      toast("中文名不能为空，且不超过 40 个字符", true);
+      return;
+    }
+    if (!model || !credential) {
+      toast("请选择模型和凭据", true);
+      return;
+    }
+    if (!Number.isFinite(balance) || balance < 0 || balance > 1000) {
+      toast("初始余额必须在 0–1000 AIC 之间", true);
+      return;
+    }
+    const credentialRaw = ((data.system && data.system.credentials) || {})[
+      credential];
+    if (!credentialRaw || !credentialRaw.present) {
+      toast("该凭据尚未配置，请先在 API 凭据里填写 Key", true);
+      return;
+    }
+    const ok = await askConfirm(
+      "创建 Agent？",
+      `将写入 config/config.yaml，并在重启 UI 后创建身份、钱包与 ${balance} AIC 初始资金。`,
+      `${name} · ${agentId}`,
+      "warning",
+      "创建 Agent",
+    );
+    if (!ok) return;
+    try {
+      await api("/api/settings/system", {
+        method: "POST",
+        body: JSON.stringify({
+          action: "agent.create",
+          data: {
+            agent_id: agentId,
+            name,
+            model,
+            credential,
+            initial_balance: balance,
+          },
+        }),
+      });
+      closeAgentCreate();
+      await load();
+      toast("Agent 已创建；重启 UI 后生效");
+    } catch (error) {
+      toast(`创建失败：${error.message}`, true);
+    }
+  }
+
   async function saveAgents() {
     const pi = [];
     const disabled = [];
+    const archived = [];
     Object.entries(agentDraft.agents).forEach(([agentId, agent]) => {
       if (agent.engine === "pi") pi.push(agentId);
-      if (!agent.enabled) disabled.push(agentId);
+      if (agent.archived) archived.push(agentId);
+      if (!agent.enabled || agent.archived) disabled.push(agentId);
     });
     try {
       await api("/api/settings", {
@@ -593,6 +778,7 @@
           work_mode: agentDraft.workMode,
           pi_work_agents: pi,
           disabled_agents: disabled,
+          archived_agents: archived,
         }),
       });
       await load();
@@ -686,9 +872,11 @@
       next.workMode = "autonomous";
       ids.forEach((agentId, index) => {
         next.agents[agentId].enabled = true;
+        next.agents[agentId].archived = false;
         next.agents[agentId].engine = index === 0 ? "solo" : "pi";
       });
       agentDraft = next;
+      showArchivedAgents = false;
       selectedAgent = next.frontAgent;
       renderAgentGlobal();
       renderAgentList();
@@ -702,6 +890,7 @@
   async function cancelCurrentPane() {
     if (currentPane === "regular-agent") {
       agentDraft = clone(agentInitial);
+      showArchivedAgents = false;
       selectedAgent = agentDraft.frontAgent;
       renderAgentGlobal();
       renderAgentList();
@@ -1177,7 +1366,7 @@
 
   $("front-select").addEventListener("change", () => {
     const next = $("front-select").value;
-    if (!agentDraft.agents[next]) return;
+    if (!agentDraft.agents[next] || agentDraft.agents[next].archived) return;
     agentDraft.frontAgent = next;
     if (!agentDraft.agents[next].enabled) {
       agentDraft.agents[next].enabled = true;
@@ -1206,18 +1395,35 @@
     if (item) selectAgent(item.dataset.agent);
   });
   $("agent-setting-enabled").addEventListener("change", () => {
-    if (agentDraft.frontAgent === selectedAgent) {
-      $("agent-setting-enabled").checked = true;
+    const agent = agentDraft.agents[selectedAgent];
+    if (!agent || agent.archived || agentDraft.frontAgent === selectedAgent) {
+      $("agent-setting-enabled").checked = !!agent && agent.enabled;
       return;
     }
-    agentDraft.agents[selectedAgent].enabled = $("agent-setting-enabled").checked;
+    agent.enabled = $("agent-setting-enabled").checked;
     refreshAgentViews();
   });
   document.querySelectorAll("#agent-engine input").forEach((input) => {
     input.addEventListener("change", () => {
       if (!input.checked) return;
-      agentDraft.agents[selectedAgent].engine = input.value;
+      const agent = agentDraft.agents[selectedAgent];
+      if (!agent || agent.archived) return;
+      agent.engine = input.value;
       refreshAgentViews();
     });
   });
+
+  $("agent-archived-toggle").addEventListener("click", () => {
+    showArchivedAgents = !showArchivedAgents;
+    const ids = Object.keys(agentDraft.agents).filter(
+      (agentId) => agentDraft.agents[agentId].archived === showArchivedAgents);
+    selectedAgent = ids[0] || "";
+    renderAgentList();
+    renderAgentDetail();
+  });
+  $("agent-create-new").addEventListener("click", openAgentCreate);
+  $("agent-create-close").addEventListener("click", closeAgentCreate);
+  $("agent-create-submit").addEventListener("click", createAgent);
+  $("agent-archive-btn").addEventListener("click", archiveSelectedAgent);
+  $("agent-restore-btn").addEventListener("click", restoreSelectedAgent);
 })();
