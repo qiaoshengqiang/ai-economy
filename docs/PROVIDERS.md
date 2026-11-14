@@ -358,3 +358,39 @@ https://opencode.ai/inference/openai/v1/chat/completions
   `Authorization` / `api-key` 会被 adapter 忽略，不能覆盖凭据；
 - `runs/`、`tasks/`、`.env` 不进 git，也不随安装包分发；
 - 设置页只显示「已配置 / 缺失」，不会把 Key 回显到浏览器。
+
+---
+
+## 8. Pi Work 如何使用服务商
+
+Pi Work 不再按 provider 名字写死上游地址。每次 Pi 任务启动时：
+
+```text
+Agent
+  → model profile
+  → provider（base_url / chat_path / request）
+  → AIEOS LLM Proxy
+  → 真实上游
+```
+
+代理层会使用：
+
+- provider 的 `base_url`
+- provider 的 `chat_path`（默认 `/chat/completions`）
+- provider 的 `request.extra_headers`（例如 OpenCode 的 `x-opencode-session`）
+- provider 的 `request.max_tokens_field` / `request.extra_body`
+- Agent 自己的 credential
+
+因此切换 Agent 的模型时，只要新模型所属的 provider 是
+OpenAI Chat Completions 兼容端点，Pi Work 就会自动走对应地址。
+
+当前限制：
+
+- 只支持 `/chat/completions` 协议；Responses / Anthropic Messages 端点暂不支持；
+- `mock` provider 没有真实上游，不能用于 Pi Work；
+- 模型 ID 必须是该 provider 真正提供的 ID；
+  例如 OpenCode Go 不支持 `deepseek-flash`，请使用
+  `glm-5.3` / `kimi-k3` / `minimax-m3` / `qwen3.8-max`。
+
+如果上游拒绝请求，任务错误现在会带上 Pi 记录的原始错误
+（例如 401 / 400 / 403），不再只显示「没有产出总结」。

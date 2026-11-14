@@ -23,9 +23,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 from core.task import Task, TaskMode, TaskStatus
 from core.task_execution import TaskResultRef
@@ -39,6 +40,31 @@ from work.roles import WorkResult
 from work.task_snapshot import SnapshotRecord, TaskSnapshotStore
 from work.worker_roles import render_role_prompt
 from work.task_directory import TaskDirectory
+
+
+@dataclass(frozen=True)
+class PiProviderSpec:
+    """Pi LLM Proxy 需要的一个**已解析端点**。
+
+    🔒 不再根据 provider 名字写死 base_url。每个 Agent 的
+       model profile 解析出 provider 后，直接使用这个 provider
+       自己的 base_url / chat_path / request（extra_headers 等）。
+    """
+
+    provider: str
+    model: str
+    adapter: str
+    base_url: str
+    chat_path: str
+    request: Mapping[str, Any]
+
+    @property
+    def chat_url(self) -> str:
+        base = str(self.base_url or "").rstrip("/")
+        path = str(self.chat_path or "/chat/completions")
+        if not path.startswith("/"):
+            path = "/" + path
+        return base + path if base else ""
 
 
 class PiWorkRuntime:
@@ -170,6 +196,93 @@ class PiWorkRuntime:
             getattr(brain, "model", "") or "deepseek-flash")
         return provider, model
 
+    def _resolved_agent(self) -> Any:
+        resolved = getattr(self.rt, "resolved_config", None)
+        if resolved is None:
+            return None
+        actor = self.task.contractor or self.task.creator
+        try:
+            return resolved.agent(actor)
+        except Exception:                                     # noqa: BLE001
+            return None
+
+    def _provider_spec(self) -> PiProviderSpec:
+        """解析当前 Agent 真正要用的 provider 端点。
+
+        优先级：
+            1. CLI 覆盖 `--pi-provider/--pi-model`（如果设置了）
+            2. Agent 的 resolved model/profile
+            3. 旧 runtime 的 router.provider_config（测试 / 兼容）
+
+        🔒 base_url / chat_path / request 全部来自 provider 自己的配置，
+           不再按 provider 名字写死 DeepSeek。
+        """
+        resolved = getattr(self.rt, "resolved_config", None)
+        resolved_agent = self._resolved_agent()
+        provider_name = ""
+        model = ""
+        if resolved_agent is not None:
+            provider_name = str(getattr(
+                getattr(resolved_agent, "provider", None), "name", "") or "")
+            model = str(getattr(resolved_agent, "model_id", "") or "")
+        provider_name = self.pi_provider or provider_name
+        model = self.pi_model or model
+
+        provider_obj = None
+        if resolved is not None and provider_name:
+            try:
+                provider_obj = resolved.provider(provider_name)
+            except Exception:                                 # noqa: BLE001
+                provider_obj = None
+
+        if provider_obj is not None:
+            base_url = str(getattr(provider_obj, "base_url", "") or "")
+            if self.upstream_base_url:
+                base_url = self.upstream_base_url.rstrip("/")
+            return PiProviderSpec(
+                provider=provider_name,
+                model=model,
+                adapter=str(getattr(provider_obj, "adapter", "") or ""),
+                base_url=base_url,
+                chat_path=str(getattr(
+                    provider_obj, "chat_path", "") or "/chat/completions"),
+                request=dict(getattr(provider_obj, "request", None) or {}),
+            )
+
+        # 兼容没有 resolved_config 的测试/旧调用方。
+        fallback_provider, fallback_model = self._provider_and_model()
+        provider_name = self.pi_provider or fallback_provider
+        model = self.pi_model or fallback_model
+        config: Dict[str, Any] = {}
+        router = getattr(self.rt, "router", None)
+        if router is not None:
+            try:
+                config = dict(router.provider_config(provider_name) or {})
+            except Exception:                                 # noqa: BLE001
+                config = {}
+        request = {
+            key: config[key]
+            for key in ("extra_headers", "extra_body", "max_tokens_field")
+            if key in config
+        }
+        return PiProviderSpec(
+            provider=provider_name,
+            model=model,
+            adapter=str(config.get("adapter") or ""),
+            base_url=(
+                self.upstream_base_url.rstrip("/")
+                if self.upstream_base_url
+                else str(config.get("base_url") or "")),
+            chat_path=str(config.get("chat_path") or "/chat/completions"),
+            request=request,
+        )
+
+    def _upstream_base_url(self) -> str:
+        """兼容旧调用：返回解析出的 provider base_url。"""
+        if self.upstream_base_url:
+            return self.upstream_base_url
+        return self._provider_spec().base_url
+
     def _pi_env(
         self, provider: str, *, include_key: bool = True,
     ) -> Dict[str, str]:
@@ -208,15 +321,6 @@ class PiWorkRuntime:
         except Exception:                                     # noqa: BLE001
             return ""
         return str(getattr(credential, "material", "") or "")
-
-    def _upstream_base_url(self) -> str:
-        if self.upstream_base_url:
-            return self.upstream_base_url
-        provider = self._provider_and_model()[0]
-        return {
-            "deepseek": "https://api.deepseek.com",
-            "openai": "https://api.openai.com",
-        }.get(provider, "https://api.deepseek.com")
 
     def _model_limits(self) -> tuple[int, int, bool, tuple]:
         """模型上下文 / 最大输出 / reasoning / 思考档位。"""
@@ -1026,7 +1130,16 @@ Task Workspace 放本次任务的交付物和验收产物。
                 "TASK.md",
                 f"# Task {task.task_id}\n\n{task.description or ''}\n")
             memory_context = self.memory.prepare()
-            provider, model = self._provider_and_model()
+            spec = self._provider_spec()
+            provider, model = spec.provider, spec.model
+            if self.use_llm_proxy:
+                if spec.adapter == "mock" or not spec.chat_url:
+                    result.error = (
+                        f"Pi Work 无法为 provider {provider!r} 找到可用的 "
+                        f"chat completions 端点（adapter={spec.adapter!r}, "
+                        f"base_url={spec.base_url!r}）。")
+                    result.status = task.status
+                    return result
             state_path = self.task_directory.aieos / "work_state.json"
             if state_path.exists():
                 try:
@@ -1073,7 +1186,9 @@ Task Workspace 放本次任务的交付物和验收产物。
                         api_key=material,
                         provider=provider,
                         model=model,
-                        upstream_base_url=self._upstream_base_url(),
+                        upstream_base_url=spec.base_url,
+                        chat_path=spec.chat_path,
+                        provider_request=spec.request,
                         timeout_seconds=self.proxy_timeout_seconds,
                     )
                     try:
@@ -1255,9 +1370,13 @@ Task Workspace 放本次任务的交付物和验收产物。
 
             summary = self._summary(all_events)
             if not summary:
+                upstream_error = self._last_assistant_error(all_events)
+                detail = (
+                    f"；上游错误：{upstream_error}" if upstream_error else "")
                 result.error = (
                     "Pi 已结束，但没有产出总结："
-                    "既没有 RESULT.md，也没有可用的 assistant 文本")
+                    "既没有 RESULT.md，也没有可用的 assistant 文本"
+                    + detail)
                 result.status = task.status
                 return result
 
@@ -1386,6 +1505,26 @@ Task Workspace 放本次任务的交付物和验收产物。
                 text = "\n".join(item for item in texts if item.strip())
                 if text.strip():
                     return text.strip()
+        return ""
+
+    @staticmethod
+    def _last_assistant_error(events: List[Dict[str, Any]]) -> str:
+        """取最近一条 assistant error 的原始上游错误。
+
+        Pi 在模型调用失败时会发 `stopReason: "error"` + `errorMessage`。
+        如果只看「没有 RESULT.md」，真正原因（401 / 400 / 超时）会丢失。
+        """
+        for event in reversed(events):
+            if event.get("type") != "message_end":
+                continue
+            message = event.get("message") or {}
+            if message.get("role") != "assistant":
+                continue
+            if str(message.get("stopReason") or "").lower() != "error":
+                continue
+            text = str(message.get("errorMessage") or "").strip()
+            if text:
+                return text
         return ""
 
     @staticmethod

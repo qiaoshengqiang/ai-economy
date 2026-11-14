@@ -497,3 +497,62 @@ def test_pi_project_workdir_modifies_existing_project(db, monkeypatch, tmp_path)
     assert [item.label for item in snapshots] == [
         "baseline", "phase:autonomous:end", "final"]
     assert snapshots[-1].files == 3
+
+
+def test_pi_provider_spec_uses_resolved_provider_endpoint(tmp_path):
+    task = Task.create(
+        task_id="T-PROVIDER-SPEC",
+        creator="agent_o",
+        description="provider spec",
+        workspace_id="WS-PROVIDER",
+        participants=["agent_o"],
+        mode=TaskMode.SOLO,
+    )
+    directory = TaskDirectoryManager(tmp_path / "tasks").for_task(task.task_id)
+    provider = SimpleNamespace(
+        name="opencode",
+        adapter="openai_compatible",
+        base_url="https://opencode.ai/inference/go/openai/v1",
+        chat_path="/chat/completions",
+        request={"extra_headers": {"x-opencode-session": "ses_test"}},
+    )
+    resolved_agent = SimpleNamespace(provider=provider, model_id="glm-5.3")
+    resolved = SimpleNamespace(
+        agent=lambda _aid: resolved_agent,
+        provider=lambda _name: provider,
+    )
+    runtime = SimpleNamespace(
+        resolved_config=resolved,
+        tasks=SimpleNamespace(),
+        economy=SimpleNamespace(agent=lambda _aid: SimpleNamespace(
+            has_brain=True, brain=_FakeBrain(),
+            workspace=_FakeWorkspace(tmp_path / "agent_o"))),
+        communication=None,
+    )
+
+    runner = PiWorkRuntime(
+        runtime, task,
+        task_directory=directory,
+        use_llm_proxy=False,
+    )
+    spec = runner._provider_spec()
+
+    assert spec.provider == "opencode"
+    assert spec.model == "glm-5.3"
+    assert spec.adapter == "openai_compatible"
+    assert spec.base_url == "https://opencode.ai/inference/go/openai/v1"
+    assert spec.chat_url == (
+        "https://opencode.ai/inference/go/openai/v1/chat/completions")
+    assert spec.request["extra_headers"]["x-opencode-session"] == "ses_test"
+
+
+def test_last_assistant_error_surfaces_upstream_message():
+    events = [
+        {"type": "message_end", "message": {
+            "role": "assistant", "stopReason": "toolUse", "content": []}},
+        {"type": "message_end", "message": {
+            "role": "assistant", "stopReason": "error",
+            "errorMessage": "401: Authentication Fails"}},
+    ]
+    assert PiWorkRuntime._last_assistant_error(events) == (
+        "401: Authentication Fails")

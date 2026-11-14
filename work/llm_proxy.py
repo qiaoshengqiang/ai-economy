@@ -21,10 +21,15 @@ import time
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Mapping, Optional
 
 from llm import prompt_log
 from llm.base import LLMResponse, TOKEN_SOURCE_API
+
+#: 给上游的默认 UA。部分网关（Cloudflare）会拦截 urllib 默认 UA。
+_PROXY_USER_AGENT = "AIEOS-Pi-Proxy/0.2"
+#: 认证头只能来自 Credential，不能被 provider.request 覆盖。
+_AUTH_HEADERS = {"authorization", "x-api-key", "api-key"}
 
 
 class _ProxyHandler(BaseHTTPRequestHandler):
@@ -82,15 +87,11 @@ class _ProxyHandler(BaseHTTPRequestHandler):
         )
         stream = bool(payload.get("stream"))
         upstream = self.proxy.upstream_url(self.path)
+        payload = self.proxy.prepare_payload(payload)
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         request = urllib.request.Request(
             upstream, data=data, method="POST",
-            headers={
-                "Content-Type": "application/json",
-                "Accept": "text/event-stream" if stream else "application/json",
-                "Accept-Encoding": "identity",
-                "Authorization": f"Bearer {self.proxy.api_key}",
-            })
+            headers=self.proxy.build_headers(stream=stream))
         try:
             response = urllib.request.urlopen(
                 request, timeout=self.proxy.timeout_seconds)
@@ -193,7 +194,9 @@ class AIEOSLLMProxy:
         api_key: str,
         provider: str = "deepseek",
         model: str = "deepseek-flash",
-        upstream_base_url: str = "https://api.deepseek.com",
+        upstream_base_url: str = "",
+        chat_path: str = "/chat/completions",
+        provider_request: Optional[Mapping[str, Any]] = None,
         timeout_seconds: float = 300.0,
     ) -> None:
         self.rt = runtime
@@ -203,6 +206,21 @@ class AIEOSLLMProxy:
         self.provider = str(provider)
         self.model = str(model)
         self.upstream_base_url = str(upstream_base_url).rstrip("/")
+        self.chat_path = str(chat_path or "/chat/completions")
+        request = dict(provider_request or {})
+        self.provider_request = request
+        raw_headers = request.get("extra_headers")
+        self.extra_headers: Dict[str, str] = {
+            str(name): str(value)
+            for name, value in (
+                dict(raw_headers) if isinstance(raw_headers, Mapping) else {}
+            ).items()
+        }
+        extra_body = request.get("extra_body")
+        self.extra_body: Dict[str, Any] = (
+            dict(extra_body) if isinstance(extra_body, Mapping) else {})
+        self.max_tokens_field = str(
+            request.get("max_tokens_field") or "max_tokens")
         self.timeout_seconds = float(timeout_seconds)
         self._server: Optional[ThreadingHTTPServer] = None
         self._thread: Optional[threading.Thread] = None
@@ -233,11 +251,54 @@ class AIEOSLLMProxy:
         self._thread = None
 
     # ------------------------------------------------------------
+    @property
+    def chat_url(self) -> str:
+        """Provider 的真实 chat completions 完整地址。"""
+        base = self.upstream_base_url.rstrip("/")
+        path = self.chat_path or "/chat/completions"
+        if not path.startswith("/"):
+            path = "/" + path
+        return base + path if base else ""
+
     def upstream_url(self, path: str) -> str:
         path = str(path or "")
         if not path.startswith("/"):
             path = "/" + path
+        # Pi 以 OpenAI-compatible `/v1/chat/completions` 调用我们。
+        # 上游的真实路径由 provider 的 base_url + chat_path 决定，
+        # 不能直接把 `/v1/...` 拼到已经带版本号的 base_url 后面。
+        if path.rstrip("/").endswith("/chat/completions"):
+            return self.chat_url
         return self.upstream_base_url + path
+
+    def prepare_payload(
+        self, payload: Mapping[str, Any],
+    ) -> Dict[str, Any]:
+        """把 Pi 的 OpenAI-compatible 请求体适配到具体 provider。"""
+        out: Dict[str, Any] = dict(payload)
+        target = self.max_tokens_field
+        if target != "max_tokens":
+            if "max_tokens" in out and target not in out:
+                out[target] = out.pop("max_tokens")
+            else:
+                out.pop("max_tokens", None)
+        if self.extra_body:
+            out.update(self.extra_body)
+        return out
+
+    def build_headers(self, *, stream: bool) -> Dict[str, str]:
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "text/event-stream" if stream else "application/json",
+            "Accept-Encoding": "identity",
+            "User-Agent": _PROXY_USER_AGENT,
+            "Authorization": f"Bearer {self.api_key}",
+        }
+        for name, value in self.extra_headers.items():
+            if name.strip().lower() in _AUTH_HEADERS:
+                continue
+            headers[name] = value
+        return headers
 
     def record_usage(
         self,

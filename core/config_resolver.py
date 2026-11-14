@@ -180,7 +180,10 @@ class ResolvedProvider:
     name: str
     adapter: str
     base_url: str
-    timeout_seconds: float
+    #: OpenAI 兼容 chat completions 的路径。默认 `/chat/completions`。
+    #: Provider 的 base_url 已经包含 API 版本时，这里不要再带 `/v1`。
+    chat_path: str = "/chat/completions"
+    timeout_seconds: float = 300.0
     request: Mapping[str, Any] = field(default_factory=dict)
     #: 没显式选模型时用的 model profile（可空）。
     default_model_profile: str = ""
@@ -191,6 +194,7 @@ class ResolvedProvider:
     def to_dict(self) -> Dict[str, Any]:
         return {"name": self.name, "adapter": self.adapter,
                 "base_url": self.base_url,
+                "chat_path": self.chat_path,
                 "timeout_seconds": self.timeout_seconds,
                 "request": dict(self.request),
                 "default_model_profile": self.default_model_profile,
@@ -845,6 +849,7 @@ class ConfigResolver:
             adapter=_require_text(raw.get("adapter"),
                                   f"providers.{name}.adapter"),
             base_url=str(raw.get("base_url") or "").rstrip("/"),
+            chat_path=str(raw.get("chat_path") or "/chat/completions"),
             timeout_seconds=_require_positive_number(
                 raw.get("timeout_seconds", 300),
                 f"providers.{name}.timeout_seconds"),

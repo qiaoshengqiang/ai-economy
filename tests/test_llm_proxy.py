@@ -16,12 +16,23 @@ from work.llm_proxy import AIEOSLLMProxy
 
 
 class _Upstream(BaseHTTPRequestHandler):
+    last_path = ""
+    last_headers = {}
+    last_body = {}
+    last_content_type = ""
+
     def log_message(self, *_args):
         return
 
     def do_POST(self):  # noqa: N802
         length = int(self.headers.get("Content-Length") or 0)
-        self.rfile.read(length)
+        raw = self.rfile.read(length)
+        type(self).last_path = self.path
+        type(self).last_headers = dict(self.headers)
+        try:
+            type(self).last_body = json.loads(raw.decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            type(self).last_body = {}
         body = json.dumps({
             "id": "chatcmpl-test",
             "choices": [{"index": 0, "finish_reason": "stop",
@@ -124,3 +135,48 @@ def test_proxy_records_usage_without_budget_gate():
         proxy.stop()
         upstream.shutdown()
         upstream.server_close()
+
+
+def test_proxy_uses_provider_endpoint_headers_and_payload_fields():
+    upstream, upstream_url = _upstream()
+    runtime = SimpleNamespace(recorder=None, experiment_run_id="exp")
+    proxy = AIEOSLLMProxy(
+        runtime, agent_id="agent_o", task_id="task_x",
+        api_key="oc_sk_test", provider="opencode", model="glm-5.3",
+        upstream_base_url=upstream_url + "/openai/v1",
+        chat_path="/chat/completions",
+        provider_request={
+            "extra_headers": {
+                "x-opencode-session": "ses_test_1",
+                "Authorization": "Bearer should-not-win",
+            },
+            "max_tokens_field": "max_completion_tokens",
+            "extra_body": {"thinking": {"type": "disabled"}},
+        })
+    base = proxy.start()
+    try:
+        request = urllib.request.Request(
+            base + "/v1/chat/completions",
+            data=json.dumps({
+                "model": "glm-5.3",
+                "messages": [{"role": "user", "content": "hi"}],
+                "max_tokens": 32,
+            }).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST")
+        urllib.request.urlopen(request, timeout=5).read()
+    finally:
+        proxy.stop()
+        upstream.shutdown()
+        upstream.server_close()
+
+    # base_url 已经带 /openai/v1，不能再次拼出 /v1/v1/chat/completions。
+    assert _Upstream.last_path == "/openai/v1/chat/completions"
+    headers = {k.lower(): v for k, v in _Upstream.last_headers.items()}
+    assert headers["x-opencode-session"] == "ses_test_1"
+    assert headers["authorization"] == "Bearer oc_sk_test"
+    assert headers["user-agent"].startswith("AIEOS-")
+    body = _Upstream.last_body
+    assert body["max_completion_tokens"] == 32
+    assert "max_tokens" not in body
+    assert body["thinking"] == {"type": "disabled"}
