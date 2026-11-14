@@ -108,7 +108,7 @@ hard    多因素冲突，且**没有压倒性答案**
 cd decision-lab
 
 # 1) 只跑天真规则基线（不需要模型，秒级）
-/opt/homebrew/bin/python3.13 benchmark.py
+python3.13 benchmark.py
 
 # 2) 跑本地 decider-0.8b（需要先装好，见下）
 ./.venv/bin/python benchmark.py --decider
@@ -124,7 +124,7 @@ cd decision-lab
 
 ```bash
 cd decision-lab
-/opt/homebrew/bin/python3.13 -m venv .venv     # ⚠️ 必须 >= 3.11
+python3.13 -m venv .venv     # ⚠️ 必须 >= 3.11
 ./.venv/bin/python -m pip install -r requirements.txt
 
 # 🔒 HuggingFace 在本机**不通**，必须走镜像

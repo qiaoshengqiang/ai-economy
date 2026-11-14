@@ -5,7 +5,7 @@
 > 先进入项目目录（只需要做一次）：
 >
 > ```bash
-> cd /Users/qiaoshengqiang/Documents/deepseek-harness/default-workspace/ai-economy
+> cd /path/to/ai-economy
 > ```
 
 ---
@@ -930,7 +930,7 @@ Python 3.13.15
 **手动重建虚拟环境**（`.venv` 被误删时用）：
 
 ```bash
-/opt/homebrew/bin/python3.13 -m venv .venv
+python3.13 -m venv .venv
 ./.venv/bin/python -m pip install -r requirements.txt
 ./dev.sh doctor
 ```

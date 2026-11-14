@@ -91,7 +91,7 @@ ADR            ← 单个决策的历史与理由（中）
 |---|---|
 | **版本** | **`v0.2.0`**（当前状态见 [`../PROJECT_STATUS.md`](../PROJECT_STATUS.md)） |
 | **阶段** | Post-Change-Pipeline-Phase-1 · Agent Core V1 · Tool Runtime V1 · Pi Work（workflow / autonomous）已实现 |
-| **测试** | 以 `./dev.sh test` 当前输出为准（最近：5686 passed, 2 skipped, 30 deselected） |
+| **测试** | 以 `./dev.sh test` 当前输出为准（最近：5687 passed, 2 skipped, 30 deselected） |
 | **协议** | v1 |
 | **Memory 四层** | Layer 1 `DESIGNED` · **Layer 2 `CURRENT`** · Layer 3/4 `FUTURE`（见 AGENTS.md §4） |
 | **Task Workspace** | `TaskWorkspaceRef` 仍是纯引用；**Workspace Core v1 已实现**（资源树 / 锁 / 版本，ADR-0029） |

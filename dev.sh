@@ -56,7 +56,7 @@ if [ ! -x "$VENV_PYTHON" ]; then
     echo "❌ 找不到虚拟环境：$VENV_PYTHON"
     echo
     echo "请先创建它："
-    echo "    /opt/homebrew/bin/python3.13 -m venv .venv"
+    echo "    python3.13 -m venv .venv"
     echo "    ./.venv/bin/python -m pip install -r requirements.txt"
     exit 1
 fi

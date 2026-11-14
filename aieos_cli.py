@@ -234,24 +234,30 @@ class Launcher:
             host = "127.0.0.1"
         return f"http://{host}:{int(config.get('port') or 0)}"
 
+    def _state_path(self, path: Any) -> str:
+        target = Path(path)
+        try:
+            return str(target.resolve().relative_to(self.root))
+        except (OSError, ValueError):
+            return str(target)
+
     def record_state(self, config: Dict[str, Any]) -> None:
         pid = 0
+        pid_path = self.root / str(config.get("pid_file") or "")
         try:
-            pid = int(
-                (self.root / str(config.get("pid_file") or "")).read_text(
-                    encoding="utf-8").strip())
+            pid = int(pid_path.read_text(encoding="utf-8").strip())
         except (OSError, ValueError):
             pid = 0
         if pid <= 0:
             return
+        log_path = self.root / str(config.get("log") or "")
         self._write_json(self.state_path, {
             "pid": pid,
             "host": str(config.get("host") or ""),
             "port": int(config.get("port") or 0),
             "url": self.display_url(config),
-            "log": str(self.root / str(config.get("log") or "")),
-            "pid_file": str(
-                self.root / str(config.get("pid_file") or "")),
+            "log": self._state_path(log_path),
+            "pid_file": self._state_path(pid_path),
             "started_at": _now_iso(),
         })
 
@@ -305,15 +311,16 @@ class Launcher:
         running = bool(pid and self._pid_alive(pid))
         if not url:
             url = self.display_url(config)
-        log_path = str(
-            state.get("log")
-            or (self.root / str(config.get("log") or "")))
+        raw_log = state.get("log") or config.get("log") or ""
+        log_path = Path(str(raw_log))
+        if not log_path.is_absolute():
+            log_path = self.root / log_path
         return {
             "running": running,
             "pid": pid,
             "url": url,
             "health": self._health(url) if running else False,
-            "log": log_path,
+            "log": str(log_path),
             "config": str(self.config_path),
         }
 
@@ -365,8 +372,10 @@ class Launcher:
     def logs(self, lines: int = 100, follow: bool = False) -> int:
         config = self.merge_config()
         state = self.read_state()
-        raw_path = state.get("log") or (self.root / str(config.get("log") or ""))
+        raw_path = state.get("log") or config.get("log") or ""
         path = Path(str(raw_path))
+        if not path.is_absolute():
+            path = self.root / path
         if not path.exists():
             print(f"日志文件不存在：{path}", file=sys.stderr)
             return 1

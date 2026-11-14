@@ -88,3 +88,10 @@ def test_environ_resolves_relative_paths(tmp_path):
         tmp_path / "experiments/pi_compare/pi_node/node_modules/.bin/pi")
     assert env["AIEOS_LOG"] == str(tmp_path / "runs/ui/server.log")
     assert env["AIEOS_PID_FILE"] == str(tmp_path / "runs/ui/aieos.pid")
+
+
+def test_default_paths_are_portable():
+    from aieos_cli import DEFAULTS
+
+    for key in ("pi_cli", "log", "pid_file"):
+        assert not Path(DEFAULTS[key]).is_absolute()

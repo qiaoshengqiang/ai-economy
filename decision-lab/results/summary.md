@@ -20,7 +20,7 @@ laya  0.3.26
 
 | # | 问题 | 修法 |
 |---|---|---|
-| 1 | venv 用了系统 Python 3.9 | 改用 `/opt/homebrew/bin/python3.13`（laya 要 ≥3.10） |
+| 1 | venv 用了系统 Python 3.9 | 改用 `python3.13`（laya 要 ≥3.10） |
 | 2 | `huggingface.co` 不通 | `HF_ENDPOINT=https://hf-mirror.com` |
 | 3 | HF 缓存目录不可写（sandbox） | `HF_HOME=<workspace>/decision-lab/.hf-cache` |
 | 4 | 我按文档猜 schema，错两次 | **读 `laya/agent.py` 的 docstring** 拿到准确 schema |

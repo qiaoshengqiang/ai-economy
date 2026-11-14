@@ -307,6 +307,55 @@ AIEOS_COMMIT_AUTO_MERGE
 - 通过 `start_aieos.sh` 直接启动的旧实例可能没有 `launcher-state.json`；
   此时 `status` 会退回 PID 文件 + launcher 配置。
 - 一次性 `--port` 与旧实例并存时，建议使用 `restart`，不要 `start`。
+- `launcher.json` 是本机配置：换机器时不要复制 `runs/`；
+  使用 `./aieos config reset` 重新生成本机参数。
+
+---
+
+## 8.1 换机器安装 / 迁移
+
+仓库里**不会**携带任何本机绝对路径：
+
+```text
+config/config.yaml   只使用相对路径（data/economy.db 等）
+config/llm.yaml      只保存 provider/base_url/model，不保存本机路径
+runs/                已被 .gitignore 忽略（launcher / 状态 / 数据库 / 日志）
+tasks/               已被 .gitignore 忽略
+agents/*/workspace   只保留 .gitkeep
+```
+
+到新机器后按顺序：
+
+```bash
+# 1. 重新创建虚拟环境
+python3.13 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+
+# 2. 重新配置 secret
+cp .env.example .env
+
+# 3. 检查 Pi CLI 路径（每台机器可能不同）
+./aieos config set pi-cli /path/to/pi
+./aieos doctor
+
+# 4. 启动
+./aieos start
+```
+
+如果是从另一台机器**整体复制目录**过来的，额外执行：
+
+```bash
+./aieos config reset
+rm -f runs/ui/launcher-state.json
+```
+
+不要复制 `runs/ui/launcher.json` / `launcher-state.json`；
+它们包含本机的端口、路径和 PID，只对原机器有意义。
+
+`config/config.yaml` 里的 `agents.<id>` 是配置事实，会随仓库走；
+如果不想带走某个本机实验 Agent，删除对应 `agents.<id>` 块后重启。
+
 
 ---
 
