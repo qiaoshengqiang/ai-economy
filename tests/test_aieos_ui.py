@@ -1972,6 +1972,23 @@ def test_styles_keep_copy_actions_from_blocking_selection():
     assert ".msg-actions .copy-btn { pointer-events: auto; }" in css
 
 
+def test_task_cards_have_status_colors_filters_and_actions():
+    from pathlib import Path
+
+    static = Path(__file__).resolve().parent.parent / "ui" / "static"
+    html = (static / "index.html").read_text(encoding="utf-8")
+    css = (static / "style.css").read_text(encoding="utf-8")
+    js = (static / "app.js").read_text(encoding="utf-8")
+    assert 'id="task-filters"' in html
+    assert 'data-task-filter="archived"' in html
+    assert "task-card-menu" in js
+    assert "/api/task/archive" in js
+    assert "/api/task/delete" in js
+    assert ".task-card.COMPLETED" in css
+    assert ".task-card.IN_PROGRESS" in css
+    assert ".task-status.COMPLETED" in css
+
+
 def test_submit_uses_client_message_id_for_idempotency():
     from pathlib import Path
 

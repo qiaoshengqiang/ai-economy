@@ -34,6 +34,7 @@
     agentsCount: $("agents-count"),
     tasks: $("tasks"),
     tasksCount: $("tasks-count"),
+    taskFilters: $("task-filters"),
     questionModal: $("question-modal"),
     questionAgent: $("question-agent"),
     questionText: $("question-text"),
@@ -55,6 +56,7 @@
   let lastMessagesKey = "";
   let lastAgentsKey = "";
   let lastTasksKey = "";
+  let taskFilter = "all";
   let activeQuestion = null;
   let lastQuestionKey = "";
   let audioContext = null;
@@ -838,23 +840,81 @@
     });
   }
 
+  const TASK_TERMINAL = new Set([
+    "COMPLETED", "CANCELLED", "REJECTED", "EXPIRED", "FAILED",
+  ]);
+
+  function closeTaskMenus() {
+    document.querySelectorAll(".task-card-menu").forEach((menu) => {
+      menu.hidden = true;
+    });
+    document.querySelectorAll(".task-more").forEach((button) => {
+      button.setAttribute("aria-expanded", "false");
+    });
+  }
+
+  async function taskAction(action, taskId) {
+    if (action === "delete") {
+      const ok = window.confirm(
+        `删除 ${taskId}？\n\n将删除 Task 记录、任务目录、快照和提交请求。\n这个操作不可恢复。建议优先使用“归档”。`,
+      );
+      if (!ok) return;
+    }
+    const endpoint = {
+      archive: "/api/task/archive",
+      unarchive: "/api/task/unarchive",
+      delete: "/api/task/delete",
+    }[action];
+    if (!endpoint) return;
+    try {
+      await api(endpoint, {
+        method: "POST",
+        body: JSON.stringify({ task_id: taskId }),
+      });
+      showToast(
+        action === "delete" ? "任务已删除"
+          : (action === "archive" ? "任务已归档" : "任务已恢复"),
+      );
+      lastTasksKey = "";
+      await refresh();
+    } catch (error) {
+      showToast(`操作失败：${error.message}`, true);
+    }
+  }
+
   function renderTasks(tasks) {
-    const list = tasks || [];
-    const key = JSON.stringify(list);
+    const all = tasks || [];
+    const visible = all.filter((task) => {
+      if (taskFilter === "archived") return !!task.archived;
+      if (task.archived) return false;
+      if (taskFilter === "completed") return task.status === "COMPLETED";
+      if (taskFilter === "active") {
+        return !TASK_TERMINAL.has(String(task.status || ""));
+      }
+      return true;
+    });
+    const key = JSON.stringify({ filter: taskFilter, tasks: visible });
     if (key === lastTasksKey && els.tasks.childElementCount) return;
     lastTasksKey = key;
-    els.tasksCount.textContent = `${list.length} 个`;
+    els.tasksCount.textContent = `${visible.length} 个`;
     els.tasks.innerHTML = "";
-    if (!list.length) {
+    if (!visible.length) {
       const empty = document.createElement("div");
       empty.className = "empty";
-      empty.textContent = "还没有 Task。";
+      empty.textContent = taskFilter === "archived"
+        ? "没有已归档的 Task。"
+        : "还没有 Task。";
       els.tasks.appendChild(empty);
       return;
     }
-    list.forEach((task) => {
+    visible.forEach((task) => {
+      const status = String(task.status || "");
+      const archived = !!task.archived;
+      const live = !!task.live;
       const card = document.createElement("div");
-      card.className = `task-card clickable ${task.status || ""}`;
+      card.className = (
+        `task-card clickable ${status}${archived ? " archived" : ""}`
+      );
       card.title = "在新任务页打开执行明细";
       card.addEventListener("click", () => {
         if (hasActiveTextSelection()) return;
@@ -867,11 +927,73 @@
       const id = document.createElement("span");
       id.className = "task-id";
       id.textContent = task.task_id;
-      const status = document.createElement("span");
-      status.className = "task-status";
-      status.textContent = task.status || "";
       top.appendChild(id);
-      top.appendChild(status);
+
+      const headRight = document.createElement("span");
+      headRight.className = "task-head-right";
+      const statusNode = document.createElement("span");
+      statusNode.className = `task-status ${status}`;
+      statusNode.textContent = status || "—";
+      headRight.appendChild(statusNode);
+      if (archived) {
+        const archivedBadge = document.createElement("span");
+        archivedBadge.className = "archived-badge";
+        archivedBadge.textContent = "已归档";
+        headRight.appendChild(archivedBadge);
+      }
+      const more = document.createElement("button");
+      more.type = "button";
+      more.className = "task-more";
+      more.textContent = "⋯";
+      more.title = "更多操作";
+      more.setAttribute("aria-expanded", "false");
+      headRight.appendChild(more);
+
+      const menu = document.createElement("div");
+      menu.className = "task-card-menu";
+      menu.hidden = true;
+      const archiveButton = document.createElement("button");
+      archiveButton.type = "button";
+      archiveButton.textContent = archived ? "▣ 恢复任务" : "▣ 归档任务";
+      archiveButton.disabled = !archived && live;
+      archiveButton.addEventListener("click", (event) => {
+        event.stopPropagation();
+        closeTaskMenus();
+        taskAction(archived ? "unarchive" : "archive", task.task_id);
+      });
+      menu.appendChild(archiveButton);
+
+      const deleteButton = document.createElement("button");
+      deleteButton.type = "button";
+      deleteButton.className = "danger";
+      deleteButton.textContent = "⌫ 删除任务";
+      deleteButton.disabled = live || !TASK_TERMINAL.has(status);
+      deleteButton.addEventListener("click", (event) => {
+        event.stopPropagation();
+        closeTaskMenus();
+        taskAction("delete", task.task_id);
+      });
+      menu.appendChild(deleteButton);
+
+      const note = document.createElement("div");
+      note.className = "menu-note";
+      note.textContent = live
+        ? "任务运行中，请先停止任务。"
+        : (!TASK_TERMINAL.has(status)
+          ? "只有已结束的任务可以删除。"
+          : "删除不可恢复；归档可以恢复。");
+      menu.appendChild(note);
+
+      more.addEventListener("click", (event) => {
+        event.stopPropagation();
+        const shouldOpen = menu.hidden;
+        closeTaskMenus();
+        menu.hidden = !shouldOpen;
+        more.setAttribute("aria-expanded", shouldOpen ? "true" : "false");
+      });
+      menu.addEventListener("click", (event) => event.stopPropagation());
+      headRight.appendChild(menu);
+      top.appendChild(headRight);
       card.appendChild(top);
 
       const modes = document.createElement("div");
@@ -1068,6 +1190,20 @@
 
   /* events */
   els.submit.addEventListener("click", submitPrompt);
+  if (els.taskFilters) {
+    els.taskFilters.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-task-filter]");
+      if (!button) return;
+      taskFilter = String(button.dataset.taskFilter || "all");
+      els.taskFilters.querySelectorAll("[data-task-filter]").forEach((node) => {
+        node.classList.toggle(
+          "active", node.dataset.taskFilter === taskFilter);
+      });
+      lastTasksKey = "";
+      renderTasks(state ? state.tasks : []);
+    });
+  }
+  document.addEventListener("click", closeTaskMenus);
   els.workspaceChip.addEventListener("click", (event) => {
     event.stopPropagation();
     els.workspaceMenu.hidden = !els.workspaceMenu.hidden;

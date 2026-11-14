@@ -254,6 +254,14 @@ class AIEOSController:
         #: UI 客户端幂等：client_message_id → 已创建的 Job。
         self._submit_lock = threading.Lock()
         self._client_submissions: Dict[str, Dict[str, str]] = {}
+        archive_base = (
+            Path(settings_path).parent if settings_path
+            else (Path(log_dir).parent if log_dir else None)
+        )
+        self._archive_path = (
+            archive_base / "archived_tasks.json"
+            if archive_base is not None else None)
+        self._archived_tasks = self._load_archived_tasks()
         #: 当前阶段只允许一个 Agent 独立完成（不组队）。
         self.solo_only = bool(solo_only)
         self.max_parallel_teams = max(1, int(max_parallel_teams))
@@ -3006,6 +3014,78 @@ class AIEOSController:
         except Exception:                                     # noqa: BLE001
             return ""
 
+    def _load_archived_tasks(self) -> Dict[str, str]:
+        if self._archive_path is None or not self._archive_path.is_file():
+            return {}
+        try:
+            raw = json.loads(
+                self._archive_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            return {}
+        if not isinstance(raw, dict):
+            return {}
+        return {
+            str(task_id): str(at or "")
+            for task_id, at in raw.items()
+            if str(task_id).strip()
+        }
+
+    def _save_archived_tasks(self) -> None:
+        if self._archive_path is None:
+            return
+        try:
+            self._archive_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self._archive_path.with_suffix(".json.tmp")
+            tmp.write_text(
+                json.dumps(self._archived_tasks, ensure_ascii=False, indent=2),
+                encoding="utf-8")
+            tmp.replace(self._archive_path)
+        except OSError:
+            pass
+
+    def archive_task(self, task_id: str) -> Dict[str, Any]:
+        key = str(task_id or "").strip()
+        task = self.rt.tasks.get(key) if key else None
+        if task is None:
+            raise ValueError(f"找不到 Task：{task_id}")
+        if self._is_live(key):
+            raise ValueError("任务正在运行，不能归档；请先停止任务")
+        self._archived_tasks[key] = _now()
+        self._save_archived_tasks()
+        return {"ok": True, "task_id": key, "archived": True}
+
+    def unarchive_task(self, task_id: str) -> Dict[str, Any]:
+        key = str(task_id or "").strip()
+        if self.rt.tasks.get(key) is None:
+            raise ValueError(f"找不到 Task：{task_id}")
+        self._archived_tasks.pop(key, None)
+        self._save_archived_tasks()
+        return {"ok": True, "task_id": key, "archived": False}
+
+    def delete_task(self, task_id: str) -> Dict[str, Any]:
+        key = str(task_id or "").strip()
+        task = self.rt.tasks.get(key) if key else None
+        if task is None:
+            raise ValueError(f"找不到 Task：{task_id}")
+        if self._is_live(key):
+            raise ValueError("任务正在运行，不能删除；请先停止任务")
+        terminal = {
+            TaskStatus.COMPLETED, TaskStatus.CANCELLED,
+            TaskStatus.REJECTED, TaskStatus.EXPIRED, TaskStatus.FAILED,
+        }
+        if task.status not in terminal:
+            raise ValueError(
+                f"只有已结束的 Task 可以删除；当前是 {task.status}")
+        deleted = self.rt.tasks.delete_task(key)
+        try:
+            directory = self.task_directories.for_task(key)
+            shutil.rmtree(directory.root, ignore_errors=True)
+        except (OSError, ValueError):
+            pass
+        self._archived_tasks.pop(key, None)
+        self._save_archived_tasks()
+        return {"ok": True, "task_id": key, "deleted": bool(deleted)}
+
     def _task_cards(self) -> List[Dict[str, Any]]:
         cards = []
         try:
@@ -3038,6 +3118,8 @@ class AIEOSController:
                 "project_path": str(
                     acceptance.get("project_path") or ""),
                 "updated_at": task.updated_at,
+                "archived": task.task_id in self._archived_tasks,
+                "live": self._is_live(task.task_id),
             })
         return cards
 

@@ -229,6 +229,25 @@ class Handler(BaseHTTPRequestHandler):
                 new_job_id = self.controller.retry(job_id)
                 self._send_json({"ok": True, "job_id": new_job_id})
                 return
+            if path in (
+                "/api/task/archive",
+                "/api/task/unarchive",
+                "/api/task/delete",
+            ):
+                task_id = str(payload.get("task_id") or "").strip()
+                try:
+                    if path == "/api/task/archive":
+                        result = self.controller.archive_task(task_id)
+                    elif path == "/api/task/unarchive":
+                        result = self.controller.unarchive_task(task_id)
+                    else:
+                        result = self.controller.delete_task(task_id)
+                except ValueError as exc:
+                    self._send_json(
+                        {"ok": False, "error": str(exc)}, status=400)
+                    return
+                self._send_json(result)
+                return
             if path == "/api/answer":
                 task_id = str(payload.get("task_id") or "").strip()
                 answer = str(payload.get("answer") or "").strip()

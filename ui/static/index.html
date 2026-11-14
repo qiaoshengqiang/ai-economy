@@ -82,6 +82,12 @@
           <h2>Task 卡片</h2>
           <span class="muted" id="tasks-count"></span>
         </div>
+        <div class="task-filters" id="task-filters">
+          <button type="button" class="task-filter active" data-task-filter="all">全部</button>
+          <button type="button" class="task-filter" data-task-filter="active">进行中</button>
+          <button type="button" class="task-filter" data-task-filter="completed">已完成</button>
+          <button type="button" class="task-filter" data-task-filter="archived">已归档</button>
+        </div>
         <div class="task-list" id="tasks"></div>
       </section>
     </aside>

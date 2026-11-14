@@ -43,6 +43,13 @@ from core.task_execution import (
 )
 from storage.database import Database
 from storage.models import (
+    TABLE_CONTEXT_CHANGES,
+    TABLE_CONTEXT_REVISIONS,
+    TABLE_PRIVATE_WORKING_MEMORY,
+    TABLE_PRIVATE_WORKING_MEMORY_REVISIONS,
+    TABLE_PUBLIC_WORKING_MEMORY,
+    TABLE_PUBLIC_WORKING_MEMORY_REVISIONS,
+    TABLE_SHARED_CONTEXTS,
     TABLE_TASK_AGREEMENTS,
     TABLE_TASK_EXECUTIONS,
     TABLE_TASK_OFFERS,
@@ -472,6 +479,46 @@ class TaskStore:
             f"SELECT 1 FROM {TABLE_TASKS} WHERE task_id = ?", (str(task_id),)
         )
         return row is not None
+
+    def delete_task(self, task_id: str) -> bool:
+        """永久删除 Task 及其任务域数据（不含 Ledger / LLM 审计）。
+
+        ⚠️ 这是显式的维护操作，不是 Task 生命周期的一部分。
+        调用方必须先确认 Task 已终止，并取得人类确认。
+        """
+        key = str(task_id or "").strip()
+        if not key:
+            return False
+        tables = (
+            TABLE_TASK_OFFERS,
+            TABLE_TASK_AGREEMENTS,
+            TABLE_TASK_EXECUTIONS,
+            TABLE_SHARED_CONTEXTS,
+            TABLE_CONTEXT_REVISIONS,
+            TABLE_CONTEXT_CHANGES,
+            TABLE_PUBLIC_WORKING_MEMORY,
+            TABLE_PUBLIC_WORKING_MEMORY_REVISIONS,
+            TABLE_PRIVATE_WORKING_MEMORY,
+            TABLE_PRIVATE_WORKING_MEMORY_REVISIONS,
+            "task_production_budgets",
+            "commit_requests",
+            TABLE_TASKS,
+        )
+        with self.db.transaction() as conn:
+            existing_tables = {
+                str(row["name"] if hasattr(row, "keys") else row[0])
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'")
+            }
+            existed = conn.execute(
+                f"SELECT 1 FROM {TABLE_TASKS} WHERE task_id = ?",
+                (key,),
+            ).fetchone() is not None
+            for table in tables:
+                if table in existing_tables:
+                    conn.execute(
+                        f"DELETE FROM {table} WHERE task_id = ?", (key,))
+        return existed
 
     def list_tasks(
         self,
