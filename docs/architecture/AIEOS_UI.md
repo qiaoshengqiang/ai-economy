@@ -250,6 +250,7 @@ Workspace 事实重新 read / search。
 | 输出显示框 | Human / Front / 系统消息；Front 回复下方显示本次 **thinking 强度 + 耗时**（Front 决策耗时或整次 Job 耗时） |
 | Task 卡片列表 | task_id · 状态（颜色区分） · 执行 Agent · 参与者 · 迭代 · **Front → Work 提示词前 3 行**（超出省略） |
 | Task 卡片操作 | `⋯` 菜单：归档 / 恢复 / 删除；归档持久化并默认隐藏，删除仅终态任务且需确认 |
+| 危险操作确认 | 统一 `confirmDialog()` 组件（danger / warning / default），不调用浏览器原生 `confirm()`；默认焦点在「取消」，Esc、关闭按钮和点击遮罩都取消 |
 | Task 卡片点击 | **同一标签页**打开 `/task.html?task_id=...`：任务认知 + 每轮 decision / work / summary 的 thinking、输出、动作与结果；每个 phase 显示 **thinking 强度 + LLM 调用耗时**，round 标题显示本轮总耗时，动作显示**工具执行耗时**；外加执行历史、文件、公共 WM、LLM 汇总（calls / tokens / 总耗时 / 平均耗时 / AIC） |
 | Agent 状态 | `IDLE` / `WORKING` / `STOPPING` · `FRONT` / `WORKER`；Work Agent 卡片可直接切换思考强度（Prototype 固定 max） |
 | Agent 中途提问 | Agent 卡片显示气泡并播放提示音；点击气泡直接回答，不经过 Front；Task 保持 IN_PROGRESS |

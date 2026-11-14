@@ -120,6 +120,32 @@
     </div>
   </div>
 
+  <div class="modal-backdrop confirm-backdrop" id="confirm-modal" hidden>
+    <div class="modal confirm-modal" id="confirm-dialog" role="alertdialog"
+      aria-modal="true" aria-labelledby="confirm-title"
+      aria-describedby="confirm-message">
+      <div class="confirm-head">
+        <div class="confirm-icon" id="confirm-icon" aria-hidden="true">!</div>
+        <div class="confirm-copy">
+          <h2 class="confirm-title" id="confirm-title">确认？</h2>
+          <p class="confirm-desc" id="confirm-message"></p>
+        </div>
+        <button type="button" class="confirm-close" id="confirm-close"
+          aria-label="关闭">✕</button>
+      </div>
+      <div class="confirm-target" id="confirm-target-wrap" hidden>
+        <code id="confirm-target"></code>
+        <span class="task-status" id="confirm-status" hidden></span>
+      </div>
+      <div class="confirm-details" id="confirm-details" hidden></div>
+      <div class="confirm-actions">
+        <button type="button" class="cd-btn secondary" id="confirm-cancel">取消</button>
+        <button type="button" class="cd-btn danger" id="confirm-ok">确认</button>
+      </div>
+      <div class="confirm-footnote" id="confirm-footnote">Esc 取消</div>
+    </div>
+  </div>
+
   <div class="modal-backdrop" id="repo-picker-modal" hidden>
     <div class="modal repo-picker-modal">
       <div class="settings-head">

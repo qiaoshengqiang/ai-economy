@@ -1989,6 +1989,36 @@ def test_task_cards_have_status_colors_filters_and_actions():
     assert ".task-status.COMPLETED" in css
 
 
+def test_danger_actions_use_reusable_confirm_dialog():
+    from pathlib import Path
+
+    static = Path(__file__).resolve().parent.parent / "ui" / "static"
+    html = (static / "index.html").read_text(encoding="utf-8")
+    css = (static / "style.css").read_text(encoding="utf-8")
+    js = (static / "app.js").read_text(encoding="utf-8")
+
+    # 统一组件，而不是浏览器原生 confirm()
+    assert 'id="confirm-modal"' in html
+    assert 'role="alertdialog"' in html
+    assert 'aria-modal="true"' in html
+    assert 'id="confirm-cancel"' in html
+    assert 'id="confirm-ok"' in html
+    assert "function confirmDialog(" in js
+    assert "window.confirm" not in js
+    # 危险操作用 danger tone 并带目标 Task + 状态
+    assert 'tone: "danger"' in js
+    assert "target: taskId" in js
+    assert "detailsTitle" in js
+    # 默认焦点在取消；Esc 取消；遮罩取消
+    assert "els.confirmCancel.focus()" in js
+    assert 'event.key === "Escape"' in js
+    assert "if (event.target === els.confirmModal) finishConfirm(false);" in js
+    # 三种 tone 的样式
+    assert ".confirm-modal.danger" in css
+    assert ".confirm-modal.warning" in css
+    assert ".cd-btn.danger" in css
+
+
 def test_submit_uses_client_message_id_for_idempotency():
     from pathlib import Path
 

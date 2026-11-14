@@ -43,6 +43,19 @@
     questionSubmit: $("question-submit"),
     questionClose: $("question-close"),
     questionLater: $("question-later"),
+    confirmModal: $("confirm-modal"),
+    confirmDialog: $("confirm-dialog"),
+    confirmIcon: $("confirm-icon"),
+    confirmTitle: $("confirm-title"),
+    confirmMessage: $("confirm-message"),
+    confirmTargetWrap: $("confirm-target-wrap"),
+    confirmTarget: $("confirm-target"),
+    confirmStatus: $("confirm-status"),
+    confirmDetails: $("confirm-details"),
+    confirmCancel: $("confirm-cancel"),
+    confirmOk: $("confirm-ok"),
+    confirmClose: $("confirm-close"),
+    confirmFootnote: $("confirm-footnote"),
   };
 
   let state = null;
@@ -185,6 +198,73 @@
     } finally {
       els.questionSubmit.disabled = false;
     }
+  }
+
+  /* 通用确认弹窗：替代浏览器原生 confirm()，返回 Promise<boolean>。 */
+  const CONFIRM_TONES = ["danger", "warning", "default"];
+  let confirmResolver = null;
+  let confirmReturnFocus = null;
+
+  function finishConfirm(result) {
+    if (!confirmResolver) return;
+    const resolve = confirmResolver;
+    confirmResolver = null;
+    els.confirmModal.hidden = true;
+    els.confirmDialog.className = "modal confirm-modal";
+    if (confirmReturnFocus && typeof confirmReturnFocus.focus === "function") {
+      try { confirmReturnFocus.focus(); } catch (_error) { /* ignore */ }
+    }
+    confirmReturnFocus = null;
+    resolve(result);
+  }
+
+  function confirmDialog(options) {
+    const opts = options || {};
+    const tone = CONFIRM_TONES.includes(opts.tone) ? opts.tone : "default";
+    if (confirmResolver) finishConfirm(false);
+    const target = String(opts.target || "").trim();
+    const status = String(opts.status || "").trim();
+    const details = Array.isArray(opts.details) ? opts.details : [];
+    confirmReturnFocus = document.activeElement;
+    els.confirmDialog.className = `modal confirm-modal ${tone}`;
+    els.confirmIcon.textContent = tone === "default" ? "?" : "!";
+    els.confirmTitle.textContent = opts.title || "确认操作？";
+    els.confirmMessage.textContent = opts.message || "";
+    els.confirmMessage.hidden = !opts.message;
+    els.confirmTargetWrap.hidden = !target && !status;
+    els.confirmTarget.textContent = target;
+    els.confirmTarget.hidden = !target;
+    els.confirmStatus.hidden = !status;
+    els.confirmStatus.className = `task-status ${status}`;
+    els.confirmStatus.textContent = status;
+    els.confirmDetails.innerHTML = "";
+    if (details.length) {
+      if (opts.detailsTitle) {
+        const head = document.createElement("b");
+        head.textContent = opts.detailsTitle;
+        els.confirmDetails.appendChild(head);
+      }
+      const list = document.createElement("ul");
+      details.forEach((detail) => {
+        const item = document.createElement("li");
+        item.textContent = String(detail);
+        list.appendChild(item);
+      });
+      els.confirmDetails.appendChild(list);
+    }
+    els.confirmDetails.hidden = !details.length;
+    els.confirmOk.textContent = opts.confirmText || "确认";
+    els.confirmOk.className = `cd-btn ${
+      tone === "danger" ? "danger"
+        : (tone === "warning" ? "warning" : "primary")}`;
+    els.confirmCancel.textContent = opts.cancelText || "取消";
+    els.confirmFootnote.textContent = (
+      opts.footnote || "Esc 取消 · 默认焦点在“取消”");
+    els.confirmModal.hidden = false;
+    els.confirmCancel.focus();
+    return new Promise((resolve) => {
+      confirmResolver = resolve;
+    });
   }
 
   document.addEventListener("selectstart", () => {
@@ -853,11 +933,26 @@
     });
   }
 
-  async function taskAction(action, taskId) {
+  async function taskAction(action, task) {
+    const taskId = String(
+      task && task.task_id ? task.task_id : (task || "")).trim();
+    if (!taskId) return;
     if (action === "delete") {
-      const ok = window.confirm(
-        `删除 ${taskId}？\n\n将删除 Task 记录、任务目录、快照和提交请求。\n这个操作不可恢复。建议优先使用“归档”。`,
-      );
+      const ok = await confirmDialog({
+        tone: "danger",
+        title: "删除任务？",
+        message: "删除后 Task 记录和任务数据会永久清理，无法恢复。如果只是不想在列表中看到它，可以改用“归档”。",
+        target: taskId,
+        status: task && task.status ? task.status : "",
+        detailsTitle: "将同时清理：",
+        details: [
+          "Task 记录、执行历史与 Task Shared Context",
+          "Public / Private Working Memory 与提交请求",
+          "tasks/<task_id> 目录、快照与工作区文件",
+        ],
+        confirmText: "删除任务",
+        cancelText: "取消",
+      });
       if (!ok) return;
     }
     const endpoint = {
@@ -959,7 +1054,7 @@
       archiveButton.addEventListener("click", (event) => {
         event.stopPropagation();
         closeTaskMenus();
-        taskAction(archived ? "unarchive" : "archive", task.task_id);
+        taskAction(archived ? "unarchive" : "archive", task);
       });
       menu.appendChild(archiveButton);
 
@@ -971,7 +1066,7 @@
       deleteButton.addEventListener("click", (event) => {
         event.stopPropagation();
         closeTaskMenus();
-        taskAction("delete", task.task_id);
+        taskAction("delete", task);
       });
       menu.appendChild(deleteButton);
 
@@ -1248,6 +1343,34 @@
   els.questionLater.addEventListener("click", closeQuestion);
   els.questionModal.addEventListener("click", (event) => {
     if (event.target === els.questionModal) closeQuestion();
+  });
+  els.confirmCancel.addEventListener("click", () => finishConfirm(false));
+  els.confirmClose.addEventListener("click", () => finishConfirm(false));
+  els.confirmOk.addEventListener("click", () => finishConfirm(true));
+  els.confirmModal.addEventListener("click", (event) => {
+    if (event.target === els.confirmModal) finishConfirm(false);
+  });
+  document.addEventListener("keydown", (event) => {
+    if (!confirmResolver) return;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      finishConfirm(false);
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const focusable = els.confirmDialog.querySelectorAll(
+      "button:not([disabled]), [href], input:not([disabled]), select, textarea",
+    );
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
   });
   els.prompt.addEventListener("keydown", (event) => {
     if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
