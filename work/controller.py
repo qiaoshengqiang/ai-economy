@@ -1615,39 +1615,31 @@ class AIEOSController:
         task_id = str(getattr(decision, "task_id", "") or "").strip()
         code = str(getattr(decision, "commit_code", "") or "").strip()
         if self.commit_service is None:
-            self._reply_direct(
+            self._reply_system(
                 job, "当前没有配置输出仓库，不能提交。", task_id)
             return
         if not task_id:
-            self._reply_direct(job, "缺少要提交的 Task。")
+            self._reply_system(job, "缺少要提交的 Task。")
             return
         try:
             task = self.rt.tasks.get(task_id)
         except Exception:                                     # noqa: BLE001
             task = None
         if task is None:
-            self._reply_direct(
+            self._reply_system(
                 job, f"找不到任务 {task_id}。", task_id)
             return
         try:
             request = self.commit_service.confirm(
                 task, code, actor="human")
         except CommitError as exc:
-            self._reply_direct(job, str(exc), task_id)
+            self._reply_system(job, str(exc), task_id)
             return
-        target = str(request.target_ref or "").removeprefix("refs/heads/")
         if request.status == CommitStatus.COMMITTED.value:
-            lines = [
-                "已提交：",
-                f"仓库：{request.output_repo}",
-                f"目录：tasks/{request.task_id}",
-                f"分支：{request.branch}",
-                f"提交：{request.commit_sha[:8]}",
-            ]
-            if request.merge_sha:
-                lines.append(
-                    f"已合并到基线：{target}（{request.merge_sha[:8]}）")
-            text = "\n".join(lines)
+            text = self._format_commit_text(
+                request,
+                heading=(
+                    f"任务 {request.task_id} 已提交到输出仓库的任务分支。"))
         elif request.status in (
             CommitStatus.FAILED.value, CommitStatus.BLOCKED.value,
             CommitStatus.STALE.value,
@@ -1655,7 +1647,7 @@ class AIEOSController:
             text = f"提交未完成：{request.error or request.status}"
         else:
             text = f"提交状态：{request.status}"
-        self._reply_direct(job, text, task_id)
+        self._reply_system(job, text, task_id)
 
     def _acquire_leader(self, job: WorkJob) -> Optional[str]:
         candidates = [
@@ -2604,8 +2596,11 @@ class AIEOSController:
             return
         front_cls = front or FrontAgentRuntime
         front_result = front_cls.result_from_work(result)
+        # 🔒 Work 结果不是 Front 的 LLM 回复。
+        #    当前没有让 Front 重新处理这条结果，所以不能把它标成 front；
+        #    用 system 明确表示「系统结果通知」。
         self._message(
-            "front" if front is not None else "system",
+            "system",
             front_cls.format_result(front_result),
             job_id=job.job_id, task_id=task_id,
             duration_ms=self._job_duration_ms(job))
@@ -2624,6 +2619,45 @@ class AIEOSController:
         self._touch(job)
         if result.ok:
             self._after_task_completed(job, task_id)
+
+    @staticmethod
+    def _format_commit_text(
+        request: Any, *, heading: str, awaiting: bool = False,
+    ) -> str:
+        """把 Output Commit 结果写成不含歧义的人类可读文本。
+
+        🔒 明确区分：
+            · 输出仓库路径
+            · 输出仓库内的任务子树路径
+            · 任务分支
+            · 是否合并到基线 / 是否检出到仓库工作区
+        """
+        target = (
+            str(getattr(request, "target_ref", "") or "")
+            .removeprefix("refs/heads/") or "main")
+        task_id = str(getattr(request, "task_id", "") or "")
+        lines = [
+            heading,
+            f"输出仓库：{getattr(request, 'output_repo', '')}",
+            f"仓库内路径：tasks/{task_id}/",
+            f"任务分支：{getattr(request, 'branch', '')}",
+        ]
+        if awaiting:
+            lines.append(f"快照：{getattr(request, 'code', '')}")
+            lines.append("需要提交时直接说“提交”即可。")
+            return "\n".join(lines)
+        sha = str(getattr(request, "commit_sha", "") or "")
+        if sha:
+            lines.append(f"提交：{sha[:8]}")
+        merge_sha = str(getattr(request, "merge_sha", "") or "")
+        if merge_sha:
+            lines.append(
+                f"已合并到基线：{target}（{merge_sha[:8]}）")
+        else:
+            lines.append(
+                f"未合并到基线 {target}；任务分支也未检出到仓库目录，"
+                "所以仓库目录里暂时看不到这些文件。")
+        return "\n".join(lines)
 
     def _after_task_completed(self, job: WorkJob, task_id: str) -> None:
         """Task COMPLETED 之后触发提交请求；失败不回滚 Task。"""
@@ -2664,29 +2698,22 @@ class AIEOSController:
             return
         if request is None:
             return
-        target = str(request.target_ref or "").removeprefix("refs/heads/")
         if request.status == CommitStatus.AWAITING_HUMAN.value:
             self._message(
                 "system",
-                f"任务 {task_id} 已完成。快照 {request.code} 可提交：\n"
-                f"仓库：{request.output_repo}\n"
-                f"目录：tasks/{request.task_id}\n"
-                f"分支：{request.branch}\n"
-                "需要提交时直接说“提交”即可。",
+                self._format_commit_text(
+                    request,
+                    heading=(
+                        f"任务 {task_id} 已完成，结果待提交。"),
+                    awaiting=True),
                 job_id=job.job_id, task_id=task_id)
         elif request.status == CommitStatus.COMMITTED.value:
-            lines = [
-                f"任务 {task_id} 已提交：",
-                f"仓库：{request.output_repo}",
-                f"目录：tasks/{request.task_id}",
-                f"分支：{request.branch}",
-                f"提交：{request.commit_sha[:8]}",
-            ]
-            if request.merge_sha:
-                lines.append(
-                    f"已合并到基线：{target}（{request.merge_sha[:8]}）")
             self._message(
-                "system", "\n".join(lines),
+                "system",
+                self._format_commit_text(
+                    request,
+                    heading=(
+                        f"任务 {task_id} 已提交到输出仓库的任务分支。")),
                 job_id=job.job_id, task_id=task_id)
         elif request.status in (
             CommitStatus.FAILED.value, CommitStatus.BLOCKED.value,
@@ -2704,6 +2731,17 @@ class AIEOSController:
             "front", text, job_id=job.job_id, task_id=task_id,
             duration_ms=self._job_duration_ms(job),
             thinking=job.front_thinking)
+        job.status = JobStatus.DIRECT_REPLY
+        job.summary = text
+        self._touch(job)
+
+    def _reply_system(
+        self, job: WorkJob, text: str, task_id: str = "",
+    ) -> None:
+        """系统动作结果：不是 Front 的 LLM 回复，不能标成 front。"""
+        self._message(
+            "system", text, job_id=job.job_id, task_id=task_id,
+            duration_ms=self._job_duration_ms(job))
         job.status = JobStatus.DIRECT_REPLY
         job.summary = text
         self._touch(job)

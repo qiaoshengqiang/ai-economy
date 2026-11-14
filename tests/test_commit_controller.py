@@ -19,7 +19,9 @@ class _Directory:
                 for aid in ("agent_a", "agent_b")]
 
 
-def _request(status: str, *, sha: str = "") -> CommitRequest:
+def _request(
+    status: str, *, sha: str = "", merge_sha: str = "",
+) -> CommitRequest:
     return CommitRequest(
         request_id="commit_x",
         task_id="task_x",
@@ -32,6 +34,7 @@ def _request(status: str, *, sha: str = "") -> CommitRequest:
         output_repo="/tmp/output",
         target_ref="refs/heads/main",
         commit_sha=sha,
+        merge_sha=merge_sha,
     )
 
 
@@ -90,8 +93,42 @@ def test_completed_task_creates_manual_commit_prompt():
         controller._after_task_completed(job, "task_x")
         texts = [item["text"] for item in controller._messages]
         assert any("提交" in text for text in texts)
-        assert any("仓库：" in text and "目录：" in text for text in texts)
+        assert any(
+            "输出仓库：" in text and "仓库内路径：" in text
+            for text in texts)
+        assert any("任务分支：" in text for text in texts)
+        assert any("结果待提交" in text for text in texts)
         assert any("aaaaaaaa" in text for text in texts)
+    finally:
+        controller.close()
+
+
+def test_committed_message_clarifies_branch_not_merged_or_checked_out():
+    controller = _controller(_request("COMMITTED", sha="c" * 40))
+    job = WorkJob(job_id="job_x", human_text="测试")
+    try:
+        controller._after_task_completed(job, "task_x")
+        text = controller._messages[-1]["text"]
+        assert "已提交到输出仓库的任务分支" in text
+        assert "输出仓库：/tmp/output" in text
+        assert "仓库内路径：tasks/task_x/" in text
+        assert "任务分支：aieos/task-task_x" in text
+        assert "提交：cccccccc" in text
+        assert "未合并到基线 main" in text
+        assert "未检出到仓库目录" in text
+    finally:
+        controller.close()
+
+
+def test_committed_message_reports_baseline_merge():
+    controller = _controller(_request(
+        "COMMITTED", sha="c" * 40, merge_sha="d" * 40))
+    job = WorkJob(job_id="job_x", human_text="测试")
+    try:
+        controller._after_task_completed(job, "task_x")
+        text = controller._messages[-1]["text"]
+        assert "已合并到基线：main（dddddddd）" in text
+        assert "未合并到基线" not in text
     finally:
         controller.close()
 
@@ -184,6 +221,9 @@ def test_front_commit_confirm_routes_to_service():
             "task_x", "aaaaaaaa", "human")
         assert job.status == JobStatus.DIRECT_REPLY
         assert "已提交" in job.summary
+        assert controller._messages[-1]["role"] == "system"
+        assert "已提交到输出仓库的任务分支" in (
+            controller._messages[-1]["text"])
     finally:
         controller.close()
 

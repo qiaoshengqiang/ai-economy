@@ -1163,6 +1163,39 @@ def test_timeout_marks_job_interrupted():
     assert "请求超时" in job.error
 
 
+def test_work_completion_message_is_system_not_front():
+    from front import FrontResult
+    from work.controller import WorkJob
+
+    class _Front:
+        def result_from_work(self, _result):
+            return FrontResult(
+                task_id="task_x", status="COMPLETED", summary="done")
+
+        def format_result(self, result):
+            return result.to_human_text()
+
+    runtime = SimpleNamespace(
+        directory=_Directory(["agent_a", "agent_b"]),
+        economy=SimpleNamespace(agent=lambda aid: SimpleNamespace(
+            has_brain=True)),
+        tasks=SimpleNamespace(list_tasks=lambda limit=50: []),
+    )
+    controller = AIEOSController(runtime, front_agent="agent_a")
+    job = WorkJob(job_id="job_done", human_text="x")
+    result = SimpleNamespace(
+        ok=True, error="", tokens=3, turns=1, status="COMPLETED",
+        summary="done")
+    try:
+        controller._finish_work(job, _Front(), "task_x", result)
+        message = controller.state()["messages"][-1]
+    finally:
+        controller.close()
+
+    assert message["role"] == "system"
+    assert "任务 task_x：COMPLETED（第 1 轮）" in message["text"]
+
+
 def test_task_cards_mark_open_task_interrupted():
     task = SimpleNamespace(
         task_id="task_open", status="IN_PROGRESS", mode="SOLO",

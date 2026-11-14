@@ -285,7 +285,8 @@ GET  /api/health
 - `solo_only=True` 时选择一个空闲 Agent；
 - 调用 `TaskCreationService` 创建 SOLO Task；
 - 调用 `SoloWorkRuntime` 执行；
-- 把 `WorkResult` 转成 `FrontResult` 显示；
+- 把 `WorkResult` 转成 `FrontResult` 模板，以 **system** 消息显示；
+  这条消息不是 Front LLM 的回复（Front 没有重新处理 WorkResult）；
 - `solo_only=False` 时保留旧的 Leader / Team 路径（仅用于对照实验）。
 
 不复制：
@@ -363,4 +364,5 @@ GET  /api/health
 - Task Workspace 任务完成后，Output Commit 使用该默认仓库；
 - Project Workdir 任务直接修改项目目录，不创建 Output Commit；
 - 目标必须是现有 Git 仓库，AIEOS 主仓库会被拒绝；
-- 提交结果消息仍会显示实际仓库路径、`tasks/<task_id>` 目录、分支和 commit。
+- 提交结果消息会明确显示：输出仓库路径、仓库内路径
+  `tasks/<task_id>/`、任务分支、commit，以及**是否合并到基线 / 是否检出**。

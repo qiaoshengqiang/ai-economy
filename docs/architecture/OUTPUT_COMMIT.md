@@ -132,6 +132,30 @@ main                        基线
 aieos/task-<task_id>        每个 Task 一条任务分支
 ```
 
+### 6.1 人类可读提交消息
+
+提交结果以 **system 消息**发送，不是 Front 的 LLM 回复。
+提交消息必须区分以下位置，避免把「已提交到任务分支」
+误解成「文件已经出现在输出仓库工作区」：
+
+```text
+输出仓库：/path/to/output-repo
+仓库内路径：tasks/<task_id>/
+任务分支：aieos/task-<task_id>
+提交：<sha>
+未合并到基线 main；任务分支也未检出到仓库目录，
+所以仓库目录里暂时看不到这些文件。
+```
+
+如果发生了 fast-forward：
+
+```text
+已合并到基线：main（<sha>）
+```
+
+`tasks/<task_id>/` 是**输出仓库内的路径**，不是 AIEOS 的
+`tasks/<task_id>/` 运行目录；两者字符串相同，但属于不同仓库。
+
 提交内容：
 
 - 只包含 final snapshot 的交付文件；
