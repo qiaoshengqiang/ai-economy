@@ -585,6 +585,14 @@ class SoloWorkRuntime:
                 for path, count in self._write_counts.items()
                 if count > 1
             }
+            # 🔴 必须从 TaskStore 重新读一次：work_complete 可能在
+            #    agent.act() 内部已经把 Task 标成 COMPLETED。
+            #    局部 task 是 run 开始时的旧对象；只看它的 status
+            #    会让循环在 COMPLETED 之后继续跑到 max_turns。
+            latest = self.rt.tasks.get(task.task_id)
+            if latest is not None:
+                task = latest
+                self.task = latest
             status_after = task.status
             self._event(
                 "work_turn", turn=turn, agent_id=actor,

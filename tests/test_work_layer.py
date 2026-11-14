@@ -818,7 +818,38 @@ class _MalformedCognitionAgent(_FakeAgent):
             messages=messages, dispatcher=dispatcher, **kwargs)
 
 
+class _CountingCompleteAgent(_CognitionAgent):
+    def __init__(self):
+        super().__init__()
+        self.work_calls = 0
+
+    def act(self, *, messages, dispatcher, **kwargs):
+        if kwargs.get("initial_phase") != "cognition":
+            self.work_calls += 1
+        return super().act(
+            messages=messages, dispatcher=dispatcher, **kwargs)
+
+
 class TestSoloWorkRuntime:
+    def test_completed_task_stops_loop_immediately(self, db):
+        task = Task.create(
+            task_id="T-STOP-AFTER-COMPLETE", creator="agent_a",
+            description="写 hello.txt", workspace_id="WS-X",
+            participants=["agent_a"], mode=TaskMode.SOLO)
+        task.claim_producer("agent_a")
+
+        runtime = _SoloRuntime(db, task)
+        agent = _CountingCompleteAgent()
+        runtime.agent = agent
+        result = SoloWorkRuntime(
+            runtime, task, max_turns=10).run()
+
+        assert result.ok is True, result.error
+        assert result.status == TaskStatus.COMPLETED
+        # work_complete 后必须立刻停止；不能继续跑到 max_turns。
+        assert agent.work_calls == 1
+        assert runtime.tasks.get(task.task_id).status == TaskStatus.COMPLETED
+
     def test_cognition_report_is_injected_into_work_prompt(self, db):
         task = Task.create(
             task_id="T-COGNITION", creator="agent_a",
