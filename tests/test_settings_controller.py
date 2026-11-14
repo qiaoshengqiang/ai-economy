@@ -63,6 +63,36 @@ def test_regular_settings_round_trip(tmp_path):
         reloaded.close()
 
 
+def test_archived_agent_round_trip_survives_restart(tmp_path):
+    path = tmp_path / "ui_settings.json"
+    controller = _controller(tmp_path)
+    try:
+        controller.update_settings(archived_agents=["agent_b"])
+    finally:
+        controller.close()
+
+    data = json.loads(path.read_text("utf-8"))
+    assert data["archived_agents"] == ["agent_b"]
+    assert "agent_b" in data["disabled_agents"]
+
+    reloaded = _controller(tmp_path)
+    try:
+        assert "agent_b" in reloaded.archived_agents
+        facts = {
+            item["agent_id"]: item
+            for item in reloaded.settings_snapshot()["agents"]
+        }
+        assert facts["agent_b"]["archived"] is True
+        assert facts["agent_b"]["enabled"] is False
+
+        # 恢复后不再归档，但仍然保持停用，直到用户显式启用。
+        reloaded.update_settings(archived_agents=[])
+        assert "agent_b" not in reloaded.archived_agents
+        assert "agent_b" in reloaded.disabled_agents
+    finally:
+        reloaded.close()
+
+
 def test_agent_thinking_round_trip(tmp_path):
     path = tmp_path / "ui_settings.json"
     controller = _controller(tmp_path)
