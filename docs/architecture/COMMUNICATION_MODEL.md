@@ -10,6 +10,10 @@
 | **实现状态** | 基础 Message **`CURRENT`** · Conversation / Inbox / Economy **`FUTURE`** |
 | **最后更新** | Read 与 communicate 的架构设计 |
 
+> **Inbox 的实施设计**：
+> [`implementation/AGENT_INBOX_V1_DESIGN.md`](implementation/AGENT_INBOX_V1_DESIGN.md)
+> （`DESIGNED`：Runtime 持有、持久化、checkpoint 消费）。
+
 ---
 
 ## 0. 三条核心原则（`SETTLED`）
