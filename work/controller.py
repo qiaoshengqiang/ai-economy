@@ -3187,6 +3187,11 @@ class AIEOSController:
             return active, completed
         live = self._live_task_ids()
         for task in tasks:
+            # 归档 = 从 Front / UI 的默认上下文隐藏。
+            # 否则 Front 会把一个用户在界面上看不到的 Task 当成
+            # “可继续”对象（例如已归档的 INTERRUPTED 任务）。
+            if task.task_id in self._archived_tasks:
+                continue
             # Solo 模式不把旧的 TEAM 任务当作可继续 / 可返工的对象；
             # 它们只保留在任务卡片里作为历史。
             if self.solo_only and task.mode != TaskMode.SOLO:

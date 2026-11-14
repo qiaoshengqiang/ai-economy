@@ -4,7 +4,7 @@
 > **日期：2026-11-13**
 > **阶段：开发中 / 观察实验**
 > **协议版本：`1`**
-> **测试基线：`5669 passed, 2 skipped, 30 deselected`**
+> **测试基线：`5670 passed, 2 skipped, 30 deselected`**
 
 本文记录**当前真实可用能力、推荐工作方式、已知限制和版本变化**。
 架构的长期权威仍然是
@@ -281,7 +281,7 @@ task_text
 | Front / Work 模式显示 | `CURRENT` |
 | Front 回复计时 | `CURRENT` |
 | Task 卡片模式快照 | `CURRENT`（新任务） |
-| Task 卡片状态色 / 归档 / 删除 | `CURRENT`（删除仅终态） |
+| Task 卡片状态色 / 归档 / 删除 | `CURRENT`（删除仅终态；归档任务不进入 Front 上下文） |
 | 设置页分组卡片 / Agent 主从编辑 | `CURRENT` |
 | Agent 中文名（canonical `agents.name`） | `CURRENT` |
 | Agent 新增（写 `config/config.yaml`，重启后装配） | `CURRENT` |
@@ -511,7 +511,7 @@ Team 协作
 当前基线：
 
 ```text
-5669 passed, 2 skipped, 30 deselected
+5670 passed, 2 skipped, 30 deselected
 ```
 
 启动说明见 [`../START_AIEOS.md`](../START_AIEOS.md)。

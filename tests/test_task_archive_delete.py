@@ -75,6 +75,30 @@ def test_archive_hides_from_default_filter(db, tmp_path):
         controller.close()
 
 
+def test_archived_task_is_not_offered_to_front(db, tmp_path):
+    controller, store = _controller(db, tmp_path)
+    task = Task.create(
+        task_id="task_archived_open",
+        creator="agent_a",
+        description="已归档但未结束的任务",
+        participants=["agent_a"],
+        mode=TaskMode.SOLO,
+    )
+    store.save(task)
+    try:
+        controller.archive_task(task.task_id)
+        active, completed = controller._task_refs()
+        assert all(
+            ref["task_id"] != task.task_id
+            for ref in [*active, *completed])
+
+        controller.unarchive_task(task.task_id)
+        active, completed = controller._task_refs()
+        assert any(ref["task_id"] == task.task_id for ref in active)
+    finally:
+        controller.close()
+
+
 def test_delete_only_terminal_and_removes_task_domain(db, tmp_path):
     controller, store = _controller(db, tmp_path)
     task = _completed_task(store)
