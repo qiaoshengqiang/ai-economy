@@ -94,7 +94,8 @@ demand/scheduler.py
 - 不在 V1 实现 Pi / Solo 的 handler；
 - 不让闹钟自动创建 Task、返工、follow-up；
 - 不让系统冒充 Human / Agent 发消息；
-- 不做无限无上限的周期唤醒；
+- 不做没有资源保护的无限唤醒（测试用 `WakeupGuard`）；
+- 不在 Worker 工作时唤醒或注入 Work 上下文；
 - 不把 Activity Record 做成聊天消息。
 
 ---
@@ -224,7 +225,7 @@ CREATE TABLE agent_alarms (
     next_fire_at       TEXT NOT NULL,
     last_fired_at      TEXT,
     fire_count         INTEGER NOT NULL DEFAULT 0,
-    max_runs           INTEGER,             -- NULL = 只受 expires_at 限制
+    max_runs           INTEGER,             -- NULL = 不按次数停止
     expires_at         TEXT,
     dedupe_key         TEXT,
     last_error         TEXT,
@@ -260,7 +261,8 @@ CREATE TABLE agent_wakeup_runs (
     started_at      TEXT NOT NULL,
     finished_at     TEXT,
     outcome         TEXT NOT NULL,          -- replied / no_notify /
-                                             -- skipped / failed / rejected
+                                             -- skipped_busy / guard_limit /
+                                             -- failed / rejected
     summary         TEXT,
     job_id          TEXT,
     detail_json     TEXT NOT NULL DEFAULT '{}',
@@ -309,19 +311,38 @@ once   → COMPLETED
 every  → ACTIVE，next_fire_at = now + interval
 ```
 
-### 6.2 安全上限
+### 6.2 资源边界与测试 Guard
 
-即使 Agent 不主动关闭，系统也有硬上限：
+**生产语义**：闹钟一直存在，直到 Agent 主动 `alarm_cancel`。
 
-| 参数 | 建议默认 | 作用 |
-|---|---|---|
-| `alarm_min_interval_seconds` | 60 | 防止过密 |
-| `alarm_max_active_per_agent` | 5 | 防止闹钟堆积 |
-| `alarm_default_max_runs` | 24 | 防止无限循环 |
-| `alarm_default_expiry_seconds` | 86400（24h） | 防止长期遗留 |
+- `max_runs` / `expires_at` 是**可选参数**，不是系统默认生命周期；
+- Agent 可以自己设置，也可以不设置；
+- 系统不会因为 Task 结束而替 Agent 停止。
 
-这些是**系统资源边界**，不是替 Agent 决定“任务结束就该停”。
-Agent 仍应主动 `alarm_cancel`。
+**测试 / 防过度工作**：
+
+测试中 Agent 可能创建过密闹钟，导致重复唤醒和 token 浪费。
+这不是产品语义，而是测试运行时的安全网。建议增加独立的 `WakeupGuard`：
+
+```yaml
+runtime:
+  alarms:
+    guard:
+      enabled: true          # 测试组合根开启；生产可关闭
+      max_wakes_per_agent: 10
+      max_wakes_total: 50
+```
+
+行为：
+
+- 超过 guard 上限 → 暂停该 Agent 的闹钟，写 Activity
+  `outcome = "guard_limit"`；
+- 不修改 Task，不伪装成 Agent 的决定；
+- 测试结束后由测试运行器清理；
+- 生产默认可以使用更高阈值或关闭。
+
+> Guard 是**测试/运行资源保护**，不是 Agent 的停止策略。
+> Agent 仍然必须被提示可以 `alarm_cancel`。
 
 ### 6.3 进程重启
 
@@ -380,8 +401,7 @@ alarm_cancel
   "instruction": "查看 task_x / task_y 的状态和最近产物；有变化或失败时通知我。",
   "task_ids": ["task_x", "task_y"],
   "schedule": "every",
-  "interval_seconds": 300,
-  "max_runs": 24
+  "interval_seconds": 300
 }
 ```
 
@@ -393,7 +413,7 @@ alarm_cancel
   "status": "ACTIVE",
   "next_fire_at": "2026-11-15T10:35:00+00:00",
   "fire_count": 0,
-  "max_runs": 24
+  "max_runs": null
 }
 ```
 
@@ -416,8 +436,8 @@ Agent prompt 必须明确写出：
 - `task_ids` 最多 5 个；
 - `once` 需要 `delay_seconds` / `at`；
 - `every` 的 `interval_seconds >= min_interval`；
-- `max_runs` 在允许范围内；
-- `expires_at` 必须在未来；
+- `max_runs` 可选，设置时必须在允许范围内；
+- `expires_at` 可选，设置时必须在未来；
 - `created_by` 只能来自 `ActionIntent.agent_id`；
 - `dedupe_key` 可选，用于幂等。
 
@@ -442,7 +462,7 @@ Agent prompt 必须明确写出：
   "instruction": "查看 task_x / task_y 的状态...",
   "scheduled_for": "2026-11-15T10:35:00+00:00",
   "fire_count": 3,
-  "max_runs": 24,
+  "max_runs": null,
   "tasks": [
     {"task_id": "task_x", "found": true, "status": "IN_PROGRESS"},
     {"task_id": "task_y", "found": false, "status": ""}
@@ -463,7 +483,8 @@ class WakeupHandler(Protocol):
 `WakeupResult`：
 
 ```text
-outcome  replied / no_notify / skipped / failed / rejected
+outcome  replied / no_notify / skipped_busy / guard_limit /
+         failed / rejected
 summary  一句话
 job_id   可选
 ```
@@ -485,24 +506,30 @@ FrontWakeupHandler
 
 ```text
 IDLE    → 可以进入一次 Life wake turn
-WORKING → 不打断当前 Pi turn；
-          把 WakeupEvent 留在 pending；
-          下一次 checkpoint / phase 边界注入
+WORKING → 不唤醒、不注入；
+          记录 outcome = "skipped_busy"；
+          下一次周期照常计算
 ```
 
 **Solo Worker**
 
 ```text
 IDLE    → 可以进入 Life wake turn
-WORKING → 下一次 Work checkpoint 注入
+WORKING → 不唤醒、不注入；
+          记录 outcome = "skipped_busy"
 ```
 
 Worker handler 必须遵守：
 
+- **只在 Agent 不工作时唤醒**；
 - 不中断当前 LLM / Tool；
+- **不把 WakeupEvent 注入 Work prompt / checkpoint**；
 - 不改变 Task 状态；
 - 不在 Work prompt 里注入经济 / 钱包；
 - 唤醒结果写 Activity Record。
+
+> 这条边界是有意的：闹钟属于 Life 层，不能改变 Worker 当前工作的上下文。
+> 如果 Worker 正在工作，这次唤醒直接跳过；工作结束后不会补发。
 
 ---
 
@@ -592,10 +619,22 @@ set_mode       不修改全局模式
 
 UI 建议：
 
-- **Agent 活动记录** 面板（主入口）；
+- 独立的**消息通知图标**；
+- 图标上显示未读活动记录数量；
+- 点击后打开 Activity Record 列表；
 - Front 卡片显示最近一次活动时间；
 - 如果 `direct_reply`，聊天里出现 Front 消息，并带“定时检查”标签；
-- 如果 `no_notify`，聊天不增加消息，但活动记录增加一行。
+- 如果 `no_notify`，聊天不增加消息，但活动记录增加一行、通知计数增加。
+
+未读计数建议：
+
+- `agent_wakeup_runs` 保持 append-only；
+- UI 在本地设置或单独的 `ui_activity_state` 中保存
+  `last_seen_run_id` / `last_seen_at`；
+- 未读数 = `last_seen_at` 之后的 run 数量；
+- 不修改 Activity Record 本身。
+
+具体图标位置、列表样式、已读交互后续单独讨论。
 
 示例：
 
@@ -685,13 +724,16 @@ runtime:
     enabled: true
     min_interval_seconds: 60
     max_active_per_agent: 5
-    default_max_runs: 24
-    default_expiry_seconds: 86400
+    guard:
+      enabled: true          # 测试组合根开启；生产可关闭
+      max_wakes_per_agent: 10
+      max_wakes_total: 50
 ```
 
 V1 只注册 Front handler；`enabled` 仍可整体关闭。
 
-> 默认值待最终确认；这里先记录设计建议。
+> `max_runs` / `expires_at` 不再有系统默认值。它们是 Agent
+> 可选设置的参数；测试防过度工作由 `guard` 负责。
 
 ---
 
@@ -704,7 +746,8 @@ V1 只注册 Front handler；`enabled` 仍可整体关闭。
 | Front 被禁用 / 归档 | 不唤醒；闹钟保留，到期后仍 ACTIVE，等待恢复或过期 |
 | Task 不存在 | 事件 `found=false`；是否停止由 Agent 决定 |
 | Task 已结束 | **不自动停**；Agent 应在看到后 `alarm_cancel` |
-| 达到 max_runs / expires_at | 自动 COMPLETED（资源边界） |
+| Worker 正在工作 | 不唤醒、不注入；`outcome = skipped_busy` |
+| 达到测试 guard 上限 | 暂停闹钟；`outcome = guard_limit` |
 | 多个 scheduler 同时触发 | 原子 claim + run 唯一约束，只有一个 dispatch |
 | Front 正在处理 Human Job | 闹钟 Job 排队，`_front_lock` 串行 |
 | 多个闹钟同时到期 | 串行 dispatch；可合并同一 Agent 的连续唤醒 |
@@ -718,7 +761,7 @@ V1 只注册 Front handler；`enabled` 仍可整体关闭。
 |---|---|---|
 | Phase W0 | 本文档 + 边界确认 | **`DESIGNED`** |
 | Phase W1 | `agent_alarms` / `agent_wakeup_runs` + `AlarmStore` | 未实现 |
-| Phase W2 | `AlarmScheduler` + `WakeupDispatcher` + 重启恢复 | 未实现 |
+| Phase W2 | `AlarmScheduler` + `WakeupDispatcher` + 重启恢复 + `WakeupGuard` | 未实现 |
 | Phase W3 | Front `alarm_create / list / cancel` + prompt | 未实现 |
 | Phase W4 | `FrontWakeupHandler` + `no_notify` + Activity UI | 未实现 |
 | Phase W5 | Pi / Solo `WakeupHandler` | `FUTURE` |
@@ -739,6 +782,8 @@ V1 只注册 Front handler；`enabled` 仍可整体关闭。
 - 多 scheduler 原子 claim 只有一个 dispatch；
 - `agent_wakeup_runs` 唯一约束防重复；
 - Front 忙时闹钟排队；
+- Worker WORKING 时 `outcome = skipped_busy`，且不注入 Work prompt；
+- WakeupGuard 超限后暂停闹钟，写 `guard_limit`；
 - `no_notify` 不产生聊天消息，但产生 Activity Record；
 - `direct_reply` 产生 Front 消息；
 - 闹钟唤醒不允许 `handoff` / `rework` / `follow_up`；
@@ -762,13 +807,15 @@ V1 只注册 Front handler；`enabled` 仍可整体关闭。
 3. Agent 必须被提示拥有 `alarm_cancel`，由 Agent 自行决定停止；
 4. `no_notify` 不在聊天里刷消息，但必须有 Activity Record / UI 活动记录；
 5. Wakeup 核心从第一天就是通用 Agent 能力；V1 只接 Front；
-6. 不设计固定 System tick；使用 deadline-driven `AlarmScheduler`。
+6. 不设计固定 System tick；使用 deadline-driven `AlarmScheduler`；
+7. `max_runs` / `expires_at` 不再有系统默认值；测试防过度工作由
+   `WakeupGuard` 负责；
+8. Worker 只在 **不工作 / IDLE** 时唤醒，不注入 Work prompt 或 checkpoint；
+9. Activity UI 使用独立通知图标 + 未读数量；具体 UI 后续讨论。
 
 ## 16. 仍待确认
 
-1. `default_max_runs = 24` / `default_expiry_seconds = 86400` 是否合适；
-2. Activity UI 是独立“活动记录”面板，还是同时在聊天里加一条可折叠的系统提示；
-3. Worker（Pi / Solo）的 wake 注入点：
-   - Pi：下一 phase 边界 / checkpoint；
-   - Solo：下一 Work checkpoint；
-4. 多进程 scheduler 的后续方案（DB 通知 / 低频 reconciliation）。
+1. `WakeupGuard` 的测试阈值（例如每 Agent 10 次 / 每次运行 50 次）；
+   是否需要同时挂 token 预算，还是只数唤醒次数；
+2. 多进程 scheduler 的后续方案（DB 通知 / 低频 reconciliation）；
+3. Activity 通知图标的已读水位存放位置（UI settings / 专用表）。
