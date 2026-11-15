@@ -116,6 +116,8 @@ class JobStatus:
     ALARM_RUNNING = "ALARM_RUNNING"
     #: 闹钟唤醒后决定不打扰人类；Activity Record 仍会写入。
     NO_NOTIFY = "NO_NOTIFY"
+    #: 闹钟唤醒派发了 Task；具体执行由子 Job 负责。
+    DISPATCHED = "DISPATCHED"
 
 
 #: 一次 Front 回合最多派发多少个独立 Task。
@@ -144,6 +146,7 @@ _ENDED_JOB_STATUSES = frozenset({
     JobStatus.CLARIFY,
     JobStatus.BATCH_DISPATCHED,
     JobStatus.NO_NOTIFY,
+    JobStatus.DISPATCHED,
 })
 
 
@@ -1365,7 +1368,11 @@ class AIEOSController:
             precomputed = getattr(job, "precomputed_decision", None)
             if precomputed is not None:
                 self._set_job(job, JobStatus.RUNNING)
-                self._run_handoff_solo(job, precomputed, None)
+                if precomputed.intent in (
+                        FrontIntent.REWORK, FrontIntent.FOLLOW_UP):
+                    self._resume_or_rework(job, precomputed, None)
+                else:
+                    self._run_handoff_solo(job, precomputed, None)
                 return
             self._set_job(job, JobStatus.FRONT_ANALYZING)
             front = self._front_runtime(self._front_project_root(job))
@@ -2360,6 +2367,8 @@ class AIEOSController:
                 assigned_worker=agent_id,
                 precomputed_decision=item,
                 front_thinking=job.front_thinking,
+                source=job.source,
+                wakeup_id=job.wakeup_id,
                 created_at=_now(),
                 updated_at=_now(),
             )
@@ -2371,6 +2380,85 @@ class AIEOSController:
 
         self._touch(job)
         self._notify()
+
+    def _dispatch_alarm_work(
+        self, job: WorkJob, decisions: List[Any],
+    ) -> Dict[str, Any]:
+        """闹钟唤醒派发 handoff / rework / follow_up。
+
+        🔒 只创建子 Job，不在 AlarmService 线程里执行 Task。
+        """
+        if not decisions:
+            return {"ok": True, "dispatched": 0, "children": []}
+        allowed = (
+            FrontIntent.HANDOFF, FrontIntent.REWORK, FrontIntent.FOLLOW_UP)
+        if any(item.intent not in allowed for item in decisions):
+            self._fail(job, "alarm_wakeup_bad_work_intent")
+            return {"ok": False, "error": job.error, "children": []}
+        # relay 模式同样只保留核心 task_text。
+        for item in decisions:
+            self._apply_front_mode(
+                item, front_mode=self._effective_front_mode(decisions))
+
+        if len(decisions) > 1:
+            # 机制事实：批量派发只支持 handoff；rework / follow_up
+            # 一次只能一个（它们会改动已有 Task）。
+            if any(
+                item.intent != FrontIntent.HANDOFF
+                for item in decisions
+            ):
+                self._fail(job, "rework / follow_up 一次只能派发一个")
+                return {"ok": False, "error": job.error, "children": []}
+            self._dispatch_batch(job, decisions)
+            if job.status == JobStatus.FAILED:
+                return {"ok": False, "error": job.error, "children": []}
+            return {
+                "ok": True,
+                "mode": "batch",
+                "dispatched": len(decisions),
+                "children": [
+                    f"{job.job_id}_b{index}"
+                    for index in range(1, len(decisions) + 1)
+                ],
+            }
+
+        item = decisions[0]
+        child_id = f"{job.job_id}_w1"
+        child = WorkJob(
+            job_id=child_id,
+            human_text=job.human_text,
+            status=JobStatus.QUEUED,
+            front_intent=item.intent,
+            workdir=job.workdir,
+            commit_repo=job.commit_repo,
+            human_message_id=job.human_message_id,
+            conversation_id=job.conversation_id,
+            parent_job_id=job.job_id,
+            batch_index=1,
+            batch_size=1,
+            precomputed_decision=item,
+            front_thinking=job.front_thinking,
+            source=job.source,
+            wakeup_id=job.wakeup_id,
+            created_at=_now(),
+            updated_at=_now(),
+        )
+        child.front_decision = item.to_dict()
+        with self._lock:
+            self._jobs[child.job_id] = child
+            self._job_order.append(child.job_id)
+        self._executor.submit(self._run_job, child)
+        job.status = JobStatus.DISPATCHED
+        job.front_intent = item.intent
+        job.summary = f"已派发 1 个任务（{item.intent}）"
+        self._touch(job)
+        self._notify()
+        return {
+            "ok": True,
+            "mode": "single",
+            "dispatched": 1,
+            "children": [child.job_id],
+        }
 
     def _run_handoff_solo(
         self,
@@ -4224,9 +4312,24 @@ class AIEOSController:
                     outcome="failed", summary="no_decision",
                     job_id=job.job_id,
                     detail={"error": "no_decision", "calls": calls})
-            allowed = {FrontIntent.DIRECT_REPLY, FrontIntent.NO_NOTIFY}
+            job.front_decision = {
+                "decisions": [item.to_dict() for item in decisions],
+                "raw_output": str(getattr(turn, "raw_output", "") or ""),
+                "attempts": list(getattr(turn, "attempts", []) or []),
+            }
+            job.front_actions = list(
+                getattr(turn, "action_history", None) or [])
+            work_intents = (
+                FrontIntent.HANDOFF, FrontIntent.REWORK,
+                FrontIntent.FOLLOW_UP)
+            work = [item for item in decisions if item.intent in work_intents]
+            control = [
+                item for item in decisions if item.intent not in work_intents]
+            allowed_control = {
+                FrontIntent.DIRECT_REPLY, FrontIntent.NO_NOTIFY}
             rejected = [
-                item for item in decisions if item.intent not in allowed]
+                item for item in control
+                if item.intent not in allowed_control]
             if rejected:
                 names = ", ".join(item.intent for item in rejected)
                 self._fail(
@@ -4240,7 +4343,7 @@ class AIEOSController:
                         "calls": calls,
                     })
             replied = False
-            for item in decisions:
+            for item in control:
                 if item.intent == FrontIntent.DIRECT_REPLY:
                     self._message(
                         "front", item.reply,
@@ -4254,7 +4357,41 @@ class AIEOSController:
                     job.status = JobStatus.NO_NOTIFY
                     job.summary = item.reason or "no_notify"
                 self._touch(job)
+
+            dispatched = 0
+            dispatch_detail: Dict[str, Any] = {}
+            if work:
+                result = self._dispatch_alarm_work(job, work)
+                dispatch_detail = dict(result)
+                if not result.get("ok"):
+                    if job.status != JobStatus.FAILED:
+                        self._fail(
+                            job,
+                            str(result.get("error") or "派发失败"))
+                    return WakeupResult(
+                        outcome="failed",
+                        summary=job.error or "dispatch_failed",
+                        job_id=job.job_id,
+                        detail={
+                            "error": job.error or "dispatch_failed",
+                            "calls": calls,
+                            **dispatch_detail,
+                        })
+                dispatched = int(result.get("dispatched") or 0)
+                if not replied:
+                    self._message(
+                        "system",
+                        f"闹钟已派发 {dispatched} 个任务。",
+                        job_id=job.job_id)
+                self._touch(job)
+
             self._write_job_log(job)
+            if dispatched:
+                return WakeupResult(
+                    outcome="dispatched",
+                    summary=job.summary or f"已派发 {dispatched} 个任务",
+                    job_id=job.job_id,
+                    detail={"calls": calls, **dispatch_detail})
             return WakeupResult(
                 outcome="replied" if replied else "no_notify",
                 summary=job.summary,

@@ -4,7 +4,7 @@
 > **日期：2026-11-15**
 > **阶段：开发中 / 观察实验**
 > **协议版本：`1`**
-> **测试基线：`5788 passed, 2 skipped, 30 deselected`**
+> **测试基线：`5794 passed, 2 skipped, 30 deselected`**
 
 本文记录**当前真实可用能力、推荐工作方式、已知限制和版本变化**。
 架构的长期权威仍然是
@@ -52,7 +52,9 @@
   `AlarmService` 线程。Activity UI：header 铃铛 + 未读徽标 + 抽屉 +
   筛选；点卡片按需拉取**原始模型输出详情**（不轮询、不加工）。
   Front prompt 带「当前时间」（时区可设置，默认北京时区）；
-  闹钟动作说明按 capability 条件渲染。Worker handler 仍为 `DESIGNED`。
+  闹钟动作说明按 capability 条件渲染。唤醒回合可派发 handoff /
+  rework / follow_up（只创建子 Job，最多 8 个 handoff、每个 Worker 一个）。
+  Worker handler 仍为 `DESIGNED`。
 
 ---
 
@@ -530,7 +532,7 @@ Team 协作
 当前基线：
 
 ```text
-5788 passed, 2 skipped, 30 deselected
+5794 passed, 2 skipped, 30 deselected
 ```
 
 启动说明见 [`../START_AIEOS.md`](../START_AIEOS.md)。

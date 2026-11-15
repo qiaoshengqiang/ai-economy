@@ -204,3 +204,54 @@ def test_batch_rejects_mixed_execution_actions(tmp_path):
         assert executor.jobs == []
     finally:
         controller.close()
+
+
+def test_alarm_work_batch_dispatches_children(tmp_path):
+    controller, executor = _controller(
+        tmp_path, ids=("agent_a", "agent_b", "agent_c", "agent_d"))
+    decisions = [
+        _handoff("任务一", preferred="agent_b"),
+        _handoff("任务二", preferred="agent_c"),
+        _handoff("任务三", preferred="agent_d"),
+    ]
+    parent = WorkJob(
+        job_id="job_alarm_batch",
+        human_text="",
+        source="alarm",
+        wakeup_id="alarm_1",
+    )
+    try:
+        result = controller._dispatch_alarm_work(parent, decisions)
+    finally:
+        controller.close()
+
+    assert result["ok"] is True
+    assert result["dispatched"] == 3
+    assert parent.status == JobStatus.BATCH_DISPATCHED
+    assert len(executor.jobs) == 3
+    children = [job for _fn, job in executor.jobs]
+    assert [job.source for job in children] == ["alarm"] * 3
+    assert [job.wakeup_id for job in children] == ["alarm_1"] * 3
+
+
+def test_alarm_work_batch_rejects_project_dir(tmp_path):
+    controller, executor = _controller(
+        tmp_path, ids=("agent_a", "agent_b", "agent_c"))
+    parent = WorkJob(
+        job_id="job_alarm_project",
+        human_text="",
+        workdir=str(tmp_path),
+        source="alarm",
+    )
+    try:
+        result = controller._dispatch_alarm_work(parent, [
+            _handoff("任务一", preferred="agent_b"),
+            _handoff("任务二", preferred="agent_c"),
+        ])
+    finally:
+        controller.close()
+
+    assert result["ok"] is False
+    assert parent.status == JobStatus.FAILED
+    assert "同一项目目录一次只能运行一个任务" in parent.error
+    assert executor.jobs == []

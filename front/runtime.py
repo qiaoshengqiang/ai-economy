@@ -494,10 +494,21 @@ scheduled_for: {wakeup.get('scheduled_for') or ''}
 
 你可以：
 - inspect / artifact_read / project_read / web_search
-{alarm_tool_line}- direct_reply：值得告诉人类时
+{alarm_tool_line}- handoff / rework / follow_up：派发或继续 Task
+- direct_reply：值得告诉人类时
 - no_notify：不值得打扰人类时（仍然会写 Activity Record）
 
-不要从闹钟创建 Task，不要发起 handoff / rework / follow_up。
+Task 能力的事实边界（由系统强制，不靠你猜）：
+- 闹钟唤醒没有项目目录；从这里派发的任务使用 Task Workspace。
+- 没有项目目录时，一次最多派发 8 个 handoff，每个 Worker 一个。
+- 有项目目录时，一次只能派发一个任务：同一目录同一时间只允许一个
+  运行中的 Task。
+- rework / follow_up 一次只能一个；原 Worker 忙时不会排队，只会回复
+  「正在忙」。
+- Worker 数量有限：单个 handoff 会等待空闲 Worker；批量派发需要足够
+  的空闲 Worker，不够时整批失败。
+- 闹钟续期由 schedule 决定：once 触发后结束；every 按周期自动续期。
+- 本轮不能 cancel / artifacts / commit_confirm / set_mode。
 """
         return f"""{self.agent_identity}
 

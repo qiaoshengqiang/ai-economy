@@ -1185,6 +1185,7 @@
   /* ---------------- Activity（唤醒记录，不是聊天消息） ---------------- */
   const ACTIVITY_OUTCOMES = {
     replied: { cls: "notified", label: "已通知", group: "notified" },
+    dispatched: { cls: "notified", label: "已派发", group: "notified" },
     no_notify: { cls: "silent", label: "未通知", group: "silent" },
     failed: { cls: "failed", label: "异常", group: "failed" },
     rejected: { cls: "failed", label: "已拒绝", group: "failed" },

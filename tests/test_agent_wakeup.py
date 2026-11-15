@@ -276,7 +276,46 @@ def test_controller_front_wakeup_no_notify(monkeypatch):
         item for item in state["messages"] if item.get("role") == "front"]
 
 
-def test_controller_front_wakeup_rejects_handoff(monkeypatch):
+def test_controller_front_wakeup_dispatches_handoff(monkeypatch):
+    from front import FrontBrief, FrontDecision, FrontIntent, FrontTurn
+    from work.controller import AIEOSController, JobStatus
+    from core.alarm import WakeupEvent
+
+    class _Front:
+        def decide_turn(self, _text, **_kwargs):
+            return FrontTurn(decisions=[FrontDecision(
+                intent=FrontIntent.HANDOFF,
+                brief=FrontBrief(goal="x", task_text="x"),
+            )])
+
+    controller = AIEOSController(
+        _controller_runtime(), front_agent="agent_a")
+    monkeypatch.setattr(
+        controller, "_front_runtime", lambda *_args, **_kwargs: _Front())
+    captured = {}
+
+    def fake_dispatch(job, decisions):
+        captured["intents"] = [item.intent for item in decisions]
+        job.status = JobStatus.DISPATCHED
+        job.summary = "已派发 1 个任务"
+        return {"ok": True, "mode": "single", "dispatched": 1,
+                "children": ["job_alarm_1_w1"]}
+
+    monkeypatch.setattr(controller, "_dispatch_alarm_work", fake_dispatch)
+    event = WakeupEvent(
+        wakeup_id="alarm_2", agent_id="agent_a",
+        reason="检查状态", instruction="查看 task_x")
+    try:
+        result = controller.run_front_wakeup(event)
+    finally:
+        controller.close()
+
+    assert captured["intents"] == ["handoff"]
+    assert result.outcome == "dispatched"
+    assert result.detail["dispatched"] == 1
+
+
+def test_controller_front_wakeup_rejects_other_control(monkeypatch):
     from front import FrontDecision, FrontIntent, FrontTurn
     from work.controller import AIEOSController
     from core.alarm import WakeupEvent
@@ -284,18 +323,14 @@ def test_controller_front_wakeup_rejects_handoff(monkeypatch):
     class _Front:
         def decide_turn(self, _text, **_kwargs):
             return FrontTurn(decisions=[FrontDecision(
-                intent=FrontIntent.HANDOFF,
-                brief=SimpleNamespace(
-                    goal="x", task_text="x", human_text="",
-                    front_notes=""),
-            )])
+                intent=FrontIntent.SET_MODE)])
 
     controller = AIEOSController(
         _controller_runtime(), front_agent="agent_a")
     monkeypatch.setattr(
         controller, "_front_runtime", lambda *_args, **_kwargs: _Front())
     event = WakeupEvent(
-        wakeup_id="alarm_2", agent_id="agent_a",
+        wakeup_id="alarm_3", agent_id="agent_a",
         reason="检查状态", instruction="查看 task_x")
     try:
         result = controller.run_front_wakeup(event)
@@ -306,6 +341,103 @@ def test_controller_front_wakeup_rejects_handoff(monkeypatch):
     assert "alarm_wakeup_cannot_do" in result.summary
 
 
+class _FakeExecutor:
+    def __init__(self):
+        self.submitted = []
+
+    def submit(self, fn, *args, **kwargs):
+        self.submitted.append((fn, args, kwargs))
+
+    def shutdown(self, **_kwargs):
+        return None
+
+
+def test_dispatch_alarm_work_creates_child_job():
+    from front import FrontBrief, FrontDecision, FrontIntent
+    from work.controller import AIEOSController, JobStatus, WorkJob
+
+    controller = AIEOSController(
+        _controller_runtime(), front_agent="agent_a")
+    controller._executor = _FakeExecutor()
+    job = WorkJob(
+        job_id="job_alarm_1", human_text="", status=JobStatus.ALARM_RUNNING,
+        source="alarm", wakeup_id="alarm_1")
+    decision = FrontDecision(
+        intent=FrontIntent.HANDOFF,
+        brief=FrontBrief(goal="x", task_text="x"),
+    )
+    try:
+        result = controller._dispatch_alarm_work(job, [decision])
+    finally:
+        controller.close()
+
+    assert result["ok"] is True
+    assert result["dispatched"] == 1
+    assert job.status == JobStatus.DISPATCHED
+    child = controller._jobs["job_alarm_1_w1"]
+    assert child.precomputed_decision is decision
+    assert child.source == "alarm"
+    assert child.wakeup_id == "alarm_1"
+    assert controller._executor.submitted
+
+
+def test_dispatch_alarm_work_rejects_multiple_rework():
+    from front import FrontBrief, FrontDecision, FrontIntent
+    from work.controller import AIEOSController, JobStatus, WorkJob
+
+    controller = AIEOSController(
+        _controller_runtime(), front_agent="agent_a")
+    controller._executor = _FakeExecutor()
+    job = WorkJob(
+        job_id="job_alarm_2", human_text="", status=JobStatus.ALARM_RUNNING,
+        source="alarm")
+    decisions = [
+        FrontDecision(
+            intent=FrontIntent.REWORK, task_id="task_x",
+            brief=FrontBrief(goal="x", task_text="x")),
+        FrontDecision(
+            intent=FrontIntent.REWORK, task_id="task_y",
+            brief=FrontBrief(goal="y", task_text="y")),
+    ]
+    try:
+        result = controller._dispatch_alarm_work(job, decisions)
+    finally:
+        controller.close()
+
+    assert result["ok"] is False
+    assert job.status == JobStatus.FAILED
+    assert "一次只能派发一个" in job.error
+    assert controller._executor.submitted == []
+
+
+def test_run_job_routes_precomputed_rework(monkeypatch):
+    from front import FrontDecision, FrontIntent
+    from work.controller import AIEOSController, JobStatus, WorkJob
+
+    controller = AIEOSController(
+        _controller_runtime(), front_agent="agent_a")
+    captured = []
+    monkeypatch.setattr(controller, "_admit_job", lambda job: True)
+    monkeypatch.setattr(
+        controller, "_resume_or_rework",
+        lambda job, decision, front: (
+            captured.append((job.job_id, decision.intent, front)) or ("", [])))
+    child = WorkJob(
+        job_id="job_alarm_1_w1",
+        human_text="",
+        status=JobStatus.QUEUED,
+        precomputed_decision=FrontDecision(
+            intent=FrontIntent.REWORK, task_id="task_x"),
+    )
+    try:
+        controller._run_job(child)
+    finally:
+        controller.close()
+
+    assert captured
+    assert captured[0][1] == "rework"
+    # 子 Job 没有 Front runtime；_finish_work 会退回默认实现。
+    assert captured[0][2] is None
 class _DetailHandler:
     def can_wake(self, agent_id: str) -> bool:
         return True

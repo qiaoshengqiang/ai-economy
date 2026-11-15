@@ -1056,7 +1056,10 @@ def test_wakeup_prompt_is_system_alarm_not_human_message():
     assert "task_x" in prompt
     assert "no_notify" in prompt
     assert "alarm_cancel" in prompt
-    assert "不要从闹钟创建 Task" in prompt
+    assert "不要从闹钟创建 Task" not in prompt
+    assert "一次最多派发 8 个 handoff" in prompt
+    assert "有项目目录时，一次只能派发一个任务" in prompt
+    assert "rework / follow_up 一次只能一个" in prompt
 
 
 def _capture_prompt(**kwargs):

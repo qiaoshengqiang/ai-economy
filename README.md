@@ -6,7 +6,7 @@
 
 **当前版本：`v0.2.0`（开发中）**
 **当前最佳工作方式：Human → Front Agent → Pi Agent → 自主工作**
-**测试基线：`5788 passed, 2 skipped, 30 deselected`**
+**测试基线：`5794 passed, 2 skipped, 30 deselected`**
 
 > - 当前真实能力、推荐模式与已知限制：[`docs/PROJECT_STATUS.md`](docs/PROJECT_STATUS.md)
 > - 架构长期 Source of Truth：[`ARCHITECTURE_CONSTITUTION.md`](docs/architecture/ARCHITECTURE_CONSTITUTION.md)
@@ -258,7 +258,7 @@ ai-economy/
 ├── resources/              ← 公共只读工具库
 ├── config/                 ← config.yaml + llm.yaml
 ├── docs/                   ← 架构文档 / ADR / 历史
-├── tests/                  ← 5788 个测试 + 30 个真实 API 测试
+├── tests/                  ← 5794 个测试 + 30 个真实 API 测试
 │
 ├── tasks/                  ← Task 运行目录（不进 git）
 ├── runs/                   ← UI / 日志 / 输出（不进 git）
@@ -324,7 +324,7 @@ LLM 调用是真实经营成本，会记 `LLM_COST` 并进入 Ledger。
 ./dev.sh test tests/test_ledger.py -k x    # 单个测试
 ```
 
-当前基线：**5788 passed, 2 skipped, 30 deselected**。
+当前基线：**5794 passed, 2 skipped, 30 deselected**。
 
 另有 30 个真实 API 测试，需要 Key 且会产生费用，单独运行：
 

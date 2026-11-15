@@ -576,13 +576,21 @@ scheduled_for: ...
 本次是第 3 / 24 次
 
 这是系统定时唤醒，不是新的用户请求。
-不要创建 Task；不要发起 handoff / rework / follow_up。
 
 你可以：
 - inspect / artifact_read / project_read / web_search
 - alarm_list / alarm_cancel / alarm_create
+- handoff / rework / follow_up：派发或继续 Task
 - direct_reply：值得告诉人类时
 - no_notify：不值得打扰人类时
+
+Task 能力的事实边界（由系统强制）：
+- 闹钟唤醒没有项目目录；派发的任务使用 Task Workspace。
+- 没有项目目录时，一次最多派发 8 个 handoff，每个 Worker 一个。
+- 有项目目录时，一次只能派发一个任务。
+- rework / follow_up 一次只能一个；原 Worker 忙时不会排队。
+- Worker 数量有限：单个 handoff 等待空闲 Worker；批量派发需要
+  足够的空闲 Worker，不够时整批失败。
 
 你有 alarm_cancel 能力。
 任务结束、目标不再需要检查，或你不再需要这个闹钟时，
@@ -591,27 +599,39 @@ scheduled_for: ...
 
 ### 9.2 允许的最终决定
 
-V1 只允许：
+允许：
 
 ```text
 direct_reply   通知人类
 no_notify      不通知聊天，但写 Activity Record
 inspect        只读查看 Task 事实，继续判断
+handoff        派发新 Task（子 Job）
+rework         返工已有 Task（一次一个）
+follow_up      续跑已有 Task（一次一个）
 ```
 
 不允许：
 
 ```text
-handoff        不能从闹钟创建新 Task
-rework         不能从闹钟发起返工
-follow_up      不能从闹钟推进 Task
-cancel         不能从闹钟取消 Task
+cancel         不从闹钟取消 Task
 artifacts      不主动导出文件
 commit_confirm 不能代替人类确认提交
 set_mode       不修改全局模式
 ```
 
-原因：闹钟是 Agent 自己的定时检查，不是新的 Human Demand。
+**事实边界**（机制强制，不是 Agent 策略）：
+
+| 情况 | 行为 |
+|---|---|
+| 无项目目录 + 多个 handoff | 最多 8 个，每个 Worker 一个 |
+| 有项目目录 + 多个 handoff | 拒绝整批；同一目录只允许一个运行中 Task |
+| rework / follow_up 多个 | 拒绝；一次只能一个 |
+| 空闲 Worker 不足（批量） | 整批失败，不部分派发 |
+| 空闲 Worker 不足（单个 handoff） | 子 Job 进入 `WAITING_FOR_AGENT` 等待 |
+| 原 Worker 忙（rework / follow_up） | 回复「正在忙」，不排队 |
+
+唤醒派发**只创建子 Job**，不在 AlarmService 线程里执行 Task；
+因此一次唤醒不会因为 Task 运行几小时而卡住其他闹钟。
 
 ### 9.3 `no_notify`
 
@@ -825,13 +845,13 @@ AIEOSController(
 - WakeupGuard 超限后暂停闹钟，写 `guard_limit`；
 - `no_notify` 不产生聊天消息，但产生 Activity Record；
 - `direct_reply` 产生 Front 消息；
-- 闹钟唤醒不允许 `handoff` / `rework` / `follow_up`；
+- `handoff` / `rework` / `follow_up` 只派发子 Job；
 - Worker handler 后续接入时，Work 状态不被闹钟改变。
 
 ### 14.2 守卫
 
 - `agent_alarms` 不写入 `communication_messages`；
-- `AlarmScheduler` 不创建 Task；
+- `AlarmService` 不创建 Task；唤醒派发由 Controller 创建子 Job；
 - `alarm_create` 不出现在 Work action set；
 - `no_notify` 只允许在 alarm wakeup 中使用；
 - `communication/` 不出现 Heartbeat / lease renewal 术语；
