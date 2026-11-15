@@ -158,12 +158,16 @@ class WakeupResult:
     outcome: str = "failed"
     summary: str = ""
     job_id: str = ""
+    #: 这次唤醒的原始证据（例如每次模型调用的输出）。
+    #: 🔒 只存事实，不做摘要；Activity 详情原样显示。
+    detail: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "outcome": self.outcome,
             "summary": self.summary,
             "job_id": self.job_id,
+            "detail": dict(self.detail),
         }
 
 

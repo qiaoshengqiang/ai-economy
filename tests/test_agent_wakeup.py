@@ -304,3 +304,103 @@ def test_controller_front_wakeup_rejects_handoff(monkeypatch):
 
     assert result.outcome == "rejected"
     assert "alarm_wakeup_cannot_do" in result.summary
+
+
+class _DetailHandler:
+    def can_wake(self, agent_id: str) -> bool:
+        return True
+
+    def wake(self, event):
+        return WakeupResult(
+            outcome="replied",
+            summary="task_x 已完成",
+            job_id="job_detail",
+            detail={"calls": [
+                {"step": 1, "raw_output": '{"intent":"x"}',
+                 "decision_error": "", "action_error": "",
+                 "decisions": ["direct_reply"], "actions": [],
+                 "receipt": ""},
+            ]},
+        )
+
+
+def test_wakeup_detail_persisted_but_not_in_list(db):
+    store = AlarmStore(db)
+    dispatcher = WakeupDispatcher()
+    dispatcher.register("agent_a", _DetailHandler())
+    service = AlarmService(store, dispatcher)
+    alarm = _due_alarm(store)
+
+    service._dispatch(alarm)
+
+    row = store.recent_runs("agent_a")[0]
+    # 列表只给摘要：不携带原始模型输出。
+    assert "detail" not in row
+    assert row["task_ids"] == ["task_x"]
+    assert row["alarm_id"] == alarm.alarm_id
+
+    detail = store.get_run(row["run_id"])
+    assert detail is not None
+    assert detail["detail"]["task_ids"] == ["task_x"]
+    assert detail["detail"]["fire_count"] == 1
+    assert detail["detail"]["calls"][0]["raw_output"] == '{"intent":"x"}'
+    assert service.run_detail(row["run_id"])["run_id"] == row["run_id"]
+    assert service.run_detail("wake_missing") is None
+
+
+def test_wakeup_calls_keep_raw_output_and_receipt():
+    from work.controller import AIEOSController
+
+    turn = SimpleNamespace(
+        attempts=[
+            {"step": 1, "raw_output": "A", "decision_error": "",
+             "action_error": "", "decisions": [],
+             "actions": ["artifact_read"]},
+            {"step": 2, "raw_output": "B", "decision_error": "",
+             "action_error": "", "decisions": ["no_notify"],
+             "actions": []},
+        ],
+        action_history=[{"raw_output": "A", "receipt": "R"}],
+    )
+    calls = AIEOSController._wakeup_calls(turn)
+    assert [call["raw_output"] for call in calls] == ["A", "B"]
+    assert calls[0]["receipt"] == "R"
+    assert calls[1]["receipt"] == ""
+    assert calls[1]["decisions"] == ["no_notify"]
+
+
+def test_controller_activity_detail_only_returns_front_runs():
+    from work.controller import AIEOSController
+
+    runs = {
+        "wake_1": {
+            "run_id": "wake_1", "agent_id": "agent_a",
+            "started_at": "2026-11-15T10:00:00+00:00",
+            "detail": {"calls": []},
+        },
+        "wake_2": {
+            "run_id": "wake_2", "agent_id": "agent_b",
+            "started_at": "2026-11-15T10:01:00+00:00",
+            "detail": {"calls": []},
+        },
+    }
+    controller = AIEOSController(
+        _controller_runtime(), front_agent="agent_a")
+    controller.alarm_service = SimpleNamespace(
+        run_detail=lambda run_id: runs.get(run_id),
+        count_runs=lambda agent_id, since="": 1,
+        stop=lambda: None,
+    )
+    try:
+        data = controller.activity_detail("wake_1")
+        assert data["activity"]["run_id"] == "wake_1"
+        for bad in ("wake_2", "wake_missing", ""):
+            with pytest.raises(ValueError):
+                controller.activity_detail(bad)
+        seen = controller.mark_activities_seen("agent_a", run_id="wake_1")
+        assert seen["seen_at"] == "2026-11-15T10:00:00+00:00"
+        with pytest.raises(ValueError):
+            controller.mark_activities_seen("agent_a", run_id="wake_2")
+    finally:
+        controller.alarm_service = None
+        controller.close()

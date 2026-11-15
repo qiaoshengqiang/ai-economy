@@ -229,6 +229,17 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(
                     {"ok": False, "error": str(exc)}, status=404)
             return
+        if path.startswith("/api/activities/"):
+            run_id = path[len("/api/activities/"):].strip()
+            if not run_id or not re.fullmatch(r"[A-Za-z0-9_]+", run_id):
+                self.send_error(400)
+                return
+            try:
+                self._send_json(self.controller.activity_detail(run_id))
+            except ValueError as exc:
+                self._send_json(
+                    {"ok": False, "error": str(exc)}, status=404)
+            return
         if path.startswith("/api/task/"):
             task_id = path[len("/api/task/"):].strip()
             if not task_id or not re.fullmatch(r"[A-Za-z0-9_.:-]+", task_id):
@@ -326,8 +337,10 @@ class Handler(BaseHTTPRequestHandler):
                 agent_id = str(
                     payload.get("agent_id")
                     or self.controller.front_agent).strip()
+                run_id = str(payload.get("run_id") or "").strip()
                 try:
-                    result = self.controller.mark_activities_seen(agent_id)
+                    result = self.controller.mark_activities_seen(
+                        agent_id, run_id=run_id)
                 except ValueError as exc:
                     self._send_json(
                         {"ok": False, "error": str(exc)}, status=404)

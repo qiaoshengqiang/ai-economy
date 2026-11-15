@@ -9,6 +9,19 @@
     frontTiming: $("front-timing"),
     frontTimingText: document.querySelector("#front-timing .timing-text"),
     runningBadge: $("running-badge"),
+    activityBell: $("activity-bell"),
+    activityBadge: $("activity-badge"),
+    activityBackdrop: $("activity-backdrop"),
+    activityDrawer: $("activity-drawer"),
+    activityClose: $("activity-close"),
+    activityMark: $("activity-mark"),
+    activityList: $("activity-list"),
+    activityFilters: document.querySelector(".activity-filters"),
+    detailModal: $("detail-modal"),
+    detailBackdrop: $("detail-backdrop"),
+    detailRun: $("detail-run"),
+    detailBody: $("detail-body"),
+    detailClose: $("detail-close"),
     messages: $("messages"),
     prompt: $("prompt"),
     submit: $("submit-btn"),
@@ -75,6 +88,12 @@
   let lastQuestionKey = "";
   let audioContext = null;
   let pendingFront = null;
+  let activityOpen = false;
+  let activityFilter = "all";
+  let activityItems = null;
+  let activityLoading = false;
+  let lastActivityUnread = -1;
+  let openActivityRun = "";
   let timingTimer = 0;
   let timingDoneTimer = 0;
   let workdirPath = "";
@@ -1163,6 +1182,323 @@
     });
   }
 
+  /* ---------------- Activity（唤醒记录，不是聊天消息） ---------------- */
+  const ACTIVITY_OUTCOMES = {
+    replied: { cls: "notified", label: "已通知", group: "notified" },
+    no_notify: { cls: "silent", label: "未通知", group: "silent" },
+    failed: { cls: "failed", label: "异常", group: "failed" },
+    rejected: { cls: "failed", label: "已拒绝", group: "failed" },
+    guard_limit: { cls: "failed", label: "已暂停", group: "failed" },
+    skipped_busy: { cls: "silent", label: "跳过", group: "silent" },
+  };
+
+  function activityOutcome(run) {
+    const key = String((run && run.outcome) || "");
+    return ACTIVITY_OUTCOMES[key] || {
+      cls: "failed",
+      label: key || "未知",
+      group: "failed",
+    };
+  }
+
+  function activityKind(kind) {
+    const value = String(kind || "");
+    if (value === "alarm") return "定时检查";
+    return value || "唤醒";
+  }
+
+  function activityTime(value) {
+    const text = String(value || "");
+    if (!text) return "—";
+    const date = new Date(text);
+    if (Number.isNaN(date.getTime())) return text;
+    const pad = (number) => String(number).padStart(2, "0");
+    return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} `
+      + `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  }
+
+  function setActivityOpen(open) {
+    activityOpen = Boolean(open);
+    els.activityDrawer.classList.toggle("open", activityOpen);
+    els.activityBackdrop.classList.toggle("open", activityOpen);
+    els.activityBell.setAttribute("aria-expanded", String(activityOpen));
+    if (activityOpen) {
+      renderActivities();
+      loadActivities();
+    }
+  }
+
+  async function loadActivities() {
+    if (activityLoading) return;
+    activityLoading = true;
+    try {
+      const data = await api("/api/activities?limit=50");
+      activityItems = data.activities || [];
+      renderActivities();
+    } catch (error) {
+      showToast(`活动记录读取失败：${error.message}`, true);
+    } finally {
+      activityLoading = false;
+    }
+  }
+
+  function renderActivities() {
+    const box = els.activityList;
+    if (!box) return;
+    box.textContent = "";
+    const items = (activityItems || []).filter((run) => (
+      activityFilter === "all"
+      || activityOutcome(run).group === activityFilter
+    ));
+    if (!items.length) {
+      const empty = document.createElement("div");
+      empty.className = "activity-empty";
+      const strong = document.createElement("strong");
+      strong.textContent = activityItems === null
+        ? "正在读取…"
+        : "没有符合条件的记录";
+      empty.appendChild(strong);
+      box.appendChild(empty);
+      return;
+    }
+    items.forEach((run) => box.appendChild(renderActivityRow(run)));
+  }
+
+  function renderActivityRow(run) {
+    const row = document.createElement("div");
+    row.className = "activity-row" + (run.unread ? " unread" : "");
+    row.tabIndex = 0;
+    row.setAttribute("role", "button");
+
+    const top = document.createElement("div");
+    top.className = "activity-row-top";
+    const time = document.createElement("span");
+    time.className = "activity-time";
+    time.textContent = activityTime(run.started_at);
+    const outcome = activityOutcome(run);
+    const badge = document.createElement("span");
+    badge.className = "activity-outcome " + outcome.cls;
+    badge.textContent = outcome.label;
+    top.append(time, badge);
+
+    const title = document.createElement("p");
+    title.className = "activity-title";
+    const kind = document.createElement("span");
+    kind.className = "activity-kind";
+    kind.textContent = activityKind(run.kind);
+    const text = document.createElement("span");
+    text.className = "activity-text";
+    text.textContent = String(run.summary || "（没有摘要）");
+    title.append(kind, text);
+
+    row.append(top, title);
+
+    const tasks = (run.task_ids || []).filter(Boolean);
+    if (tasks.length) {
+      const chips = document.createElement("div");
+      chips.className = "activity-tasks";
+      tasks.forEach((task) => {
+        const chip = document.createElement("span");
+        chip.className = "activity-task";
+        chip.textContent = task;
+        chips.appendChild(chip);
+      });
+      row.appendChild(chips);
+    }
+
+    row.addEventListener("click", () => openActivityDetail(run));
+    row.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      openActivityDetail(run);
+    });
+    return row;
+  }
+
+  async function openActivityDetail(run) {
+    if (!run || !run.run_id) return;
+    openActivityRun = run.run_id;
+    els.detailRun.textContent = run.run_id;
+    els.detailBody.textContent = "";
+    const loading = document.createElement("div");
+    loading.className = "detail-empty";
+    loading.textContent = "正在读取……";
+    els.detailBody.appendChild(loading);
+    els.detailModal.classList.add("open");
+    els.detailBackdrop.classList.add("open");
+
+    try {
+      // 详情只在打开时取一次；不参与 1.2 秒轮询。
+      const data = await api(`/api/activities/${encodeURIComponent(run.run_id)}`);
+      if (openActivityRun !== run.run_id) return;
+      renderActivityDetail(data.activity || run);
+      markActivityRead(run);
+    } catch (error) {
+      if (openActivityRun !== run.run_id) return;
+      els.detailBody.textContent = "";
+      const message = document.createElement("div");
+      message.className = "detail-empty";
+      message.textContent = `读取失败：${error.message}`;
+      els.detailBody.appendChild(message);
+    }
+  }
+
+  function renderActivityDetail(run) {
+    const box = els.detailBody;
+    box.textContent = "";
+    els.detailRun.textContent = `${run.run_id} · ${activityTime(run.started_at)}`;
+    const detail = run.detail || {};
+
+    const meta = document.createElement("dl");
+    meta.className = "detail-meta";
+    [
+      ["类型", activityKind(run.kind)],
+      ["结果", activityOutcome(run).label],
+      ["alarm", detail.alarm_id || "—"],
+      ["scheduled_for", run.scheduled_for || "—"],
+      ["开始", run.started_at || "—"],
+      ["结束", run.finished_at || "—"],
+      ["job", run.job_id || "—"],
+      ["tasks", (detail.task_ids || []).join(", ") || "—"],
+    ].forEach(([key, value]) => {
+      const wrap = document.createElement("div");
+      const term = document.createElement("dt");
+      term.textContent = key;
+      const desc = document.createElement("dd");
+      desc.textContent = String(value);
+      wrap.append(term, desc);
+      meta.appendChild(wrap);
+    });
+    box.appendChild(meta);
+
+    if (detail.error) {
+      const section = document.createElement("section");
+      section.className = "detail-section";
+      const heading = document.createElement("h3");
+      heading.textContent = "唤醒错误（原样）";
+      const pre = document.createElement("pre");
+      pre.textContent = String(detail.error);
+      section.append(heading, pre);
+      box.appendChild(section);
+    }
+
+    const calls = Array.isArray(detail.calls) ? detail.calls : [];
+    const section = document.createElement("section");
+    section.className = "detail-section";
+    const heading = document.createElement("h3");
+    heading.textContent = `LLM 调用输出（${calls.length} 次，原样）`;
+    section.appendChild(heading);
+    if (!calls.length) {
+      const empty = document.createElement("div");
+      empty.className = "detail-empty";
+      empty.textContent = "这次唤醒没有模型输出。";
+      section.appendChild(empty);
+    } else {
+      calls.forEach((call) => section.appendChild(renderActivityCall(call)));
+    }
+    box.appendChild(section);
+  }
+
+  function renderActivityCall(call) {
+    const box = document.createElement("div");
+    box.className = "call";
+
+    const head = document.createElement("div");
+    head.className = "call-head";
+    const step = document.createElement("span");
+    step.className = "call-step";
+    step.textContent = `#${call.step || "?"}`;
+    const label = document.createElement("span");
+    label.className = "call-label";
+    const decisions = call.decisions || [];
+    if ((call.actions || []).length) {
+      label.textContent = "动作步骤";
+    } else if (decisions.length === 1 && decisions[0] === "inspect") {
+      label.textContent = "读取事实";
+    } else if (decisions.length) {
+      label.textContent = "最终决定";
+    } else {
+      label.textContent = "未识别的输出";
+    }
+    head.append(step, label);
+    const problem = call.decision_error || call.action_error;
+    if (problem) {
+      const error = document.createElement("span");
+      error.className = "call-error";
+      error.textContent = `parse: ${problem}`;
+      head.appendChild(error);
+    }
+
+    const pre = document.createElement("pre");
+    pre.textContent = String(call.raw_output || "");
+    box.append(head, pre);
+
+    if (call.receipt) {
+      const receipt = document.createElement("div");
+      receipt.className = "call receipt";
+      const receiptHead = document.createElement("div");
+      receiptHead.className = "call-head";
+      const receiptLabel = document.createElement("span");
+      receiptLabel.className = "call-meta";
+      receiptLabel.textContent = "动作结果（原样）";
+      receiptHead.appendChild(receiptLabel);
+      const receiptPre = document.createElement("pre");
+      receiptPre.textContent = String(call.receipt);
+      receipt.append(receiptHead, receiptPre);
+      box.appendChild(receipt);
+    }
+    return box;
+  }
+
+  function closeActivityDetail() {
+    openActivityRun = "";
+    els.detailModal.classList.remove("open");
+    els.detailBackdrop.classList.remove("open");
+  }
+
+  async function markActivityRead(run) {
+    const agentId = (state && state.front_agent) || "";
+    if (!agentId) return;
+    try {
+      await api("/api/activities/seen", {
+        method: "POST",
+        body: JSON.stringify({ agent_id: agentId, run_id: run.run_id }),
+      });
+      const cutoff = String(run.started_at || "");
+      (activityItems || []).forEach((item) => {
+        if (!cutoff || String(item.started_at || "") <= cutoff) {
+          item.unread = false;
+        }
+      });
+      renderActivities();
+      const unread = Number((state && state.activity_unread) || 0);
+      if (unread <= 1) {
+        els.activityBadge.textContent = "0";
+        els.activityBadge.classList.add("zero");
+      }
+    } catch (_error) {
+      // 已读写入失败不影响阅读本身。
+    }
+  }
+
+  async function markAllActivitiesRead() {
+    const agentId = (state && state.front_agent) || "";
+    if (!agentId) return;
+    try {
+      await api("/api/activities/seen", {
+        method: "POST",
+        body: JSON.stringify({ agent_id: agentId }),
+      });
+      (activityItems || []).forEach((item) => { item.unread = false; });
+      renderActivities();
+      els.activityBadge.textContent = "0";
+      els.activityBadge.classList.add("zero");
+      lastActivityUnread = 0;
+    } catch (error) {
+      showToast(`标记已读失败：${error.message}`, true);
+    }
+  }
+
   function render() {
     if (!state) return;
     const settings = state.settings || {};
@@ -1177,6 +1513,18 @@
     els.workModeBadge.classList.toggle("work-auto", workAuto);
     els.workModeBadge.classList.toggle("work-flow", !workAuto);
     els.runningBadge.textContent = `Running: ${state.running_jobs || 0}`;
+    const unread = Number(state.activity_unread || 0);
+    els.activityBadge.textContent = String(unread);
+    els.activityBadge.classList.toggle("zero", unread <= 0);
+    if (els.activityBell) {
+      els.activityBell.title = unread > 0
+        ? `Agent 活动记录 · ${unread} 条未读`
+        : "Agent 活动记录";
+    }
+    if (unread !== lastActivityUnread) {
+      lastActivityUnread = unread;
+      if (activityOpen) loadActivities();
+    }
     checkPendingFront();
     if (!pendingFront && els.frontTiming.classList.contains("idle")) {
       setFrontTimingIdle();
@@ -1375,6 +1723,37 @@
   els.confirmModal.addEventListener("click", (event) => {
     if (event.target === els.confirmModal) finishConfirm(false);
   });
+  if (els.activityBell) {
+    els.activityBell.addEventListener("click", () => {
+      setActivityOpen(!activityOpen);
+    });
+    els.activityClose.addEventListener("click", () => setActivityOpen(false));
+    els.activityBackdrop.addEventListener("click", () => setActivityOpen(false));
+    els.activityMark.addEventListener("click", markAllActivitiesRead);
+    els.detailBackdrop.addEventListener("click", closeActivityDetail);
+    els.detailClose.addEventListener("click", closeActivityDetail);
+    if (els.activityFilters) {
+      els.activityFilters.addEventListener("click", (event) => {
+        const button = event.target.closest("[data-filter]");
+        if (!button) return;
+        activityFilter = String(button.dataset.filter || "all");
+        els.activityFilters.querySelectorAll("[data-filter]").forEach((node) => {
+          node.classList.toggle("active", node === button);
+        });
+        renderActivities();
+      });
+    }
+    document.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape") return;
+      if (els.detailModal.classList.contains("open")) {
+        event.preventDefault();
+        closeActivityDetail();
+      } else if (activityOpen) {
+        event.preventDefault();
+        setActivityOpen(false);
+      }
+    });
+  }
   document.addEventListener("keydown", (event) => {
     if (!confirmResolver) return;
     if (event.key === "Escape") {

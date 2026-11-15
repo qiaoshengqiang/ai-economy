@@ -1,6 +1,6 @@
 # Agent Wakeup V1 —— 定时唤醒与 Agent 闹钟设计
 
-> **状态：Phase W1–W4 后端 `CURRENT`；Activity 图标 / Worker handler `DESIGNED`（2026-11-15）**
+> **状态：Phase W1–W4.1 `CURRENT`；Worker handler `DESIGNED`（2026-11-15）**
 >
 > V1 先接入 **Front Agent**；核心数据模型、调度器和
 > `WakeupDispatcher` 从第一天就是**通用 Agent 能力**。
@@ -618,24 +618,34 @@ set_mode       不修改全局模式
 }
 ```
 
-UI 建议：
+**UI（`CURRENT`，V1）**：
 
-- 独立的**消息通知图标**；
-- 图标上显示未读活动记录数量；
-- 点击后打开 Activity Record 列表；
-- Front 卡片显示最近一次活动时间；
-- 如果 `direct_reply`，聊天里出现 Front 消息，并带“定时检查”标签；
-- 如果 `no_notify`，聊天不增加消息，但活动记录增加一行、通知计数增加。
+- header 独立的**铃铛图标** + 未读徽标；
+- 点击打开右侧 Activity 抽屉；
+- 筛选：全部 / 已通知 / 未通知 / 异常；
+- **点卡片打开详情**：原样显示这次唤醒的每次模型输出
+  （`FrontTurn.attempts` + `action_history.receipt`）；
+- 详情**只在打开时取一次**（`GET /api/activities/{run_id}`），
+  不进入 1.2 秒的 `/api/state` 轮询；
+- `no_notify` 不产生聊天消息，但活动记录增加一行。
 
-未读计数建议：
+未读：
 
 - `agent_wakeup_runs` 保持 append-only；
-- UI 在本地设置或单独的 `ui_activity_state` 中保存
-  `last_seen_run_id` / `last_seen_at`；
-- 未读数 = `last_seen_at` 之后的 run 数量；
-- 不修改 Activity Record 本身。
+- 水位保存在 `ui_settings.json` 的 `activity_seen`；
+- 未读数 = 水位之后的 run 数量，不修改 Activity Record；
+- 第一次启用时水位设为当前时间，历史记录不计未读。
 
-具体图标位置、列表样式、已读交互后续单独讨论。
+API：
+
+```text
+GET  /api/activities?agent_id=agent_a&limit=50   # 列表（不含原始输出）
+GET  /api/activities/{run_id}                    # 详情（含原始输出）
+POST /api/activities/seen                        # {agent_id, run_id?}
+```
+
+> **V1 故意不做加工**：详情只是等宽显示原始 JSON；不做摘要、
+> 不做解释、不做漂亮的可视化。等稳定后再定真正的详情 UI。
 
 示例：
 
@@ -766,7 +776,7 @@ AIEOSController(
 | Phase W2 | `AlarmService` + `WakeupDispatcher` + 重启恢复 + `WakeupGuard` | **`CURRENT`**（V1） |
 | Phase W3 | Front `alarm_create / list / cancel` + prompt | **`CURRENT`**（V1） |
 | Phase W4 | `FrontWakeupHandler` + `no_notify` + Activity API | **`CURRENT`**（V1） |
-| Phase W4.1 | Activity 通知图标 / Activity UI | `DESIGNED` |
+| Phase W4.1 | Activity 通知图标 / 抽屉 / 原始输出详情 | **`CURRENT`**（V1） |
 | Phase W5 | Pi / Solo `WakeupHandler` | `FUTURE` |
 
 ---

@@ -143,8 +143,25 @@ class _FakeController:
             }],
         }
 
-    def mark_activities_seen(self, agent_id):
+    def mark_activities_seen(self, agent_id, *, run_id=""):
         return {"agent_id": agent_id, "seen_at": "now", "unread": 0}
+
+    def activity_detail(self, run_id):
+        if run_id != "wake_1":
+            raise ValueError("活动记录不存在")
+        return {"ok": True, "activity": {
+            "run_id": "wake_1",
+            "agent_id": "agent_a",
+            "outcome": "no_notify",
+            "summary": "状态没有变化",
+            "detail": {"calls": [{
+                "step": 1,
+                "raw_output": '{"intent":"no_notify"}',
+                "decisions": ["no_notify"],
+                "actions": [],
+                "receipt": "",
+            }]},
+        }}
 
     def inbox_pending(self, agent_id, *, limit=50):
         if agent_id != "agent_a":
@@ -318,6 +335,22 @@ def test_activities_api(server):
     assert status == 200
     assert payload["ok"] is True
     assert payload["unread"] == 0
+
+    status, body = _get(base + "/api/activities/wake_1")
+    assert status == 200
+    detail = json.loads(body)
+    assert detail["ok"] is True
+    assert detail["activity"]["detail"]["calls"][0]["step"] == 1
+
+
+def test_activity_detail_missing(server):
+    _fake, base = server
+    try:
+        _get(base + "/api/activities/wake_missing")
+    except urllib.error.HTTPError as exc:
+        assert exc.code == 404
+    else:
+        raise AssertionError("未知 run_id 应返回 404")
 
 
 def test_task_detail_api(server):

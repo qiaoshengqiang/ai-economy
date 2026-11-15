@@ -245,6 +245,10 @@ class AlarmService:
     def recent_runs(self, agent_id: str, *, limit: int = 50) -> List[Dict[str, Any]]:
         return self.store.recent_runs(agent_id, limit=limit)
 
+    def run_detail(self, run_id: str) -> Optional[Dict[str, Any]]:
+        """单条 Activity 的完整记录（含原始模型输出）。"""
+        return self.store.get_run(run_id)
+
     def count_runs(self, agent_id: str = "", *, since: str = "") -> int:
         return self.store.count_runs(agent_id=agent_id, since=since)
 
@@ -363,12 +367,19 @@ class AlarmService:
             result = WakeupResult(
                 outcome="failed",
                 summary=f"{type(exc).__name__}: {exc}")
+        detail: Dict[str, Any] = {
+            "alarm_id": alarm.alarm_id,
+            "task_ids": list(alarm.task_ids),
+            "fire_count": alarm.fire_count + 1,
+        }
+        # handler 返回的原始证据（每次模型输出）原样并入。
+        detail.update(dict(getattr(result, "detail", None) or {}))
         self.store.finish_run(
             run_id,
             outcome=result.outcome,
             summary=result.summary,
             job_id=result.job_id,
-            detail={"alarm_id": alarm.alarm_id},
+            detail=detail,
         )
         self._reschedule(alarm, now=utc_now_iso())
 

@@ -4,7 +4,7 @@
 > **日期：2026-11-15**
 > **阶段：开发中 / 观察实验**
 > **协议版本：`1`**
-> **测试基线：`5776 passed, 2 skipped, 30 deselected`**
+> **测试基线：`5780 passed, 2 skipped, 30 deselected`**
 
 本文记录**当前真实可用能力、推荐工作方式、已知限制和版本变化**。
 架构的长期权威仍然是
@@ -47,10 +47,11 @@
   `human_text`（Human 原话，不一定是需求）· `task_text`（Front 给 Worker
   的任务说明）· `front_notes`（Front 的建议，非硬要求）；Worker prompt
   按来源分段显示，不再把三者混成一段。
-- Agent Wakeup V1 后端：`agent_alarms` / `agent_wakeup_runs`；Front 可
-  `alarm_create / list / cancel`；`no_notify` + Activity API；单进程
-  deadline-driven `AlarmService` 线程；Worker handler 与 Activity 图标
-  仍为 `DESIGNED`。
+- Agent Wakeup V1：`agent_alarms` / `agent_wakeup_runs`；Front 可
+  `alarm_create / list / cancel`；`no_notify`；单进程 deadline-driven
+  `AlarmService` 线程。Activity UI：header 铃铛 + 未读徽标 + 抽屉 +
+  筛选；点卡片按需拉取**原始模型输出详情**（不轮询、不加工）。
+  Worker handler 仍为 `DESIGNED`。
 
 ---
 
@@ -528,7 +529,7 @@ Team 协作
 当前基线：
 
 ```text
-5776 passed, 2 skipped, 30 deselected
+5780 passed, 2 skipped, 30 deselected
 ```
 
 启动说明见 [`../START_AIEOS.md`](../START_AIEOS.md)。

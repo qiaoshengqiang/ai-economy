@@ -330,13 +330,45 @@ class AlarmStore:
         )
         out: List[Dict[str, Any]] = []
         for row in rows:
+            # 列表只给摘要：原始模型输出只在打开详情时取一次，
+            # UI 每 1.2 秒轮询，不能把 detail_json 一起传。
             item = dict(row)
-            try:
-                item["detail"] = json.loads(item.pop("detail_json") or "{}")
-            except (TypeError, ValueError):
-                item["detail"] = {}
+            raw_detail = item.pop("detail_json", None)
+            task_ids: List[str] = []
+            alarm_id = ""
+            if raw_detail:
+                try:
+                    parsed = json.loads(raw_detail)
+                except (TypeError, ValueError):
+                    parsed = {}
+                if isinstance(parsed, dict):
+                    task_ids = [
+                        str(value)
+                        for value in (parsed.get("task_ids") or ())
+                        if str(value or "").strip()
+                    ]
+                    alarm_id = str(parsed.get("alarm_id") or "")
+            item["task_ids"] = task_ids
+            item["alarm_id"] = alarm_id
             out.append(item)
         return out
+
+    def get_run(self, run_id: str) -> Optional[Dict[str, Any]]:
+        row = self.db.fetchone(
+            f"""
+            SELECT * FROM {TABLE_AGENT_WAKEUP_RUNS}
+             WHERE run_id = ?
+            """,
+            (str(run_id),),
+        )
+        if row is None:
+            return None
+        item = dict(row)
+        try:
+            item["detail"] = json.loads(item.pop("detail_json") or "{}")
+        except (TypeError, ValueError):
+            item["detail"] = {}
+        return item
 
     def count_runs(self, *, agent_id: str = "", since: str = "") -> int:
         clauses = []

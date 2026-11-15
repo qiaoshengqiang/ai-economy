@@ -994,6 +994,9 @@ class AIEOSController:
         items = service.recent_runs(key, limit=limit) if service else []
         seen = self._activity_seen.get(key, "")
         unread = service.count_runs(key, since=seen) if service else 0
+        for item in items:
+            started = str(item.get("started_at") or "")
+            item["unread"] = (not seen) or started > seen
         return {
             "agent_id": key,
             "seen_at": seen,
@@ -1001,15 +1004,40 @@ class AIEOSController:
             "activities": items,
         }
 
-    def mark_activities_seen(self, agent_id: str) -> Dict[str, Any]:
+    def activity_detail(self, run_id: str) -> Dict[str, Any]:
+        """单条 Activity 详情：打开时取一次，不参与轮询。"""
+        key = str(run_id or "").strip()
+        service = self.alarm_service
+        run = service.run_detail(key) if (service and key) else None
+        if run is None or str(run.get("agent_id") or "") != self.front_agent:
+            # 不区分「不存在」和「不属于当前 Front」，避免泄露其他 Agent。
+            raise ValueError("活动记录不存在")
+        return {"ok": True, "activity": run}
+
+    def mark_activities_seen(
+        self, agent_id: str, *, run_id: str = "",
+    ) -> Dict[str, Any]:
+        """把未读水位推进到 `run_id` 的 started_at；不传则推进到现在。"""
         key = str(agent_id or "").strip()
         if key not in self._agent_ids:
             raise ValueError(f"未知 Agent：{key!r}")
         seen = _now()
+        target = str(run_id or "").strip()
+        if target:
+            service = self.alarm_service
+            run = service.run_detail(target) if service else None
+            if run is None or str(run.get("agent_id") or "") != key:
+                raise ValueError("活动记录不存在")
+            seen = str(run.get("started_at") or "") or seen
+            current = self._activity_seen.get(key, "")
+            if current and current >= seen:
+                seen = current
         with self._lock:
             self._activity_seen[key] = seen
         self._persist_settings()
-        return {"agent_id": key, "seen_at": seen, "unread": 0}
+        service = self.alarm_service
+        unread = service.count_runs(key, since=seen) if service else 0
+        return {"agent_id": key, "seen_at": seen, "unread": int(unread)}
 
     def apply_system_settings(
         self, action: str, payload: Dict[str, Any],
@@ -4057,6 +4085,10 @@ class AIEOSController:
         if db is None:
             logger.warning("AlarmScheduler 未启动：Runtime 没有数据库")
             return
+        if self.front_agent not in self._activity_seen:
+            # 第一次启用 Activity：历史记录不算「未读」，从这一刻开始计。
+            self._activity_seen[self.front_agent] = _now()
+            self._persist_settings()
         service = AlarmService(
             AlarmStore(db),
             self._alarm_dispatcher,
@@ -4085,6 +4117,38 @@ class AIEOSController:
             "found": True,
             "status": str(getattr(task, "status", "") or ""),
         }
+
+    @staticmethod
+    def _wakeup_calls(turn: Any) -> List[Dict[str, Any]]:
+        """一次唤醒里的每次模型输出 —— 原样保存，不做摘要。"""
+        receipts: Dict[str, str] = {}
+        for item in getattr(turn, "action_history", None) or ():
+            if not isinstance(item, dict):
+                continue
+            raw = str(item.get("raw_output") or "")
+            if raw and raw not in receipts:
+                receipts[raw] = str(item.get("receipt") or "")
+        calls: List[Dict[str, Any]] = []
+        for index, attempt in enumerate(
+                getattr(turn, "attempts", None) or (), 1):
+            if not isinstance(attempt, dict):
+                continue
+            raw = str(attempt.get("raw_output") or "")
+            calls.append({
+                "step": int(attempt.get("step") or index),
+                "raw_output": raw,
+                "decision_error": str(
+                    attempt.get("decision_error") or ""),
+                "action_error": str(attempt.get("action_error") or ""),
+                "decisions": [
+                    str(value)
+                    for value in (attempt.get("decisions") or ())],
+                "actions": [
+                    str(value)
+                    for value in (attempt.get("actions") or ())],
+                "receipt": receipts.get(raw, ""),
+            })
+        return calls
 
     def run_front_wakeup(self, event: WakeupEvent) -> WakeupResult:
         """AlarmService 的 Front handler：同步执行一次 Front wake turn。"""
@@ -4119,7 +4183,8 @@ class AIEOSController:
                 self._fail(job, "Front Agent 没有可用的 Brain")
                 return WakeupResult(
                     outcome="failed", summary="front_unavailable",
-                    job_id=job.job_id)
+                    job_id=job.job_id,
+                    detail={"error": "front_unavailable", "calls": []})
             active, completed = self._task_refs()
             with self._front_lock:
                 started = time.perf_counter()
@@ -4133,17 +4198,20 @@ class AIEOSController:
                     self._fail(job, str(exc))
                     return WakeupResult(
                         outcome="failed", summary=str(exc),
-                        job_id=job.job_id)
+                        job_id=job.job_id,
+                        detail={"error": str(exc), "calls": []})
                 job.front_ms = max(0, int(
                     (time.perf_counter() - started) * 1000))
                 job.front_thinking = self._thinking_for(
                     self.front_agent, "decision")
+            calls = self._wakeup_calls(turn)
             decisions = list(turn.decisions or [])
             if not decisions:
                 self._fail(job, "Front 闹钟唤醒没有给出任何决定")
                 return WakeupResult(
                     outcome="failed", summary="no_decision",
-                    job_id=job.job_id)
+                    job_id=job.job_id,
+                    detail={"error": "no_decision", "calls": calls})
             allowed = {FrontIntent.DIRECT_REPLY, FrontIntent.NO_NOTIFY}
             rejected = [
                 item for item in decisions if item.intent not in allowed]
@@ -4154,7 +4222,11 @@ class AIEOSController:
                 return WakeupResult(
                     outcome="rejected",
                     summary=f"alarm_wakeup_cannot_do: {names}",
-                    job_id=job.job_id)
+                    job_id=job.job_id,
+                    detail={
+                        "error": f"alarm_wakeup_cannot_do: {names}",
+                        "calls": calls,
+                    })
             replied = False
             for item in decisions:
                 if item.intent == FrontIntent.DIRECT_REPLY:
@@ -4174,7 +4246,8 @@ class AIEOSController:
             return WakeupResult(
                 outcome="replied" if replied else "no_notify",
                 summary=job.summary,
-                job_id=job.job_id)
+                job_id=job.job_id,
+                detail={"calls": calls})
         finally:
             prompt_log.clear_job()
             self._notify()

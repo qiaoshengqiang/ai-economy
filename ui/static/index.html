@@ -16,6 +16,18 @@
       <span class="pill front" id="front-badge" title="Front Agent 当前模式">Front: —</span>
       <span class="pill work-auto" id="work-mode-badge" title="Worker 当前模式">Work: —</span>
       <span class="pill" id="running-badge">Running: 0</span>
+      <button class="activity-bell" id="activity-bell" type="button"
+        title="Agent 活动记录" aria-label="Agent 活动记录"
+        aria-expanded="false" aria-controls="activity-drawer">
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"
+            fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round" />
+          <path d="M10 21h4" fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round" />
+        </svg>
+        <span class="activity-badge zero" id="activity-badge">0</span>
+      </button>
       <button class="icon-btn" id="settings-btn" title="设置">⚙ 设置</button>
     </div>
   </header>
@@ -94,6 +106,50 @@
   </main>
 
   <div id="toast" class="toast" hidden></div>
+
+  <!-- Activity：Front 的定时唤醒记录，不是聊天消息 -->
+  <div class="activity-backdrop" id="activity-backdrop"></div>
+  <aside class="activity-drawer" id="activity-drawer" aria-label="Agent 活动记录">
+    <div class="activity-head">
+      <div>
+        <h2>Agent 活动记录</h2>
+        <p>Front 的定时检查与唤醒结果 · 不是聊天消息</p>
+      </div>
+      <div class="activity-head-actions">
+        <button class="activity-close" id="activity-close" type="button" aria-label="关闭">✕</button>
+      </div>
+    </div>
+    <div class="activity-toolbar">
+      <div class="activity-filters">
+        <button class="activity-filter active" type="button" data-filter="all">全部</button>
+        <button class="activity-filter" type="button" data-filter="notified">已通知</button>
+        <button class="activity-filter" type="button" data-filter="silent">未通知</button>
+        <button class="activity-filter" type="button" data-filter="failed">异常</button>
+      </div>
+      <button class="activity-mark" id="activity-mark" type="button">全部已读</button>
+    </div>
+    <div class="activity-list" id="activity-list"></div>
+    <div class="activity-foot">
+      活动记录是系统事实；`未通知` 不会生成聊天消息，但会保留在这里。
+    </div>
+  </aside>
+
+  <div class="detail-backdrop" id="detail-backdrop"></div>
+  <section class="detail-modal" id="detail-modal" role="dialog"
+    aria-modal="true" aria-labelledby="detail-title">
+    <div class="detail-head">
+      <div>
+        <h2 id="detail-title">唤醒详情</h2>
+        <p id="detail-run"></p>
+      </div>
+      <button class="activity-close" id="detail-close" type="button" aria-label="关闭">✕</button>
+    </div>
+    <div class="detail-body" id="detail-body"></div>
+    <div class="detail-foot">
+      这里只显示该次唤醒的模型原始输出，不解析、不美化。它不是聊天消息，
+      也不代表 Task 的领域状态。
+    </div>
+  </section>
 
   <div class="modal-backdrop" id="question-modal" hidden>
     <div class="modal question-modal">
