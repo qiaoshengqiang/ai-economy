@@ -304,6 +304,12 @@ def test_pi_prompts_separate_name_and_agent_id(db, tmp_path):
         task_id="T-PI-IDENTITY", creator="agent_c",
         description="身份提示词。",
         workspace_id="WS-PI-ID", participants=["agent_c"],
+        acceptance={"brief": {
+            "goal": "把格子改成正方形",
+            "human_text": "格子看起来有点变形",
+            "task_text": "把格子改成正方形",
+            "front_notes": "建议保持竖屏；这只是建议。",
+        }},
         mode=TaskMode.SOLO)
     task.claim_producer("agent_c")
     store = TaskStore(db)
@@ -337,6 +343,11 @@ def test_pi_prompts_separate_name_and_agent_id(db, tmp_path):
         assert "你的名字是：小希" in prompt
         assert "你的 Agent ID 是：agent_c" in prompt
         assert "小希（agent_c）" not in prompt
+        assert "Human 对 Front 的原话（不一定是需求）" in prompt
+        assert "Front 给 Worker 的任务说明" in prompt
+        assert "Front 的建议（非硬要求）" in prompt
+        assert "格子看起来有点变形" in prompt
+        assert "保持竖屏" in prompt
 
 
 def test_autonomous_mode_uses_single_minimal_run(db, monkeypatch, tmp_path):

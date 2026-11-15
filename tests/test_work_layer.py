@@ -371,6 +371,25 @@ class TestWorkPrompt:
         assert "你的 Agent ID 是：agent_a" in prompt
         assert "小艾（agent_a）" not in prompt
 
+    def test_work_prompt_labels_human_task_and_front_notes(self):
+        context = WorkContext(
+            task_id="T-1", agent_id="agent_a", role=WorkRole.SOLO,
+            brief={
+                "goal": "把格子改成正方形",
+                "human_text": "格子看起来有点变形",
+                "task_text": "把格子改成正方形",
+                "front_notes": "建议保持竖屏；这只是建议。",
+            })
+        prompt = build_work_prompt(
+            context, task_description="把格子改成正方形", runtime=None)
+
+        assert "Human 对 Front 的原话（不一定是需求）" in prompt
+        assert "Front 给 Worker 的任务说明" in prompt
+        assert "Front 的建议（非硬要求）" in prompt
+        assert "格子看起来有点变形" in prompt
+        assert "把格子改成正方形" in prompt
+        assert "保持竖屏" in prompt
+
     def test_team_prompt_shows_participant_names_with_agent_ids(self):
         context = WorkContext(
             task_id="T-1", agent_id="agent_a", agent_name="小艾",
@@ -1288,5 +1307,5 @@ def test_work_prompt_renders_front_supplied_files():
     prompt = build_work_prompt(
         context, task_description="写 index.html", runtime=None)
 
-    assert '"files"' in prompt
+    assert "Front 提供的文件" in prompt
     assert "FRONT-CODE" in prompt

@@ -2479,6 +2479,10 @@ class AIEOSController:
         criteria = [_task_text_from_brief(decision.brief)]
         acceptance = {
             "criteria": list(criteria),
+            # 🔒 Pi 只看 Task.description；来源分层必须随 Task 持久化。
+            "brief": (
+                decision.brief.to_dict()
+                if getattr(decision, "brief", None) is not None else {}),
             "role": str(getattr(decision, "role", "") or "generalist"),
             "work_profile": str(
                 getattr(decision, "work_profile", "") or "standard"),
@@ -2679,12 +2683,22 @@ class AIEOSController:
         acceptance = getattr(task, "acceptance", None)
         if not isinstance(acceptance, dict):
             acceptance = {}
-        if acceptance.get("role") != role.role_id:
-            acceptance["role"] = role.role_id
-            task.acceptance = acceptance
-            save_task = getattr(self.rt.tasks, "save", None)
-            if callable(save_task):
-                save_task(task)
+        brief = getattr(decision, "brief", None)
+        brief_dict = (
+            brief.to_dict() if brief is not None else {
+                "goal": job.human_text,
+                "human_text": job.human_text,
+                "task_text": job.human_text,
+                "front_notes": "",
+                "reply_style": "",
+            }
+        )
+        acceptance["role"] = role.role_id
+        acceptance["brief"] = dict(brief_dict)
+        task.acceptance = acceptance
+        save_task = getattr(self.rt.tasks, "save", None)
+        if callable(save_task):
+            save_task(task)
         role_prompt = self.worker_roles.render(role)
 
         if self.solo_only and task.mode != TaskMode.SOLO:
@@ -2766,6 +2780,8 @@ class AIEOSController:
             getattr(decision, "rework_scope", "") or "enhance").strip().lower()
         if rework_scope not in ("fix", "enhance", "redesign"):
             rework_scope = "enhance"
+        instruction = str(
+            brief_dict.get("task_text") or job.human_text).strip()
         if action == "rework":
             if self.commit_service is not None:
                 try:
@@ -2773,17 +2789,23 @@ class AIEOSController:
                 except Exception:                             # noqa: BLE001
                     pass
             turn = int(getattr(task, "iteration", 1) or 1) + 1
-            # Reopen 不覆盖旧历史；把本轮要求追加到 Task 描述，
-            # 让 Leader / 成员都能看到 Human 这次改了什么。
+            # Reopen 不覆盖旧历史；Task description 只追加本轮**执行说明**。
+            # Human 原话 / Front 建议在 acceptance["brief"] 中分层保存。
             task.description = (
                 f"{task.description}\n\n返工要求（第 {turn} 轮）：\n"
-                f"{job.human_text}")
-            self.rt.tasks.save(task)
+                f"{instruction}")
+            if callable(save_task):
+                save_task(task)
             self._message(
                 "system", f"原团队开始第 {turn} 轮返工。",
                 job_id=job.job_id, task_id=task.task_id)
-            reason = job.human_text
+            reason = instruction
         else:
+            if instruction:
+                task.description = (
+                    f"{task.description}\n\n续跑要求：\n{instruction}")
+                if callable(save_task):
+                    save_task(task)
             self._message(
                 "system",
                 f"任务 {task.task_id} 之前中断了，从现有状态继续。",
@@ -2793,6 +2815,7 @@ class AIEOSController:
         if task.mode == TaskMode.TEAM:
             runner = TeamWorkRuntime(
                 self.rt, task,
+                brief=brief_dict,
                 max_worker_turns=self.max_worker_turns,
                 max_integration_turns=self.max_integration_turns,
                 cognitive_budget=self.cognitive_budget,
@@ -2823,6 +2846,7 @@ class AIEOSController:
             else:
                 runner = SoloWorkRuntime(
                     self.rt, task,
+                    brief=brief_dict,
                     max_turns=self.max_solo_turns,
                     cognitive_budget=self.cognitive_budget,
                     resume_context=resume_context,

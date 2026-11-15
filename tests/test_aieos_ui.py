@@ -767,6 +767,83 @@ def test_rework_reopens_completed_task_with_new_request(monkeypatch):
     assert job.status == "COMPLETED"
 
 
+def test_rework_uses_front_instruction_and_preserves_provenance(monkeypatch):
+    import work.controller as controller_module
+    from front import FrontBrief, FrontDecision, FrontIntent, FrontResult
+    from work.controller import WorkJob
+
+    seen = {}
+
+    class _Front:
+        def decide(self, _text, active_tasks=(), completed_tasks=(),
+                   conversation=(), **kwargs):
+            return FrontDecision(
+                intent=FrontIntent.REWORK,
+                task_id="task_done",
+                brief=FrontBrief(
+                    goal="把格子改成正方形",
+                    human_text="格子看起来有点变形",
+                    task_text="把格子改成正方形",
+                    front_notes="建议保持竖屏；这只是建议。",
+                ),
+                reply="收到，我让原团队改。",
+            )
+
+        def result_from_work(self, _result):
+            return FrontResult(
+                task_id="task_done", status="COMPLETED", summary="已改")
+
+        def format_result(self, result):
+            return result.to_human_text()
+
+    task = SimpleNamespace(
+        task_id="task_done", status="COMPLETED", mode="TEAM",
+        creator="agent_b", contractor="agent_b",
+        participants=["agent_b", "agent_c"], is_open=False,
+        description="做一个静态网页", iteration=1, acceptance={},
+    )
+    runtime = SimpleNamespace(
+        directory=_Directory(["agent_a", "agent_b", "agent_c"]),
+        economy=SimpleNamespace(agent=lambda aid: SimpleNamespace(
+            has_brain=True)),
+        tasks=SimpleNamespace(
+            list_tasks=lambda limit=50: [],
+            get=lambda tid: task,
+            save=lambda _task: None,
+        ),
+    )
+
+    class _Team:
+        def __init__(self, _rt, task_, **kwargs):
+            self.task = task_
+            seen["brief"] = kwargs.get("brief")
+
+        def reopen_and_run(self, *, reason=""):
+            seen["reason"] = reason
+            return SimpleNamespace(ok=True, tokens=5, turns=2)
+
+    controller = AIEOSController(
+        runtime, front_agent="agent_a", solo_only=False)
+    monkeypatch.setattr(
+        controller, "_front_runtime", lambda *_args, **_kwargs: _Front())
+    monkeypatch.setattr(controller_module, "TeamWorkRuntime", _Team)
+
+    job = WorkJob(
+        job_id="job_rework", human_text="格子看起来有点变形")
+    try:
+        controller._run_job(job)
+    finally:
+        controller.close()
+
+    assert seen["reason"] == "把格子改成正方形"
+    assert "返工要求（第 2 轮）" in task.description
+    assert "把格子改成正方形" in task.description
+    assert task.acceptance["brief"]["human_text"] == "格子看起来有点变形"
+    assert task.acceptance["brief"]["front_notes"] == "建议保持竖屏；这只是建议。"
+    assert seen["brief"]["task_text"] == "把格子改成正方形"
+    assert job.status == "COMPLETED"
+
+
 def test_controller_passes_recent_conversation_to_front(monkeypatch):
     from front import FrontDecision, FrontIntent
     from work.controller import WorkJob
@@ -1723,7 +1800,7 @@ def test_front_parse_failure_falls_back_to_clarify_and_records_attempts(
 
 
 def test_follow_up_sends_front_reply(monkeypatch):
-    from front import FrontDecision, FrontIntent
+    from front import FrontBrief, FrontDecision, FrontIntent
     from work.controller import WorkJob
     import work.controller as controller_module
 
@@ -1764,6 +1841,12 @@ def test_follow_up_sends_front_reply(monkeypatch):
     decision = FrontDecision(
         intent=FrontIntent.FOLLOW_UP,
         task_id="task_follow",
+        brief=FrontBrief(
+            goal="继续修竖屏",
+            human_text="继续",
+            task_text="继续修竖屏",
+            front_notes="先看 ui.js 的格子比例。",
+        ),
         reply="我继续把它做完。",
     )
     try:
@@ -1776,6 +1859,10 @@ def test_follow_up_sends_front_reply(monkeypatch):
         item["role"] == "front"
         and item["text"] == "我继续把它做完。"
         for item in messages)
+    assert "续跑要求：" in task.description
+    assert "继续修竖屏" in task.description
+    assert task.acceptance["brief"]["human_text"] == "继续"
+    assert task.acceptance["brief"]["front_notes"] == "先看 ui.js 的格子比例。"
 
 
 def test_front_artifact_read_uses_task_workspace(monkeypatch):
@@ -1961,7 +2048,7 @@ def test_pi_task_creation_skips_shared_context(db):
     assert alignment_calls == []
 
 
-def test_task_detail_does_not_persist_structured_brief(db):
+def test_task_detail_keeps_brief_out_of_public_facts(db):
     from core.task_store import TaskStore
     from front import FrontBrief, FrontDecision, FrontIntent
 
@@ -1996,7 +2083,9 @@ def test_task_detail_does_not_persist_structured_brief(db):
     finally:
         controller.close()
 
-    assert "brief" not in task.acceptance
+    # Brief 作为**来源分层**持久化在 Task.acceptance 中；
+    # 它不属于 task_detail 对外的公共事实。
+    assert task.acceptance["brief"]["task_text"] == "写 hello.txt"
     assert task.acceptance["criteria"] == ["写 hello.txt"]
     assert "brief" not in detail
     assert "criteria" not in detail["task"]

@@ -102,6 +102,58 @@ def test_handoff_task_text_can_override_brief_goal():
     assert decision.brief.human_text == "随便写个程序吧"
 
 
+def test_handoff_parses_front_notes():
+    runtime = FrontAgentRuntime(
+        "front", _think_returning({
+            "intent": "handoff",
+            "task_text": "把格子改成正方形",
+            "front_notes": "建议同时保持竖屏，但这不是硬要求。",
+            "reply": "好",
+        }))
+    decision = runtime.decide("格子看起来有点变形")
+
+    assert decision.brief.task_text == "把格子改成正方形"
+    assert decision.brief.human_text == "格子看起来有点变形"
+    assert "保持竖屏" in decision.brief.front_notes
+
+
+def test_rework_parses_task_text_and_front_notes():
+    runtime = FrontAgentRuntime(
+        "front", _think_returning({
+            "intent": "rework",
+            "task_id": "task_1",
+            "task_text": "把格子改成正方形",
+            "front_notes": "建议去掉横向压扁；这只是建议。",
+            "reply": "好",
+        }))
+    decision = runtime.decide(
+        "格子看起来有点变形",
+        completed_tasks=[{"task_id": "task_1", "status": "COMPLETED"}])
+
+    assert decision.brief.task_text == "把格子改成正方形"
+    assert decision.brief.human_text == "格子看起来有点变形"
+    assert "去掉横向压扁" in decision.brief.front_notes
+    assert decision.to_dict()["task_text"] == "把格子改成正方形"
+    assert "去掉横向压扁" in decision.to_dict()["front_notes"]
+
+
+def test_follow_up_parses_task_text_and_front_notes():
+    runtime = FrontAgentRuntime(
+        "front", _think_returning({
+            "intent": "follow_up",
+            "task_id": "task_2",
+            "task_text": "继续修竖屏",
+            "front_notes": "先看 ui.js 的格子比例。",
+            "reply": "好",
+        }))
+    decision = runtime.decide(
+        "继续", active_tasks=[{"task_id": "task_2"}])
+
+    assert decision.brief.task_text == "继续修竖屏"
+    assert decision.brief.human_text == "继续"
+    assert "格子比例" in decision.brief.front_notes
+
+
 def test_rework_requires_completed_task():
     runtime = FrontAgentRuntime(
         "front", _think_returning(
@@ -288,9 +340,9 @@ def test_front_prompt_is_human_facing_and_does_not_invent_constraints():
     assert "不返回" in prompt
     assert "private_read" in prompt
     assert "brief.files" in prompt
-    assert "task_text 是 Work Agent 唯一看到的内容" in prompt
-    assert "brief 只携带你准备好的文件" in prompt
-    assert "回复只描述 Worker 实际收到的 task_text" in prompt
+    assert "task_text：你给 Worker 的任务说明" in prompt
+    assert "brief.files 携带你准备好的文件" in prompt
+    assert "reply：只给人类看的回复" in prompt
     assert "preferred_agent 是路由元数据" in prompt
     assert "最近对话" in prompt
     assert "没有创建 Task 的动作" in prompt
@@ -328,7 +380,7 @@ def test_front_prompt_includes_project_context_and_task_rules():
     assert "同一项目目录可以先后承载多个 Task" in prompt
     assert "也可以继续已有 Task" in prompt
     assert "inspect 可以读取 Task 的 workspace_path" in prompt
-    assert "Worker 只看到 task_text" in prompt
+    assert "Worker 会看到 human_text / task_text / front_notes" in prompt
     assert "改项目目录里的文件时用 handoff 创建新任务" not in prompt
     assert "project_list" in prompt
     assert "project_read" in prompt
@@ -405,9 +457,14 @@ def test_result_from_work_result_dict():
 
 
 def test_brief_round_trip():
-    brief = FrontBrief(goal="g", deliverables=["a"])
+    brief = FrontBrief(
+        goal="g", human_text="原话", task_text="任务",
+        front_notes="建议", deliverables=["a"])
     restored = FrontBrief.from_dict(brief.to_dict())
     assert restored.goal == "g"
+    assert restored.human_text == "原话"
+    assert restored.task_text == "任务"
+    assert restored.front_notes == "建议"
     assert restored.deliverables == ["a"]
     assert restored.brief_id == brief.brief_id
 
@@ -547,7 +604,7 @@ def test_prompt_separates_task_text_from_routing_metadata():
     ])
 
     prompt = think.prompt
-    assert "task_text 是 Work Agent 唯一看到的内容" in prompt
+    assert "task_text：你给 Worker 的任务说明" in prompt
     assert "preferred_agent 是路由元数据" in prompt
     assert "use it verbatim" not in prompt
 
@@ -558,7 +615,7 @@ def test_prompt_says_assignee_is_routing_not_task_text():
     runtime.decide("让 agent_e 写一个笑话")
 
     prompt = think.prompt
-    assert "task_text 是 Work Agent 唯一看到的内容" in prompt
+    assert "task_text：你给 Worker 的任务说明" in prompt
     assert "preferred_agent 是路由元数据" in prompt
     assert "路由事实：" in prompt
     assert "keep the original text" not in prompt
@@ -906,7 +963,7 @@ def test_front_relay_mode_prompt_keeps_only_user_content():
     prompt = prompts[0]
     assert "Front 模式：只传达" in prompt
     assert "task_text 与用户提出的任务内容一致" in prompt
-    assert "brief 只携带 files" in prompt
+    assert "front_notes 是你的建议" in prompt
     assert "set_mode" in prompt
     assert "commit_confirm" in prompt
 

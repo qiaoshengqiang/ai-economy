@@ -2,10 +2,15 @@
 Front 层数据契约
 =================
 
-Brief 承载 Human 原文 + Front 选择的 `task_text`（原文或忠实重述）
-+ goal（日志短标签）+ files + reply_style。
-🔒 `task_text` 是 Work Agent 唯一看到的内容；结构化需求字段不再由
-   Front handoff 产生，也不传给 Worker。
+Brief 承载来源分层的 Work 指令：
+
+    human_text   Human 对 Front 的原话（不一定是需求）
+    task_text    Front 给 Worker 的任务说明（Worker 执行的内容）
+    front_notes  Front 自己的判断 / 建议（非硬要求）
+    files        Front 准备好的文件
+    reply_style  Front 要求的回复格式
+
+🔒 `reply` 只给人类看，不是 Worker 指令。
 Result 是 Work 回到 Front 的**可读结果**，不是 Task 状态。
 """
 
@@ -54,10 +59,11 @@ class FrontIntent:
 @dataclass
 class FrontBrief:
     """
-    Front → Team Lead 的工作 Brief。
+    Front → Worker 的工作 Brief。
 
-    🔒 `human_text` 永远是 Human 原文；`task_text` 是 Front 选择交给
-       Work 的版本（可以是原文或忠实重述），也是 Worker 唯一看到的内容。
+    🔒 `human_text` 永远是 Human 对 Front 的原话，**不一定本身是需求**；
+       `task_text` 是 Front 给 Worker 的任务说明（Worker 执行的内容）；
+       `front_notes` 是 Front 自己的判断 / 建议，**不是硬要求**。
     """
 
     goal: str
@@ -67,6 +73,9 @@ class FrontBrief:
     #: 判断后做的忠实重述；必须保持原意。所有需求 / 约束 / 验收都应
     #: 直接写在这里。
     task_text: str = ""
+    #: Front 自己的判断 / 建议 / 取舍说明；Worker 可以看到，但它不是
+    #: Human 要求，也不是必须执行的 DoD。
+    front_notes: str = ""
     #: 旧版结构化字段：只保留给 CLI / 旧 job log 兼容。
     #: Front handoff 不再解析它们，Controller 也不传给 Worker。
     deliverables: List[str] = field(default_factory=list)
@@ -95,6 +104,7 @@ class FrontBrief:
         self.human_text = str(self.human_text or "").strip()
         self.task_text = str(
             self.task_text or self.goal or self.human_text).strip()
+        self.front_notes = str(self.front_notes or "").strip()
         self.brief_id = str(self.brief_id or f"brief_{uuid.uuid4().hex[:12]}")
         self.created_at = str(self.created_at or utc_now_iso())
         self.deliverables = _strings(self.deliverables)
@@ -111,6 +121,7 @@ class FrontBrief:
             "goal": self.goal,
             "human_text": self.human_text,
             "task_text": self.task_text,
+            "front_notes": self.front_notes,
             "deliverables": list(self.deliverables),
             "constraints": list(self.constraints),
             "acceptance_expectations": list(self.acceptance_expectations),
@@ -130,6 +141,7 @@ class FrontBrief:
             brief_id=str(data.get("brief_id") or ""),
             human_text=str(data.get("human_text") or ""),
             task_text=str(data.get("task_text") or ""),
+            front_notes=str(data.get("front_notes") or ""),
             deliverables=data.get("deliverables") or [],
             constraints=data.get("constraints") or [],
             acceptance_expectations=(
@@ -151,7 +163,7 @@ class FrontDecision:
     intent: str
     #: direct_reply
     reply: str = ""
-    #: handoff
+    #: handoff / rework / follow_up：Worker 执行说明与来源分层。
     brief: Optional[FrontBrief] = None
     #: rework / follow_up
     task_id: str = ""
@@ -205,6 +217,7 @@ class FrontDecision:
             "brief": self.brief.to_dict() if self.brief else None,
             # 顶层也放一份，方便 job log / UI 直接读，不必解 brief。
             "task_text": self.brief.task_text if self.brief else "",
+            "front_notes": self.brief.front_notes if self.brief else "",
             "task_id": self.task_id,
             "question": self.question,
             "reply_style": self.reply_style,

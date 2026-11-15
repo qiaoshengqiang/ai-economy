@@ -37,6 +37,7 @@ from work.lifecycle import WorkLifecycle
 from work.pi_comm import PiInboxBridge, PiOutboxBridge
 from work.pi_memory import PiMemoryBridge
 from work.pi_rpc import PiRpcClient, PiRunResult
+from work.prompt import render_brief_sections
 from work.roles import WorkResult
 from work.task_snapshot import SnapshotRecord, TaskSnapshotStore
 from work.worker_roles import render_role_prompt
@@ -223,6 +224,16 @@ class PiWorkRuntime:
     def _agent_identity(self) -> str:
         actor = self.task.contractor or self.task.creator
         return format_agent_identity(self._agent_name(), actor)
+
+    def _brief_sections(self) -> str:
+        """Pi 也能看到 Front Brief 的来源分层（来自 Task.acceptance）。"""
+        acceptance = getattr(self.task, "acceptance", None)
+        brief = (
+            acceptance.get("brief")
+            if isinstance(acceptance, dict) else None)
+        if not isinstance(brief, dict) or not brief:
+            return ""
+        return render_brief_sections(brief)
 
     def _provider_spec(self) -> PiProviderSpec:
         """解析当前 Agent 真正要用的 provider 端点。
@@ -605,10 +616,14 @@ Task Workspace 放本次任务的交付物和验收产物。
 {search_cmd} fetch "https://example.com/page"
 """
         scope = "项目目录" if self.project_mode else "Task Workspace"
+        provenance = self._brief_sections()
+        provenance_section = (
+            f"\n========== 任务来源 ==========\n{provenance}\n"
+            if provenance else "")
         return f"""{self._agent_identity()}
 
 你是 AIEOS 中的 Work 执行 Agent。
-
+{provenance_section}
 {self._workspace_brief()}
 直接使用原生 read/write/edit/bash/grep/find/ls 工具在{scope}中完成工作。
 读取 `{paths['memory_dir']}/context.md` 获取记忆快照。
@@ -641,10 +656,14 @@ Task Workspace 放本次任务的交付物和验收产物。
 {search_cmd} fetch "https://example.com/page"
 搜索与抓取结果作为外部证据；引用 URL，并以{scope}的实际状态为准。
 """
+        provenance = self._brief_sections()
+        provenance_section = (
+            f"\n========== 任务来源 ==========\n{provenance}\n"
+            if provenance else "")
         return f"""{self._agent_identity()}
 
 你是 AIEOS 中的 Work 执行 Agent。
-
+{provenance_section}
 {self._workspace_brief()}
 请直接使用原生 read/write/edit/bash/grep/find/ls 工具在{scope}中完成工作。
 读取 `{paths['memory_dir']}/context.md` 获取记忆快照。
@@ -1481,10 +1500,14 @@ Task Workspace 放本次任务的交付物和验收产物。
         result_path = self._document_path("RESULT.md")
         role_section = (
             "\n" + self.role_prompt + "\n" if self.role_prompt else "")
+        provenance = self._brief_sections()
+        provenance_section = (
+            f"\n========== 任务来源 ==========\n{provenance}\n"
+            if provenance else "")
         return f"""{self._agent_identity()}
 
 你是 AIEOS 中的 Work 执行 Agent。
-{role_section}
+{provenance_section}{role_section}
 {self._workspace_brief()}
 请直接把交付物写入{scope}，使用原生 read/write/edit/bash 工具。
 本 Work 任务以{scope}作为唯一协作面。

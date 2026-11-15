@@ -398,7 +398,8 @@ class FrontAgentRuntime:
 - task_text 保留用户的核心任务要求和用户明确提出的任务细节。
 - 对话性、路由性和解释性文字留在对话里；task_text 只承载任务内容。
 - 功能、技术栈、文件、验收标准、约束、实现建议和视觉细节以用户提出的内容为准。
-- task_text 是 Work Agent 唯一看到的内容；brief 只携带 files。
+- human_text 是 Human 对 Front 的原话，不一定是需求；Worker 会看到它。
+- front_notes 是你的建议 / 取舍，不是硬要求；只传达模式建议留空。
 - role / work_profile / preferred_agent 属于路由元数据，留在对应字段里。
 """
         project_actions = (
@@ -467,8 +468,9 @@ class FrontAgentRuntime:
   inspect 可以读取 Task 的 workspace_path / workspace_mode。
 - rework / follow_up 会改变已有 Task；inspect 可以读取 task_id、状态、
   描述和 workspace_path，用来核对用户所指的任务。
-- Worker 只看到 task_text；task_text 写清目标对象、目录和期望结果，
-  Worker 才能独立执行。
+- Worker 会看到 human_text / task_text / front_notes 三部分：
+  task_text 是你的执行说明，front_notes 是建议（非硬要求）。
+  task_text 写清目标对象、目录和期望结果，Worker 才能独立执行。
 
 ========== 检查结果（只读） ==========
 {_render_inspection(inspection)}
@@ -543,13 +545,17 @@ Role 是弱信号；work_profile 依据任务本身判断。
    {{"intent":"direct_reply","reply":"...","reason":"..."}}
 
 2. handoff —— 新的工作请求。
-   🔒 task_text 是 Work Agent 唯一看到的内容；human_text 保留原文。
+   字段来源：
+   - human_text：Human 对 Front 的原话，不一定是需求；可能是补充、纠正、上下文或闲聊。
+   - task_text：你给 Worker 的任务说明，是 Worker 执行的内容。
+   - front_notes：你的判断 / 建议 / 取舍，Worker 能看到，但不是硬要求。
+   - reply：只给人类看的回复；不要假设它已经传达给 Worker。
    Worker 依据 task_text 执行；需求、约束、验收标准、交付物写进 task_text。
    preferred_agent 是路由元数据；空 / 省略 = 系统选择一个空闲 worker。
-   brief 只携带你准备好的文件：brief.files。
-   回复只描述 Worker 实际收到的 task_text。
+   brief.files 携带你准备好的文件。
    {{"intent":"handoff",
      "task_text":"...",
+     "front_notes":"...",
      "role":"worker 角色 id 之一",
      "work_profile":"direct|standard|creative_product",
      "preferred_agent":"optional agent_id",
@@ -559,13 +565,19 @@ Role 是弱信号；work_profile 依据任务本身判断。
 
 3. rework —— 修改一个已完成的 Task。
    rework_scope：fix / enhance / redesign。
+   可以给 task_text / front_notes：task_text 是本轮返工说明，
+   front_notes 是你的建议（非硬要求）；不填时系统用 Human 原话作为返工说明。
    inspect 可以读取 task_id、状态、描述和 workspace_path，用来核对任务。
    {{"intent":"rework","task_id":"...","rework_scope":"enhance",
+     "task_text":"...","front_notes":"...",
      "reply":"...","reason":"..."}}
 
 4. follow_up —— 继续一个进行中 / 已中断的 Task。
+   可以给 task_text / front_notes；不填时系统用 Human 原话作为续跑说明。
    目标不唯一时，clarify 可以向用户确认。
-   {{"intent":"follow_up","task_id":"...","reply":"...","reason":"..."}}
+   {{"intent":"follow_up","task_id":"...",
+     "task_text":"...","front_notes":"...",
+     "reply":"...","reason":"..."}}
 
 5. cancel —— 停止一个进行中的 Task。
    {{"intent":"cancel","task_id":"...","reply":"...","reason":"..."}}

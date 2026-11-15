@@ -40,8 +40,8 @@ FRONT_ACTION_NAMES = frozenset({
 #: 自然形状 decision 允许出现的键。用来避免把文件内容里的
 #: `{"question": ...}` / `{"reply": ...}` 误认成 Front 决定。
 _NATURAL_DECISION_KEYS = frozenset({
-    "goal", "brief", "task_text", "question", "reply", "reason",
-    "confidence", "deliverables", "constraints",
+    "goal", "brief", "task_text", "front_notes", "question", "reply",
+    "reason", "confidence", "deliverables", "constraints",
     "acceptance_expectations", "ambiguities", "non_goals",
     "context_refs", "files", "role", "work_profile", "preferred_agent",
     "reply_style", "front_mode", "work_mode", "task_id",
@@ -93,16 +93,19 @@ def _brief_from(payload: Dict[str, Any], human_text: str) -> Optional[FrontBrief
     if not isinstance(raw, dict):
         return None
     task_text = str(payload.get("task_text") or "").strip()
-    # 🔒 `task_text` 是 Work Agent 唯一看到的内容。`goal` 只是日志里的
-    # 短标签，有 task_text 时不再允许它单独分叉。
+    # 🔒 `task_text` 是 Worker 执行的任务说明。`goal` 只是日志里的短标签。
     goal = task_text or str(raw.get("goal") or "").strip()
     if not goal:
         return None
+    front_notes = str(
+        payload.get("front_notes")
+        or raw.get("front_notes") or "").strip()
     try:
         return FrontBrief(
             goal=goal,
             human_text=human_text,
             task_text=task_text or goal,
+            front_notes=front_notes,
             # 结构化 brief 字段不再从 Front 输出解析：它们不会传给 Worker，
             # 继续接收只会让 Front 误以为自己已经交付了这些要求。
             files=raw.get("files") or [],
@@ -227,8 +230,9 @@ def parse_front_decision(
 
         if raw_intent == FrontIntent.HANDOFF:
             # Front 自己决定：逐字转交原文，或给一个忠实的重述。
-            # 两种都允许；`task_text` 就是 Work Agent 看到的任务文本。
+            # 两种都允许；`task_text` 就是 Worker 执行的任务说明。
             reply_style = str(payload.get("reply_style") or "").strip()
+            front_notes = str(payload.get("front_notes") or "").strip()
             brief = _brief_from(payload, human_text)
             task_text = str(payload.get("task_text") or "").strip()
             if not task_text and brief is not None:
@@ -242,11 +246,13 @@ def parse_front_decision(
                     goal=task_text,
                     human_text=human_text,
                     task_text=task_text,
+                    front_notes=front_notes,
                     reply_style=reply_style,
                 )
             else:
                 brief.human_text = str(human_text or brief.human_text)
                 brief.task_text = task_text
+                brief.front_notes = front_notes or brief.front_notes
                 brief.reply_style = reply_style or brief.reply_style
             return FrontDecision(
                 intent=raw_intent, brief=brief,
@@ -264,8 +270,14 @@ def parse_front_decision(
             task_id = str(payload.get("task_id") or "").strip()
             if task_id not in completed:
                 return None, "rework_task_not_completed"
+            brief = _brief_from(payload, human_text)
+            if brief is not None:
+                brief.reply_style = str(
+                    payload.get("reply_style") or "").strip()
+                brief.front_notes = str(
+                    payload.get("front_notes") or "").strip()
             return FrontDecision(
-                intent=raw_intent, task_id=task_id,
+                intent=raw_intent, task_id=task_id, brief=brief,
                 reply=str(payload.get("reply") or "").strip(),
                 rework_scope=str(
                     payload.get("rework_scope") or "enhance").strip(),
@@ -276,8 +288,14 @@ def parse_front_decision(
             task_id = str(payload.get("task_id") or "").strip()
             if task_id not in active:
                 return None, "follow_up_task_not_active"
+            brief = _brief_from(payload, human_text)
+            if brief is not None:
+                brief.reply_style = str(
+                    payload.get("reply_style") or "").strip()
+                brief.front_notes = str(
+                    payload.get("front_notes") or "").strip()
             return FrontDecision(
-                intent=raw_intent, task_id=task_id,
+                intent=raw_intent, task_id=task_id, brief=brief,
                 reply=str(payload.get("reply") or "").strip(),
                 confidence=confidence,
                 reason=str(payload.get("reason") or "")), ""

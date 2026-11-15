@@ -31,7 +31,7 @@ Work 层最小 prompt
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Mapping, Optional
 
 from work.capabilities import describe_action_params, describe_actions
 from work.roles import WorkContext, WorkRole
@@ -105,10 +105,39 @@ def _render_workspace(runtime: Any, workspace_id: str,
     return "\n".join(lines) if lines else "（Workspace 为空）"
 
 
-def _render_brief(brief: Optional[Dict[str, Any]]) -> str:
+def render_brief_sections(brief: Optional[Mapping[str, Any]]) -> str:
+    """把 Front Brief 渲染成**来源明确**的事实块。
+
+    🔒 不把整个 JSON 直接丢给 Worker：Worker 需要知道哪些是 Human 原话、
+       哪些是 Front 的任务说明、哪些只是 Front 的建议。
+    """
     if not brief:
         return "（没有额外 Brief；使用任务描述）"
-    return json.dumps(brief, ensure_ascii=False, indent=2)
+    parts: List[str] = []
+    human = str(brief.get("human_text") or "").strip()
+    task = str(brief.get("task_text") or "").strip()
+    notes = str(brief.get("front_notes") or "").strip()
+    if human:
+        parts.append(
+            "Human 对 Front 的原话（不一定是需求）：\n" + human)
+    if task:
+        parts.append("Front 给 Worker 的任务说明：\n" + task)
+    if notes:
+        parts.append("Front 的建议（非硬要求）：\n" + notes)
+    files = brief.get("files") or []
+    if files:
+        parts.append(
+            "Front 提供的文件：\n"
+            + json.dumps(files, ensure_ascii=False, indent=2))
+    if not parts:
+        goal = str(brief.get("goal") or "").strip()
+        if goal:
+            parts.append("Front 给 Worker 的任务说明：\n" + goal)
+    return "\n\n".join(parts) or "（Brief 为空）"
+
+
+def _render_brief(brief: Optional[Dict[str, Any]]) -> str:
+    return render_brief_sections(brief)
 
 
 def _render_public_memory(context: WorkContext) -> str:

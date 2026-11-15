@@ -4,7 +4,7 @@
 > **日期：2026-11-15**
 > **阶段：开发中 / 观察实验**
 > **协议版本：`1`**
-> **测试基线：`5741 passed, 2 skipped, 30 deselected`**
+> **测试基线：`5746 passed, 2 skipped, 30 deselected`**
 
 本文记录**当前真实可用能力、推荐工作方式、已知限制和版本变化**。
 架构的长期权威仍然是
@@ -43,6 +43,10 @@
 - Agent 显示名进入 prompt：自我介绍拆成「名字」和「Agent ID」两条事实；
   Front / 收件箱 / Team 列表显示对方名字，动作与路由字段仍只认 Agent ID；
   `agent_a..e` 旧 `system_prompt` 中的 `Agent A/B/...` 已改为中文显示名。
+- Front → Worker 转达分层：handoff / rework / follow_up 都保留
+  `human_text`（Human 原话，不一定是需求）· `task_text`（Front 给 Worker
+  的任务说明）· `front_notes`（Front 的建议，非硬要求）；Worker prompt
+  按来源分段显示，不再把三者混成一段。
 
 ---
 
@@ -520,7 +524,7 @@ Team 协作
 当前基线：
 
 ```text
-5741 passed, 2 skipped, 30 deselected
+5746 passed, 2 skipped, 30 deselected
 ```
 
 启动说明见 [`../START_AIEOS.md`](../START_AIEOS.md)。
