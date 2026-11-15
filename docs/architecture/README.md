@@ -38,6 +38,7 @@
 | [RECOVERY_MODEL.md](RECOVERY_MODEL.md) | 中 | **异常检测 ≠ 治理决策 · Human Confirmation · 未来 AI Governance**（`FUTURE`） | 做 Agent 异常 / Recovery / 治理时 |
 | [COMMUNICATION_MODEL.md](COMMUNICATION_MODEL.md) | 中 | **Communication 是 Agent 基础能力（不绑 Task）· Workspace Event ≠ Agent Message · Runtime Inbox** | 做通信 / Conversation / Inbox 时 |
 | [implementation/AGENT_INBOX_V1_DESIGN.md](implementation/AGENT_INBOX_V1_DESIGN.md) | 中 | **Agent Inbox V1 —— Runtime 持有、持久化、checkpoint 消费**（Phase 0–4 `CURRENT`；Phase 5 V1 `CURRENT`，其余 `DESIGNED`） | 做收件箱 / Agent Runtime / Life 层通信时 |
+| [implementation/AGENT_WAKEUP_V1_DESIGN.md](implementation/AGENT_WAKEUP_V1_DESIGN.md) | 中 | **Agent Wakeup V1 —— 定时唤醒 / 闹钟 / Activity Record**（`DESIGNED`；V1 先接 Front，核心通用） | 做定时唤醒 / Life Loop / Agent 自我调度时 |
 | [UI_COMMUNICATION_INTEGRATION.md](UI_COMMUNICATION_INTEGRATION.md) | 中 | **UI 通信接入 · Human↔Front · Front↔Worker · Task 生命周期 · Pi inbox/outbox**（Phase 1–4 `CURRENT`） | 做 UI / Front / Worker / Task 通信时 |
 | [TOOL_RUNTIME_V1_DESIGN.md](TOOL_RUNTIME_V1_DESIGN.md) | 中 | **受控代码执行 / 测试 · 公共只读工具库 · 独立 run 目录**（`CURRENT`） | 做代码执行 / 测试 / 工具时 |
 | [OUTPUT_COMMIT.md](OUTPUT_COMMIT.md) | 中 | **任务完成后提交到独立输出仓库 · manual / limited / auto**（`CURRENT`） | 做提交 / 交付 / 输出仓库时 |
