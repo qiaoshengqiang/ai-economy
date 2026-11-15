@@ -397,6 +397,11 @@ def test_autonomous_mode_uses_single_minimal_run(db, monkeypatch, tmp_path):
     assert "草稿" in system
     assert "中间产物" in system
     assert "tools/" in system
+    # 结束方式：告诉它写到哪里、最后输出什么，不规定“何时算完成”
+    assert "========== 结束方式 ==========" in system
+    assert str(directory.workspace / "RESULT.md") in system
+    assert "TASK_COMPLETE" in system
+    assert "系统会优先读取这个文件作为任务总结" in system
     assert "不要" not in system
     assert "禁止" not in system
     assert "不允许" not in system

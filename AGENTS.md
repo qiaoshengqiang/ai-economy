@@ -30,7 +30,7 @@
 | | |
 |---|---|
 | **阶段** | **`v0.2.0`** · Workspace Core V1 已冻结 · Agent Core V1 · Tool Runtime V1 · Vision V1 · Demand Entry V1 · Pi Work（workflow / autonomous）· Output Commit V1 · Project Workdir V1 · 观察实验 |
-| **测试基线** | 以 `./dev.sh test` 当前输出为准（最近：**5739 passed, 2 skipped, 30 deselected**） |
+| **测试基线** | 以 `./dev.sh test` 当前输出为准（最近：**5741 passed, 2 skipped, 30 deselected**） |
 | **协议版本** | `protocol_version = "1"` |
 | **命令数** | 25（`./dev.sh` 查看全部） |
 | **数据库表** | **30** |
@@ -395,7 +395,6 @@ AGENTS.md → 判断任务领域 → 只读相关 Specification → 必要时读
 | **Negotiation / DecisionPolicy** | §6.1 · `core/decision_policy.py` · `task_negotiation_service.py` | Workspace 相关 |
 | **Execution（START/SUBMIT/…）** | `task_execution_service.py` · `core/task_execution.py` · `core/task.py` | Alignment 设计 |
 | **Communication / 协议 / UI 消息 / Inbox** | [`PROTOCOL.md`](PROTOCOL.md) · `communication/` · [`UI_COMMUNICATION_INTEGRATION.md`](docs/architecture/UI_COMMUNICATION_INTEGRATION.md) · [`AGENT_INBOX_V1_DESIGN.md`](docs/architecture/implementation/AGENT_INBOX_V1_DESIGN.md) · ADR-0002 · ADR-0003 | Economy |
-| **Wakeup / Alarm / 定时唤醒** | [`AGENT_WAKEUP_V1_DESIGN.md`](docs/architecture/implementation/AGENT_WAKEUP_V1_DESIGN.md) + [`COMMUNICATION_MODEL.md`](docs/architecture/COMMUNICATION_MODEL.md) §5 —— **Alarm ≠ Message** · **Wakeup ≠ LLM Call** · V1 先接 Front | 与 Task 执行解耦 |
 | **Workspace / Lifecycle / Human** | [`TASK_WORKSPACE.md`](docs/architecture/TASK_WORKSPACE.md) + ADR-0020/0021/0022（§4.1 · §7 · §14.5 · §15） | TASK_SHARED_CONTEXT.md |
 | **Task Origin / Task Lineage** | [`TASK_ORIGIN_LINEAGE.md`](docs/architecture/TASK_ORIGIN_LINEAGE.md) + **ADR-0023** —— 概念已定（`SETTLED`），**实现为 `FUTURE`** | — |
 | **代码执行 / 测试工具** | [`TOOL_RUNTIME_V1_DESIGN.md`](docs/architecture/TOOL_RUNTIME_V1_DESIGN.md) + **ADR-0040** · `tool_runtime/` · `resources/public/tools/` | 与 Task Execution 无关 |
@@ -434,7 +433,6 @@ AGENTS.md → 判断任务领域 → 只读相关 Specification → 必要时读
 | **Resource / Lock / Handoff** | [`RESOURCE_LAYER.md`](docs/architecture/RESOURCE_LAYER.md) + [`LOCK_MODEL.md`](docs/architecture/LOCK_MODEL.md) —— 第一版核心 = **`Controller + Lock + Handoff + Audit`**（Authorization / Delegation 降级，Cascade Revocation **移除**，ADR-0027） | **`FUTURE`** |
 | **Recovery / Governance** | [`RECOVERY_MODEL.md`](docs/architecture/RECOVERY_MODEL.md) —— **异常检测 ≠ 治理决策**；当前 Human Confirmation，未来 AI Governance | **`FUTURE`** |
 | **Read / Communication** | [`COMMUNICATION_MODEL.md`](docs/architecture/COMMUNICATION_MODEL.md) —— Read 靠 **Task Participation**（无 READ ACL）· Communication 是 **Agent 基础能力**（不绑 Task）· **Workspace Event ≠ Agent Message** · Runtime Inbox（ADR-0028） | 基础 Message `CURRENT` · 其余 `FUTURE` |
-| **Wakeup / Alarm / 定时唤醒** | [`AGENT_WAKEUP_V1_DESIGN.md`](docs/architecture/implementation/AGENT_WAKEUP_V1_DESIGN.md) —— Agent 自己的持久化闹钟 · Activity Record · 通用 WakeupDispatcher；**Alarm ≠ Message / Task / Heartbeat** | **`DESIGNED`**（V1 先接 Front） |
 
 **Workspace 导航**（规范 §23.4）：
 

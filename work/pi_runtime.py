@@ -594,6 +594,7 @@ Task Workspace 放本次任务的交付物和验收产物。
     def _autonomous_system_prompt(self) -> str:
         """自主模式的最小系统提示：环境边界、私有空间用途与工具使用。"""
         paths = self.memory.paths()
+        result_path = self._document_path("RESULT.md")
         search_cmd = os.environ.get("AIEOS_WEB_SEARCH_CMD", "").strip()
         search_section = ""
         if search_cmd:
@@ -613,6 +614,14 @@ Task Workspace 放本次任务的交付物和验收产物。
 读取 `{paths['memory_dir']}/context.md` 获取记忆快照。
 {search_section}
 {self._communication_section()}
+========== 结束方式 ==========
+任务结束时，在 `{result_path}` 写总结：
+- 交付内容
+- 验证结果
+- 已知限制
+
+系统会优先读取这个文件作为任务总结。
+最后一行输出 `TASK_COMPLETE`，然后结束。
 """
 
     def _minimal_system_prompt(self) -> str:
