@@ -396,6 +396,7 @@ class TestMigrationBaselineStillHolds:
         _dev = load_deviations()
         require_reason(_dev, "max_tokens")
         require_reason(_dev, "model")
+        require_reason(_dev, "system_prompt")
 
         for agent_id, before in sorted(baseline.items()):
             agent = r.agent(agent_id)
@@ -414,7 +415,10 @@ class TestMigrationBaselineStillHolds:
             _want_mt = int(_dev_mt.get(agent.agent_id,
                                       before["max_tokens"]))
             assert int(agent.max_tokens) == _want_mt, agent.agent_id
-            assert len(agent.system_prompt) == before["system_prompt_len"], agent_id
+            want_prompt_len = int(
+                (_dev.get("system_prompt") or {}).get(
+                    agent_id, before["system_prompt_len"]))
+            assert len(agent.system_prompt) == want_prompt_len, agent_id
             expected_env = (_dev_model.get("credential_env")
                             or before["credential_env"]
                             or GLOBAL_FALLBACK.get(agent_id, ""))

@@ -359,6 +359,7 @@ class TestResolvesCorrectly:
         _dev = load_deviations()
         require_reason(_dev, "max_tokens")
         require_reason(_dev, "model")
+        require_reason(_dev, "system_prompt")
 
         checked = 0
         for agent_id, before in sorted(baseline.items()):
@@ -404,8 +405,11 @@ class TestResolvesCorrectly:
                     f"{agent_id}: credential env {a.credential.env!r} != "
                     f"迁移前/登记值 {expected_env!r}")
 
-            # ⑥ system_prompt 一个字都不能丢
-            assert len(a.system_prompt) == before["system_prompt_len"], (
+            # ⑥ system_prompt：迁移前内容不能丢；有意的显示名变更走 deviations
+            want_prompt_len = int(
+                (_dev.get("system_prompt") or {}).get(
+                    agent_id, before["system_prompt_len"]))
+            assert len(a.system_prompt) == want_prompt_len, (
                 f"{agent_id}: system_prompt 长度变了")
 
             # ⑦ 其它 Agent 段原样保留（迁移不允许丢字段）

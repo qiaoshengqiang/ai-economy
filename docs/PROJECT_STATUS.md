@@ -41,7 +41,8 @@
   Human → Front 改为 Inbox-first；Solo 只入队，并在 work checkpoint 注入；
   Phase 5 V1 支持空闲 Solo Agent 的可选自动回复，默认 `reply_mode = never`。
 - Agent 显示名进入 prompt：自我介绍拆成「名字」和「Agent ID」两条事实；
-  Front / 收件箱 / Team 列表显示对方名字，动作与路由字段仍只认 Agent ID。
+  Front / 收件箱 / Team 列表显示对方名字，动作与路由字段仍只认 Agent ID；
+  `agent_a..e` 旧 `system_prompt` 中的 `Agent A/B/...` 已改为中文显示名。
 
 ---
 

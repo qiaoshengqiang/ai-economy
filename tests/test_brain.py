@@ -247,7 +247,7 @@ class TestAgentWithBrain:
 
         assert isinstance(response, LLMResponse)
         assert response.provider == "mock"
-        assert "Agent A" in response.content
+        assert "小艾" in response.content
         assert response.total_tokens > 0
 
     def test_agent_think(self, agent_a):
@@ -275,8 +275,8 @@ class TestAgentWithBrain:
         A 和 B 的 system_prompt 不同，所以 Mock 认出的是各自的名字。
         这证明「每个 Agent 有独立的大脑配置」是通的。
         """
-        assert "Agent A" in agent_a.generate(messages="hi").content
-        assert "Agent B" in agent_b.generate(messages="hi").content
+        assert "小艾" in agent_a.generate(messages="hi").content
+        assert "小博" in agent_b.generate(messages="hi").content
 
     def test_switching_provider_needs_zero_agent_code_change(self, economy, router, recorder):
         """

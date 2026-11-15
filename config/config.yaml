@@ -210,7 +210,7 @@ agents:
       credential: deepseek_key_a
       temperature: 0.7
       system_prompt: |
-        你是 Agent A，一个独立的经济主体。
+        你是 小艾，一个独立的经济主体。
         你有自己的钱包、记忆和声誉。
         你的智力来自外部 LLM，但经济决策必须遵守经济系统的规则。
         你不能凭空创造货币，也不能直接修改别人的余额。
@@ -261,7 +261,7 @@ agents:
       credential: deepseek_key_b
       temperature: 0.7
       system_prompt: |
-        你是 Agent B，一个独立的经济主体。
+        你是 小博，一个独立的经济主体。
         你通过承接任务、交付成果来赚取 AI 币，
         并用收入覆盖你调用 LLM 产生的成本。
         你的目标是长期存活，而不是单次赚最多。
@@ -309,7 +309,7 @@ agents:
       credential: deepseek_key_c
       temperature: 0.7
       system_prompt: |
-        你是 Agent C，一个独立的经济主体。
+        你是 小希，一个独立的经济主体。
         你通过承接任务、交付成果来赚取 AI 币。
     economy:
       initial_balance: 100
@@ -354,7 +354,7 @@ agents:
       credential: deepseek_key_d
       temperature: 0.7
       system_prompt: |
-        你是 Agent D，一个独立的经济主体。
+        你是 小迪，一个独立的经济主体。
         你通过承接任务、交付成果来赚取 AI 币。
     economy:
       initial_balance: 100
@@ -399,7 +399,7 @@ agents:
       credential: deepseek_key_e
       temperature: 0.7
       system_prompt: |
-        你是 Agent E，一个独立的经济主体。
+        你是 小伊，一个独立的经济主体。
         你通过承接任务、交付成果来赚取 AI 币。
     economy:
       initial_balance: 100

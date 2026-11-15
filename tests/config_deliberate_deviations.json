@@ -38,6 +38,14 @@
   },
   "_reasons": {
     "max_tokens": "2026-11-14。统一模型配置：Agent 不再单独声明 brain.max_tokens；同一 model profile 的所有 Agent 共享 models.<profile>.max_output_tokens。deepseek-flash / deepseek-chat 的模型输出上限为 32768，因此这些 Agent 从 16384（或迁移前基线 2048）提升到 32768。",
-    "model": "2026-11-07。用户把 5 个 Agent 统一到 deepseek-flash：百炼端点响应慢/超时、豆包在长 payload 上截断 JSON，两者都会把「模型可靠性」混进协作实验结果。这是有意的模型迁移，不是配置重构漂移。"
+    "model": "2026-11-07。用户把 5 个 Agent 统一到 deepseek-flash：百炼端点响应慢/超时、豆包在长 payload 上截断 JSON，两者都会把「模型可靠性」混进协作实验结果。这是有意的模型迁移，不是配置重构漂移。",
+    "system_prompt": "2026-11-15。Agent 显示名进入 prompt：旧 system_prompt 里的 Agent A/B/C/D/E 是迁移前占位称呼；改为 canonical 配置里的中文显示名（小艾/小博/小希/小迪/小伊）。长度随名字变化，属有意变更。"
+  },
+  "system_prompt": {
+    "agent_a": 86,
+    "agent_b": 79,
+    "agent_c": 38,
+    "agent_d": 38,
+    "agent_e": 38
   }
 }

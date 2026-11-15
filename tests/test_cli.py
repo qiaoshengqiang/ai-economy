@@ -409,7 +409,7 @@ class TestProviderCommands:
         result = run_cli("ask", "Hello, Agent A.", db_path=tmp_path / "ask.db")
 
         assert result.returncode == EXIT_OK, result.stdout + result.stderr
-        assert "Mock response generated for Agent A." in result.stdout
+        assert "Mock response generated for 小艾." in result.stdout
 
     def test_ask_shows_token_usage(self, tmp_path):
         result = run_cli("ask", "你好", db_path=tmp_path / "ask2.db")
@@ -502,7 +502,7 @@ class TestProviderCommands:
         result = run_cli("demo", db_path=tmp_path / "demo2.db")
 
         assert "User:" in result.stdout
-        assert "Mock response generated for Agent A." in result.stdout
+        assert "Mock response generated for 小艾." in result.stdout
 
     def test_demo_does_not_charge_the_wallet(self, tmp_path):
         """
