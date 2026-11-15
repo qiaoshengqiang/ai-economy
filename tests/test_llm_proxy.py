@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 import urllib.request
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -124,6 +125,10 @@ def test_proxy_records_usage_without_budget_gate():
         response = urllib.request.urlopen(request, timeout=5)
         payload = json.loads(response.read())
         assert payload["usage"]["total_tokens"] == 15
+        # 记录发生在响应写出之后；这里等它落库，避免竞态误报。
+        deadline = time.time() + 2
+        while not recorder.calls and time.time() < deadline:
+            time.sleep(0.01)
         assert recorder.calls
         recorded = recorder.calls[0]
         assert recorded["agent_id"] == "agent_c"

@@ -492,6 +492,7 @@
       piTimeoutEnabled: $("pi-timeout-enabled").checked,
       piTimeoutSeconds: Number($("pi-timeout-seconds").value || 7200),
       promptLogEnabled: $("prompt-log-enabled").checked,
+      timezone: $("timezone").value || "Asia/Shanghai",
     };
   }
 
@@ -556,6 +557,7 @@
     $("pi-timeout-enabled").checked = state.piTimeoutEnabled !== false;
     $("pi-timeout-seconds").value = String(state.piTimeoutSeconds || 7200);
     $("prompt-log-enabled").checked = !!state.promptLogEnabled;
+    $("timezone").value = state.timezone || "Asia/Shanghai";
     updateRuntimeDependencies();
     updateFooter();
   }
@@ -574,6 +576,7 @@
     $("pi-timeout-seconds").value = String(
       regular.pi_timeout_seconds || 7200);
     $("prompt-log-enabled").checked = !!regular.prompt_log_enabled;
+    $("timezone").value = regular.timezone || "Asia/Shanghai";
     updateRuntimeDependencies();
     runtimeInitial = clone(runtimeSnapshot());
     updateFooter();
@@ -594,6 +597,7 @@
           pi_timeout_enabled: state.piTimeoutEnabled,
           pi_timeout_seconds: state.piTimeoutSeconds,
           prompt_log_enabled: state.promptLogEnabled,
+          timezone: state.timezone,
         }),
       });
       await load();
@@ -1148,6 +1152,7 @@
         piTimeoutEnabled: true,
         piTimeoutSeconds: 7200,
         promptLogEnabled: false,
+        timezone: "Asia/Shanghai",
       });
       toast("已恢复运行默认值（尚未保存）");
       return;
@@ -1726,6 +1731,7 @@
   [
     "max-teams", "max-solo-turns", "commit-output-repo",
     "commit-base-ref", "pi-timeout-seconds", "prompt-log-enabled",
+    "timezone",
   ].forEach((id) => {
     const node = $(id);
     node.addEventListener("change", () => {

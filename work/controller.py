@@ -50,6 +50,7 @@ from commit.store import CommitStore
 from core.alarm import WakeupEvent, WakeupResult
 from core.alarm_store import AlarmStore
 from core.task import Task, TaskMode, TaskStatus
+from core.timezones import DEFAULT_TIMEZONE, normalize_timezone
 from demand.task_creation import TaskCreationService
 from services.alarm_service import AlarmService, WakeupDispatcher
 from services.artifacts import read_artifact
@@ -341,6 +342,8 @@ class AIEOSController:
         self.work_mode = "autonomous"
         #: Front 模式：autonomous = 当前会补全 brief；relay = 只传达。
         self.front_mode = "autonomous"
+        #: Front prompt 里的「当前时间」时区；存储仍然是 UTC。
+        self.timezone = DEFAULT_TIMEZONE
         self.pi_cli_path = str(pi_cli_path or "pi")
         self.pi_provider = str(pi_provider or "")
         self.pi_model = str(pi_model or "")
@@ -505,6 +508,10 @@ class AIEOSController:
         front_mode = str(data.get("front_mode") or "autonomous").strip().lower()
         if front_mode in ("autonomous", "relay"):
             self.front_mode = front_mode
+        try:
+            self.timezone = normalize_timezone(data.get("timezone"))
+        except ValueError:
+            self.timezone = DEFAULT_TIMEZONE
         commit_mode = str(
             data.get("commit_mode") or "manual").strip().lower()
         if commit_mode in (
@@ -553,6 +560,7 @@ class AIEOSController:
         commit_auto_merge: Optional[bool] = None,
         commit_max_file_bytes: Optional[int] = None,
         commit_max_total_bytes: Optional[int] = None,
+        timezone: Optional[str] = None,
     ) -> Dict[str, Any]:
         with self._lock:
             if front_agent is not None:
@@ -678,6 +686,8 @@ class AIEOSController:
                 if value <= 0:
                     raise ValueError("commit_max_total_bytes 必须 > 0")
                 self.commit_max_total_bytes = value
+            if timezone is not None:
+                self.timezone = normalize_timezone(timezone)
             self._persist_settings()
             self._sync_inbox_services()
             self._configure_front_brain()
@@ -705,6 +715,7 @@ class AIEOSController:
             "commit_auto_merge": bool(self.commit_auto_merge),
             "commit_max_file_bytes": int(self.commit_max_file_bytes),
             "commit_max_total_bytes": int(self.commit_max_total_bytes),
+            "timezone": str(self.timezone),
             "activity_seen": dict(self._activity_seen),
         }
 
@@ -1645,7 +1656,8 @@ class AIEOSController:
             roles=self.worker_roles.catalog(),
             execute_actions=_execute,
             action_types=dispatcher.action_types,
-            front_mode=self.front_mode)
+            front_mode=self.front_mode,
+            timezone=self.timezone)
 
     def _pi_enabled(self, agent_id: str) -> bool:
         return str(agent_id or "") in self.pi_work_agents

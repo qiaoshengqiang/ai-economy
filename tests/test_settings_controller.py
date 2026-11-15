@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
+import pytest
+
 from llm import prompt_log
 from work.controller import AIEOSController
 
@@ -369,3 +371,25 @@ def test_commit_settings_round_trip(tmp_path):
         assert reloaded.commit_output_repo == str(tmp_path / "output")
     finally:
         reloaded.close()
+
+
+def test_timezone_defaults_to_beijing_and_persists(tmp_path):
+    path = tmp_path / "ui_settings.json"
+    controller = _controller(tmp_path)
+    try:
+        assert controller.settings_dict()["timezone"] == "Asia/Shanghai"
+        controller.update_settings(timezone="UTC")
+        assert controller.settings_dict()["timezone"] == "UTC"
+        with pytest.raises(ValueError, match="未知时区"):
+            controller.update_settings(timezone="Mars/Olympus")
+    finally:
+        controller.close()
+
+    reloaded = _controller(tmp_path)
+    try:
+        assert reloaded.settings_dict()["timezone"] == "UTC"
+    finally:
+        reloaded.close()
+
+    data = json.loads(path.read_text("utf-8"))
+    assert data["timezone"] == "UTC"

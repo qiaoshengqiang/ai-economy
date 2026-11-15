@@ -369,6 +369,7 @@ class Handler(BaseHTTPRequestHandler):
                         "commit_max_file_bytes"),
                     commit_max_total_bytes=payload.get(
                         "commit_max_total_bytes"),
+                    timezone=payload.get("timezone"),
                 )
                 self._send_json({"ok": True, "settings": settings})
                 return

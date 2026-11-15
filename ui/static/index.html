@@ -674,6 +674,35 @@
             <section class="setting-card">
               <div class="setting-card-head">
                 <div>
+                  <h4>时间与时区</h4>
+                  <p>Agent 看到的「当前时间」；闹钟与历史记录仍以 UTC 保存。</p>
+                </div>
+                <span class="scope-badge now">立即生效</span>
+              </div>
+
+              <div class="setting-row">
+                <div class="setting-label">
+                  <span>时区</span>
+                  <small>影响 Front 的当前时间提示，以及「早上七点」这类绝对时间。</small>
+                </div>
+                <div class="setting-control">
+                  <select id="timezone">
+                    <option value="Asia/Shanghai">北京 · UTC+08:00</option>
+                    <option value="UTC">UTC</option>
+                    <option value="Asia/Tokyo">东京 · UTC+09:00</option>
+                    <option value="Asia/Singapore">新加坡 · UTC+08:00</option>
+                    <option value="Europe/London">伦敦</option>
+                    <option value="Europe/Berlin">柏林</option>
+                    <option value="America/New_York">纽约</option>
+                    <option value="America/Los_Angeles">洛杉矶</option>
+                  </select>
+                </div>
+              </div>
+            </section>
+
+            <section class="setting-card">
+              <div class="setting-card-head">
+                <div>
                   <h4>诊断</h4>
                   <p>只在排查问题时开启，会产生额外的本地日志。</p>
                 </div>

@@ -24,6 +24,7 @@ import json
 from typing import Any, Callable, Dict, Iterable, List, Optional
 
 from core.identity import format_agent_identity, format_agent_label
+from core.timezones import DEFAULT_TIMEZONE, normalize_timezone, render_now
 from front.contracts import (
     FrontDecision, FrontIntent, FrontResult, FrontTurn,
 )
@@ -41,6 +42,32 @@ FRONT_SYSTEM_PROMPT = (
     "你可以聊天、使用自己的私有 workspace 和草稿，并把工作交给 Work Agent。"
     "请使用人类使用的语言回复。"
 )
+
+#: 只有 action_types 里真的有 alarm_create 时才拼进 prompt。
+#: 否则会出现「可用动作里没有、参数说明里却在教它用」的矛盾。
+_ALARM_CREATE_DOC = """- alarm_create {reason, instruction, task_ids?, schedule?, interval_seconds?, delay_seconds?, at?, max_runs?, expires_at?, dedupe_key?} —— 给自己创建持久化闹钟。
+  · schedule 只能是 once / every，可省略：给 interval_seconds 就是 every，
+    给 delay_seconds / at 就是 once。
+  · interval_seconds 最小 60 秒。
+  · at / expires_at 用 UTC ISO8601（例如 2026-11-15T23:00:00Z）；
+    用户说本地时间时，按上面的「当前时间」换算成 UTC 再填。
+  · instruction 是写给「下次被唤醒的自己」的指令，会原样出现在唤醒
+    prompt 里：写清要检查什么、什么条件下通知人类。
+  · task_ids 可选，最多 5 个；唤醒时提供这些 Task 的只读
+    found / status 快照。Task 结束不会自动停止闹钟。
+  · max_runs 是总触发次数，达到后自动结束；不填 = 不限。
+  · 创建结果已经包含 alarm_id / next_fire_at，不需要再 alarm_list 确认。
+  · 同样的提醒用 dedupe_key 去重；已有同 key 的活动闹钟会返回原来那个。
+  · every 闹钟会自动续期，不要在唤醒轮次里为同一个节奏重复 create。
+"""
+_ALARM_LIST_DOC = (
+    "- alarm_list {include_inactive?} —— 列出自己的闹钟"
+    "（含 next_fire_at / fire_count）。\n")
+_ALARM_CANCEL_DOC = "- alarm_cancel {alarm_id} —— 关闭自己的闹钟。\n"
+_ALARM_EXAMPLE = (
+    '{"actions":[{"type":"alarm_create","parameters":'
+    '{"reason":"检查 task_x","instruction":"task_x 状态变化时通知人类",'
+    '"interval_seconds":300}}]}\n')
 
 
 class FrontUnavailableError(RuntimeError):
@@ -64,6 +91,7 @@ class FrontAgentRuntime:
         max_steps: int = 12,
         think_retries: int = 1,
         front_mode: str = "autonomous",
+        timezone: str = DEFAULT_TIMEZONE,
     ) -> None:
         if not callable(think):
             raise ValueError("FrontAgentRuntime 需要可调用的 think(prompt)")
@@ -87,6 +115,11 @@ class FrontAgentRuntime:
         if mode not in ("autonomous", "relay"):
             mode = "autonomous"
         self.front_mode = mode
+        #: 只影响 prompt 里的「当前时间」；存储始终是 UTC。
+        try:
+            self.timezone = normalize_timezone(timezone)
+        except ValueError:
+            self.timezone = DEFAULT_TIMEZONE
         #: 最近一次 decide 的动作历史 / 原始输出 / 每次尝试（观测用）。
         self.last_action_history: List[Dict[str, Any]] = []
         self.last_raw_output: str = ""
@@ -393,6 +426,22 @@ class FrontAgentRuntime:
                 "\n上一次输出无法解析：" + previous_error +
                 "。继续下一步；最终仍要输出一个合法的 JSON。\n")
         actions = ", ".join(self.action_types) or "（无）"
+        now_text = render_now(self.timezone)
+        alarm_docs = ""
+        alarm_example = ""
+        if "alarm_create" in self.action_types:
+            alarm_docs += _ALARM_CREATE_DOC
+            alarm_example = _ALARM_EXAMPLE
+        if "alarm_list" in self.action_types:
+            alarm_docs += _ALARM_LIST_DOC
+        if "alarm_cancel" in self.action_types:
+            alarm_docs += _ALARM_CANCEL_DOC
+        alarm_tools = [
+            name for name in ("alarm_list", "alarm_cancel", "alarm_create")
+            if name in self.action_types
+        ]
+        alarm_tool_line = (
+            f"- {', '.join(alarm_tools)}\n" if alarm_tools else "")
         mode_section = ""
         if self.front_mode == "relay":
             mode_section = """
@@ -445,13 +494,14 @@ scheduled_for: {wakeup.get('scheduled_for') or ''}
 
 你可以：
 - inspect / artifact_read / project_read / web_search
-- alarm_list / alarm_cancel / alarm_create
-- direct_reply：值得告诉人类时
+{alarm_tool_line}- direct_reply：值得告诉人类时
 - no_notify：不值得打扰人类时（仍然会写 Activity Record）
 
 不要从闹钟创建 Task，不要发起 handoff / rework / follow_up。
 """
         return f"""{self.agent_identity}
+
+当前时间：{now_text}
 
 你是面向人类的入口。
 {wakeup_section}
@@ -517,7 +567,7 @@ scheduled_for: {wakeup.get('scheduled_for') or ''}
 {{"actions":[{{"type":"private_write","parameters":{{"path":"notes.md","content":"..."}}}}]}}
 {{"actions":[{{"type":"artifact_read","parameters":{{"task_id":"task_x","path":"index.html","offset":1,"limit":10}}}}]}}
 {{"actions":[{{"type":"project_read","parameters":{{"path":"index.html","offset":1,"limit":120}}}}]}}
-
+{alarm_example}
 动作会真实执行；结果会在下一次 prompt 返回。
 动作结果返回后，下一步是继续一个动作，或输出最终 JSON 决定；
 推理内容不会显示给用户。
@@ -526,14 +576,7 @@ scheduled_for: {wakeup.get('scheduled_for') or ''}
 参数：
 - artifact_read {{task_id, path, offset?, limit?}} —— 读取 Task
   Workspace 中的文件（只读；返回内容 + total_lines/revision）
-{project_action_doc}- alarm_create {{reason, instruction, task_ids?, schedule?, interval_seconds?, delay_seconds?, at?, max_runs?, expires_at?}} —— 给自己创建持久化闹钟。
-  schedule 只能是 once / every，可省略：给 interval_seconds 就是 every，
-  给 delay_seconds / at 就是 once。task_ids 可选，最多 5 个；
-  不因 Task 结束自动停止。创建结果（alarm_id / next_fire_at）已经在
-  动作结果里，不要为了确认再调用 alarm_list；要停止用 alarm_cancel。
-- alarm_list {{include_inactive?}} —— 列出自己的闹钟。
-- alarm_cancel {{alarm_id}} —— 关闭自己的闹钟。
-- private_list {{}} —— 返回私有空间路径列表
+{project_action_doc}{alarm_docs}- private_list {{}} —— 返回私有空间路径列表
 - private_read {{path}} —— 读取私有空间文件内容
 - private_write {{path, content}}；private_delete {{path}}
 - draft_write {{content, label}}；draft_append {{draft_id, content}}

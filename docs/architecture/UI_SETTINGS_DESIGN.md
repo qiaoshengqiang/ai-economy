@@ -121,6 +121,8 @@ profile / env / present / api_key（只写）
 - **Work 总时长开关与秒数**（关闭后 Pi Work 不设总时限）；
 - **交付与提交**：输出仓库开关 / 路径、提交模式、基线分支、auto merge；
 - **Prompt 日志开关**（默认关闭）；
+- **时区**：默认 `Asia/Shanghai`（北京时区），只影响 Front prompt 里的
+  「当前时间」；所有持久化时间仍是 UTC；
 - 设置立即生效，并持久化到 `ui_settings.json`。
 
 > Front Agent / Front 模式 / Work 模式属于 Agent 行为，已移到 Agent 页。

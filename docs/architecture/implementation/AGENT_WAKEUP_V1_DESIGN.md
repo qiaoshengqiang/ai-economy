@@ -429,6 +429,21 @@ alarm_cancel
 原因：真实运行里 Front 连续猜错 `schedule`（缺省 → `once` 报错，
 再猜 `interval` 报错），每次模型调用约 77 秒，白等了两轮。
 
+### 7.1.1 Prompt 事实（`CURRENT`）
+
+- **当前时间**：Front prompt 顶部固定显示
+  `本地时区 + 偏移 / UTC`，例如
+  `2026-11-15 15:34 +08:00（Asia/Shanghai） / UTC 2026-11-15T07:34:45Z`。
+- **时区设置**：`ui_settings.json` 的 `timezone`，默认
+  `Asia/Shanghai`（北京）；只影响 prompt 与展示，**存储仍是 UTC**。
+- **条件渲染**：`alarm_create / list / cancel` 的说明只在
+  action set 真的包含它们时出现，避免「可用动作里没有、说明里却教它用」。
+- **参数语义**：`interval_seconds` 最小 60；`at / expires_at` 是 UTC
+  ISO8601；`instruction` 是写给下次唤醒自己的指令；`max_runs` 是总次数；
+  `dedupe_key` 用于去重；`every` 会自动续期。
+- **后果不是猜测**：`创建结果已包含 alarm_id / next_fire_at` 明确写入
+  prompt，避免 Agent 用 `alarm_list` 再确认一次。
+
 ### 7.2 关闭闹钟必须被提示
 
 Agent prompt 必须明确写出：

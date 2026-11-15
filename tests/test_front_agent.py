@@ -1057,3 +1057,67 @@ def test_wakeup_prompt_is_system_alarm_not_human_message():
     assert "no_notify" in prompt
     assert "alarm_cancel" in prompt
     assert "不要从闹钟创建 Task" in prompt
+
+
+def _capture_prompt(**kwargs):
+    captured = {}
+
+    def think(prompt):
+        captured["prompt"] = prompt
+        return json.dumps({"intent": "direct_reply", "reply": "好"})
+
+    runtime = FrontAgentRuntime("front", think, **kwargs)
+    runtime.decide_turn("你好")
+    return captured["prompt"]
+
+
+def test_prompt_includes_current_time_and_timezone():
+    prompt = _capture_prompt(action_types=("artifact_read",))
+    assert "当前时间：" in prompt
+    assert "Asia/Shanghai" in prompt
+    assert "UTC " in prompt
+
+    utc_prompt = _capture_prompt(
+        action_types=("artifact_read",), timezone="UTC")
+    assert "（UTC）" in utc_prompt
+
+
+def test_prompt_hides_alarm_actions_when_disabled():
+    prompt = _capture_prompt(action_types=("artifact_read", "private_read"))
+    assert "可用动作：artifact_read, private_read" in prompt
+    assert "alarm_create" not in prompt
+    assert "alarm_list" not in prompt
+    assert "alarm_cancel" not in prompt
+
+
+def test_prompt_documents_alarm_actions_when_enabled():
+    prompt = _capture_prompt(action_types=(
+        "alarm_create", "alarm_list", "alarm_cancel", "artifact_read"))
+    assert "- alarm_create {reason, instruction" in prompt
+    assert "interval_seconds 最小 60 秒" in prompt
+    assert "UTC ISO8601" in prompt
+    assert "dedupe_key" in prompt
+    assert "不要在唤醒轮次里为同一个节奏重复 create" in prompt
+    assert '"type":"alarm_create"' in prompt
+    assert "- alarm_list {include_inactive?}" in prompt
+    assert "- alarm_cancel {alarm_id}" in prompt
+
+
+def test_wakeup_prompt_omits_alarm_tools_when_disabled():
+    captured = {}
+
+    def think(prompt):
+        captured["prompt"] = prompt
+        return json.dumps({"intent": "no_notify", "reason": "无变化"})
+
+    runtime = FrontAgentRuntime(
+        "front", think, action_types=("artifact_read",))
+    runtime.decide_turn("", wakeup={
+        "wakeup_id": "alarm_1",
+        "reason": "检查",
+        "instruction": "没事就别打扰",
+    })
+    prompt = captured["prompt"]
+    assert "alarm_list / alarm_cancel / alarm_create" not in prompt
+    assert "- alarm_create" not in prompt
+    assert "no_notify" in prompt
