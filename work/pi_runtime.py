@@ -28,6 +28,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional
 
+from core.identity import format_agent_identity
 from core.task import Task, TaskMode, TaskStatus
 from core.task_execution import TaskResultRef
 from llm.base import LLMResponse, TOKEN_SOURCE_API
@@ -208,6 +209,20 @@ class PiWorkRuntime:
             return resolved.agent(actor)
         except Exception:                                     # noqa: BLE001
             return None
+
+    def _agent_name(self) -> str:
+        """显示名：resolved config 优先，其次 Economy 身份。"""
+        actor = self.task.contractor or self.task.creator
+        resolved_agent = self._resolved_agent()
+        if resolved_agent is not None:
+            name = str(getattr(resolved_agent, "name", "") or "").strip()
+            if name:
+                return name
+        return str(getattr(self._agent(), "name", "") or "").strip()
+
+    def _agent_identity(self) -> str:
+        actor = self.task.contractor or self.task.creator
+        return format_agent_identity(self._agent_name(), actor)
 
     def _provider_spec(self) -> PiProviderSpec:
         """解析当前 Agent 真正要用的 provider 端点。
@@ -589,7 +604,9 @@ Task Workspace 放本次任务的交付物和验收产物。
 {search_cmd} fetch "https://example.com/page"
 """
         scope = "项目目录" if self.project_mode else "Task Workspace"
-        return f"""你是 {self.task.contractor or self.task.creator}，AIEOS 中的 Work 执行 Agent。
+        return f"""{self._agent_identity()}
+
+你是 AIEOS 中的 Work 执行 Agent。
 
 {self._workspace_brief()}
 直接使用原生 read/write/edit/bash/grep/find/ls 工具在{scope}中完成工作。
@@ -615,7 +632,9 @@ Task Workspace 放本次任务的交付物和验收产物。
 {search_cmd} fetch "https://example.com/page"
 搜索与抓取结果作为外部证据；引用 URL，并以{scope}的实际状态为准。
 """
-        return f"""你是 {self.task.contractor or self.task.creator}，AIEOS 中的 Work 执行 Agent。
+        return f"""{self._agent_identity()}
+
+你是 AIEOS 中的 Work 执行 Agent。
 
 {self._workspace_brief()}
 请直接使用原生 read/write/edit/bash/grep/find/ls 工具在{scope}中完成工作。
@@ -1453,7 +1472,9 @@ Task Workspace 放本次任务的交付物和验收产物。
         result_path = self._document_path("RESULT.md")
         role_section = (
             "\n" + self.role_prompt + "\n" if self.role_prompt else "")
-        return f"""你是 {self.task.contractor or self.task.creator}，AIEOS 中的 Work 执行 Agent。
+        return f"""{self._agent_identity()}
+
+你是 AIEOS 中的 Work 执行 Agent。
 {role_section}
 {self._workspace_brief()}
 请直接把交付物写入{scope}，使用原生 read/write/edit/bash 工具。

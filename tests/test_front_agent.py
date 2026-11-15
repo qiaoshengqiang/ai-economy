@@ -280,7 +280,9 @@ def test_front_prompt_is_human_facing_and_does_not_invent_constraints():
     runtime = FrontAgentRuntime("front", think)
     runtime.decide("继续做", active_tasks=[{"task_id": "task_1"}])
     prompt = captured["prompt"]
-    assert "你是 front，面向人类的入口" in prompt
+    assert "你的名字是：front" in prompt
+    assert "你的 Agent ID 是：front" in prompt
+    assert "你是面向人类的入口" in prompt
     assert "Front 动作（可选，多步）" in prompt
     assert "artifact_read" in prompt
     assert "不返回" in prompt
@@ -436,19 +438,30 @@ def test_handoff_parses_preferred_agent():
     assert decision.brief.task_text == "写一个笑话"
 
 
+def test_front_own_name_and_agent_id_are_separate():
+    think = _think_returning({"intent": "direct_reply", "reply": "好"})
+    runtime = FrontAgentRuntime("agent_a", think, agent_name="小艾")
+    runtime.decide("你好")
+
+    assert "你的名字是：小艾" in think.prompt
+    assert "你的 Agent ID 是：agent_a" in think.prompt
+    assert "小艾（agent_a）" not in think.prompt
+
+
 def test_prompt_exposes_agent_facts_and_routing_rules():
     think = _think_returning({"intent": "direct_reply", "reply": "好"})
     runtime = FrontAgentRuntime("front", think)
     runtime.decide("你好", agents=[
-        {"agent_id": "agent_b", "status": "WORKING",
+        {"agent_id": "agent_b", "name": "小博", "status": "WORKING",
          "role": "WORKER", "can_work": True},
-        {"agent_id": "agent_e", "status": "IDLE",
+        {"agent_id": "agent_e", "name": "小伊", "status": "IDLE",
          "role": "WORKER", "can_work": True},
     ])
 
     prompt = think.prompt
-    assert "agent_b：status=WORKING" in prompt
-    assert "agent_e：status=IDLE" in prompt
+    assert "小博（Agent ID: agent_b）：status=WORKING" in prompt
+    assert "小伊（Agent ID: agent_e）：status=IDLE" in prompt
+    assert "必须填 Agent ID" in prompt
     assert "preferred_agent 为 WORKING → 拒绝" in prompt
     assert "不会自动替换" in prompt
     assert "inspect —— 只读 Task 事实" in prompt

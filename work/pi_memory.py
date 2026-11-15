@@ -19,6 +19,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from core.identity import format_agent_identity
 from core.private_working_memory import (
     ConcurrentPrivateWorkingMemoryModification,
 )
@@ -38,6 +39,7 @@ class PiMemoryBridge:
         self.task = task
         self.task_workspace = Path(task_workspace)
         agent = self._agent()
+        self.agent_name = str(getattr(agent, "name", "") or "")
         workspace = getattr(agent, "workspace", None)
         self.private_workspace = (
             Path(getattr(workspace, "root", "")) if workspace else None)
@@ -87,7 +89,8 @@ class PiMemoryBridge:
 
         context = f"""# AIEOS Work Memory
 
-Agent：{self.agent_id}
+{format_agent_identity(self.agent_name, self.agent_id)}
+
 任务：{self.task.task_id}
 Task 工作目录：{self.task_workspace}
 私有 workspace：{self.private_workspace or "（不可用）"}

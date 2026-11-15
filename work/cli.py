@@ -212,6 +212,7 @@ def main(argv=None) -> int:
     front = FrontAgentRuntime(
         getattr(front_agent, "agent_id", args.front_agent),
         front_agent.think,
+        agent_name=str(getattr(front_agent, "name", "") or ""),
     )
     active, completed = _task_refs(runtime.tasks.list_tasks(limit=50))
     try:

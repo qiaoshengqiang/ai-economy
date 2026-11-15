@@ -22,6 +22,7 @@ from typing import Any, Dict, Mapping, Optional, Tuple
 
 from communication import MessageType
 from communication.inbox import InboxPolicy
+from core.identity import format_agent_identity, format_agent_label
 from work.comm_bridge import run_coro
 
 logger = logging.getLogger(__name__)
@@ -124,6 +125,11 @@ class LifeInboxService:
         return (
             f"conv_life_{row.get('to_agent')}_{row.get('from_agent')}")
 
+    def _agent_label(self, agent_id: str) -> str:
+        agent = self._agent(agent_id)
+        name = str(getattr(agent, "name", "") or "")
+        return format_agent_label(name, agent_id)
+
     def _reply(self, agent_id: str, row: Mapping[str, Any]) -> str:
         agent = self._agent(agent_id)
         if agent is None:
@@ -132,10 +138,11 @@ class LifeInboxService:
         text = str(payload.get("text") or "").strip()
         if not text:
             return ""
+        name = str(getattr(agent, "name", "") or "")
         prompt = (
             "你收到一条来自另一个 Agent 的生活层消息。\n"
             "这不是 Task，不要求你创建工作、修改文件或声称完成了工作。\n\n"
-            f"来自：{row.get('from_agent') or '?'}\n"
+            f"来自：{self._agent_label(str(row.get('from_agent') or ''))}\n"
             f"消息：{text}\n\n"
             "请用简短、自然的中文回复。只输出回复正文，不要解释规则。"
         )
@@ -143,6 +150,7 @@ class LifeInboxService:
             return str(agent.think(
                 prompt,
                 system=(
+                    format_agent_identity(name, agent_id) + "\n\n"
                     "你是 AIEOS 中的一个独立 Agent。"
                     "这是一条生活层通信，不是任务执行。"
                     "你可以简短回复，也可以不回复；不要创建 Task，"

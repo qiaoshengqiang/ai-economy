@@ -260,7 +260,9 @@ class CognitiveContext:
 
         head: List[str] = []
         if self.identity:
-            head.append(f"I am {self.identity}.")
+            # 🔒 identity 可以是完整自述（名字 / Agent ID 两行），
+            #    所以原样渲染，不再强加 "I am " 前缀。
+            head.append(self.identity)
         if self.constitution:
             head.append(self.constitution)
         if self.drives:

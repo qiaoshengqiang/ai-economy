@@ -121,6 +121,15 @@ class TestDefaultRuntimeWiring:
             "默认路径没有构建 Cognitive Context"
         assert ag.brain.last_context_stats["selected_strategies"] >= 1
 
+    def test_context_separates_name_and_agent_id(self, runtime):
+        """名字和 Agent ID 是两条系统事实，不能合并成一句。"""
+        ag, prov = _capture(runtime)
+        ag.generate(messages="hi")
+        system = prov.seen[-1]["system"] or ""
+        assert "我的名字是：小艾" in system
+        assert "我的 Agent ID 是：agent_a" in system
+        assert "小艾（agent_a）" not in system
+
     def test_relevant_strategy_reaches_provider_by_default(self, runtime):
         """§十一 场景 A：相关 Self Model **自动**进入 Provider。"""
         SelfModelStore(runtime.economy.db).add_strategy(

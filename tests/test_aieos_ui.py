@@ -1151,7 +1151,8 @@ def test_agent_facts_include_status_and_can_work():
     runtime = SimpleNamespace(
         directory=_Directory(["agent_a", "agent_b"]),
         economy=SimpleNamespace(agent=lambda aid: SimpleNamespace(
-            has_brain=True)),
+            has_brain=True,
+            name={"agent_a": "小艾", "agent_b": "小博"}.get(aid, aid))),
         tasks=SimpleNamespace(list_tasks=lambda limit=50: []),
     )
     controller = AIEOSController(runtime, front_agent="agent_a")
@@ -1161,8 +1162,10 @@ def test_agent_facts_include_status_and_can_work():
         controller.close()
 
     assert facts["agent_a"]["role"] == "FRONT"
+    assert facts["agent_a"]["name"] == "小艾"
     assert facts["agent_a"]["can_work"] is False
     assert facts["agent_b"]["role"] == "WORKER"
+    assert facts["agent_b"]["name"] == "小博"
     assert facts["agent_b"]["status"] == "IDLE"
 
 

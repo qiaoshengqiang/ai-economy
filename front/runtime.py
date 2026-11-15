@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 from typing import Any, Callable, Dict, Iterable, List, Optional
 
+from core.identity import format_agent_identity, format_agent_label
 from front.contracts import (
     FrontDecision, FrontIntent, FrontResult, FrontTurn,
 )
@@ -54,6 +55,7 @@ class FrontAgentRuntime:
         agent_id: str,
         think: Callable[[str], str],
         *,
+        agent_name: str = "",
         inspect_fn: Optional[Callable[[str], Any]] = None,
         roles: Iterable[Dict[str, Any]] = (),
         execute_actions: Optional[
@@ -66,6 +68,7 @@ class FrontAgentRuntime:
         if not callable(think):
             raise ValueError("FrontAgentRuntime 需要可调用的 think(prompt)")
         self.agent_id = str(agent_id)
+        self.agent_name = str(agent_name or "")
         self._think = think
         #: 只读 inspect 能力：task_id → 事实（dict/str）。None = 不可用。
         self._inspect_fn = inspect_fn
@@ -88,6 +91,11 @@ class FrontAgentRuntime:
         self.last_action_history: List[Dict[str, Any]] = []
         self.last_raw_output: str = ""
         self.last_attempts: List[Dict[str, Any]] = []
+
+    @property
+    def agent_identity(self) -> str:
+        """名字和 Agent ID 是两条独立事实，不合并成一句。"""
+        return format_agent_identity(self.agent_name, self.agent_id)
 
     # ------------------------------------------------------------
     # 决策
@@ -116,7 +124,8 @@ class FrontAgentRuntime:
 
         `conversation` 是最近 Human / Front 消息的只读快照。
 
-        `agents` 是系统里的 Agent 事实：`{agent_id, status, role, can_work}`。
+        `agents` 是系统里的 Agent 事实：
+        `{agent_id, name, status, role, can_work}`。
         Front 可以据此决定是否指定 `preferred_agent`；系统不规定它怎么做。
 
         `project_context` 是用户当前选中项目目录的只读摘要；空字符串表示
@@ -407,7 +416,9 @@ class FrontAgentRuntime:
             "- 读代码用于确认目标文件和现状；完整实现由 Worker 决定，\n"
             "  回复只引用必要的文件信息。\n"
             if project_actions else "")
-        return f"""你是 {self.agent_id}，面向人类的入口。
+        return f"""{self.agent_identity}
+
+你是面向人类的入口。
 
 请自然对话，使用人类使用的语言。你可以使用自己的私有 workspace 和草稿，
 也可以把工作交给 Work Agent。Task 由 Work Agent 创建；你没有创建 Task 的动作。
@@ -428,6 +439,8 @@ class FrontAgentRuntime:
 
 ========== Agent 事实（只读） ==========
 {_render_agents(agents)}
+- 名字用于称呼；`preferred_agent` 必须填 Agent ID（例如 `agent_b`），
+  不要填显示名。
 
 ========== Worker 角色（只读） ==========
 {_render_roles(self.roles)}
@@ -669,6 +682,7 @@ def _agent_refs(items: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
             continue
         out.append({
             "agent_id": agent_id,
+            "name": str(item.get("name") or "").strip(),
             "status": str(item.get("status") or ""),
             "role": str(item.get("role") or ""),
             "can_work": bool(item.get("can_work", True)),
@@ -688,11 +702,14 @@ def _render_roles(roles: List[Dict[str, Any]]) -> str:
 def _render_agents(agents: List[Dict[str, Any]]) -> str:
     if not agents:
         return "（无）"
-    return "\n".join(
-        f"- {item['agent_id']}：status={item['status'] or '?'} "
-        f"role={item['role'] or 'WORKER'} can_work={item['can_work']}"
-        for item in agents
-    )
+    lines = []
+    for item in agents:
+        name = str(item.get("name") or "")
+        label = format_agent_label(name, item["agent_id"])
+        lines.append(
+            f"- {label}：status={item['status'] or '?'} "
+            f"role={item['role'] or 'WORKER'} can_work={item['can_work']}")
+    return "\n".join(lines)
 
 
 def _render_inspection(items: List[Dict[str, Any]]) -> str:

@@ -78,7 +78,7 @@ from work.task_snapshot import TaskSnapshotStore
 from work.worker_roles import WorkerRoleError, WorkerRoleStore
 from work.plan import WorkPlan, parse_work_plan
 from work.prompt import WORK_SYSTEM_PROMPT, build_lead_plan_prompt
-from work.roles import WorkContext, WorkRole
+from work.roles import WorkContext, WorkRole, resolve_agent_name
 from work.runtime import SoloWorkRuntime
 from work.team_runtime import TeamWorkRuntime
 
@@ -834,13 +834,8 @@ class AIEOSController:
         return data if isinstance(data, dict) else None
 
     def _agent_name(self, agent_id: str) -> str:
-        economy = getattr(self.rt, "economy", None)
-        if economy is None:
-            return str(agent_id)
-        try:
-            return str(economy.agent(str(agent_id)).name)
-        except Exception:                                     # noqa: BLE001
-            return str(agent_id)
+        name = resolve_agent_name(self.rt, agent_id)
+        return name or str(agent_id)
 
     def _agent_settings_facts(self) -> List[Dict[str, Any]]:
         facts: List[Dict[str, Any]] = []
@@ -1549,6 +1544,7 @@ class AIEOSController:
 
         return FrontAgentRuntime(
             self.front_agent, _front_think,
+            agent_name=self._agent_name(self.front_agent),
             inspect_fn=self._front_inspect_facts,
             roles=self.worker_roles.catalog(),
             execute_actions=_execute,
@@ -1982,6 +1978,7 @@ class AIEOSController:
         for aid in self._agent_ids:
             facts.append({
                 "agent_id": aid,
+                "name": self._agent_name(aid),
                 "status": self.availability.state(aid),
                 "role": (
                     "FRONT" if aid == self.front_agent else "WORKER"),
@@ -2218,7 +2215,7 @@ class AIEOSController:
             ).strip()
             lines.append(
                 f"{index}. {goal[:80]} → "
-                f"{self._agent_name(agent_id)}（{agent_id}）")
+                f"{self._agent_name(agent_id)}（Agent ID: {agent_id}）")
         reply = str(
             getattr(decisions[0], "reply", "") or "").strip()
         headline = reply or "好，我把这次需求拆成多个任务："
@@ -2543,6 +2540,10 @@ class AIEOSController:
             context = WorkContext(
                 task_id=f"pending_{job.job_id}",
                 agent_id=leader,
+                agent_name=resolve_agent_name(self.rt, leader),
+                agent_names={
+                    aid: resolve_agent_name(self.rt, aid) for aid in idle
+                },
                 role=WorkRole.LEAD,
                 iteration=1,
                 brief=brief.to_dict(),

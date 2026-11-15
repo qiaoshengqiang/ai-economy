@@ -182,6 +182,7 @@ class DemandRunner:
         for attempt in range(1, 3):
             prompt = build_brief_prompt(
                 run=self.run, front_agent=self.run.front_agent,
+                runtime=self.rt,
                 previous_error=last_error)
             outcome = self._turn(
                 self.run.front_agent, prompt, None,

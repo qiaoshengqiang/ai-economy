@@ -95,7 +95,7 @@ def test_pi_memory_ingests_and_consolidates(tmp_path):
 def test_pi_memory_context_documents_private_workspace(tmp_path):
     runtime = SimpleNamespace(
         economy=SimpleNamespace(agent=lambda aid: SimpleNamespace(
-            workspace=_Workspace(tmp_path / "agent"))),
+            name="小希", workspace=_Workspace(tmp_path / "agent"))),
         private_working_memory=_Working(),
         private_short_term_memory=_Short(),
         private_long_term_memory=_Long(),
@@ -109,6 +109,8 @@ def test_pi_memory_context_documents_private_workspace(tmp_path):
     bridge.prepare()
 
     context = (bridge.memory_dir / "context.md").read_text(encoding="utf-8")
+    assert "你的名字是：小希" in context
+    assert "你的 Agent ID 是：agent_c" in context
     assert "私有 workspace" in context
     assert "草稿" in context
     assert "中间产物" in context

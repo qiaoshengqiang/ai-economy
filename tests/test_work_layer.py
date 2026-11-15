@@ -35,7 +35,8 @@ from work.availability import AgentAvailability
 from work.drafts import TaskDraftStore
 from work.lifecycle import WorkLifecycle, WorkLifecycleError
 from work.prompt import (
-    WORK_SYSTEM_PROMPT, build_cognition_prompt, build_work_prompt,
+    WORK_SYSTEM_PROMPT, build_cognition_prompt, build_lead_plan_prompt,
+    build_work_prompt,
 )
 from work.roles import WorkContext, WorkRole
 from work.runtime import SoloWorkRuntime
@@ -358,6 +359,41 @@ class TestWorkPrompt:
         assert "work_complete" in prompt
         assert "PUBLIC WORKING MEMORY" not in prompt
         assert "hello.txt exists" in prompt
+
+    def test_prompt_separates_name_and_agent_id(self):
+        context = WorkContext(
+            task_id="T-1", agent_id="agent_a", agent_name="小艾",
+            role=WorkRole.SOLO)
+        prompt = build_work_prompt(
+            context, task_description="写 hello.txt", runtime=None)
+
+        assert "你的名字是：小艾" in prompt
+        assert "你的 Agent ID 是：agent_a" in prompt
+        assert "小艾（agent_a）" not in prompt
+
+    def test_team_prompt_shows_participant_names_with_agent_ids(self):
+        context = WorkContext(
+            task_id="T-1", agent_id="agent_a", agent_name="小艾",
+            agent_names={"agent_b": "小博", "agent_c": "小希"},
+            role=WorkRole.LEAD)
+        prompt = build_lead_plan_prompt(
+            context,
+            task_description="做一个网页",
+            participants=["agent_b", "agent_c"],
+        )
+
+        assert "小博（Agent ID: agent_b）" in prompt
+        assert "小希（Agent ID: agent_c）" in prompt
+        assert "小博（agent_b）" not in prompt
+
+    def test_prompt_falls_back_to_agent_id_when_name_missing(self):
+        context = WorkContext(
+            task_id="T-1", agent_id="agent_a", role=WorkRole.SOLO)
+        prompt = build_work_prompt(
+            context, task_description="写 hello.txt", runtime=None)
+
+        assert "你的名字是：agent_a" in prompt
+        assert "你的 Agent ID 是：agent_a" in prompt
 
     def test_cognition_prompt_includes_environment_and_tools(self):
         context = WorkContext(

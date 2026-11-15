@@ -71,6 +71,7 @@ class _Brain:
 
 class _Agent:
     brain = _Brain()
+    name = "小艾"
 
 
 class _Economy:
@@ -136,6 +137,10 @@ def test_task_prompt_delivers_tool_and_budget_facts():
         agent_id="agent_a", inbox=[], budget_cap=16384,
         budget_feedback=_feedback())
 
+    # 名字和 Agent ID 是两条独立事实
+    assert "你的名字是：小艾" in prompt
+    assert "你的 Agent ID 是：agent_a" in prompt
+    assert "小艾（agent_a）" not in prompt
     # 三条关键事实
     assert "不会回写 Task Workspace" in prompt
     assert "tests/foo.spec.js" in prompt

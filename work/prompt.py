@@ -244,7 +244,9 @@ def build_cognition_prompt(
     criteria = "\n".join(
         f"- {item}" for item in context.acceptance_criteria
     ) or "（没有显式 DoD；以人类任务原文为准）"
-    return f"""你是 {context.agent_id}。当前是任务认知阶段。
+    return f"""{context.agent_identity}
+
+当前是任务认知阶段。
 
 本阶段只读；之后才会进入 Work 阶段。
 
@@ -349,7 +351,9 @@ def build_work_prompt(
         else "只有分配的工作真正完成后，才调用 work_complete。"
     )
 
-    return f"""你是 {context.agent_id}，正在处理 Task {context.task_id}
+    return f"""{context.agent_identity}
+
+你正在处理 Task {context.task_id}
 （第 {context.iteration} 次迭代）。
 
 ========== 角色 ==========
@@ -444,7 +448,7 @@ thinking 是可选的；省略表示保持当前设置。
 # ============================================================
 # Team 模式
 # ============================================================
-def _render_items(items: Any) -> str:
+def _render_items(items: Any, context: Optional[WorkContext] = None) -> str:
     lines = []
     for item in items or []:
         paths = f"；paths={item.paths}" if getattr(item, "paths", None) else ""
@@ -457,8 +461,11 @@ def _render_items(items: Any) -> str:
         if len(notes) > 2000:
             notes = notes[:2000] + " …（已截断）"
         notes_text = f"\n  notes: {notes}" if notes else ""
+        owner = (
+            context.label_for(item.agent_id)
+            if context is not None else item.agent_id)
         lines.append(
-            f"- {item.item_id} @ {item.agent_id}: {item.goal}"
+            f"- {item.item_id} @ {owner}: {item.goal}"
             f"{paths}{acceptance}{notes_text}")
     return "\n".join(lines) or "（无）"
 
@@ -485,8 +492,11 @@ def build_lead_plan_prompt(
     """
     Leader 计划阶段：只输出计划 JSON，不直接执行工作。
     """
-    people = ", ".join(participants)
-    return f"""你是 {context.agent_id}，Team Leader。当前 Task {context.task_id}
+    people = "\n".join(
+        f"- {context.label_for(aid)}" for aid in participants) or "（无）"
+    return f"""{context.agent_identity}
+
+你是 Team Leader。当前 Task {context.task_id}
 （iteration {context.iteration}）。
 
 ========== 任务目标 ==========
@@ -542,10 +552,12 @@ def build_team_worker_prompt(
     """成员 prompt：只看到自己的 item，不看到其他成员的完整上下文。"""
     workspace = context.workspace_facts or _render_workspace(
         runtime, context.workspace_id, context.agent_id)
-    return f"""你是 {context.agent_id}，Team Member。
+    return f"""{context.agent_identity}
+
+你是 Team Member。
 
 ========== 你的分工 ==========
-{_render_items(items)}
+{_render_items(items, context)}
 
 ========== 当前状态 ==========
 {_render_item_state(item_state)}
@@ -596,7 +608,9 @@ def build_qa_prompt(
 ) -> str:
     workspace = context.workspace_facts or _render_workspace(
         runtime, context.workspace_id, context.agent_id)
-    return f"""你是 {context.agent_id}，QA。
+    return f"""{context.agent_identity}
+
+你是 QA。
 
 ========== 任务目标 ==========
 {task_description}
@@ -653,7 +667,9 @@ def build_lead_integration_prompt(
         "\n如果 blocked / pending item 或 QA 反馈需要调整分工，"
         "可以调用 work_plan_update（reassign / add / cancel / update）。\n"
         if include_plan_update else "")
-    return f"""你是 {context.agent_id}，Team Leader。现在做集成、接线、收尾。
+    return f"""{context.agent_identity}
+
+你是 Team Leader。现在做集成、接线、收尾。
 
 ========== 任务目标 ==========
 {task_description}
@@ -711,7 +727,11 @@ def build_leader_replan_prompt(
         f"- blocked/pending items: {blocked}\n"
         + (f"- QA feedback: {qa_feedback}\n" if qa_feedback else "")
     )
-    return f"""你是 {context.agent_id}，Team Leader。当前是**重新计划阶段**。
+    team_text = "\n".join(
+        f"- {context.label_for(aid)}" for aid in participants) or "（无）"
+    return f"""{context.agent_identity}
+
+你是 Team Leader。当前是**重新计划阶段**。
 
 ========== 任务目标 ==========
 {task_description}
@@ -726,7 +746,7 @@ def build_leader_replan_prompt(
 {_render_public_memory(context)}
 
 ========== 团队成员 ==========
-{", ".join(participants)}
+{team_text}
 
 ========== 你的职责 ==========
 这个阶段专注调整计划；生产在后续阶段进行。根据 blocked / pending / QA 反馈决定：

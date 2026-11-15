@@ -4,7 +4,7 @@
 > **日期：2026-11-15**
 > **阶段：开发中 / 观察实验**
 > **协议版本：`1`**
-> **测试基线：`5725 passed, 2 skipped, 30 deselected`**
+> **测试基线：`5739 passed, 2 skipped, 30 deselected`**
 
 本文记录**当前真实可用能力、推荐工作方式、已知限制和版本变化**。
 架构的长期权威仍然是
@@ -40,6 +40,8 @@
   Pi Agent 与 Front 已接入常驻收件箱（`runtime.inbox_enabled = true`），
   Human → Front 改为 Inbox-first；Solo 只入队，并在 work checkpoint 注入；
   Phase 5 V1 支持空闲 Solo Agent 的可选自动回复，默认 `reply_mode = never`。
+- Agent 显示名进入 prompt：自我介绍拆成「名字」和「Agent ID」两条事实；
+  Front / 收件箱 / Team 列表显示对方名字，动作与路由字段仍只认 Agent ID。
 
 ---
 
@@ -517,7 +519,7 @@ Team 协作
 当前基线：
 
 ```text
-5725 passed, 2 skipped, 30 deselected
+5739 passed, 2 skipped, 30 deselected
 ```
 
 启动说明见 [`../START_AIEOS.md`](../START_AIEOS.md)。

@@ -25,6 +25,7 @@ import json
 import uuid
 from typing import Any, Callable, Dict, List, Optional
 
+from core.identity import format_agent_label
 from core.task import Task, TaskMode, TaskStatus
 from core.task_execution import TaskResultRef
 from services.artifacts import write_artifact
@@ -40,7 +41,9 @@ from work.lifecycle import WorkLifecycle, WorkLifecycleError
 from work.prompt import (
     WORK_SYSTEM_PROMPT, build_cognition_prompt, build_work_prompt,
 )
-from work.roles import WorkContext, WorkResult, WorkRole
+from work.roles import (
+    WorkContext, WorkResult, WorkRole, resolve_agent_name,
+)
 
 
 _ENVELOPE_KEYS = frozenset({
@@ -786,8 +789,11 @@ class SoloWorkRuntime:
             if not text:
                 text = json.dumps(
                     payload, ensure_ascii=False, default=str)[:500]
+            from_agent = str(row.get("from_agent") or "")
+            from_label = format_agent_label(
+                resolve_agent_name(self.rt, from_agent), from_agent)
             lines.append(
-                f"- 来自 {row.get('from_agent') or '?'} "
+                f"- 来自 {from_label or '?'} "
                 f"· {row.get('message_type') or '?'}: {text}")
             try:
                 recorder.mark_processed_id(
@@ -804,6 +810,7 @@ class SoloWorkRuntime:
         return WorkContext(
             task_id=task.task_id,
             agent_id=actor,
+            agent_name=resolve_agent_name(self.rt, actor),
             role=WorkRole.SOLO,
             iteration=task.iteration,
             brief=self.brief,

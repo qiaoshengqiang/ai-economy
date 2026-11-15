@@ -16,6 +16,41 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+from core.identity import (
+    agent_display_name, format_agent_identity, format_agent_label,
+)
+
+
+def resolve_agent_name(runtime: Any, agent_id: str) -> str:
+    """解析显示名：canonical config 优先，其次 Economy 身份，最后为空。
+
+    🔒 `agents.<id>.name` 是唯一权威来源。`ResolvedAgent.name` 直接来自它；
+       `Economy` 的身份名在启动时也会同步到同一个配置值。
+       这里保留 fallback，只是为了让测试 / 未声明 Agent 仍能工作。
+    """
+    key = str(agent_id or "").strip()
+    if not key:
+        return ""
+
+    resolved = getattr(runtime, "resolved_config", None)
+    if resolved is not None:
+        try:
+            name = str(getattr(resolved.agent(key), "name", "") or "").strip()
+            if name:
+                return name
+        except Exception:                                     # noqa: BLE001
+            pass
+
+    economy = getattr(runtime, "economy", None)
+    if economy is not None:
+        try:
+            name = str(getattr(economy.agent(key), "name", "") or "").strip()
+            if name:
+                return name
+        except Exception:                                     # noqa: BLE001
+            pass
+    return ""
+
 
 class WorkRole:
     """Work 层角色。"""
@@ -40,11 +75,17 @@ class WorkContext:
        message inbox / acceptance assignment protocol。
 
     这些属于 Life 层，不进入具体工作的 prompt。
+
+    `agent_name` 只是**称呼**，不是经济身份；`agent_id` 仍是唯一技术标识。
     """
 
     task_id: str
     agent_id: str
     role: str
+    #: 显示名（来自 `agents.<id>.name`）；空时回退到 `agent_id`。
+    agent_name: str = ""
+    #: 其他参与者的显示名：`agent_id -> name`。只用于 prompt 称呼。
+    agent_names: Dict[str, str] = field(default_factory=dict)
     iteration: int = 1
     brief: Optional[Dict[str, Any]] = None
     workspace_id: str = ""
@@ -61,10 +102,31 @@ class WorkContext:
     #: 当前 Agent 在这个 Task 下的草稿元数据。
     draft_facts: str = ""
 
+    @property
+    def display_name(self) -> str:
+        return agent_display_name(self.agent_name, self.agent_id)
+
+    @property
+    def agent_label(self) -> str:
+        """紧凑展示：`小艾（Agent ID: agent_a）`。只用于列表 / 消息头。"""
+        return format_agent_label(self.agent_name, self.agent_id)
+
+    @property
+    def agent_identity(self) -> str:
+        """自我介绍：名字和 Agent ID 分成两条事实。"""
+        return format_agent_identity(self.agent_name, self.agent_id)
+
+    def label_for(self, agent_id: str) -> str:
+        """其他 Agent 的紧凑展示：`小博（Agent ID: agent_b）`。"""
+        return format_agent_label(
+            self.agent_names.get(str(agent_id), ""), agent_id)
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "task_id": self.task_id,
             "agent_id": self.agent_id,
+            "agent_name": self.agent_name,
+            "agent_names": dict(self.agent_names),
             "role": self.role,
             "iteration": self.iteration,
             "brief": dict(self.brief) if self.brief else None,

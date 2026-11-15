@@ -51,6 +51,14 @@ def test_it_reaches_the_context_query(rt):
         assert "constitution" in q, f"{aid} 的 context_query 里没有 constitution"
 
 
+def test_context_query_has_separate_name_and_agent_id(rt):
+    for aid in AGENTS:
+        q = _brain(rt, aid).default_context_query
+        identity = q.get("identity", "")
+        assert "我的名字是：" in identity, aid
+        assert f"我的 Agent ID 是：{aid}" in identity, aid
+
+
 def test_it_renders_into_the_system_prompt(rt):
     for aid in AGENTS:
         b = _brain(rt, aid)

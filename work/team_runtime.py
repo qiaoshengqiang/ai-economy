@@ -49,7 +49,9 @@ from work.prompt import (
     build_team_worker_prompt,
 )
 from work.replan import ReplanError, apply_plan_operations
-from work.roles import WorkContext, WorkResult, WorkRole
+from work.roles import (
+    WorkContext, WorkResult, WorkRole, resolve_agent_name,
+)
 
 
 #: item 状态（runtime 内部，不是 Task 状态）
@@ -1493,9 +1495,15 @@ Task: {self.task.task_id}
     # ------------------------------------------------------------
     def _context(self, agent_id: str, role: str) -> WorkContext:
         task = self.task
+        names = {
+            str(aid): resolve_agent_name(self.rt, str(aid))
+            for aid in (task.participants or ())
+        }
         return WorkContext(
             task_id=task.task_id,
             agent_id=agent_id,
+            agent_name=resolve_agent_name(self.rt, agent_id),
+            agent_names=names,
             role=role,
             iteration=task.iteration,
             brief=self.brief,

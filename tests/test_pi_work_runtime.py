@@ -299,6 +299,46 @@ def test_pi_work_runtime_completes_and_ingests_memory(db, monkeypatch, tmp_path)
     assert "aieos_web_search.py fetch" in prompt
 
 
+def test_pi_prompts_separate_name_and_agent_id(db, tmp_path):
+    task = Task.create(
+        task_id="T-PI-IDENTITY", creator="agent_c",
+        description="身份提示词。",
+        workspace_id="WS-PI-ID", participants=["agent_c"],
+        mode=TaskMode.SOLO)
+    task.claim_producer("agent_c")
+    store = TaskStore(db)
+    store.save(task)
+
+    workspace = _FakeWorkspace(tmp_path / "agent_c")
+    runtime = SimpleNamespace(
+        resolved_config=SimpleNamespace(
+            agent=lambda _aid: SimpleNamespace(name="小希")),
+        tasks=store,
+        economy=SimpleNamespace(agent=lambda _aid: SimpleNamespace(
+            has_brain=True, brain=_FakeBrain(),
+            workspace=workspace, name="小希")),
+        private_working_memory=_FakeWorkingMemory(),
+        private_short_term_memory=_FakeShortMemory(),
+        private_long_term_memory=_FakeLongMemory(),
+        recorder=_Recorder(),
+        experiment_run_id="exp-identity",
+    )
+    directory = TaskDirectoryManager(tmp_path / "tasks").for_task(task.task_id)
+    runner = PiWorkRuntime(
+        runtime, task,
+        task_directory=directory,
+        use_llm_proxy=False,
+    )
+
+    for prompt in (
+        runner._minimal_system_prompt(),
+        runner._system_prompt(""),
+    ):
+        assert "你的名字是：小希" in prompt
+        assert "你的 Agent ID 是：agent_c" in prompt
+        assert "小希（agent_c）" not in prompt
+
+
 def test_autonomous_mode_uses_single_minimal_run(db, monkeypatch, tmp_path):
     task = Task.create(
         task_id="T-AUTONOMOUS", creator="agent_c",

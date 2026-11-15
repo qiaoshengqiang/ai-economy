@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from communication import MessageType
+from core.identity import format_agent_label
 from work.comm_bridge import run_coro
 
 logger = logging.getLogger(__name__)
@@ -99,15 +100,30 @@ class PiInboxBridge:
                     "Pi inbox 收取失败", exc_info=True)
                 await asyncio.sleep(0.2)
 
+    def _sender_label(self, agent_id: str) -> str:
+        """消息头显示名；技术上仍保留 `from_agent` 原值。"""
+        display = ""
+        registry = getattr(self.communication, "registry", None)
+        if registry is not None:
+            try:
+                info = registry.find(agent_id)
+                if info is not None:
+                    display = str(getattr(info, "display_name", "") or "")
+            except Exception:                                 # noqa: BLE001
+                display = ""
+        return format_agent_label(display, agent_id)
+
     def capture(self, message: Any) -> None:
         """CommunicationManager handler：把消息写入 Pi 可读的文件。"""
         payload = getattr(message, "payload", None) or {}
         if not isinstance(payload, dict):
             payload = {}
         text = str(payload.get("text") or "").strip()
+        from_agent = str(getattr(message, "from_agent", "") or "")
         record = {
             "message_id": str(getattr(message, "message_id", "") or ""),
-            "from_agent": str(getattr(message, "from_agent", "") or ""),
+            "from_agent": from_agent,
+            "from_display_name": self._sender_label(from_agent),
             "to_agent": str(getattr(message, "to_agent", "") or ""),
             "message_type": str(getattr(message, "message_type", "") or ""),
             "conversation_id": str(
@@ -118,7 +134,7 @@ class PiInboxBridge:
             "created_at": str(getattr(message, "created_at", "") or ""),
         }
         block = (
-            f"### {record['message_id']} · {record['from_agent']} "
+            f"### {record['message_id']} · {record['from_display_name']} "
             f"· {record['message_type']}\n{text}\n\n")
         with self._lock:
             with self.inbox_jsonl.open("a", encoding="utf-8") as handle:

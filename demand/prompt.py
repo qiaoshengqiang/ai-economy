@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, Iterable, List, Optional
 
+from core.identity import format_agent_identity, format_agent_label
 from core.write_limits import MAX_SINGLE_WRITE_CHARS
 
 MAX_DIRECTORY_CHARS = 4_000
@@ -31,10 +32,11 @@ def render_directory(runtime: Any) -> str:
         except Exception:                                     # noqa: BLE001
             pass
         name = getattr(agent, "name", "") or entry.agent_id
+        label = format_agent_label(name, entry.agent_id)
         caps = entry.capabilities.names if entry.capabilities else ()
         cap_text = ", ".join(sorted(caps)) if caps else "(none)"
         lines.append(
-            f"- {entry.agent_id} ({name}): capabilities=[{cap_text}], "
+            f"- {label}: capabilities=[{cap_text}], "
             f"available={entry.available}")
     text = "\n".join(lines) if lines else "（目录为空）"
     return _clip(text, MAX_DIRECTORY_CHARS)
@@ -116,7 +118,9 @@ def _render_context(runtime: Any, task_id: str) -> str:
     return _clip(text, MAX_CONTEXT_CHARS)
 
 
-def _render_inbox(messages: Iterable[Any]) -> str:
+def _render_inbox(
+    messages: Iterable[Any], runtime: Any = None,
+) -> str:
     items = list(messages)
     if not items:
         return "（这一轮你收到 0 条消息。）"
@@ -133,10 +137,14 @@ def _render_inbox(messages: Iterable[Any]) -> str:
             text = ""
         if not text:
             text = str(payload.get("text") or payload)[:500]
+        from_agent = str(getattr(m, "from_agent", "?") or "?")
+        to_agent = str(getattr(m, "to_agent", "?") or "?")
+        from_label = format_agent_label(
+            _agent_name(runtime, from_agent), from_agent)
+        to_label = format_agent_label(
+            _agent_name(runtime, to_agent), to_agent)
         lines.append(
-            f"[{message_type}] "
-            f"{getattr(m, 'from_agent', '?')} → "
-            f"{getattr(m, 'to_agent', '?')}:")
+            f"[{message_type}] {from_label} → {to_label}:")
         lines.append(text)
         if message_type == "ERROR":
             errors = payload.get("errors") or []
@@ -508,6 +516,7 @@ def _envelope_example() -> str:
 
 
 def build_brief_prompt(*, run: Any, front_agent: str,
+                       runtime: Any = None,
                        previous_error: str = "") -> str:
     """
     Stage 1 —— **Front / 解读**。
@@ -520,7 +529,11 @@ def build_brief_prompt(*, run: Any, front_agent: str,
         retry = (
             "\n上一轮 brief 输出不合法：" + str(previous_error) +
             "。请只输出一个合法 JSON 对象。\n")
-    return f"""你是 {front_agent}，AI Economy OS 的 Human → OS 入口。
+    identity = format_agent_identity(
+        _agent_name(runtime, front_agent), front_agent)
+    return f"""{identity}
+
+你是 AI Economy OS 的 Human → OS 入口。
 这是正式运行，不是你直接执行任务的阶段。
 
 ========== Human Demand ==========
@@ -575,7 +588,11 @@ def build_intake_prompt(*, run: Any, runtime: Any, front_agent: str,
         error_text = (
             "\n========== 上一轮 task_create 失败（请修正后重试） ==========\n"
             + str(previous_error) + "\n")
-    return f"""你是 {front_agent}，AI Economy OS 里的一名 Agent。这是**正式运行**，不是演示。
+    identity = format_agent_identity(
+        _agent_name(runtime, front_agent), front_agent)
+    return f"""{identity}
+
+你是 AI Economy OS 里的一名 Agent。这是**正式运行**，不是演示。
 
 ========== Human Demand ==========
 {run.demand}
@@ -667,6 +684,13 @@ def build_intake_prompt(*, run: Any, runtime: Any, front_agent: str,
 """
 
 
+def _agent_name(runtime: Any, agent_id: str) -> str:
+    try:
+        return str(getattr(runtime.economy.agent(agent_id), "name", "") or "")
+    except Exception:                                         # noqa: BLE001
+        return ""
+
+
 def build_task_prompt(
     *,
     run: Any,
@@ -704,7 +728,7 @@ def build_task_prompt(
     long_term = _safe(
         lambda: runtime.private_long_term_memory.render_top(agent_id),
         "（长期记忆读取失败）")
-    inbox_text = _render_inbox(inbox)
+    inbox_text = _render_inbox(inbox, runtime)
     budget = _render_budget(
         runtime, agent_id, cap=budget_cap, feedback=budget_feedback)
     try:
@@ -730,8 +754,12 @@ def build_task_prompt(
         stalled_agents=list(stalled_agents or []),
     )
     drafts_text = _render_drafts(drafts)
+    identity = format_agent_identity(
+        _agent_name(runtime, agent_id), agent_id)
 
-    return f"""你是 {agent_id}，这是正式运行中的一个 Task turn。
+    return f"""{identity}
+
+这是正式运行中的一个 Task turn。
 
 ========== 你的角色事实 ==========
 {role_text}

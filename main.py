@@ -65,6 +65,7 @@ from core.config_resolver import (                              # noqa: E402
 from core.paths import GLOBAL_CONFIG_FILE                        # noqa: E402
 from llm.router import adapter_specs                            # noqa: E402
 from core.economy import AgentNotFoundError, Economy, EconomyError  # noqa: E402
+from core.identity import format_agent_identity                 # noqa: E402
 from core.ledger import LedgerError, format_amount              # noqa: E402
 from core.logging_setup import get_logger, setup_logging        # noqa: E402
 from core.platform_support import default_platform             # noqa: E402
@@ -621,8 +622,9 @@ def _agent_context_query(base: Mapping[str, Any],
     🔒 读的是 `ResolvedAgent.raw`（保留的原始 agent 段）——
        因此**不需要给 `config_resolver` 加字段**：新配置项天然通过。
 
-    🔒 `identity` 也支持（`to_text()` 的 head 段里它和 constitution 并列），
-       只是当前没有 Agent 配它。
+    🔒 `identity` 也支持（`to_text()` 的 head 段里它和 constitution 并列）。
+       但**名字和 Agent ID 是系统事实**，不能被 `cognition.identity` 覆盖掉：
+       这里先写两行明确身份，再把配置里的自述附在后面。
     """
     out: Dict[str, Any] = dict(base or {})
     cog = dict((getattr(resolved_agent, "raw", None) or {}).get("cognition")
@@ -631,6 +633,13 @@ def _agent_context_query(base: Mapping[str, Any],
         val = cog.get(key)
         if val is not None and str(val).strip():
             out[key] = str(val).strip()
+
+    name = str(getattr(resolved_agent, "name", "") or "")
+    agent_id = str(getattr(resolved_agent, "agent_id", "") or "")
+    identity = format_agent_identity(name, agent_id, pronoun="我的")
+    configured = str(out.get("identity") or "").strip()
+    out["identity"] = (
+        f"{identity}\n{configured}" if configured else identity)
     return out
 
 

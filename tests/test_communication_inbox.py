@@ -356,7 +356,14 @@ def test_life_inbox_auto_replies_to_agent_message(wired):
         enabled=True,
         cutover_at="2000-01-01T00:00:00+00:00",
     )
-    agent_b.think = lambda *_args, **_kwargs: "pong"
+    captured = {}
+
+    def _think(prompt, **kwargs):
+        captured["prompt"] = prompt
+        captured["system"] = kwargs.get("system") or ""
+        return "pong"
+
+    agent_b.think = _think
     agent_b.last_usage = {"cost_ai": 0.0}
     availability = AgentAvailability()
     availability.register("agent_b")
@@ -367,9 +374,10 @@ def test_life_inbox_auto_replies_to_agent_message(wired):
         payload={"kind": "agent_message", "text": "ping"},
     ))
 
+    agents = {"agent_a": agent_a, "agent_b": agent_b}
     runtime = SimpleNamespace(
         communication=manager,
-        economy=SimpleNamespace(agent=lambda _aid: agent_b),
+        economy=SimpleNamespace(agent=lambda aid: agents.get(aid)),
     )
     service = LifeInboxService(runtime, availability)
     service.configure({"agent_b": InboxPolicy(
@@ -382,6 +390,9 @@ def test_life_inbox_auto_replies_to_agent_message(wired):
     finally:
         service.stop()
 
+    assert "你的名字是：Agent B" in captured["system"]
+    assert "你的 Agent ID 是：agent_b" in captured["system"]
+    assert "来自：Agent A（Agent ID: agent_a）" in captured["prompt"]
     assert journal.get_message(message.message_id)["processed_once"] == 1
     inbound = run_coro(manager.receive("agent_a", timeout=0.1))
     assert inbound.message is not None

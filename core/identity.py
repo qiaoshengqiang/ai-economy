@@ -113,6 +113,47 @@ class AgentIdentity:
         return f"AgentIdentity(agent_id={self.agent_id!r}, name={self.name!r})"
 
 
+def agent_display_name(name: Optional[str], agent_id: str) -> str:
+    """显示名；缺失时回退到 `agent_id`。"""
+    value = str(name or "").strip()
+    if value:
+        return value
+    return str(agent_id or "").strip()
+
+
+def format_agent_label(name: Optional[str], agent_id: str) -> str:
+    """列表 / 消息头使用的紧凑显示：`小艾（Agent ID: agent_a）`。
+
+    🔒 自我身份句不要用它 —— 那里必须把名字和 Agent ID 分开写
+       （见 `format_agent_identity()`）。
+    """
+    display = agent_display_name(name, agent_id)
+    key = str(agent_id or "").strip()
+    if not key or display == key:
+        return display
+    return f"{display}（Agent ID: {key}）"
+
+
+def format_agent_identity(
+    name: Optional[str],
+    agent_id: str,
+    *,
+    pronoun: str = "你的",
+) -> str:
+    """把名字和 Agent ID 渲染成两条明确的事实。
+
+    🔒 这是给 Agent 自我介绍用的：名字是称呼，Agent ID 是技术标识。
+       不要把两者合并成一句，否则模型容易把中文名填进
+       `preferred_agent` / `assigned_to` / `to` 这类字段。
+    """
+    display = agent_display_name(name, agent_id)
+    key = str(agent_id or "").strip()
+    lines = [f"{pronoun}名字是：{display}"]
+    if key:
+        lines.append(f"{pronoun} Agent ID 是：{key}")
+    return "\n".join(lines)
+
+
 def new_message_id(prefix: str = "msg") -> str:
     """
     生成一个短一点的唯一 ID，用于消息 / 任务 / 合同。
