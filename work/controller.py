@@ -47,8 +47,11 @@ from llm.web_search import WebSearchClient, WebSearchError
 from commit.models import CommitMode, CommitStatus
 from commit.service import CommitError, OutputCommitService
 from commit.store import CommitStore
+from core.alarm import WakeupEvent, WakeupResult
+from core.alarm_store import AlarmStore
 from core.task import Task, TaskMode, TaskStatus
 from demand.task_creation import TaskCreationService
+from services.alarm_service import AlarmService, WakeupDispatcher
 from services.artifacts import read_artifact
 from work.artifact_export import (
     ArtifactExportError, export_task_workspace,
@@ -67,6 +70,7 @@ from work.drafts import TaskDraftStore
 from work.front_actions import (
     build_front_dispatcher, execute_front_actions,
 )
+from work.front_wakeup import FrontWakeupHandler
 from work.handoff import HandoffRuntime
 from work.life_inbox_service import LifeInboxService
 from work.pi_inbox_service import PiInboxService
@@ -107,6 +111,10 @@ class JobStatus:
     WAITING_HUMAN = "WAITING_HUMAN"
     DIRECT_REPLY = "DIRECT_REPLY"
     CLARIFY = "CLARIFY"
+    #: 闹钟唤醒 Job；不占用 Task 的 live 状态。
+    ALARM_RUNNING = "ALARM_RUNNING"
+    #: 闹钟唤醒后决定不打扰人类；Activity Record 仍会写入。
+    NO_NOTIFY = "NO_NOTIFY"
 
 
 #: 一次 Front 回合最多派发多少个独立 Task。
@@ -134,6 +142,7 @@ _ENDED_JOB_STATUSES = frozenset({
     JobStatus.DIRECT_REPLY,
     JobStatus.CLARIFY,
     JobStatus.BATCH_DISPATCHED,
+    JobStatus.NO_NOTIFY,
 })
 
 
@@ -162,6 +171,10 @@ class WorkJob:
     #: Human Gateway 写入 Journal 后返回的消息 ID / 会话 ID。
     human_message_id: str = ""
     conversation_id: str = ""
+    #: human / alarm。alarm Job 不来自 Human 消息。
+    source: str = "human"
+    wakeup_id: str = ""
+    wakeup_event: Dict[str, Any] = field(default_factory=dict)
     #: Front → Worker 的 TASK_OFFER 消息 ID / handoff 会话 ID。
     handoff_message_id: str = ""
     handoff_conversation_id: str = ""
@@ -203,6 +216,8 @@ class WorkJob:
             "commit_repo": self.commit_repo,
             "human_message_id": self.human_message_id,
             "conversation_id": self.conversation_id,
+            "source": self.source,
+            "wakeup_id": self.wakeup_id,
             "handoff_message_id": self.handoff_message_id,
             "handoff_conversation_id": self.handoff_conversation_id,
             "client_message_id": self.client_message_id,
@@ -271,10 +286,28 @@ class AIEOSController:
         prompt_log_path: Optional[Path] = None,
         system_settings: Any = None,
         human_gateway: Any = None,
+        alarms_enabled: bool = False,
+        alarm_min_interval_seconds: int = 60,
+        alarm_max_active_per_agent: int = 5,
+        alarm_guard_max_per_agent: int = 0,
+        alarm_guard_max_total: int = 0,
     ) -> None:
         self.rt = runtime
         self.front_agent = str(front_agent)
         self.human_gateway = human_gateway
+        self.alarms_enabled = bool(alarms_enabled)
+        self.alarm_min_interval_seconds = max(
+            1, int(alarm_min_interval_seconds))
+        self.alarm_max_active_per_agent = max(
+            1, int(alarm_max_active_per_agent))
+        self.alarm_guard_max_per_agent = max(
+            0, int(alarm_guard_max_per_agent))
+        self.alarm_guard_max_total = max(0, int(alarm_guard_max_total))
+        #: Wakeup V1：单进程内的闹钟服务。
+        self.alarm_service: Optional[AlarmService] = None
+        self._alarm_dispatcher = WakeupDispatcher()
+        #: Activity 未读水位：agent_id -> ISO 时间。
+        self._activity_seen: Dict[str, str] = {}
         #: UI 客户端幂等：client_message_id → 已创建的 Job。
         self._submit_lock = threading.Lock()
         self._client_submissions: Dict[str, Dict[str, str]] = {}
@@ -388,6 +421,7 @@ class AIEOSController:
             raise ValueError(
                 f"Front Agent {self.front_agent!r} 不在 Agent Directory 里")
         self._configure_front_brain()
+        self._init_alarms()
 
     # ------------------------------------------------------------
     # 设置 / 状态
@@ -457,6 +491,13 @@ class AIEOSController:
                 str(aid): str(level)
                 for aid, level in raw_thinking.items()
                 if str(aid) in self._agent_ids
+            }
+        raw_seen = data.get("activity_seen")
+        if isinstance(raw_seen, dict):
+            self._activity_seen = {
+                str(aid): str(value)
+                for aid, value in raw_seen.items()
+                if str(aid) in self._agent_ids and str(value).strip()
             }
         mode = str(data.get("work_mode") or "workflow").strip().lower()
         if mode in ("workflow", "autonomous"):
@@ -664,6 +705,7 @@ class AIEOSController:
             "commit_auto_merge": bool(self.commit_auto_merge),
             "commit_max_file_bytes": int(self.commit_max_file_bytes),
             "commit_max_total_bytes": int(self.commit_max_total_bytes),
+            "activity_seen": dict(self._activity_seen),
         }
 
     def _pi_timeout(self) -> float:
@@ -943,6 +985,31 @@ class AIEOSController:
             "stats": recorder.inbox_stats(key),
             "messages": messages,
         }
+
+    def activities(self, agent_id: str, *, limit: int = 50) -> Dict[str, Any]:
+        key = str(agent_id or "").strip()
+        if key not in self._agent_ids:
+            raise ValueError(f"未知 Agent：{key!r}")
+        service = self.alarm_service
+        items = service.recent_runs(key, limit=limit) if service else []
+        seen = self._activity_seen.get(key, "")
+        unread = service.count_runs(key, since=seen) if service else 0
+        return {
+            "agent_id": key,
+            "seen_at": seen,
+            "unread": int(unread),
+            "activities": items,
+        }
+
+    def mark_activities_seen(self, agent_id: str) -> Dict[str, Any]:
+        key = str(agent_id or "").strip()
+        if key not in self._agent_ids:
+            raise ValueError(f"未知 Agent：{key!r}")
+        seen = _now()
+        with self._lock:
+            self._activity_seen[key] = seen
+        self._persist_settings()
+        return {"agent_id": key, "seen_at": seen, "unread": 0}
 
     def apply_system_settings(
         self, action: str, payload: Dict[str, Any],
@@ -1536,6 +1603,7 @@ class AIEOSController:
             web_fetch_fn=lambda url: self.web_fetch(
                 self.front_agent, url),
             project_root=project_root,
+            alarm_service=self.alarm_service,
         )
 
         def _execute(actions: List[Dict[str, Any]]) -> str:
@@ -1773,6 +1841,8 @@ class AIEOSController:
         job: WorkJob,
         active: List[Dict[str, Any]],
         completed: List[Dict[str, Any]],
+        *,
+        wakeup: Optional[Dict[str, Any]] = None,
     ) -> FrontTurn:
         """优先走多动作接口；旧 Front 实现仍按单动作兼容。"""
         method = getattr(front, "decide_turn", None)
@@ -1805,6 +1875,8 @@ class AIEOSController:
             "context": context,
             "project_context": project_context,
         }
+        if wakeup is not None:
+            kwargs["wakeup"] = wakeup
         if callable(method):
             return method(job.human_text, **kwargs)
         decision = front.decide(job.human_text, **kwargs)
@@ -1826,6 +1898,13 @@ class AIEOSController:
                 thinking=job.front_thinking)
             job.status = JobStatus.DIRECT_REPLY
             job.summary = text
+            self._touch(job)
+            return
+        if intent == FrontIntent.NO_NOTIFY:
+            if getattr(job, "source", "") != "alarm":
+                raise ValueError("no_notify 只允许用于闹钟唤醒")
+            job.status = JobStatus.NO_NOTIFY
+            job.summary = str(getattr(decision, "reason", "") or "no_notify")
             self._touch(job)
             return
         if intent == FrontIntent.CLARIFY:
@@ -3321,6 +3400,11 @@ class AIEOSController:
             ]
             messages = self._merged_messages()
             tasks = self._task_cards()
+            activity_unread = 0
+            if self.alarm_service is not None:
+                activity_unread = self.alarm_service.count_runs(
+                    self.front_agent,
+                    since=self._activity_seen.get(self.front_agent, ""))
             return {
                 "front_agent": self.front_agent,
                 "settings": self.settings_dict(),
@@ -3328,6 +3412,7 @@ class AIEOSController:
                 "tasks": tasks,
                 "jobs": jobs,
                 "messages": messages,
+                "activity_unread": int(activity_unread),
                 "running_jobs": sum(
                     1 for job in self._jobs.values()
                     if job.status in (
@@ -3337,6 +3422,7 @@ class AIEOSController:
                         JobStatus.LEADER_PLANNING,
                         JobStatus.WAITING_FOR_MEMBERS,
                         JobStatus.RUNNING,
+                        JobStatus.ALARM_RUNNING,
                     )
                 ),
             }
@@ -3962,6 +4048,137 @@ class AIEOSController:
         with self._lock:
             self._agent_tasks.pop(aid, None)
 
+    def _init_alarms(self) -> None:
+        """V1：单进程内启动一个 deadline-driven AlarmScheduler。"""
+        if not self.alarms_enabled:
+            return
+        economy = getattr(self.rt, "economy", None)
+        db = getattr(economy, "db", None)
+        if db is None:
+            logger.warning("AlarmScheduler 未启动：Runtime 没有数据库")
+            return
+        service = AlarmService(
+            AlarmStore(db),
+            self._alarm_dispatcher,
+            min_interval_seconds=self.alarm_min_interval_seconds,
+            max_active_per_agent=self.alarm_max_active_per_agent,
+            task_status_fn=self._alarm_task_status,
+            guard_max_per_agent=self.alarm_guard_max_per_agent,
+            guard_max_total=self.alarm_guard_max_total,
+        )
+        self._alarm_dispatcher.register(
+            self.front_agent,
+            FrontWakeupHandler(self.run_front_wakeup),
+        )
+        self.alarm_service = service
+        service.start()
+
+    def _alarm_task_status(self, task_id: str) -> Dict[str, Any]:
+        try:
+            task = self.rt.tasks.get(str(task_id))
+        except Exception:                                     # noqa: BLE001
+            task = None
+        if task is None:
+            return {"task_id": str(task_id), "found": False, "status": ""}
+        return {
+            "task_id": str(task_id),
+            "found": True,
+            "status": str(getattr(task, "status", "") or ""),
+        }
+
+    def run_front_wakeup(self, event: WakeupEvent) -> WakeupResult:
+        """AlarmService 的 Front handler：同步执行一次 Front wake turn。"""
+        event_dict = event.to_dict()
+        task_ids = list(event.task_ids or [])
+        job = WorkJob(
+            job_id=f"job_alarm_{uuid.uuid4().hex[:10]}",
+            human_text="",
+            status=JobStatus.ALARM_RUNNING,
+            source="alarm",
+            wakeup_id=event.wakeup_id,
+            wakeup_event=event_dict,
+            task_id=(task_ids[0] if task_ids else ""),
+            conversation_id="",
+            created_at=_now(),
+            updated_at=_now(),
+        )
+        with self._lock:
+            self._jobs[job.job_id] = job
+            self._job_order.append(job.job_id)
+        try:
+            return self._run_front_wakeup(job)
+        finally:
+            self._write_job_log(job)
+            self._notify()
+
+    def _run_front_wakeup(self, job: WorkJob) -> WakeupResult:
+        prompt_log.bind_job(job.job_id)
+        try:
+            front = self._front_runtime("")
+            if front is None:
+                self._fail(job, "Front Agent 没有可用的 Brain")
+                return WakeupResult(
+                    outcome="failed", summary="front_unavailable",
+                    job_id=job.job_id)
+            active, completed = self._task_refs()
+            with self._front_lock:
+                started = time.perf_counter()
+                try:
+                    turn = self._front_turn(
+                        front, job, active, completed,
+                        wakeup=job.wakeup_event)
+                except FrontUnavailableError as exc:
+                    job.front_ms = max(0, int(
+                        (time.perf_counter() - started) * 1000))
+                    self._fail(job, str(exc))
+                    return WakeupResult(
+                        outcome="failed", summary=str(exc),
+                        job_id=job.job_id)
+                job.front_ms = max(0, int(
+                    (time.perf_counter() - started) * 1000))
+                job.front_thinking = self._thinking_for(
+                    self.front_agent, "decision")
+            decisions = list(turn.decisions or [])
+            if not decisions:
+                self._fail(job, "Front 闹钟唤醒没有给出任何决定")
+                return WakeupResult(
+                    outcome="failed", summary="no_decision",
+                    job_id=job.job_id)
+            allowed = {FrontIntent.DIRECT_REPLY, FrontIntent.NO_NOTIFY}
+            rejected = [
+                item for item in decisions if item.intent not in allowed]
+            if rejected:
+                names = ", ".join(item.intent for item in rejected)
+                self._fail(
+                    job, f"alarm_wakeup_cannot_do: {names}")
+                return WakeupResult(
+                    outcome="rejected",
+                    summary=f"alarm_wakeup_cannot_do: {names}",
+                    job_id=job.job_id)
+            replied = False
+            for item in decisions:
+                if item.intent == FrontIntent.DIRECT_REPLY:
+                    self._message(
+                        "front", item.reply,
+                        job_id=job.job_id, task_id=job.task_id,
+                        duration_ms=job.front_ms,
+                        thinking=job.front_thinking)
+                    job.status = JobStatus.DIRECT_REPLY
+                    job.summary = item.reply
+                    replied = True
+                elif item.intent == FrontIntent.NO_NOTIFY:
+                    job.status = JobStatus.NO_NOTIFY
+                    job.summary = item.reason or "no_notify"
+                self._touch(job)
+            self._write_job_log(job)
+            return WakeupResult(
+                outcome="replied" if replied else "no_notify",
+                summary=job.summary,
+                job_id=job.job_id)
+        finally:
+            prompt_log.clear_job()
+            self._notify()
+
     def _configure_front_brain(self) -> None:
         """Front 的决策思考强度：Auto 默认 low，可在 Agent 卡片修改。"""
         agent = self._agent(self.front_agent)
@@ -4139,6 +4356,9 @@ class AIEOSController:
     def close(self) -> None:
         with self._lock:
             self._closed = True
+        if self.alarm_service is not None:
+            self.alarm_service.stop()
+            self.alarm_service = None
         if self._pi_inbox_service is not None:
             self._pi_inbox_service.stop_all()
             self._pi_inbox_service = None

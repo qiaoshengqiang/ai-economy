@@ -106,6 +106,12 @@ TABLE_PRIVATE_SHORT_TERM_MEMORY: Final = "agent_short_term_memory"
 TABLE_PRIVATE_SHORT_TERM_ARCHIVE: Final = "agent_short_term_memory_archive"
 TABLE_PRIVATE_LONG_TERM_MEMORY: Final = "agent_long_term_memory"
 
+# ---- Agent Wakeup V1：定时唤醒 / 闹钟 ----
+# 🔒 Alarm 是 Agent 自己的**调度状态**，不是 Message、Task 或 Heartbeat。
+#    Activity Record 是唤醒结果，不是聊天消息。
+TABLE_AGENT_ALARMS: Final = "agent_alarms"
+TABLE_AGENT_WAKEUP_RUNS: Final = "agent_wakeup_runs"
+
 
 # ============================================================
 # 建表 SQL
@@ -1183,6 +1189,60 @@ SCHEMA_STATEMENTS: Final[tuple[str, ...]] = (
         PRIMARY KEY (agent_id, entry_id)
     )
     """,
+
+    # --------------------------------------------------------
+    # Agent Wakeup V1：闹钟定义
+    # --------------------------------------------------------
+    """
+    CREATE TABLE IF NOT EXISTS agent_alarms (
+        alarm_id           TEXT PRIMARY KEY,
+        agent_id           TEXT NOT NULL,
+        status             TEXT NOT NULL,
+        reason             TEXT NOT NULL,
+        instruction        TEXT NOT NULL,
+        task_ids_json      TEXT NOT NULL DEFAULT '[]',
+        schedule_kind      TEXT NOT NULL,
+        interval_seconds   INTEGER,
+        next_fire_at       TEXT NOT NULL,
+        last_fired_at      TEXT,
+        fire_count         INTEGER NOT NULL DEFAULT 0,
+        max_runs           INTEGER,
+        expires_at         TEXT,
+        dedupe_key         TEXT,
+        last_error         TEXT,
+        created_by         TEXT NOT NULL,
+        source_message_id  TEXT,
+        conversation_id    TEXT,
+        created_at         TEXT NOT NULL,
+        updated_at         TEXT NOT NULL
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_agent_alarms_due "
+    "ON agent_alarms (status, next_fire_at)",
+    "CREATE INDEX IF NOT EXISTS idx_agent_alarms_agent "
+    "ON agent_alarms (agent_id, status)",
+
+    # --------------------------------------------------------
+    # Agent Wakeup V1：每次唤醒的 Activity Record
+    # --------------------------------------------------------
+    """
+    CREATE TABLE IF NOT EXISTS agent_wakeup_runs (
+        run_id          TEXT PRIMARY KEY,
+        wakeup_id       TEXT NOT NULL,
+        agent_id        TEXT NOT NULL,
+        kind            TEXT NOT NULL,
+        scheduled_for   TEXT NOT NULL,
+        started_at      TEXT NOT NULL,
+        finished_at     TEXT,
+        outcome         TEXT NOT NULL,
+        summary         TEXT,
+        job_id          TEXT,
+        detail_json     TEXT NOT NULL DEFAULT '{}',
+        UNIQUE (wakeup_id, scheduled_for)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_agent_wakeup_runs_agent "
+    "ON agent_wakeup_runs (agent_id, started_at)",
 )
 
 

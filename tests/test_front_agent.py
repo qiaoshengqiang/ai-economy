@@ -1025,3 +1025,35 @@ def test_commit_confirm_accepts_natural_language_without_code():
     assert decision.intent == FrontIntent.COMMIT_CONFIRM
     assert decision.task_id == "task_x"
     assert decision.commit_code == ""
+
+
+def test_wakeup_prompt_is_system_alarm_not_human_message():
+    captured = {}
+
+    def think(prompt):
+        captured["prompt"] = prompt
+        return json.dumps({
+            "intent": "no_notify",
+            "reason": "状态没有变化",
+        })
+
+    runtime = FrontAgentRuntime(
+        "front", think,
+        action_types=("alarm_create", "alarm_list", "alarm_cancel"))
+    runtime.decide_turn("", wakeup={
+        "wakeup_id": "alarm_1",
+        "reason": "检查任务状态",
+        "instruction": "查看 task_x",
+        "scheduled_for": "2026-11-15T10:35:00+00:00",
+        "fire_count": 2,
+        "tasks": [{"task_id": "task_x", "found": True,
+                   "status": "IN_PROGRESS"}],
+    })
+
+    prompt = captured["prompt"]
+    assert "系统闹钟（不是 Human 消息）" in prompt
+    assert "alarm_1" in prompt
+    assert "task_x" in prompt
+    assert "no_notify" in prompt
+    assert "alarm_cancel" in prompt
+    assert "不要从闹钟创建 Task" in prompt

@@ -128,6 +128,24 @@ class _FakeController:
             "agent_a": {"agent_id": "agent_a", "pending": 0},
         }}
 
+    def activities(self, agent_id, *, limit=50):
+        if agent_id != "agent_a":
+            raise ValueError(f"未知 Agent：{agent_id!r}")
+        return {
+            "agent_id": agent_id,
+            "seen_at": "",
+            "unread": 1,
+            "activities": [{
+                "run_id": "wake_1",
+                "agent_id": agent_id,
+                "outcome": "no_notify",
+                "summary": "状态没有变化",
+            }],
+        }
+
+    def mark_activities_seen(self, agent_id):
+        return {"agent_id": agent_id, "seen_at": "now", "unread": 0}
+
     def inbox_pending(self, agent_id, *, limit=50):
         if agent_id != "agent_a":
             raise ValueError(f"未知 Agent：{agent_id!r}")
@@ -283,6 +301,23 @@ def test_inbox_stats_and_pending_api(server):
     with pytest.raises(urllib.error.HTTPError) as excinfo:
         _get(base + "/api/inbox/no_such_agent")
     assert excinfo.value.code == 404
+
+
+def test_activities_api(server):
+    _fake, base = server
+    status, body = _get(base + "/api/activities?agent_id=agent_a&limit=10")
+    assert status == 200
+    payload = json.loads(body)
+    assert payload["agent_id"] == "agent_a"
+    assert payload["unread"] == 1
+    assert payload["activities"][0]["outcome"] == "no_notify"
+
+    status, payload = _post(base + "/api/activities/seen", {
+        "agent_id": "agent_a",
+    })
+    assert status == 200
+    assert payload["ok"] is True
+    assert payload["unread"] == 0
 
 
 def test_task_detail_api(server):

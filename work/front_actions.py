@@ -51,6 +51,7 @@ FRONT_ACTION_TYPES = frozenset({
     "private_read", "private_write", "private_list", "private_delete",
     "draft_read", "draft_write", "draft_append", "draft_list",
     "draft_delete",
+    "alarm_create", "alarm_list", "alarm_cancel",
 })
 
 
@@ -270,6 +271,133 @@ class FrontProjectReadExecutor:
         )
 
 
+class FrontAlarmCreateExecutor:
+    """`alarm_create` —— Front 给自己创建一个持久化闹钟。"""
+
+    action_types = frozenset({"alarm_create"})
+
+    def __init__(self, alarm_service: Any) -> None:
+        self.alarm_service = alarm_service
+
+    def execute(self, intent: ActionIntent) -> ActionResult:
+        params = dict(getattr(intent, "parameters", None) or {})
+        if self.alarm_service is None:
+            return ActionResult(
+                success=False, error="alarm_service 未启用",
+                action_id=intent.intent_id,
+                action_type=intent.action_type,
+                metadata={"code": "alarm_disabled"},
+            )
+        try:
+            result = self.alarm_service.create(
+                agent_id=intent.agent_id,
+                reason=params.get("reason") or "",
+                instruction=params.get("instruction") or "",
+                task_ids=params.get("task_ids") or params.get("task_id") or [],
+                schedule=params.get("schedule") or "once",
+                interval_seconds=params.get("interval_seconds"),
+                delay_seconds=params.get("delay_seconds"),
+                at=str(params.get("at") or ""),
+                max_runs=params.get("max_runs"),
+                expires_at=str(params.get("expires_at") or ""),
+                expires_in_seconds=params.get("expires_in_seconds"),
+                dedupe_key=str(params.get("dedupe_key") or ""),
+                source_message_id=str(
+                    params.get("source_message_id") or ""),
+                conversation_id=str(params.get("conversation_id") or ""),
+            )
+        except Exception as exc:                              # noqa: BLE001
+            return ActionResult(
+                success=False, error=f"{type(exc).__name__}: {exc}",
+                action_id=intent.intent_id,
+                action_type=intent.action_type,
+                metadata={"code": "alarm_create_failed"},
+            )
+        return ActionResult(
+            success=True, output=result,
+            action_id=intent.intent_id,
+            action_type=intent.action_type,
+            metadata={"code": None},
+        )
+
+
+class FrontAlarmListExecutor:
+    action_types = frozenset({"alarm_list"})
+
+    def __init__(self, alarm_service: Any) -> None:
+        self.alarm_service = alarm_service
+
+    def execute(self, intent: ActionIntent) -> ActionResult:
+        if self.alarm_service is None:
+            return ActionResult(
+                success=False, error="alarm_service 未启用",
+                action_id=intent.intent_id,
+                action_type=intent.action_type,
+                metadata={"code": "alarm_disabled"},
+            )
+        params = dict(getattr(intent, "parameters", None) or {})
+        try:
+            alarms = self.alarm_service.list(
+                intent.agent_id,
+                include_inactive=bool(params.get("include_inactive", False)),
+            )
+        except Exception as exc:                              # noqa: BLE001
+            return ActionResult(
+                success=False, error=f"{type(exc).__name__}: {exc}",
+                action_id=intent.intent_id,
+                action_type=intent.action_type,
+                metadata={"code": "alarm_list_failed"},
+            )
+        return ActionResult(
+            success=True, output={"alarms": alarms},
+            action_id=intent.intent_id,
+            action_type=intent.action_type,
+            metadata={"code": None},
+        )
+
+
+class FrontAlarmCancelExecutor:
+    action_types = frozenset({"alarm_cancel"})
+
+    def __init__(self, alarm_service: Any) -> None:
+        self.alarm_service = alarm_service
+
+    def execute(self, intent: ActionIntent) -> ActionResult:
+        if self.alarm_service is None:
+            return ActionResult(
+                success=False, error="alarm_service 未启用",
+                action_id=intent.intent_id,
+                action_type=intent.action_type,
+                metadata={"code": "alarm_disabled"},
+            )
+        params = dict(getattr(intent, "parameters", None) or {})
+        alarm_id = str(params.get("alarm_id") or "").strip()
+        if not alarm_id:
+            return ActionResult(
+                success=False, error="alarm_cancel 需要 alarm_id",
+                action_id=intent.intent_id,
+                action_type=intent.action_type,
+                metadata={"code": "bad_request"},
+            )
+        try:
+            ok = self.alarm_service.cancel(intent.agent_id, alarm_id)
+        except Exception as exc:                              # noqa: BLE001
+            return ActionResult(
+                success=False, error=f"{type(exc).__name__}: {exc}",
+                action_id=intent.intent_id,
+                action_type=intent.action_type,
+                metadata={"code": "alarm_cancel_failed"},
+            )
+        return ActionResult(
+            success=bool(ok),
+            output={"alarm_id": alarm_id, "cancelled": bool(ok)},
+            error=None if ok else "闹钟不存在或不属于当前 Agent",
+            action_id=intent.intent_id,
+            action_type=intent.action_type,
+            metadata={"code": None if ok else "not_found"},
+        )
+
+
 def build_front_dispatcher(
     *,
     workspace_of: Callable[[str], Any],
@@ -278,6 +406,7 @@ def build_front_dispatcher(
     web_search_fn: Optional[Callable[..., Any]] = None,
     web_fetch_fn: Optional[Callable[..., Any]] = None,
     project_root: str = "",
+    alarm_service: Any = None,
 ) -> ActionDispatcher:
     """把 Front 的私有空间 / 草稿 / 只读产物动作接成一个 dispatcher。"""
 
@@ -309,6 +438,12 @@ def build_front_dispatcher(
         executors.append(FrontWebSearchExecutor(web_search_fn))
     if web_fetch_fn is not None:
         executors.append(FrontWebFetchExecutor(web_fetch_fn))
+    if alarm_service is not None:
+        executors.extend([
+            FrontAlarmCreateExecutor(alarm_service),
+            FrontAlarmListExecutor(alarm_service),
+            FrontAlarmCancelExecutor(alarm_service),
+        ])
     return ActionDispatcher(executors)
 
 

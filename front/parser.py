@@ -35,6 +35,7 @@ FRONT_ACTION_NAMES = frozenset({
     "private_read", "private_write", "private_list", "private_delete",
     "draft_read", "draft_write", "draft_append", "draft_list",
     "draft_delete",
+    "alarm_create", "alarm_list", "alarm_cancel",
 })
 
 #: 自然形状 decision 允许出现的键。用来避免把文件内容里的
@@ -225,6 +226,12 @@ def parse_front_decision(
                 return None, "direct_reply_missing_reply"
             return FrontDecision(
                 intent=raw_intent, reply=reply,
+                confidence=confidence,
+                reason=str(payload.get("reason") or "")), ""
+
+        if raw_intent == FrontIntent.NO_NOTIFY:
+            return FrontDecision(
+                intent=raw_intent,
                 confidence=confidence,
                 reason=str(payload.get("reason") or "")), ""
 

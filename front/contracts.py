@@ -46,6 +46,8 @@ class FrontIntent:
     SET_MODE = "set_mode"
     #: 人类确认提交某个已完成 Task 的 final snapshot
     COMMIT_CONFIRM = "commit_confirm"
+    #: 闹钟唤醒后决定不打扰人类；仍然写 Activity Record。
+    NO_NOTIFY = "no_notify"
 
     @classmethod
     def all(cls) -> List[str]:
@@ -53,6 +55,7 @@ class FrontIntent:
             cls.DIRECT_REPLY, cls.HANDOFF, cls.REWORK,
             cls.FOLLOW_UP, cls.CANCEL, cls.ARTIFACTS, cls.CLARIFY,
             cls.INSPECT, cls.SET_MODE, cls.COMMIT_CONFIRM,
+            cls.NO_NOTIFY,
         ]
 
 

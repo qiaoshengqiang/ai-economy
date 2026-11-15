@@ -212,6 +212,23 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(
                     {"ok": False, "error": str(exc)}, status=404)
             return
+        if path == "/api/activities":
+            query = parse_qs(parsed.query)
+            agent_id = str(
+                (query.get("agent_id") or [self.controller.front_agent])[0]
+                or self.controller.front_agent).strip()
+            try:
+                limit = int(
+                    str((query.get("limit") or ["50"])[0]) or "50")
+            except (TypeError, ValueError):
+                limit = 50
+            try:
+                self._send_json(self.controller.activities(
+                    agent_id, limit=limit))
+            except ValueError as exc:
+                self._send_json(
+                    {"ok": False, "error": str(exc)}, status=404)
+            return
         if path.startswith("/api/task/"):
             task_id = path[len("/api/task/"):].strip()
             if not task_id or not re.fullmatch(r"[A-Za-z0-9_.:-]+", task_id):
@@ -304,6 +321,18 @@ class Handler(BaseHTTPRequestHandler):
                 job_id = self.controller.answer_question(
                     task_id, answer, option_id=option_id)
                 self._send_json({"ok": True, "job_id": job_id})
+                return
+            if path == "/api/activities/seen":
+                agent_id = str(
+                    payload.get("agent_id")
+                    or self.controller.front_agent).strip()
+                try:
+                    result = self.controller.mark_activities_seen(agent_id)
+                except ValueError as exc:
+                    self._send_json(
+                        {"ok": False, "error": str(exc)}, status=404)
+                    return
+                self._send_json({"ok": True, **result})
                 return
             if path == "/api/settings":
                 settings = self.controller.update_settings(
@@ -506,6 +535,7 @@ def main(argv=None) -> int:
         prompt_log_path=db_path.parent / "prompts",
         system_settings=system_admin,
         human_gateway=human_gateway,
+        alarms_enabled=True,
     )
     Handler.controller = controller
     httpd = ThreadingHTTPServer((args.host, int(args.port)), Handler)

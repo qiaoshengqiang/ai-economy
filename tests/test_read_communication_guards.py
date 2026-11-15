@@ -734,7 +734,7 @@ class TestNoImplementation:
         # + 3（Private Short / Long-Term Memory）
         # + 1（Commit Requests）
         # + 1（Agent Inbox State）= 30
-        assert len(names) == 30, (
-            f"表数应为 13 + 5 + 3 + 2 + 2 + 3 + 1 + 1 = 30，"
+        assert len(names) == 32, (
+            f"表数应为 13 + 5 + 3 + 2 + 2 + 3 + 1 + 1 + 2 = 32，"
             f"实际 {len(names)}：{sorted(names)}"
         )

@@ -115,6 +115,7 @@ class FrontAgentRuntime:
         context: str = "",
         project_context: str = "",
         max_inspect: int = 2,
+        wakeup: Optional[Dict[str, Any]] = None,
     ) -> FrontTurn:
         """
         识别 Human 意图。
@@ -160,6 +161,7 @@ class FrontAgentRuntime:
                 agents=agent_facts, inspection=inspection,
                 action_history=action_history,
                 context=context, project_context=project_context,
+                wakeup=wakeup,
                 previous_error=last_error)
             raw = self._think_with_retry(prompt)
             self.last_raw_output = str(raw or "")
@@ -382,6 +384,7 @@ class FrontAgentRuntime:
         action_history: List[Dict[str, Any]] = (),
         context: str = "",
         project_context: str = "",
+        wakeup: Optional[Dict[str, Any]] = None,
         previous_error: str = "",
     ) -> str:
         error_text = ""
@@ -417,9 +420,41 @@ class FrontAgentRuntime:
             "- 读代码用于确认目标文件和现状；完整实现由 Worker 决定，\n"
             "  回复只引用必要的文件信息。\n"
             if project_actions else "")
+        wakeup_section = ""
+        if wakeup:
+            tasks = wakeup.get("tasks") or []
+            task_lines = []
+            for item in tasks:
+                if not isinstance(item, dict):
+                    continue
+                task_lines.append(
+                    f"- {item.get('task_id')}: "
+                    f"found={item.get('found')} "
+                    f"status={item.get('status') or '?'}")
+            task_text = "\n".join(task_lines) or "（没有关联 Task）"
+            wakeup_section = f"""
+========== 系统闹钟（不是 Human 消息） ==========
+这是系统定时唤醒，不是新的用户请求；本轮没有新的 Human 输入。
+alarm_id: {wakeup.get('wakeup_id') or wakeup.get('alarm_id') or '?'}
+reason: {wakeup.get('reason') or ''}
+instruction: {wakeup.get('instruction') or ''}
+scheduled_for: {wakeup.get('scheduled_for') or ''}
+第 {wakeup.get('fire_count') or '?'} 次触发
+关联 Task（只读快照）：
+{task_text}
+
+你可以：
+- inspect / artifact_read / project_read / web_search
+- alarm_list / alarm_cancel / alarm_create
+- direct_reply：值得告诉人类时
+- no_notify：不值得打扰人类时（仍然会写 Activity Record）
+
+不要从闹钟创建 Task，不要发起 handoff / rework / follow_up。
+"""
         return f"""{self.agent_identity}
 
 你是面向人类的入口。
+{wakeup_section}
 
 请自然对话，使用人类使用的语言。你可以使用自己的私有 workspace 和草稿，
 也可以把工作交给 Work Agent。Task 由 Work Agent 创建；你没有创建 Task 的动作。
@@ -491,7 +526,10 @@ class FrontAgentRuntime:
 参数：
 - artifact_read {{task_id, path, offset?, limit?}} —— 读取 Task
   Workspace 中的文件（只读；返回内容 + total_lines/revision）
-{project_action_doc}- private_list {{}} —— 返回私有空间路径列表
+{project_action_doc}- alarm_create {{reason, instruction, task_ids?, schedule, interval_seconds?, delay_seconds?, at?, max_runs?, expires_at?}} —— 给自己创建持久化闹钟。task_ids 可选，最多 5 个；不因 Task 结束自动停止；你有 alarm_cancel，可以自己关闭。
+- alarm_list {{include_inactive?}} —— 列出自己的闹钟。
+- alarm_cancel {{alarm_id}} —— 关闭自己的闹钟。
+- private_list {{}} —— 返回私有空间路径列表
 - private_read {{path}} —— 读取私有空间文件内容
 - private_write {{path, content}}；private_delete {{path}}
 - draft_write {{content, label}}；draft_append {{draft_id, content}}

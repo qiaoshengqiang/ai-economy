@@ -1,10 +1,11 @@
 # Agent Wakeup V1 —— 定时唤醒与 Agent 闹钟设计
 
-> **状态：`DESIGNED`（2026-11-15）**
+> **状态：Phase W1–W4 后端 `CURRENT`；Activity 图标 / Worker handler `DESIGNED`（2026-11-15）**
 >
 > V1 先接入 **Front Agent**；核心数据模型、调度器和
 > `WakeupDispatcher` 从第一天就是**通用 Agent 能力**。
 > Pi / Solo Worker 的 handler 后续接入，不重新设计核心。
+> V1 部署假设：一台机器一个 AIEOS UI 进程 = 一个 AlarmService 线程。
 >
 > 相关文档：
 > [`ARCHITECTURE_CONSTITUTION.md`](../ARCHITECTURE_CONSTITUTION.md) §5.9 ·
@@ -716,24 +717,25 @@ Agent 自己 → 未来某个时刻 → 叫醒自己
 
 ## 11. 配置
 
-建议新增：
+V1 由 `AIEOSController` 构造参数控制（尚未落成 `config.yaml` 段）：
 
-```yaml
-runtime:
-  alarms:
-    enabled: true
-    min_interval_seconds: 60
-    max_active_per_agent: 5
-    guard:
-      enabled: true          # 测试组合根开启；生产可关闭
-      max_wakes_per_agent: 10
-      max_wakes_total: 50
+```python
+AIEOSController(
+    alarms_enabled=True,
+    alarm_min_interval_seconds=60,
+    alarm_max_active_per_agent=5,
+    alarm_guard_max_per_agent=0,   # 0 = 关闭
+    alarm_guard_max_total=0,
+)
 ```
 
-V1 只注册 Front handler；`enabled` 仍可整体关闭。
+- UI 组合根：`alarms_enabled=True`；
+- 测试 / 轻量 controller：默认 `False`，不启动 scheduler 线程；
+- V1 只注册 Front handler；
+- `max_runs` / `expires_at` 不再有系统默认值；测试防过度工作由
+  `WakeupGuard` 参数负责。
 
-> `max_runs` / `expires_at` 不再有系统默认值。它们是 Agent
-> 可选设置的参数；测试防过度工作由 `guard` 负责。
+后续再决定是否把这些参数写进 `config.yaml` 设置页。
 
 ---
 
@@ -759,11 +761,12 @@ V1 只注册 Front handler；`enabled` 仍可整体关闭。
 
 | 阶段 | 内容 | 状态 |
 |---|---|---|
-| Phase W0 | 本文档 + 边界确认 | **`DESIGNED`** |
-| Phase W1 | `agent_alarms` / `agent_wakeup_runs` + `AlarmStore` | 未实现 |
-| Phase W2 | `AlarmScheduler` + `WakeupDispatcher` + 重启恢复 + `WakeupGuard` | 未实现 |
-| Phase W3 | Front `alarm_create / list / cancel` + prompt | 未实现 |
-| Phase W4 | `FrontWakeupHandler` + `no_notify` + Activity UI | 未实现 |
+| Phase W0 | 本文档 + 边界确认 | **`CURRENT`** |
+| Phase W1 | `agent_alarms` / `agent_wakeup_runs` + `AlarmStore` | **`CURRENT`**（V1） |
+| Phase W2 | `AlarmService` + `WakeupDispatcher` + 重启恢复 + `WakeupGuard` | **`CURRENT`**（V1） |
+| Phase W3 | Front `alarm_create / list / cancel` + prompt | **`CURRENT`**（V1） |
+| Phase W4 | `FrontWakeupHandler` + `no_notify` + Activity API | **`CURRENT`**（V1） |
+| Phase W4.1 | Activity 通知图标 / Activity UI | `DESIGNED` |
 | Phase W5 | Pi / Solo `WakeupHandler` | `FUTURE` |
 
 ---
@@ -819,27 +822,29 @@ V1 只注册 Front handler；`enabled` 仍可整体关闭。
    是否需要同时挂 token 预算，还是只数唤醒次数；
 2. Activity 通知图标的已读水位存放位置（UI settings / 专用表）。
 
-### 16.1 多进程 scheduler（`OPEN`）
+### 16.1 多进程 scheduler（V1 不讨论）
 
-V1 只假设一个 UI 进程持有 scheduler。多进程方案尚未决定。
+**V1 部署假设：一台机器一个 AIEOS UI 进程。**
 
-候选方案：
+```text
+一个 UI 进程
+  └─ 一个 AlarmService 线程
+```
 
-| 方案 | 做法 | 优点 | 代价 |
-|---|---|---|---|
-| A. 单 scheduler owner | 只允许一个进程跑 scheduler | 简单、无重复 | 需要 owner 选举 / 锁文件 / DB 锁 |
-| B. 每进程 scheduler + DB claim | 每个进程都可 tick，靠原子 claim 去重 | 无单点、实现直接 | 需要 DB 通知或低频轮询；会有空转 |
-| C. 独立 scheduler 服务 | scheduler 独立进程 / 服务 | 职责最清楚 | 部署复杂度最高 |
+`./aieos start` 已经用 PID 文件阻止正常重复启动。
+多进程 scheduler 不是 V1 的架构议题；只有未来出现独立 headless
+scheduler 服务时再讨论。
 
-暂不拍板。当前 `agent_alarms` 的原子 claim 已经为 B 留了基础；
-但 V1 不应同时启动多个 scheduler。
+### 16.2 Activity 已读水位（`CURRENT`）
 
-### 16.2 Activity 已读水位（`OPEN`）
+V1 使用 `ui_settings.json` 的 `activity_seen`：
 
-通知图标需要“未读数”。候选：
-
-- UI 本地 `last_seen_at`；
-- `ui_settings.json` 保存每个 Agent 的水位；
-- 单独 `ui_activity_state` 表。
+```json
+{
+  "activity_seen": {
+    "agent_a": "2026-11-15T...Z"
+  }
+}
+```
 
 Activity Record 本身保持 append-only，不因“已读”被修改。
