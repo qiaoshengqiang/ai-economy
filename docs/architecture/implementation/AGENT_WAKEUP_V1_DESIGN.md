@@ -817,5 +817,29 @@ V1 只注册 Front handler；`enabled` 仍可整体关闭。
 
 1. `WakeupGuard` 的测试阈值（例如每 Agent 10 次 / 每次运行 50 次）；
    是否需要同时挂 token 预算，还是只数唤醒次数；
-2. 多进程 scheduler 的后续方案（DB 通知 / 低频 reconciliation）；
-3. Activity 通知图标的已读水位存放位置（UI settings / 专用表）。
+2. Activity 通知图标的已读水位存放位置（UI settings / 专用表）。
+
+### 16.1 多进程 scheduler（`OPEN`）
+
+V1 只假设一个 UI 进程持有 scheduler。多进程方案尚未决定。
+
+候选方案：
+
+| 方案 | 做法 | 优点 | 代价 |
+|---|---|---|---|
+| A. 单 scheduler owner | 只允许一个进程跑 scheduler | 简单、无重复 | 需要 owner 选举 / 锁文件 / DB 锁 |
+| B. 每进程 scheduler + DB claim | 每个进程都可 tick，靠原子 claim 去重 | 无单点、实现直接 | 需要 DB 通知或低频轮询；会有空转 |
+| C. 独立 scheduler 服务 | scheduler 独立进程 / 服务 | 职责最清楚 | 部署复杂度最高 |
+
+暂不拍板。当前 `agent_alarms` 的原子 claim 已经为 B 留了基础；
+但 V1 不应同时启动多个 scheduler。
+
+### 16.2 Activity 已读水位（`OPEN`）
+
+通知图标需要“未读数”。候选：
+
+- UI 本地 `last_seen_at`；
+- `ui_settings.json` 保存每个 Agent 的水位；
+- 单独 `ui_activity_state` 表。
+
+Activity Record 本身保持 append-only，不因“已读”被修改。
