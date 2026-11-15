@@ -418,6 +418,17 @@ alarm_cancel
 }
 ```
 
+**归一化（2026-11-15 实测补丁）**：
+
+- `schedule` 可省略：有 `interval_seconds` → `every`；
+  有 `delay_seconds` / `at` → `once`；
+- `interval` / `recurring` / `periodic` 等别名归一化为 `every`；
+- 返回结果里已有 `alarm_id` / `next_fire_at`，Agent **不需要**
+  再调用 `alarm_list` 确认。
+
+原因：真实运行里 Front 连续猜错 `schedule`（缺省 → `once` 报错，
+再猜 `interval` 报错），每次模型调用约 77 秒，白等了两轮。
+
 ### 7.2 关闭闹钟必须被提示
 
 Agent prompt 必须明确写出：

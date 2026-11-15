@@ -526,7 +526,11 @@ scheduled_for: {wakeup.get('scheduled_for') or ''}
 参数：
 - artifact_read {{task_id, path, offset?, limit?}} —— 读取 Task
   Workspace 中的文件（只读；返回内容 + total_lines/revision）
-{project_action_doc}- alarm_create {{reason, instruction, task_ids?, schedule, interval_seconds?, delay_seconds?, at?, max_runs?, expires_at?}} —— 给自己创建持久化闹钟。task_ids 可选，最多 5 个；不因 Task 结束自动停止；你有 alarm_cancel，可以自己关闭。
+{project_action_doc}- alarm_create {{reason, instruction, task_ids?, schedule?, interval_seconds?, delay_seconds?, at?, max_runs?, expires_at?}} —— 给自己创建持久化闹钟。
+  schedule 只能是 once / every，可省略：给 interval_seconds 就是 every，
+  给 delay_seconds / at 就是 once。task_ids 可选，最多 5 个；
+  不因 Task 结束自动停止。创建结果（alarm_id / next_fire_at）已经在
+  动作结果里，不要为了确认再调用 alarm_list；要停止用 alarm_cancel。
 - alarm_list {{include_inactive?}} —— 列出自己的闹钟。
 - alarm_cancel {{alarm_id}} —— 关闭自己的闹钟。
 - private_list {{}} —— 返回私有空间路径列表

@@ -404,3 +404,47 @@ def test_controller_activity_detail_only_returns_front_runs():
     finally:
         controller.alarm_service = None
         controller.close()
+
+
+def test_alarm_schedule_inferred_from_interval(db):
+    service = AlarmService(AlarmStore(db), WakeupDispatcher())
+    created = service.create(
+        agent_id="agent_a", reason="每分钟", instruction="发条消息",
+        schedule="", interval_seconds=60)
+    assert created["schedule_kind"] == "every"
+    assert created["interval_seconds"] == 60
+
+    # 常见别名也归一化，避免模型猜错取值多跑一轮。
+    alias = service.create(
+        agent_id="agent_a", reason="别名", instruction="发条消息",
+        schedule="interval", interval_seconds=120, task_ids=["task_x"])
+    assert alias["schedule_kind"] == "every"
+    assert alias["interval_seconds"] == 120
+
+
+def test_alarm_schedule_error_is_actionable(db):
+    service = AlarmService(AlarmStore(db), WakeupDispatcher())
+    with pytest.raises(ValueError, match="once / every"):
+        service.create(
+            agent_id="agent_a", reason="r", instruction="i",
+            schedule="hourly", interval_seconds=60)
+    with pytest.raises(ValueError, match="delay_seconds"):
+        service.create(
+            agent_id="agent_a", reason="r", instruction="i",
+            schedule="once")
+
+
+def test_front_alarm_create_without_schedule(db):
+    service = AlarmService(AlarmStore(db), WakeupDispatcher())
+    intent = SimpleNamespace(
+        intent_id="i1", action_type="alarm_create", agent_id="agent_a",
+        parameters={
+            "reason": "每分钟",
+            "instruction": "发条消息",
+            "interval_seconds": 60,
+            "max_runs": 5,
+        })
+    result = FrontAlarmCreateExecutor(service).execute(intent)
+    assert result.success is True
+    assert result.output["schedule_kind"] == "every"
+    assert result.output["max_runs"] == 5

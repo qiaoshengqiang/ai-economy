@@ -153,9 +153,19 @@ class AlarmService:
             raise ValueError("alarm_create 需要 instruction")
 
         tasks = self._normalize_tasks(task_ids)
-        kind = str(schedule or "once").strip().lower()
+        kind = str(schedule or "").strip().lower()
+        # Agent 只给 interval_seconds 时，语义已经明确是周期闹钟。
+        # 这里做归一化，避免模型为了猜 schedule 多花一轮调用。
+        if kind in ("interval", "recurring", "repeat", "periodic"):
+            kind = "every"
+        elif kind in ("delay", "after"):
+            kind = "once"
+        if not kind:
+            kind = "every" if interval_seconds not in (None, "") else "once"
         if kind not in ("once", "every"):
-            raise ValueError("schedule 只能是 once / every")
+            raise ValueError(
+                "schedule 只能是 once / every（可省略："
+                "给 interval_seconds 即为 every）")
 
         now = datetime.now(timezone.utc)
         interval: Optional[int] = None
@@ -164,7 +174,9 @@ class AlarmService:
             try:
                 interval = int(interval_seconds)
             except (TypeError, ValueError):
-                raise ValueError("every 需要 interval_seconds")
+                raise ValueError(
+                    "every 需要 interval_seconds（秒，最小 "
+                    f"{self.min_interval_seconds}）")
             if interval < self.min_interval_seconds:
                 raise ValueError(
                     f"interval_seconds 不能小于 {self.min_interval_seconds}")
@@ -178,7 +190,9 @@ class AlarmService:
                 try:
                     delay = int(delay_seconds)
                 except (TypeError, ValueError):
-                    raise ValueError("once 需要 delay_seconds 或 at")
+                    raise ValueError(
+                        "once 需要 delay_seconds 或 at；"
+                        "周期触发请传 interval_seconds")
                 if delay <= 0:
                     raise ValueError("delay_seconds 必须 > 0")
                 next_at = now + timedelta(seconds=delay)

@@ -294,7 +294,7 @@ class FrontAlarmCreateExecutor:
                 reason=params.get("reason") or "",
                 instruction=params.get("instruction") or "",
                 task_ids=params.get("task_ids") or params.get("task_id") or [],
-                schedule=params.get("schedule") or "once",
+                schedule=params.get("schedule") or "",
                 interval_seconds=params.get("interval_seconds"),
                 delay_seconds=params.get("delay_seconds"),
                 at=str(params.get("at") or ""),

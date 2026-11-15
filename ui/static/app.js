@@ -1190,6 +1190,7 @@
     rejected: { cls: "failed", label: "已拒绝", group: "failed" },
     guard_limit: { cls: "failed", label: "已暂停", group: "failed" },
     skipped_busy: { cls: "silent", label: "跳过", group: "silent" },
+    running: { cls: "silent", label: "进行中", group: "silent" },
   };
 
   function activityOutcome(run) {
