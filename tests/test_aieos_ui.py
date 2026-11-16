@@ -2543,6 +2543,34 @@ def test_model_editor_exposes_tool_call_format():
     assert "tool_call_format" in save
 
 
+def test_agent_editor_exposes_life_wake_settings():
+    from pathlib import Path
+
+    static = Path(__file__).resolve().parent.parent / "ui" / "static"
+    html = (static / "index.html").read_text(encoding="utf-8")
+    js = (static / "settings.js").read_text(encoding="utf-8")
+
+    for field in (
+        "agent-life-enabled",
+        "agent-life-wake-on-message",
+        "agent-life-wake-on-alarm",
+        "agent-life-accept-delegated",
+        "agent-life-max-turns",
+        "agent-life-min-interval",
+        "agent-life-max-tokens",
+        "agent-life-max-cost",
+        "agent-life-max-conversation",
+    ):
+        assert f'id="{field}"' in html
+    assert "Life 唤醒" in html
+    assert "接受 Front 的委托闹钟" in html
+
+    assert "function agentLifeSettings" in js
+    assert "agent-life-accept-delegated" in js
+    assert "lifeChanged" in js
+    assert "update.life = life" in js
+
+
 def test_agent_question_bubble_and_answer_ui():
     from pathlib import Path
 

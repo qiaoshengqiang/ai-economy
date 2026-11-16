@@ -699,6 +699,42 @@
       (item) => item.value === current) ? current : "";
   }
 
+  function defaultLifeSettings() {
+    return {
+      enabled: false,
+      wake_on_message: false,
+      wake_on_alarm: true,
+      accept_delegated_alarms: false,
+      max_turns_per_hour: 20,
+      min_interval_seconds: 5,
+      max_tokens_per_turn: 1024,
+      max_cost_per_turn: 1,
+      max_conversation_turns: 6,
+    };
+  }
+
+  function agentLifeSettings(agent) {
+    const raw = (agent && agent.life) || {};
+    const defaults = defaultLifeSettings();
+    return {
+      enabled: raw.enabled ?? defaults.enabled,
+      wake_on_message: raw.wake_on_message ?? defaults.wake_on_message,
+      wake_on_alarm: raw.wake_on_alarm ?? defaults.wake_on_alarm,
+      accept_delegated_alarms: (
+        raw.accept_delegated_alarms ?? defaults.accept_delegated_alarms),
+      max_turns_per_hour: Number(
+        raw.max_turns_per_hour ?? defaults.max_turns_per_hour),
+      min_interval_seconds: Number(
+        raw.min_interval_seconds ?? defaults.min_interval_seconds),
+      max_tokens_per_turn: Number(
+        raw.max_tokens_per_turn ?? defaults.max_tokens_per_turn),
+      max_cost_per_turn: Number(
+        raw.max_cost_per_turn ?? defaults.max_cost_per_turn),
+      max_conversation_turns: Number(
+        raw.max_conversation_turns ?? defaults.max_conversation_turns),
+    };
+  }
+
   function buildAgentState() {
     const regular = data.regular || {};
     const piAgents = new Set(regular.pi_work_agents || []);
@@ -715,6 +751,7 @@
         provider: String(modelRaw.provider || ""),
         model,
         credential: String(agent.credential || ""),
+        life: agentLifeSettings(agent),
       };
     });
     const ids = Object.keys(agents);
@@ -800,6 +837,32 @@
     });
   }
 
+  function renderAgentLife(agent, disabled) {
+    const life = agentLifeSettings(agent);
+    $("agent-life-enabled").checked = !!life.enabled;
+    $("agent-life-wake-on-message").checked = !!life.wake_on_message;
+    $("agent-life-wake-on-alarm").checked = !!life.wake_on_alarm;
+    $("agent-life-accept-delegated").checked = (
+      !!life.accept_delegated_alarms);
+    $("agent-life-max-turns").value = String(life.max_turns_per_hour);
+    $("agent-life-min-interval").value = String(life.min_interval_seconds);
+    $("agent-life-max-tokens").value = String(life.max_tokens_per_turn);
+    $("agent-life-max-cost").value = String(life.max_cost_per_turn);
+    $("agent-life-max-conversation").value = String(
+      life.max_conversation_turns);
+    [
+      "agent-life-enabled",
+      "agent-life-wake-on-message",
+      "agent-life-wake-on-alarm",
+      "agent-life-accept-delegated",
+      "agent-life-max-turns",
+      "agent-life-min-interval",
+      "agent-life-max-tokens",
+      "agent-life-max-cost",
+      "agent-life-max-conversation",
+    ].forEach((id) => { $(id).disabled = !!disabled; });
+  }
+
   function renderAgentDetail() {
     const agent = agentDraft.agents[selectedAgent];
     if (!agent) {
@@ -816,6 +879,7 @@
       $("agent-detail-credential").disabled = true;
       $("agent-setting-enabled").checked = false;
       $("agent-setting-enabled").disabled = true;
+      renderAgentLife(null, true);
       $("agent-archive-btn").hidden = true;
       $("agent-restore-btn").hidden = true;
       return;
@@ -840,6 +904,7 @@
     $("agent-detail-credential").disabled = agent.archived;
     $("agent-setting-enabled").checked = agent.enabled;
     $("agent-setting-enabled").disabled = isFront || agent.archived;
+    renderAgentLife(agent, isFront || agent.archived);
     $("agent-setting-enabled-note").textContent = agent.archived
       ? "已归档的 Agent 不会接新任务；恢复后可重新启用。"
       : (isFront
@@ -1052,16 +1117,21 @@
         agent.model !== initial.model
         || agent.credential !== initial.credential
       );
-      if (!changed) return;
+      const life = agentLifeSettings(agent);
+      const lifeChanged = JSON.stringify(life) !== JSON.stringify(
+        agentLifeSettings(initial));
+      if (!changed && !lifeChanged) return;
       if (!agent.model || !agent.credential) {
         missing.push(agent.name || agentId);
         return;
       }
-      modelChanges.push({
+      const update = {
         agent_id: agentId,
         model: agent.model,
         credential: agent.credential,
-      });
+      };
+      if (lifeChanged) update.life = life;
+      modelChanges.push(update);
     });
     if (missing.length) {
       toast(`请为 ${missing.join("、")} 选择模型与凭据`, true);
@@ -1093,7 +1163,7 @@
       await load();
       if (agentDraft.agents[keep]) selectAgent(keep);
       toast(message || (modelChanges.length
-        ? "Agent 设置与模型已保存；模型改动重启后生效"
+        ? "Agent 配置已保存；模型 / Life 改动重启后生效"
         : "Agent 设置已保存；协作与引擎变更对新任务生效"));
     } catch (error) {
       toast(`保存失败：${error.message}`, true);
@@ -1816,6 +1886,36 @@
     if (!agent) return;
     agent.credential = $("agent-detail-credential").value;
     updateFooter();
+  });
+  const agentLifeFieldMap = {
+    "agent-life-enabled": "enabled",
+    "agent-life-wake-on-message": "wake_on_message",
+    "agent-life-wake-on-alarm": "wake_on_alarm",
+    "agent-life-accept-delegated": "accept_delegated_alarms",
+    "agent-life-max-turns": "max_turns_per_hour",
+    "agent-life-min-interval": "min_interval_seconds",
+    "agent-life-max-tokens": "max_tokens_per_turn",
+    "agent-life-max-cost": "max_cost_per_turn",
+    "agent-life-max-conversation": "max_conversation_turns",
+  };
+  Object.entries(agentLifeFieldMap).forEach(([id, key]) => {
+    $(id).addEventListener("change", () => {
+      const agent = agentDraft && agentDraft.agents[selectedAgent];
+      if (!agent || agent.archived
+          || agentDraft.frontAgent === selectedAgent) {
+        return;
+      }
+      const input = $(id);
+      const life = agentLifeSettings(agent);
+      if (input.type === "checkbox") {
+        life[key] = input.checked;
+      } else {
+        const minimum = Number(input.min || 0);
+        life[key] = Math.max(minimum, Number(input.value || minimum));
+      }
+      agent.life = life;
+      updateFooter();
+    });
   });
   $("new-agent-provider").addEventListener("change", () => {
     populateNewAgentModels();

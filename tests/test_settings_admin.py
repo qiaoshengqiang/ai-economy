@@ -201,6 +201,86 @@ def test_delete_credential_is_blocked_while_agents_reference_it(tmp_path):
     assert "仍被 Agent 使用" in str(excinfo.value)
 
 
+def _life_payload(**overrides):
+    payload = {
+        "enabled": True,
+        "wake_on_message": True,
+        "wake_on_alarm": True,
+        "accept_delegated_alarms": True,
+        "max_turns_per_hour": 20,
+        "min_interval_seconds": 5,
+        "max_tokens_per_turn": 1024,
+        "max_cost_per_turn": 1.0,
+        "max_conversation_turns": 6,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_agent_update_life_only_keeps_model_and_credential(tmp_path):
+    admin = _admin(tmp_path)
+    before = yaml.safe_load(
+        (tmp_path / "config.yaml").read_text(encoding="utf-8"))
+    brain_before = dict(before["agents"]["agent_b"]["brain"])
+
+    snap = admin.apply("agent.update", {
+        "agent_id": "agent_b",
+        "life": _life_payload(),
+    })
+
+    after_text = (tmp_path / "config.yaml").read_text(encoding="utf-8")
+    after = yaml.safe_load(after_text)
+    assert "# AI Economy OS v0.2.0 - 全局配置" in after_text
+    assert after["agents"]["agent_b"]["life"]["enabled"] is True
+    assert after["agents"]["agent_b"]["life"]["wake_on_message"] is True
+    assert after["agents"]["agent_b"]["life"][
+        "accept_delegated_alarms"] is True
+    # UI 没暴露的默认字段不写入配置，避免一次保存产生噪音。
+    assert "allowed_actions" not in after["agents"]["agent_b"]["life"]
+    assert "reply_max_chars" not in after["agents"]["agent_b"]["life"]
+    assert after["agents"]["agent_b"]["brain"]["model"] == (
+        brain_before["model"])
+    assert after["agents"]["agent_b"]["brain"]["credential"] == (
+        brain_before["credential"])
+    assert snap["restart_required"] is True
+    assert snap["updated_agent"] == "agent_b"
+
+
+def test_agent_update_life_preserves_unexposed_fields(tmp_path):
+    admin = _admin(tmp_path)
+    config_path = tmp_path / "config.yaml"
+    data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    data["agents"]["agent_b"]["life"] = {
+        "enabled": False,
+        "allowed_actions": ["message_send"],
+        "reply_max_chars": 777,
+    }
+    config_path.write_text(
+        yaml.safe_dump(data, allow_unicode=True, sort_keys=False),
+        encoding="utf-8")
+
+    admin.apply("agent.update", {
+        "agent_id": "agent_b",
+        "life": _life_payload(enabled=True),
+    })
+
+    after = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    life = after["agents"]["agent_b"]["life"]
+    assert life["enabled"] is True
+    assert life["allowed_actions"] == ["message_send"]
+    assert life["reply_max_chars"] == 777
+
+
+def test_agent_update_rejects_non_object_life(tmp_path):
+    admin = _admin(tmp_path)
+    with pytest.raises(SettingsAdminError) as excinfo:
+        admin.apply("agent.update", {
+            "agent_id": "agent_b",
+            "life": "enabled: true",
+        })
+    assert "life 必须是对象" in str(excinfo.value)
+
+
 def test_create_agent_appends_config_and_requires_restart(tmp_path):
     admin = _admin(tmp_path)
     assert admin.snapshot()["restart_required"] is False

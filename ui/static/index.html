@@ -1012,6 +1012,112 @@
                     </div>
                   </div>
 
+                  <div class="setting-row" style="display:block;">
+                    <div class="setting-label" style="margin-bottom:7px;">
+                      <span>Life 唤醒</span>
+                      <small>消息到达 / 闹钟到期时，是否允许这个 Agent 醒来处理一次生活层消息。Front 使用自己的入站链路，不在这里配置。</small>
+                    </div>
+                    <div class="switch-row">
+                      <label class="switch">
+                        <input id="agent-life-enabled" type="checkbox" />
+                        <span class="switch-track"><span class="switch-thumb"></span></span>
+                        <span class="switch-copy">
+                          <b>允许被唤醒</b>
+                          <small>关闭后消息只进收件箱，不触发 Life Turn。</small>
+                        </span>
+                      </label>
+                    </div>
+                    <div class="switch-row">
+                      <label class="switch">
+                        <input id="agent-life-wake-on-message" type="checkbox" />
+                        <span class="switch-track"><span class="switch-thumb"></span></span>
+                        <span class="switch-copy">
+                          <b>消息到达时唤醒</b>
+                          <small>只在 Agent 空闲时执行；忙碌时不打断。</small>
+                        </span>
+                      </label>
+                    </div>
+                    <div class="switch-row">
+                      <label class="switch">
+                        <input id="agent-life-wake-on-alarm" type="checkbox" />
+                        <span class="switch-track"><span class="switch-thumb"></span></span>
+                        <span class="switch-copy">
+                          <b>闹钟到期时唤醒</b>
+                          <small>包括自己设的闹钟和 Front 设置的委托闹钟。</small>
+                        </span>
+                      </label>
+                    </div>
+                    <div class="switch-row">
+                      <label class="switch">
+                        <input id="agent-life-accept-delegated" type="checkbox" />
+                        <span class="switch-track"><span class="switch-thumb"></span></span>
+                        <span class="switch-copy">
+                          <b>接受 Front 的委托闹钟</b>
+                          <small>关闭后 Front 不能给这个 Agent 设置未来唤醒。</small>
+                        </span>
+                      </label>
+                    </div>
+                  </div>
+
+                  <div class="setting-row">
+                    <div class="setting-label">
+                      <span>每小时最多唤醒</span>
+                      <small>防止消息互聊 / 闹钟过密导致频繁消耗 token。</small>
+                    </div>
+                    <div class="setting-control">
+                      <div class="inline-control">
+                        <input id="agent-life-max-turns" type="number" min="1" max="200" value="20" />
+                        <span class="unit">次</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="setting-row">
+                    <div class="setting-label"><span>两次唤醒最小间隔</span></div>
+                    <div class="setting-control">
+                      <div class="inline-control">
+                        <input id="agent-life-min-interval" type="number" min="1" max="3600" value="5" />
+                        <span class="unit">秒</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="setting-row">
+                    <div class="setting-label"><span>单次最大输出</span></div>
+                    <div class="setting-control">
+                      <div class="inline-control">
+                        <input id="agent-life-max-tokens" type="number" min="64" max="32768" value="1024" />
+                        <span class="unit">tokens</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="setting-row">
+                    <div class="setting-label">
+                      <span>单次成本上限</span>
+                      <small>超过只记录 warning，不中断本次 Life Turn。</small>
+                    </div>
+                    <div class="setting-control">
+                      <div class="inline-control">
+                        <input id="agent-life-max-cost" type="number" min="0" step="0.01" value="1" />
+                        <span class="unit">AIC</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="setting-row">
+                    <div class="setting-label">
+                      <span>单会话回复上限</span>
+                      <small>同一个 conversation 的自动生活消息达到上限后停止唤醒。</small>
+                    </div>
+                    <div class="setting-control">
+                      <div class="inline-control">
+                        <input id="agent-life-max-conversation" type="number" min="1" max="50" value="6" />
+                        <span class="unit">轮</span>
+                      </div>
+                    </div>
+                  </div>
+
                   <div class="helper agent-archive-note">
                     归档会停用 Agent 并隐藏，但保留身份、账本、任务和记忆。
                   </div>

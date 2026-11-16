@@ -964,6 +964,7 @@ class AIEOSController:
                 resolved_agents[aid] = {
                     "model": str(brain.get("model") or ""),
                     "credential": str(brain.get("credential") or ""),
+                    "life": dict((raw or {}).get("life") or {}),
                 }
         except Exception:                                     # noqa: BLE001
             resolved_agents = {}
@@ -987,6 +988,8 @@ class AIEOSController:
                 "thinking": self._thinking_for_agent(aid),
                 "thinking_levels": list(
                     self._agent_thinking_levels(aid)),
+                "life": LifePolicy.from_raw(
+                    info.get("life") or {}).to_dict(),
             })
         return facts
 
@@ -3965,6 +3968,7 @@ class AIEOSController:
                     "thinking": self._thinking_for_agent(aid),
                     "thinking_levels": list(
                         self._agent_thinking_levels(aid)),
+                    "life": self._life_policy(aid).to_dict(),
                     "question": self._pending_question(aid),
                 })
             jobs = [

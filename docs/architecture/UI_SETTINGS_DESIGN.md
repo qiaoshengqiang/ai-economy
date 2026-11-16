@@ -199,10 +199,13 @@ runs/ui/prompts/prompts-YYYY-MM-DD.jsonl
   - `build_runtime` 从 canonical `agents.<id>.runtime: true` 得到启动列表；
   - 重启 UI 后创建身份、钱包、Workspace 与初始资金；
   - 默认引擎内置，重启后可在 Agent 页切换 Pi；
-- Life 唤醒目前通过 canonical 配置管理（`agents.<id>.life`）：
+- Agent 页直接配置 Life 唤醒（写入 canonical `agents.<id>.life`）：
   - `enabled` / `wake_on_message` / `wake_on_alarm`；
   - `accept_delegated_alarms`：是否接受 Front 设置的委托闹钟；
-  - `max_turns_per_hour` / `min_interval_seconds` / `max_tokens_per_turn`；
+  - `max_turns_per_hour` / `min_interval_seconds` / `max_tokens_per_turn` /
+    `max_cost_per_turn` / `max_conversation_turns`；
+  - 保存后 `restart_required`，重启 UI 生效；
+  - Front 使用自己的入站 / 闹钟链路，Life 开关对 Front 禁用；
   - 默认关闭，详见 [`AGENT_LIFE_WAKE_V1_DESIGN.md`](implementation/AGENT_LIFE_WAKE_V1_DESIGN.md)。
 - 删除用归档替代：隐藏 + 停用，不删除身份、账本、任务、消息和记忆；
 - Agent 卡片的 Thinking 选项来自模型 `thinking_levels`；

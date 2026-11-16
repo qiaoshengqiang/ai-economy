@@ -4,7 +4,7 @@
 > **日期：2026-11-15**
 > **阶段：开发中 / 观察实验**
 > **协议版本：`1`**
-> **测试基线：`5913 passed, 2 skipped, 30 deselected`**
+> **测试基线：`5917 passed, 2 skipped, 30 deselected`**
 
 本文记录**当前真实可用能力、推荐工作方式、已知限制和版本变化**。
 架构的长期权威仍然是
@@ -516,6 +516,7 @@ Pi 自主任务仍然可能消耗较多 token：
 - 新增 Agent Life Wake：消息到达 / 闹钟到期唤醒空闲 Agent，进入一次
   受控 Life Turn；Front 可给开启 `life.accept_delegated_alarms` 的 Agent
   设置委托闹钟；Life 回复经 Front 中转给人类；
+- Agent 设置页新增 Life 开关与限流 / 预算参数（写入 `agents.<id>.life`，重启生效）；
 - 修复系统设置编辑模型时整体覆盖、丢失 `supports_image_input` 等字段；
 - 修复 Pi 超时被标成 FAILED、返工 session 复用、role 未持久化、`last_error` 不更新；
 - DeepSeek context 默认 600K，单次输出上限 32K；
@@ -581,7 +582,7 @@ Team 协作
 当前基线：
 
 ```text
-5913 passed, 2 skipped, 30 deselected
+5917 passed, 2 skipped, 30 deselected
 ```
 
 启动说明见 [`../START_AIEOS.md`](../START_AIEOS.md)。

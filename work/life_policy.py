@@ -98,11 +98,8 @@ class LifePolicy:
                             if str(item).strip())
         else:
             actions = DEFAULT_ALLOWED_ACTIONS
-        # 未知动作不执行；no_op 始终允许。
-        allowed = tuple(
-            item for item in actions
-            if item in LIFE_ACTIONS) + (
-                ("no_op",) if "no_op" not in actions else ())
+        # 未知动作不执行；no_op 不写进白名单，但 `allows()` 始终允许它。
+        allowed = tuple(item for item in actions if item in LIFE_ACTIONS)
         # 去重，保留顺序。
         seen = set()
         allowed = tuple(
@@ -130,7 +127,24 @@ class LifePolicy:
         )
 
     def allows(self, action: str) -> bool:
-        return str(action or "") in self.allowed_actions
+        value = str(action or "")
+        return value == "no_op" or value in self.allowed_actions
+
+    def to_dict(self) -> dict:
+        """给 UI / 设置页的归一化结果。"""
+        return {
+            "enabled": self.enabled,
+            "wake_on_message": self.wake_on_message,
+            "wake_on_alarm": self.wake_on_alarm,
+            "accept_delegated_alarms": self.accept_delegated_alarms,
+            "max_turns_per_hour": self.max_turns_per_hour,
+            "min_interval_seconds": self.min_interval_seconds,
+            "max_tokens_per_turn": self.max_tokens_per_turn,
+            "max_cost_per_turn": self.max_cost_per_turn,
+            "max_conversation_turns": self.max_conversation_turns,
+            "reply_max_chars": self.reply_max_chars,
+            "allowed_actions": list(self.allowed_actions),
+        }
 
 
 __all__ = ["LIFE_ACTIONS", "DEFAULT_ALLOWED_ACTIONS", "LifePolicy"]

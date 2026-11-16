@@ -37,11 +37,27 @@ from core.paths import (
 )
 from core.platform_support import default_platform
 from llm.router import adapter_specs
+from work.life_policy import LifePolicy
 
 _ENV_NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
 _PROFILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 _AGENT_ID_RE = re.compile(r"^[a-z][a-z0-9_]{2,31}$")
 _MAX_AGENT_INITIAL_BALANCE = 1000.0
+
+#: Agent 设置页直接暴露的 life 字段。
+#: 其他字段（例如 allowed_actions / reply_max_chars）只有在配置里已存在时
+#: 才继续保留，避免 UI 保存一次就写出一堆默认值噪音。
+_AGENT_LIFE_UI_KEYS = (
+    "enabled",
+    "wake_on_message",
+    "wake_on_alarm",
+    "accept_delegated_alarms",
+    "max_turns_per_hour",
+    "min_interval_seconds",
+    "max_tokens_per_turn",
+    "max_cost_per_turn",
+    "max_conversation_turns",
+)
 
 
 class SettingsAdminError(ValueError):
@@ -72,16 +88,8 @@ def _atomic_write(path: Path, text: str, *, mode: Optional[int] = None) -> None:
     tmp.replace(path)
 
 
-def _patch_agent_brain(
-    text: str, agent_id: str, *, model: str, credential: str,
-) -> str:
-    """只改 `agents.<id>.brain.model / credential`，保留其余文本与注释。
-
-    为什么不 `yaml.safe_load` + `safe_dump` 整个 config.yaml：
-    那会把所有注释、空行和手工排版全部抹掉。配置文件是给人看的，
-    这里只需要替换两行，所以用最小文本补丁。
-    """
-    lines = text.splitlines()
+def _agent_block_bounds(lines: List[str], agent_id: str) -> tuple:
+    """返回 `agents.<id>:` 的 `[start, end)` 行号。"""
     agents_index = None
     for index, line in enumerate(lines):
         if re.fullmatch(r"agents:\s*", line):
@@ -114,6 +122,34 @@ def _patch_agent_brain(
         if not line.startswith(" "):
             agent_end = index
             break
+    return agent_start, agent_end
+
+
+def _block_end(
+    lines: List[str], start: int, limit: int, *, indent: int,
+) -> int:
+    """返回一个 YAML 映射块（`indent` 空格）的结束行号。"""
+    for index in range(start + 1, limit):
+        line = lines[index]
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        current = len(line) - len(line.lstrip(" "))
+        if current <= indent:
+            return index
+    return limit
+
+
+def _patch_agent_brain(
+    text: str, agent_id: str, *, model: str, credential: str,
+) -> str:
+    """只改 `agents.<id>.brain.model / credential`，保留其余文本与注释。
+
+    为什么不 `yaml.safe_load` + `safe_dump` 整个 config.yaml：
+    那会把所有注释、空行和手工排版全部抹掉。配置文件是给人看的，
+    这里只需要替换两行，所以用最小文本补丁。
+    """
+    lines = text.splitlines()
+    agent_start, agent_end = _agent_block_bounds(lines, agent_id)
 
     brain_index = None
     for index in range(agent_start + 1, agent_end):
@@ -155,6 +191,42 @@ def _patch_agent_brain(
     if prefix:
         new_brain = prefix + new_brain
     lines[brain_index + 1:brain_end] = new_brain
+
+    updated = "\n".join(lines)
+    if text.endswith("\n"):
+        updated += "\n"
+    return updated
+
+
+def _patch_agent_life(
+    text: str, agent_id: str, life: Mapping[str, Any],
+) -> str:
+    """写入 / 替换 `agents.<id>.life`，保留 Agent 的其余配置与注释。"""
+    lines = text.splitlines()
+    agent_start, agent_end = _agent_block_bounds(lines, agent_id)
+
+    dumped = yaml.safe_dump(
+        dict(life), allow_unicode=True, sort_keys=False, width=1000,
+    ).rstrip()
+    block = ["    life:"] + [
+        "      " + line for line in dumped.splitlines()
+    ]
+
+    life_index = None
+    for index in range(agent_start + 1, agent_end):
+        if re.fullmatch(r"    life:\s*", lines[index]):
+            life_index = index
+            break
+    if life_index is not None:
+        life_end = _block_end(lines, life_index, agent_end, indent=4)
+        lines[life_index:life_end] = block
+    else:
+        insert_at = agent_end
+        for index in range(agent_start + 1, agent_end):
+            if re.fullmatch(r"    economy:\s*", lines[index]):
+                insert_at = index
+                break
+        lines[insert_at:insert_at] = block
 
     updated = "\n".join(lines)
     if text.endswith("\n"):
@@ -460,21 +532,32 @@ class SystemConfigAdmin:
         return result
 
     def _update_agent(self, payload: Mapping[str, Any]) -> Dict[str, Any]:
-        """修改 Agent 的模型 / 凭据：只改 canonical `config.yaml`。"""
+        """修改 Agent 的模型 / 凭据 / life：只改 canonical `config.yaml`。"""
         agent_id = str(payload.get("agent_id") or "").strip()
         if not _AGENT_ID_RE.fullmatch(agent_id):
             raise SettingsAdminError("Agent ID 不合法。")
         model = str(payload.get("model") or "").strip()
         credential = str(payload.get("credential") or "").strip()
+        raw_life = payload.get("life")
+        if raw_life is not None and not isinstance(raw_life, Mapping):
+            raise SettingsAdminError("life 必须是对象。")
+
+        llm = self._llm_data()
+        merged = self._merged(llm)
+        agent_raw = dict((merged.get("agents") or {}).get(agent_id) or {})
+        if not agent_raw:
+            raise SettingsAdminError(f"未知 Agent：{agent_id!r}")
+        brain_raw = dict(agent_raw.get("brain") or {})
+        # 只改 life 时允许省略 model / credential：沿用当前值。
+        if not model:
+            model = str(brain_raw.get("model") or "").strip()
+        if not credential:
+            credential = str(brain_raw.get("credential") or "").strip()
         if not model:
             raise SettingsAdminError("model 不能为空。")
         if not credential:
             raise SettingsAdminError("credential 不能为空。")
 
-        llm = self._llm_data()
-        merged = self._merged(llm)
-        if agent_id not in (merged.get("agents") or {}):
-            raise SettingsAdminError(f"未知 Agent：{agent_id!r}")
         models = dict(merged.get("models") or {})
         credentials = dict(merged.get("credentials") or {})
         if model not in models:
@@ -483,6 +566,23 @@ class SystemConfigAdmin:
             raise SettingsAdminError(
                 f"未知 credential profile：{credential!r}")
 
+        life = None
+        if raw_life is not None:
+            # 合并已有 life，避免 UI 没暴露的字段（例如 allowed_actions）
+            # 在一次保存里被静默删除。
+            existing_life = dict(agent_raw.get("life") or {})
+            incoming = dict(raw_life)
+            policy = LifePolicy.from_raw({**existing_life, **incoming})
+            normalized = policy.to_dict()
+            life = dict(existing_life)
+            for key in _AGENT_LIFE_UI_KEYS:
+                if key in incoming or key in existing_life:
+                    life[key] = normalized[key]
+            # 只有配置里原本就有这些扩展字段时才写回，避免默认值噪音。
+            for key in ("reply_max_chars", "allowed_actions"):
+                if key in existing_life:
+                    life[key] = normalized[key]
+
         try:
             original = self.config_path.read_text(encoding="utf-8")
         except OSError as exc:
@@ -490,9 +590,11 @@ class SystemConfigAdmin:
                 f"读取 {self.config_path} 失败：{exc}") from exc
         updated = _patch_agent_brain(
             original, agent_id, model=model, credential=credential)
+        if life is not None:
+            updated = _patch_agent_life(updated, agent_id, life)
         if updated == original:
             raise SettingsAdminError(
-                f"Agent {agent_id} 的模型配置没有发生变化。")
+                f"Agent {agent_id} 的配置没有发生变化。")
 
         self._backup_config()
         _atomic_write(self.config_path, updated)
