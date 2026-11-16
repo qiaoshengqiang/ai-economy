@@ -294,7 +294,7 @@ def test_controller_submit_dispatches_through_front_inbox(wired):
 
 def test_solo_runtime_drains_inbox_to_checkpoint(wired):
     from types import SimpleNamespace
-    from work.runtime import SoloWorkRuntime
+    from work.runtime import BuiltinWorkRuntime
 
     manager, journal, _agent_a, _agent_b = wired
     journal.initialize_inbox(
@@ -305,7 +305,7 @@ def test_solo_runtime_drains_inbox_to_checkpoint(wired):
     message = run_coro(manager.send(
         "agent_a", "agent_b", text="solo hello"))
 
-    runner = SoloWorkRuntime.__new__(SoloWorkRuntime)
+    runner = BuiltinWorkRuntime.__new__(BuiltinWorkRuntime)
     runner.rt = SimpleNamespace(communication=manager)
     text = runner._drain_inbox("agent_b")
 

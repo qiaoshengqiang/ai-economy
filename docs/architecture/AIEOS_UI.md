@@ -31,7 +31,7 @@ DB: runs/ui/aieos.db
 --max-teams 3
 --worker-turns 8
 --integration-turns 8
---solo-turns 24
+--builtin-turns 24
 --cognitive-budget 65536
 ```
 
@@ -39,8 +39,8 @@ DB: runs/ui/aieos.db
 
 ## 2. 交互模型
 
-> **当前模式：`solo_only=True`。** 一个任务只交给一个 Agent 独立完成，
-> 不做 Leader 规划、不组队。Team 代码仍保留，但 UI 不会触发。
+> **当前只允许单 Agent Task（`solo_only=True`）。** 一个任务只交给一个
+> Agent 独立完成，不做 Leader 规划、不组队。Team 代码仍保留，但 UI 不会触发。
 
 ```text
 Human
@@ -56,7 +56,7 @@ Front Agent（固定）
                   ↓
             创建 SOLO Task
                   ↓
-            SoloWorkRuntime
+            BuiltinWorkRuntime
                   ↓
             FrontResult → 输出框
 ```
@@ -201,7 +201,7 @@ Front 看到的开放 Task 状态来自两个事实：Task Core 的状态 + 是�
 Job 正在执行。没有 Job 的开放 Task 标记为 `INTERRUPTED`，
 不会被描述成「正在处理中」。
 
-### Solo 的任务认知 + 决策 / 工作 / 总结
+### 内置引擎的任务认知 + 决策 / 工作 / 总结
 
 启动时先做一次**任务认知**（只读）：
 
@@ -236,8 +236,8 @@ Workspace 事实重新 read / search。
   `--cognitive-budget`（UI 默认 **65,536**）作为实际输出预算；
   prompt 只把 effective budget 作为事实展示，不提供调参说明；
 - Playwright 产生的截图通过 `image_resolver` 以 `image_url`
-  回喂给 Solo Agent；
-- Solo 默认最多 **24** 个外层 turn。
+  回喂给内置引擎 Agent；
+- 内置引擎默认最多 **24** 个外层 turn；Pi 引擎按 Pi 总时长控制。
 
 ---
 
@@ -265,7 +265,7 @@ Workspace 事实重新 read / search。
 ```text
 ui/server.py          标准库 HTTP server + 静态文件
 ui/static/            无构建 HTML / CSS / JS
-work/controller.py    AIEOSController：Front / Solo Agent 编排
+work/controller.py    AIEOSController：Front / Worker Agent 编排
 ```
 
 ### API
@@ -284,7 +284,7 @@ GET  /api/health
   避免把同一请求重复建任务）；
 - `solo_only=True` 时选择一个空闲 Agent；
 - 调用 `TaskCreationService` 创建 SOLO Task；
-- 调用 `SoloWorkRuntime` 执行；
+- 调用 `BuiltinWorkRuntime` 执行；
 - 把 `WorkResult` 转成 `FrontResult` 模板，以 **system** 消息显示；
   这条消息不是 Front LLM 的回复（Front 没有重新处理 WorkResult）；
 - `solo_only=False` 时保留旧的 Leader / Team 路径（仅用于对照实验）。
@@ -326,7 +326,7 @@ GET  /api/health
 - 工具用法通过 `tool_help` 自查，文档源在
   `resources/public/tools/<tool>.md`，不在 prompt 里重复维护；
 - Team 路径的「运行中重新计划」仍沿用 `work_plan_update`（当前 UI 不触发）；
-- 常规设置中的最大并行任务数在进程内生效；Front Agent / Front 模式 / Work 模式 / 轮次 / Agent 启停 / 引擎写入 `runs/ui/ui_settings.json`；
+- 常规设置中的最大并行任务数在进程内生效；Front Agent / Front 模式 / Pi 工作模式 / 轮次 / Agent 启停 / 引擎写入 `runs/ui/ui_settings.json`；
 - 系统设置写入 `config/llm.yaml` 与 `.env`，需要重启 UI 进程；UI 显示“重启后生效”；
 - Worker Roles 写入 `config/worker_roles.yaml`，下一个任务生效；删除使用归档；
 - Prompt 日志默认关闭；开启后写入 `runs/ui/prompts/prompts-YYYY-MM-DD.jsonl`，

@@ -24,7 +24,7 @@
 3. **验收人无法复跑时，应发 `VERIFY(passed=false)` 并写明缺口**，
    不要用重复 `workspace_read` / `run_tool` 代替验收结论。
 
-在 Work / Solo 模式用 `tool_help` 读取文档：
+在 Work / 内置引擎模式用 `tool_help` 读取文档：
 
 ```json
 {"type":"tool_help","parameters":{"tool":"playwright"}}

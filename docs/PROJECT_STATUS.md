@@ -4,7 +4,7 @@
 > **日期：2026-11-15**
 > **阶段：开发中 / 观察实验**
 > **协议版本：`1`**
-> **测试基线：`5840 passed, 2 skipped, 30 deselected`**
+> **测试基线：`5844 passed, 2 skipped, 30 deselected`**
 
 本文记录**当前真实可用能力、推荐工作方式、已知限制和版本变化**。
 架构的长期权威仍然是
@@ -15,10 +15,10 @@
 
 ## 1. 一句话现状
 
-> **当前最佳工作方式是：Human → Front → Pi Agent → 自主工作（autonomous）。**
+> **当前最佳工作方式是：Human → Front → Pi 引擎 Agent → 自主工作（autonomous）。**
 >
 > 工作流模式（Prototype → Engineering → Evolution）仍然可用，但更重；
-> 非 Pi 的 Solo 目前只有工作流式循环；
+> 内置引擎（非 Pi）目前只有工作流式循环；
 > Team 协作模式有重大问题，已暂时搁置。
 
 ---
@@ -37,9 +37,9 @@
 - UI 改为紧凑 Agent 列表、模式可见、Front 回复计时、工作中 Agent 动态边框；
 - 修复中断恢复、超时分类、跨迭代 session、错误记录等问题；
 - Agent Inbox Phase 0/1/2/3/4：持久化 Inbox 状态、legacy cutover、统计与只读 API；
-  Pi Agent 与 Front 已接入常驻收件箱（`runtime.inbox_enabled = true`），
-  Human → Front 改为 Inbox-first；Solo 只入队，并在 work checkpoint 注入；
-  Phase 5 V1 支持空闲 Solo Agent 的可选自动回复，默认 `reply_mode = never`。
+  Pi 引擎 Agent 与 Front 已接入常驻收件箱（`runtime.inbox_enabled = true`），
+  Human → Front 改为 Inbox-first；内置引擎只入队，并在 work checkpoint 注入；
+  Phase 5 V1 支持空闲内置引擎 Agent 的可选自动回复，默认 `reply_mode = never`。
 - Agent 显示名进入 prompt：自我介绍拆成「名字」和「Agent ID」两条事实；
   Front / 收件箱 / Team 列表显示对方名字，动作与路由字段仍只认 Agent ID；
   `agent_a..e` 旧 `system_prompt` 中的 `Agent A/B/...` 已改为中文显示名。
@@ -64,7 +64,7 @@
   `x-opencode-session`（含 provider/model）；`llm_calls` 记录
   cache_read / cache_write / allowance / billing_source / session_id；
   任务详情页显示该 Task 的缓存命中率与 Go allowance。
-- Prompt 缓存布局：Front / Solo / Pi 把稳定指令、schema、输出格式前置，
+- Prompt 缓存布局：Front / 内置引擎 / Pi 把稳定指令、schema、输出格式前置，
   记忆 / 对话 / 当前输入 / 动作结果 / 当前时间后置；
   `tests/test_prompt_cache_order.py` 守卫顺序。
 - Worker 图片输入按 model profile 声明 `supports_image_input`；
@@ -74,6 +74,10 @@
 - 连续只读保护默认从 4 轮提高到 8 轮；设置 → 运行可调整（0 = 不限制）。
 - Front `inspect` 每次输入上限默认从 2 提高到 4；设置 → 运行可调整
   （0–20，0 = 不限制）。
+- Work 引擎语义统一：`Solo` 只表示任务拓扑；内置引擎改名
+  `BuiltinWorkRuntime`，UI 引擎标签为「内置 / Pi」；
+  `max_solo_turns` → `max_builtin_turns`（旧 settings 键与
+  `--solo-turns` 仅保留兼容）。
 - 读取分页字段统一：按行用 `start_line` / `max_lines` / `next_start_line`
   （`workspace_read` · `artifact_read` · `project_read`），按字符用
   `start_char` / `max_chars` / `next_start_char`（`draft_read`）；
@@ -90,7 +94,7 @@ Human
   ↓
 Front Agent
   ↓  handoff / task_text
-Pi Agent（Work 自主模式）
+Pi 引擎 Agent（Work 自主模式）
   ↓  原生 read / write / edit / bash / grep / find / ls
 Task Workspace
   ↓
@@ -101,16 +105,16 @@ RESULT.md / 文件产物
 
 ```text
 Front 模式：自主 或 只传达
-Work 模式：自主
-Pi Agent：agent_b / agent_c / agent_d / agent_e（默认全部启用 Pi）
+Pi 工作模式：自主
+Pi 引擎 Agent：agent_b / agent_c / agent_d / agent_e（默认全部启用 Pi）
 ```
 
 默认配置（`v0.2.0`）：
 
 ```text
 Front 模式：autonomous
-Work 模式：autonomous
-Pi Agents：agent_b, agent_c, agent_d, agent_e
+Pi 工作模式：autonomous
+Pi 引擎 Agents：agent_b, agent_c, agent_d, agent_e
 Pi 超时：7200 秒
 DeepSeek context：600000
 DeepSeek 单次输出：32768（同一 model profile 的所有 Agent 共享）
@@ -158,14 +162,22 @@ Worker Role 的 phase_requirements
 
 ---
 
-## 4. Work 模式现状
+## 4. 执行引擎与拓扑现状
 
-| 模式 | 状态 | 说明 |
+**执行引擎**
+
+| 引擎 | 状态 | 说明 |
 |---|---|---|
 | **Pi + autonomous** | **`CURRENT` · 推荐** | 单阶段自主工作；最轻；当前最佳实践 |
 | **Pi + workflow** | `CURRENT` · 可用但较重 | Prototype → Engineering → Evolution；阶段提示、角色要求、验证要求更多 |
-| **非 Pi Solo** | `CURRENT` · 仅工作流式 | `SoloWorkRuntime`；Cognition / Work 循环；**没有 autonomous 模式** |
-| **Team 协作** | **`SHELVED` · 暂停使用** | 代码保留；UI `solo_only=True` 不会触发；不用于新任务 |
+| **内置引擎（非 Pi）** | `CURRENT` · 仅工作流式 | `BuiltinWorkRuntime`；Cognition / Work 循环；**没有 autonomous 模式** |
+
+**任务拓扑**
+
+| 拓扑 | 状态 | 说明 |
+|---|---|---|
+| **SOLO** | **`CURRENT`** | 一个 Agent 独立完成；当前 UI 主路径 |
+| **TEAM** | **`SHELVED` · 暂停使用** | 代码保留；UI `solo_only=True` 不会触发；不用于新任务 |
 
 ### 4.1 Pi workflow
 
@@ -185,9 +197,9 @@ Prototype 原型生成
 - 阶段恢复是阶段级，不是轮次级；
 - 对简单任务容易产生过度验证、范围膨胀和较高 token 成本。
 
-### 4.2 非 Pi Solo
+### 4.2 内置引擎（非 Pi）
 
-`SoloWorkRuntime`：
+`BuiltinWorkRuntime`：
 
 - 有自己的 Cognition / Work 循环；
 - 有轮次、认知预算、只读轮次等约束；
@@ -213,7 +225,7 @@ Leader 规划 → TeamWorkRuntime → 多 Agent 协作
 
 ## 5. Front 模式现状
 
-Front 有两个模式，和 Work 模式相互独立：
+Front 有两个模式，和 Pi 工作模式相互独立：
 
 | Front 模式 | 状态 | 行为 |
 |---|---|---|
@@ -265,7 +277,7 @@ Role 是任务元数据，不等于 Worker 已经收到角色提示词。
 也就是说：
 
 ```text
-Role 生效条件 = Work 模式 workflow
+Role 生效条件 = Pi 工作模式 workflow
               + 阶段是 prototype / engineering / evolution
 ```
 
@@ -320,7 +332,7 @@ task_text
 | Worker ↔ Worker 显式消息 / Pi inbox-outbox | `CURRENT`（Phase 4；Claim Lease hardening 待补） |
 | Agent 紧凑列表 + 机器人空闲/工作动画 | `CURRENT` |
 | Agent 工作中顺时针虚线边框 | `CURRENT` |
-| Front / Work 模式显示 | `CURRENT` |
+| Front / Pi 工作模式显示 | `CURRENT` |
 | Front 回复计时 | `CURRENT` |
 | Task 卡片模式快照 | `CURRENT`（新任务） |
 | Task 卡片状态色 / 归档 / 删除 | `CURRENT`（删除仅终态；归档任务不进入 Front 上下文） |
@@ -398,13 +410,13 @@ Team 协作是目前最大的未完成区域：
 - 旧 TEAM 任务不能继续 / 返工；
 - 需要单独的任务书重新设计可靠性、协调和验收，不应在当前版本上继续加功能。
 
-### 8.2 非 Pi Solo 没有自主模式
+### 8.2 内置引擎没有自主模式
 
-`Work 模式` 切换只作用于 Pi Work。
+`Pi 工作模式` 切换只作用于 Pi Work。
 
 如果 Agent 不在 `pi_work_agents` 中：
 
-- 使用 `SoloWorkRuntime`；
+- 使用 `BuiltinWorkRuntime`；
 - 只有 Cognition / Work 工作流式循环；
 - 不能切换到 autonomous。
 
@@ -493,7 +505,7 @@ Pi 自主任务仍然可能消耗较多 token：
 - 新增 Project Workdir：选择已有项目目录，Pi 直接修改，shadow snapshot + 项目锁；
 - 修复 Pi 超时被标成 FAILED、返工 session 复用、role 未持久化、`last_error` 不更新；
 - DeepSeek context 默认 600K，单次输出上限 32K；
-- Team 仍然暂停，非 Pi Solo 仍然只有工作流式循环。
+- Team 仍然暂停，内置引擎仍然只有工作流式循环。
 
 ---
 
@@ -504,7 +516,7 @@ Pi 自主任务仍然可能消耗较多 token：
 ```text
 Front：自主（需求完整时可用只传达）
 Work：自主
-Pi Agent：启用 Pi 的 Agent
+Pi 引擎 Agent：使用 Pi 引擎的 Agent
 ```
 
 ### 需要明确阶段检查
@@ -524,7 +536,7 @@ Work：工作流
 
 ```text
 Team 协作
-非 Pi Solo 上期待 autonomous
+内置引擎上期待 autonomous
 在 autonomous 下期待 Role 生效
 ```
 
@@ -555,7 +567,7 @@ Team 协作
 当前基线：
 
 ```text
-5840 passed, 2 skipped, 30 deselected
+5844 passed, 2 skipped, 30 deselected
 ```
 
 启动说明见 [`../START_AIEOS.md`](../START_AIEOS.md)。
@@ -581,7 +593,7 @@ WSL     实验性，路径语义需单独处理
 - Pi autonomous 已经可以作为当前主力工作方式；
 - Front 与 Work 的模式边界已经清楚；
 - Team 已被明确搁置，不再假装可用；
-- 非 Pi Solo 的限制已经明确写出；
+- 内置引擎的限制已经明确写出；
 - Role / 验收 / 上下文注入的边界有文档和测试。
 
 下一步应该优先做**观察和收敛**，而不是继续堆叠工作流功能。

@@ -8,7 +8,7 @@ AIEOS UI Server —— 人类与 Front Agent 的唯一入口
       ↕
     AIEOSController
       ↕
-    Front / Solo Agent / Task / Workspace
+    Front / Worker Agent / Task / Workspace
 
 🔒 只用标准库 `http.server`，不引入新依赖。
 🔒 绑定 127.0.0.1；不暴露到公网。
@@ -391,7 +391,10 @@ class Handler(BaseHTTPRequestHandler):
                 settings = self.controller.update_settings(
                     front_agent=payload.get("front_agent"),
                     max_parallel_teams=payload.get("max_parallel_teams"),
-                    max_solo_turns=payload.get("max_solo_turns"),
+                    max_builtin_turns=(
+                        payload.get("max_builtin_turns")
+                        if payload.get("max_builtin_turns") is not None
+                        else payload.get("max_solo_turns")),
                     max_read_only_turns=payload.get(
                         "max_read_only_turns"),
                     front_max_inspect=payload.get("front_max_inspect"),
@@ -448,7 +451,7 @@ class Handler(BaseHTTPRequestHandler):
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog="aieos-ui",
-        description="AIEOS 人类交互界面（Front Agent + Team）")
+        description="AIEOS 人类交互界面（Front Agent + Worker）")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8000)
     ap.add_argument("--db", default=None,
@@ -459,11 +462,16 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--max-teams", type=int, default=3)
     ap.add_argument("--worker-turns", type=int, default=8)
     ap.add_argument("--integration-turns", type=int, default=8)
-    ap.add_argument("--solo-turns", type=int, default=24)
+    ap.add_argument(
+        "--builtin-turns", type=int, default=None,
+        help="内置 Work 引擎的最大外层 turn；默认 24")
+    #: @deprecated 旧名；保留一个版本，内部使用 --builtin-turns。
+    ap.add_argument("--solo-turns", type=int, default=None,
+                    help=argparse.SUPPRESS)
     ap.add_argument("--cognitive-budget", type=int, default=65536)
     ap.add_argument(
         "--pi-agents", default="agent_b,agent_c,agent_d,agent_e",
-        help="逗号分隔：这些 Agent 的 Solo Task 使用 Pi Work 引擎")
+        help="逗号分隔：这些 Agent 的 Work 使用 Pi 引擎")
     ap.add_argument(
         "--pi-cli",
         default=str(ROOT / "experiments" / "pi_compare" / "pi_node"
@@ -556,7 +564,10 @@ def main(argv=None) -> int:
         max_parallel_teams=max(1, int(args.max_teams)),
         max_worker_turns=max(1, int(args.worker_turns)),
         max_integration_turns=max(1, int(args.integration_turns)),
-        max_solo_turns=max(1, int(args.solo_turns)),
+        max_builtin_turns=max(1, int(
+            args.builtin_turns
+            if args.builtin_turns is not None
+            else (args.solo_turns if args.solo_turns is not None else 24))),
         cognitive_budget=max(1, int(args.cognitive_budget)),
         pi_work_agents=[
             item.strip() for item in str(args.pi_agents or "").split(",")
@@ -578,7 +589,7 @@ def main(argv=None) -> int:
             Path(args.task_root).expanduser().resolve()
             if args.task_root else (ROOT / "tasks").resolve()
         ),
-        # 当前阶段只跑 Solo；Team 路径保留在代码里但不由 UI 触发。
+        # 当前阶段只跑 SOLO Task；Team 路径保留在代码里但不由 UI 触发。
         solo_only=True,
         settings_path=db_path.parent / "ui_settings.json",
         log_dir=db_path.parent / "jobs",

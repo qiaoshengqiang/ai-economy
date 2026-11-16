@@ -49,7 +49,7 @@ tasks/<task_id>/
 
 - 磁盘是内容权威；
 - DB 只保存 Task 元数据和 manifest/hash；
-- Solo Pi 任务不引入逻辑锁；Team 共享目录以后再加协调；
+- Pi 执行的 SOLO Task 不引入逻辑锁；Team 共享目录以后再加协调；
 - `tasks/` 是运行产物，已加入 `.gitignore`。
 
 ## 3. Pi 进程
@@ -316,7 +316,7 @@ Pi agent_settled
 `AIEOSController` 新增：
 
 ```text
-pi_work_agents     # 只有这些 Agent 的 Solo Task 走 Pi
+pi_work_agents     # 只有这些 Agent 的 Work 走 Pi 引擎
 pi_cli_path
 pi_provider
 pi_model
@@ -335,7 +335,7 @@ python -m ui.server \
   --task-root /path/to/tasks
 ```
 
-未开启的 Agent 继续走 `SoloWorkRuntime`，可回滚。
+未开启的 Agent 继续走 `BuiltinWorkRuntime`，可回滚。
 
 ## 7. 已验证
 

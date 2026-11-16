@@ -582,7 +582,7 @@
               <div class="setting-card-head">
                 <div>
                   <h4>执行限制</h4>
-                  <p>控制并发、单任务轮次和 Work 总时长。</p>
+                  <p>控制并发、内置引擎轮次和 Pi 总时长。</p>
                 </div>
                 <span class="scope-badge">新任务生效</span>
               </div>
@@ -603,12 +603,12 @@
 
               <div class="setting-row">
                 <div class="setting-label">
-                  <span>单任务最大轮次</span>
-                  <small>防止单个任务无限循环。</small>
+                  <span>内置引擎最大轮次</span>
+                  <small>仅内置引擎使用；Pi 引擎按 Pi 总时长控制。</small>
                 </div>
                 <div class="setting-control">
                   <div class="inline-control">
-                    <input id="max-solo-turns" type="number" min="1" max="200" />
+                    <input id="max-builtin-turns" type="number" min="1" max="200" />
                     <span class="unit">轮</span>
                     <span class="range">1–200</span>
                   </div>
@@ -648,7 +648,7 @@
                   <input id="pi-timeout-enabled" type="checkbox" checked />
                   <span class="switch-track"><span class="switch-thumb"></span></span>
                   <span class="switch-copy">
-                    <b>限制 Work 总时长</b>
+                    <b>限制 Pi 总时长</b>
                     <small>关闭后 Pi Work 不设总时限；单次 LLM 请求仍受服务商 Timeout 限制。</small>
                   </span>
                 </label>
@@ -793,7 +793,7 @@
                   <span class="switch-track"><span class="switch-thumb"></span></span>
                   <span class="switch-copy">
                     <b>记录模型输入（Prompt 日志）</b>
-                    <small>写入 runs/ui/prompts/，记录 Front / Solo / Pi 的 system 与 messages。默认关闭，测完请关闭。</small>
+                    <small>写入 runs/ui/prompts/，记录 Front / 内置引擎 / Pi 的 system 与 messages。默认关闭，测完请关闭。</small>
                   </span>
                 </label>
               </div>
@@ -877,7 +877,7 @@
                 <button type="button" class="cd-btn primary" id="agent-create-submit">创建 Agent</button>
               </div>
               <div class="helper" style="padding-bottom:10px;">
-                新 Agent 重启后出现在列表；默认引擎为 Solo，可在重启后切换为 Pi。
+                新 Agent 重启后出现在列表；默认引擎为内置，可在重启后切换为 Pi。
               </div>
             </section>
 
@@ -909,7 +909,7 @@
                   </div>
                 </div>
                 <div class="compact-field">
-                  <span>Work 模式</span>
+                  <span>Pi 工作模式</span>
                   <div class="segmented" id="work-mode">
                     <label><input type="radio" name="work-mode" value="autonomous" checked />自主</label>
                     <label><input type="radio" name="work-mode" value="workflow" />工作流</label>
@@ -953,11 +953,11 @@
                   <div class="setting-row">
                     <div class="setting-label">
                       <span>引擎</span>
-                      <small>Solo 走内置循环；Pi 走 Pi Work。</small>
+                      <small>内置引擎使用 AIEOS 动作循环；Pi 引擎使用 Pi Work。Pi 工作模式仅对 Pi 生效。</small>
                     </div>
                     <div class="setting-control">
                       <div class="segmented" id="agent-engine">
-                        <label><input type="radio" name="agent-engine" value="solo" />Solo</label>
+                        <label><input type="radio" name="agent-engine" value="builtin" />内置</label>
                         <label><input type="radio" name="agent-engine" value="pi" />Pi</label>
                       </div>
                     </div>

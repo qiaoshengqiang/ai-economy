@@ -12,7 +12,7 @@
 🔒 这与 Workspace Core 的逻辑资源树是两套东西：
     · Pi Work 以真实目录为内容权威；
     · AIEOS 只保存路径、manifest 和 hash；
-    · Solo Pi 任务不需要逻辑锁 / revision。
+    · Pi 执行的 SOLO Task 不需要逻辑锁 / revision。
 """
 
 from __future__ import annotations

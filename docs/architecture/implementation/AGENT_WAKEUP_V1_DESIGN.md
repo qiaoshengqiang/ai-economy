@@ -4,7 +4,7 @@
 >
 > V1 先接入 **Front Agent**；核心数据模型、调度器和
 > `WakeupDispatcher` 从第一天就是**通用 Agent 能力**。
-> Pi / Solo Worker 的 handler 后续接入，不重新设计核心。
+> Pi / 内置引擎 Worker 的 handler 后续接入，不重新设计核心。
 > V1 部署假设：一台机器一个 AIEOS UI 进程 = 一个 AlarmService 线程。
 >
 > 相关文档：
@@ -30,7 +30,7 @@ WakeupEvent
   ↓
 WakeupDispatcher
   ↓
-FrontWakeupHandler / PiWakeupHandler / SoloWakeupHandler
+FrontWakeupHandler / PiWakeupHandler / BuiltinWakeupHandler
   ↓
 Agent 被唤醒后自行决定：
   inspect / 通知人类 / 不通知 / 取消闹钟 / 继续设闹钟
@@ -92,7 +92,7 @@ demand/scheduler.py
 
 - 不实现完整 Life Loop；
 - 不实现 Heartbeat / Lease Renewal / 存活检测；
-- 不在 V1 实现 Pi / Solo 的 handler；
+- 不在 V1 实现 Pi / 内置引擎的 handler；
 - 不让闹钟自动创建 Task、返工、follow-up；
 - 不让系统冒充 Human / Agent 发消息；
 - 不做没有资源保护的无限唤醒（测试用 `WakeupGuard`）；
@@ -162,7 +162,7 @@ Agent ── alarm_create / alarm_cancel / alarm_list
 └──────────────────────────────────────────────────────┘
         │                    │                    │
         ▼                    ▼                    ▼
-FrontWakeupHandler   PiWakeupHandler      SoloWakeupHandler
+FrontWakeupHandler   PiWakeupHandler      BuiltinWakeupHandler
    （V1）              （以后）               （以后）
         │
         ▼
@@ -472,7 +472,7 @@ Agent prompt 必须明确写出：
 
 - `alarm_create / list / cancel` 只挂到 **Front 动作集**；
 - 核心 service 支持任意 `agent_id`；
-- Pi / Solo 的 action 和 handler 后续接入。
+- Pi / 内置引擎的 action 和 handler 后续接入。
 
 ---
 
@@ -538,7 +538,7 @@ WORKING → 不唤醒、不注入；
           下一次周期照常计算
 ```
 
-**Solo Worker**
+**内置引擎 Worker**
 
 ```text
 IDLE    → 可以进入 Life wake turn
@@ -823,7 +823,7 @@ AIEOSController(
 | Phase W3 | Front `alarm_create / list / cancel` + prompt | **`CURRENT`**（V1） |
 | Phase W4 | `FrontWakeupHandler` + `no_notify` + Activity API | **`CURRENT`**（V1） |
 | Phase W4.1 | Activity 通知图标 / 抽屉 / 原始输出详情 | **`CURRENT`**（V1） |
-| Phase W5 | Pi / Solo `WakeupHandler` | `FUTURE` |
+| Phase W5 | Pi / 内置引擎 `WakeupHandler` | `FUTURE` |
 
 ---
 

@@ -31,7 +31,7 @@
 | Demand Entry V1 | `./dev.sh demand` · Agent 自主 `task_create` · 串行 RunScheduler · CLI | ✅ 已实现（ADR-0042） |
 | Workspace Read/Edit V1 | 范围读取（offset/limit）· `workspace_edit` old/new 局部替换 | ✅ 已实现（ADR-0043） |
 | Workspace Search V1 | `workspace_search` 只读字面搜索 · Demand CLI 接入工作记忆/短期/长期/私有空间 | ✅ 已实现（ADR-0044） |
-| Pi Work | Front → Pi Agent → workflow / autonomous · 快照 · 恢复 / Reopen | ✅ 已实现 |
+| Pi Work | Front → Pi 引擎 Agent → workflow / autonomous · 快照 · 恢复 / Reopen | ✅ 已实现 |
 | Output Commit | 独立输出仓库 · manual / limited / auto · Front `commit_confirm` | ✅ 已实现（ADR-0058） |
 | Project Workdir | 直接修改已有项目目录 · shadow snapshot · 项目锁 | ✅ Phase 1（ADR-0060） |
 | 实验线 | Human Demand → 多 Agent 协作生产 / 自主分工观察（`experiments/`） | 🚧 进行中 |

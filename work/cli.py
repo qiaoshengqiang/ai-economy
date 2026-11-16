@@ -13,9 +13,9 @@ Work CLI —— Human → Front → Solo Task → Work
       ↓
     Front Agent（direct_reply / handoff / rework / follow_up / clarify）
       ↓ handoff
-    Team Lead（默认选择一个非 Front 的 Agent）
+    Front 选中的 Worker Agent（默认选择一个非 Front 的 Agent）
       ↓ 创建 SOLO Task
-    SoloWorkRuntime（精简 Work prompt / 无消息 / 无经济）
+    BuiltinWorkRuntime（精简 Work prompt / 无消息 / 无经济）
       ↓
     Front 格式化结果 → Human
 
@@ -46,7 +46,7 @@ from front import (                                              # noqa: E402
     FrontAgentRuntime, FrontIntent, FrontUnavailableError,
 )
 from work.availability import AgentAvailability                   # noqa: E402
-from work.runtime import SoloWorkRuntime                          # noqa: E402
+from work.runtime import BuiltinWorkRuntime                       # noqa: E402
 from work.scheduler import RequestStatus, TeamScheduler           # noqa: E402
 from work.team_runtime import TeamWorkRuntime                     # noqa: E402
 
@@ -250,12 +250,12 @@ def main(argv=None) -> int:
             work_result = team.reopen_and_run(
                 reason=decision.reply or human_text)
         else:
-            solo = SoloWorkRuntime(
+            builtin = BuiltinWorkRuntime(
                 runtime, task,
                 max_turns=int(args.max_turns),
                 cognitive_budget=int(args.cognitive_budget),
             )
-            work_result = solo.reopen_and_run(
+            work_result = builtin.reopen_and_run(
                 reason=decision.reply or human_text)
         print(front.format_result(
             front.result_from_work(work_result)))
@@ -356,7 +356,7 @@ def main(argv=None) -> int:
             front.result_from_work(work_result)))
         return 0 if work_result.ok else 1
 
-    # ---- Solo ----
+    # ---- Builtin ----
     availability = AgentAvailability()
     availability.register(lead)
     if not availability.try_acquire(lead):
@@ -371,13 +371,13 @@ def main(argv=None) -> int:
         if task is None:
             print("❌ Task 创建后无法读取")
             return 1
-        solo = SoloWorkRuntime(
+        builtin = BuiltinWorkRuntime(
             runtime, task,
             brief=decision.brief.to_dict(),
             max_turns=int(args.max_turns),
             cognitive_budget=int(args.cognitive_budget),
         )
-        work_result = solo.run()
+        work_result = builtin.run()
         print(front.format_result(
             front.result_from_work(work_result)))
         return 0 if work_result.ok else 1

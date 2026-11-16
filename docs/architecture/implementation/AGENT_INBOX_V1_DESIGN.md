@@ -4,8 +4,8 @@
 >
 > Phase 0（边界 / flag / legacy cutover）、Phase 1（持久化 Inbox Core /
 > 统计 / API）、Phase 2（Pi 持久 Inbox）、Phase 3（Front Inbox-first）
-> 与 Phase 4（Solo 入队 / checkpoint）已实现；
-> Phase 5 V1（空闲 Solo Agent 可选自动回复）已实现，
+> 与 Phase 4（内置引擎入队 / checkpoint）已实现；
+> Phase 5 V1（空闲内置引擎 Agent 可选自动回复）已实现，
 > Conversation / 邀请 / 社交 / 经济通信仍为 `DESIGNED`。
 >
 > 相关文档：
@@ -24,12 +24,12 @@
 | Phase 1：持久化 Inbox Core | **`CURRENT`** | pending / IGNORED / stats / startup recovery / `/api/inbox` |
 | Phase 2：Pi 持久 Inbox | **`CURRENT`** | `PiInboxService` 常驻消费；写入 `agents/<id>/inbox/` |
 | Phase 3：Front Inbox-first | **`CURRENT`** | Human → Front inbox → Job dispatch |
-| Phase 4：Solo 入队 / Life | **`CURRENT`** | Solo 只入队；work checkpoint 注入；默认不自动回复 |
-| Phase 5：Life 通信 | **V1 `CURRENT`** | 空闲 Solo Agent 可选自动回复；其余 `DESIGNED` |
+| Phase 4：内置引擎入队 / Life | **`CURRENT`** | 内置引擎只入队；work checkpoint 注入；默认不自动回复 |
+| Phase 5：Life 通信 | **V1 `CURRENT`** | 空闲内置引擎 Agent 可选自动回复；其余 `DESIGNED` |
 
 > Phase 1 的 `communication_inbox_state` 是第 **30** 张表。
 > `runtime.inbox_enabled` 当前为 `true`；
-> Front 与 Pi Agent 已启用常驻消费，Solo 只入队 / checkpoint 注入。
+> Front 与 Pi 引擎 Agent 已启用常驻消费，内置引擎只入队 / checkpoint 注入。
 
 ---
 
@@ -66,8 +66,8 @@ Message 不能因为 Agent 正在思考或执行而丢失
 
 | 缺口 | 影响 |
 |---|---|
-| UI 生产路径没有启动 `AgentRuntime.run_forever()` | Front / Solo 的信箱无人消费 |
-| Pi Inbox Bridge 只在任务运行期间启动 | 空闲 Pi Agent 的消息延迟到下一次任务 |
+| UI 生产路径没有启动 `AgentRuntime.run_forever()` | Front / 内置引擎的信箱无人消费 |
+| Pi Inbox Bridge 只在任务运行期间启动 | 空闲 Pi 引擎 Agent 的消息延迟到下一次任务 |
 | 生产 Agent 没有注册 `on_message` handler | 即使取到消息，也不会进入 Brain |
 | Human Gateway 与 controller 双路径 | 同一条 Human 消息在信箱里有一份，被直接使用一次 |
 | 没有启动时重放 | 进程重启后，未消费的内存队列消失 |
@@ -107,7 +107,7 @@ Pi 只在任务期间消费一部分
 1. Inbox 由 Agent Runtime 持有，独立于当前 LLM 调用；
 2. 消息持久化，进程重启后未处理消息可恢复；
 3. Agent 在安全 checkpoint 处理收件箱，不中断当前 LLM / Tool；
-4. Front 与 Pi 首先接入，Solo 先只入队；
+4. Front 与 Pi 首先接入，内置引擎先只入队；
 5. 未来 Life 层可以在没有 Task 的情况下收发消息；
 6. 不改变 Task Core 的状态权威；
 7. 不让系统冒充 Agent 发送 Agent 消息。
@@ -166,10 +166,10 @@ Agent 可以接收和记录消息，但不自动调用 LLM 回复。
 ```text
 Front   → 常驻 Inbox Runtime
 Pi      → 持久 Inbox Bridge
-Solo    → 只入队 / 观测，不自动调用 Brain
+内置引擎    → 只入队 / 观测，不自动调用 Brain
 ```
 
-Solo 在没有 Task 时的自主思考属于 Life 层后续能力。
+内置引擎在没有 Task 时的自主思考属于 Life 层后续能力。
 
 ---
 
@@ -183,7 +183,7 @@ Transport Inbox（持久投递队列）
   DELIVERED → CLAIMED → PROCESSED / FAILED
 
 Agent Inbox（Runtime 持有的待处理队列）
-  Front / Solo：Runtime pending queue
+  Front / 内置引擎：Runtime pending queue
   Pi：tasks/<task_id>/.aieos/pi-inbox.md 或
       agents/<id>/inbox/
 ```
@@ -209,7 +209,7 @@ Front IDLE
 Pi Task 运行中
   → 在 phase / turn 边界读取
 
-Solo Task 运行中
+内置引擎 Task 运行中
   → 不消费；等任务结束或显式 checkpoint
 
 Agent 空闲但未启用 inbox
@@ -322,7 +322,7 @@ PiInboxHandler
   - 写入持久 pi-inbox
   - 任务运行时由 Pi 读取
 
-SoloInboxHandler
+BuiltinInboxHandler
   - V1 只记录 / 计入 unread
   - 不自动调用 Brain
 ```
@@ -385,16 +385,16 @@ Task lifecycle 消息驱动的改造属于后续独立阶段。
 ### Phase 2：Pi 持久 Inbox（`CURRENT`）
 
 - `PiInboxService` 在 UI 组合根启动；
-- 每个 Pi Agent 一个常驻 `PiInboxBridge`；
-- 空闲 Pi Agent 收到消息 → `agents/<id>/inbox/pi-inbox.md`；
+- 每个 Pi 引擎 Agent 一个常驻 `PiInboxBridge`；
+- 空闲 Pi 引擎 Agent 收到消息 → `agents/<id>/inbox/pi-inbox.md`；
 - Pi 下一次 phase / turn 读取；
-- 只启用 Pi Agent 的 `communication_inbox_state.enabled`；
-- Front / Solo 状态仍为 disabled。
+- 只启用 Pi 引擎 Agent 的 `communication_inbox_state.enabled`；
+- Front / 内置引擎状态仍为 disabled。
 
 **验收**：
 
 ```text
-[ ] 空闲 Pi Agent 收到消息，不丢
+[ ] 空闲 Pi 引擎 Agent 收到消息，不丢
 [ ] 下一次任务开始时能看到
 [ ] 任务运行中不中断当前 LLM
 [ ] 消息处理后 status / processed_at 正确
@@ -419,19 +419,19 @@ Task lifecycle 消息驱动的改造属于后续独立阶段。
 [ ] UI 能显示 pending / processing
 ```
 
-### Phase 4：Solo 入队与 Life 准备（`CURRENT`）
+### Phase 4：内置引擎入队与 Life 准备（`CURRENT`）
 
-- Solo Agent 启用 inbox 后只记录 unread；
+- 内置引擎 Agent 启用 inbox 后只记录 unread；
 - 不启动常驻消费者；
-- `SoloWorkRuntime` 在 run 开始 / 每轮 work 前 drain pending；
+- `BuiltinWorkRuntime` 在 run 开始 / 每轮 work 前 drain pending；
 - 注入后 `mark_processed_id()`；
 - 新增 `InboxPolicy`（默认 `reply_mode = never`），但尚未自动回复；
-- Solo 消息不会被自动转成 Task 或 Brain 调用。
+- 内置引擎消息不会被自动转成 Task 或 Brain 调用。
 
 **验收**：
 
 ```text
-[ ] Solo Agent 不再“永远看不到消息”
+[ ] 内置引擎 Agent 不再“永远看不到消息”
 [ ] 不自动创建 Task
 [ ] 不自动调用 Brain
 [ ] 重启后消息仍在
@@ -442,7 +442,7 @@ Task lifecycle 消息驱动的改造属于后续独立阶段。
 V1 已实现：
 
 - `LifeInboxService` 只处理 `payload.kind = "agent_message"`；
-- 只处理 **IDLE** 的非 Front / 非 Pi Agent；
+- 只处理 **IDLE** 的非 Front / 非 Pi 引擎 Agent；
 - 只有 Agent 配置 `inbox.reply_mode = auto` 才回复；
 - 默认 `reply_mode = never`；
 - 每个 conversation 最多 `max_auto_replies_per_conversation` 次；
@@ -463,7 +463,7 @@ agents:
 
 仍未实现：
 
-- Pi Agent 的空闲自动回复（Pi 持久 Inbox 已消费消息，V1 不叠加）；
+- Pi 引擎 Agent 的空闲自动回复（Pi 持久 Inbox 已消费消息，V1 不叠加）；
 - Conversation Manager；
 - 邀请协议；
 - 社交 / 经济消息的专门策略；
@@ -494,13 +494,13 @@ class InboxOutcome:
 
 ---
 
-## 9. Front / Pi / Solo / TaskService 边界
+## 9. Front / Pi / 内置引擎 / TaskService 边界
 
 | 邮箱 | V1 是否消费 | 说明 |
 |---|---|---|
 | Front | ✅ Phase 3 | Human / handoff 回复 |
 | Pi Worker | ✅ Phase 2 | 持久 pi-inbox |
-| Solo Worker | ⚠️ 只入队 | 不自动 Brain |
+| 内置引擎 Worker | ⚠️ 只入队 | 不自动 Brain |
 | TaskService | ❌ | TaskLifecycleClient 已同步处理 |
 | HumanGateway | ❌ | UI 从 Journal 读，不消费自己的信箱 |
 
@@ -551,7 +551,7 @@ processed_at / error
 [ ] Front 单路径
 [ ] Pi 空闲收件
 [ ] Task lifecycle 不重复执行
-[ ] Solo 只入队
+[ ] 内置引擎只入队
 [ ] 默认不自动回复
 [ ] UI stats
 ```
@@ -591,7 +591,7 @@ runtime.inbox_enabled = false
 2. Phase 1 recorder 查询 / 恢复 / legacy
 3. Phase 2 Pi 持久 inbox
 4. Phase 3 Front inbox-first
-5. Phase 4 Solo 入队
+5. Phase 4 内置引擎入队
 6. Phase 5 Life 通信
 ```
 

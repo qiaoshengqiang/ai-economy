@@ -39,7 +39,7 @@ from work.prompt import (
     build_work_prompt,
 )
 from work.roles import WorkContext, WorkRole
-from work.runtime import SoloWorkRuntime
+from work.runtime import BuiltinWorkRuntime
 from work.team_registry import TeamRegistry
 
 
@@ -336,14 +336,14 @@ class TestWorkActions:
     def test_action_params_render_only_requested_actions(self):
         from work.capabilities import describe_action_params
 
-        solo = describe_action_params(
+        params = describe_action_params(
             {"workspace_write", "run_tool", "work_complete"})
-        assert "workspace_write" in solo
-        assert "work_complete" in solo
-        assert "work_item_done" not in solo
-        assert "public_working_memory_update" not in solo
+        assert "workspace_write" in params
+        assert "work_complete" in params
+        assert "work_item_done" not in params
+        assert "public_working_memory_update" not in params
 
-    def test_solo_dispatcher_excludes_public_working_memory(self):
+    def test_builtin_dispatcher_excludes_public_working_memory(self):
         registered = set(_dispatcher(
             include_public_memory=False).action_types)
         assert "public_working_memory_read" not in registered
@@ -464,7 +464,7 @@ class TestWorkPrompt:
         assert "普通 JSON 语法" in prompt
         assert "工具调用标记" in prompt
 
-    def test_all_registered_solo_actions_are_visible(self):
+    def test_all_registered_builtin_actions_are_visible(self):
         """能力清单来自 dispatcher：注册了什么，prompt 里就必须有什么。"""
         context = WorkContext(
             task_id="T-1", agent_id="agent_a", role=WorkRole.SOLO)
@@ -688,7 +688,7 @@ class TestTaskDraftStore:
 
 
 # ============================================================
-# 6. SoloWorkRuntime 最小闭环
+# 6. BuiltinWorkRuntime 最小闭环
 # ============================================================
 class _FakeAgent:
     def __init__(self):
@@ -716,11 +716,11 @@ class _FakeAgent:
             segments=[segment],
             action_intents=[intent],
             action_results=[action_result],
-            summary="solo 总结",
+            summary="builtin 总结",
         )
 
 
-class _SoloRuntime:
+class _BuiltinRuntime:
     def __init__(self, db, task):
         self.tasks = TaskStore(db)
         self.tasks.save(task)
@@ -917,7 +917,7 @@ class _CountingCompleteAgent(_CognitionAgent):
             messages=messages, dispatcher=dispatcher, **kwargs)
 
 
-class TestSoloWorkRuntime:
+class TestBuiltinWorkRuntime:
     def test_completed_task_stops_loop_immediately(self, db):
         task = Task.create(
             task_id="T-STOP-AFTER-COMPLETE", creator="agent_a",
@@ -925,10 +925,10 @@ class TestSoloWorkRuntime:
             participants=["agent_a"], mode=TaskMode.SOLO)
         task.claim_producer("agent_a")
 
-        runtime = _SoloRuntime(db, task)
+        runtime = _BuiltinRuntime(db, task)
         agent = _CountingCompleteAgent()
         runtime.agent = agent
-        result = SoloWorkRuntime(
+        result = BuiltinWorkRuntime(
             runtime, task, max_turns=10).run()
 
         assert result.ok is True, result.error
@@ -945,9 +945,9 @@ class TestSoloWorkRuntime:
         task.claim_producer("agent_a")
 
         rounds = []
-        runtime = _SoloRuntime(db, task)
+        runtime = _BuiltinRuntime(db, task)
         runtime.agent = _CognitionAgent()
-        result = SoloWorkRuntime(
+        result = BuiltinWorkRuntime(
             runtime, task, max_turns=1,
             round_sink=rounds.append).run()
 
@@ -966,9 +966,9 @@ class TestSoloWorkRuntime:
             participants=["agent_a"], mode=TaskMode.SOLO)
         task.claim_producer("agent_a")
 
-        runtime = _SoloRuntime(db, task)
+        runtime = _BuiltinRuntime(db, task)
         runtime.agent = _NoActionThenCompleteAgent()
-        result = SoloWorkRuntime(runtime, task, max_turns=4).run()
+        result = BuiltinWorkRuntime(runtime, task, max_turns=4).run()
 
         assert result.ok is True, result.error
         assert result.status == TaskStatus.COMPLETED
@@ -988,9 +988,9 @@ class TestSoloWorkRuntime:
         task.claim_producer("agent_a")
 
         rounds = []
-        runtime = _SoloRuntime(db, task)
+        runtime = _BuiltinRuntime(db, task)
         runtime.agent = _MalformedCognitionAgent()
-        result = SoloWorkRuntime(
+        result = BuiltinWorkRuntime(
             runtime, task, max_turns=1,
             round_sink=rounds.append).run()
 
@@ -1013,14 +1013,14 @@ class TestSoloWorkRuntime:
         task.claim_producer("agent_a")
 
         rounds = []
-        runtime = _SoloRuntime(db, task)
+        runtime = _BuiltinRuntime(db, task)
         runtime.agent = _MalformedCognitionAgent(
             first_content=(
                 '<｜｜DSML｜｜ calls>\n'
                 '<｜｜DSML｜｜ invoke name="tool_help">\n'
                 '<｜｜DSML｜｜ parameter name="tool" string="true">'
                 'playwright</｜｜DSML｜｜ parameter>\n'))
-        result = SoloWorkRuntime(
+        result = BuiltinWorkRuntime(
             runtime, task, max_turns=1,
             round_sink=rounds.append).run()
 
@@ -1040,9 +1040,9 @@ class TestSoloWorkRuntime:
             participants=["agent_a"], mode=TaskMode.SOLO)
         task.claim_producer("agent_a")
 
-        runtime = _SoloRuntime(db, task)
+        runtime = _BuiltinRuntime(db, task)
         runtime.agent = _ToolDocAgent()
-        result = SoloWorkRuntime(runtime, task, max_turns=1).run()
+        result = BuiltinWorkRuntime(runtime, task, max_turns=1).run()
 
         assert result.ok is True, result.error
         work_prompt = str(runtime.agent.prompts[-1])
@@ -1062,9 +1062,9 @@ class TestSoloWorkRuntime:
             participants=["agent_a"], mode=TaskMode.SOLO)
         task.claim_producer("agent_a")
 
-        runtime = _SoloRuntime(db, task)
+        runtime = _BuiltinRuntime(db, task)
         runtime.agent = _CognitionAgent()
-        result = SoloWorkRuntime(
+        result = BuiltinWorkRuntime(
             runtime, task, max_turns=1).run()
 
         assert result.ok is True, result.error
@@ -1089,9 +1089,9 @@ class TestSoloWorkRuntime:
             participants=["agent_a"], mode=TaskMode.SOLO)
         task.claim_producer("agent_a")
 
-        runtime = _SoloRuntime(db, task)
+        runtime = _BuiltinRuntime(db, task)
         runtime.agent = _CognitionAgent()
-        result = SoloWorkRuntime(
+        result = BuiltinWorkRuntime(
             runtime, task, max_turns=1,
             resume_context="CHECKPOINT-MARKER").run()
 
@@ -1112,9 +1112,9 @@ class TestSoloWorkRuntime:
             participants=["agent_a"], mode=TaskMode.SOLO)
         task.claim_producer("agent_a")
 
-        runtime = _SoloRuntime(db, task)
+        runtime = _BuiltinRuntime(db, task)
         runtime.agent = _SeenReadsAgent()
-        result = SoloWorkRuntime(runtime, task, max_turns=3).run()
+        result = BuiltinWorkRuntime(runtime, task, max_turns=3).run()
 
         assert result.ok is True, result.error
         assert len(runtime.agent.seen_sets) == 2
@@ -1129,8 +1129,8 @@ class TestSoloWorkRuntime:
         task.claim_producer("agent_a")
 
         rounds = []
-        runtime = _SoloRuntime(db, task)
-        result = SoloWorkRuntime(
+        runtime = _BuiltinRuntime(db, task)
+        result = BuiltinWorkRuntime(
             runtime, task, max_turns=1,
             round_sink=rounds.append).run()
 
@@ -1141,7 +1141,7 @@ class TestSoloWorkRuntime:
         assert rounds[0]["iteration"] == 1
         assert rounds[1]["run_id"] == rounds[0]["run_id"]
         assert rounds[1]["round"] == 1
-        assert rounds[1]["summary"] == "solo 总结"
+        assert rounds[1]["summary"] == "builtin 总结"
         assert rounds[1]["segments"][0]["content"] == "done"
         assert rounds[1]["segments"][0]["model_reasoning"] == "MODEL-THINK"
         assert rounds[1]["segments"][0]["latency_ms"] == 42.5
@@ -1158,8 +1158,8 @@ class TestSoloWorkRuntime:
             participants=["agent_a"], mode=TaskMode.SOLO)
         task.claim_producer("agent_a")
 
-        runtime = _SoloRuntime(db, task)
-        result = SoloWorkRuntime(runtime, task, max_turns=1).run()
+        runtime = _BuiltinRuntime(db, task)
+        result = BuiltinWorkRuntime(runtime, task, max_turns=1).run()
 
         assert result.ok is True, result.error
         assert runtime.agent.last_kwargs["initial_phase"] == "decision"
@@ -1172,8 +1172,8 @@ class TestSoloWorkRuntime:
             participants=["agent_a"], mode=TaskMode.SOLO)
         task.claim_producer("agent_a")
 
-        runtime = _SoloRuntime(db, task)
-        result = SoloWorkRuntime(runtime, task, max_turns=3).run()
+        runtime = _BuiltinRuntime(db, task)
+        result = BuiltinWorkRuntime(runtime, task, max_turns=3).run()
 
         assert result.ok is True, result.error
         assert result.status == TaskStatus.COMPLETED
@@ -1190,8 +1190,8 @@ class TestSoloWorkRuntime:
         task.start()
         task.submit()
 
-        runtime = _SoloRuntime(db, task)
-        result = SoloWorkRuntime(runtime, task, max_turns=3).run()
+        runtime = _BuiltinRuntime(db, task)
+        result = BuiltinWorkRuntime(runtime, task, max_turns=3).run()
 
         assert result.ok is True, result.error
         assert runtime.tasks.get(task.task_id).status == TaskStatus.COMPLETED
@@ -1200,9 +1200,9 @@ class TestSoloWorkRuntime:
         task = Task.create(
             task_id="T-TEAM", creator="agent_a",
             participants=["agent_a", "agent_b"], mode=TaskMode.TEAM)
-        runtime = _SoloRuntime(db, task)
+        runtime = _BuiltinRuntime(db, task)
         with pytest.raises(ValueError, match="SOLO"):
-            SoloWorkRuntime(runtime, task)
+            BuiltinWorkRuntime(runtime, task)
 
 
 def test_replace_missing_file_suggests_create():
@@ -1267,9 +1267,9 @@ def test_summary_actions_are_reported_to_next_turn(db):
         participants=["agent_a"], mode=TaskMode.SOLO)
     task.claim_producer("agent_a")
 
-    runtime = _SoloRuntime(db, task)
+    runtime = _BuiltinRuntime(db, task)
     runtime.agent = _SummaryActionAgent()
-    result = SoloWorkRuntime(runtime, task, max_turns=2).run()
+    result = BuiltinWorkRuntime(runtime, task, max_turns=2).run()
 
     assert result.ok is True, result.error
     next_prompt = str(runtime.agent.prompts[-1])
@@ -1315,9 +1315,9 @@ class TestReadOnlyProgressGuard:
             participants=["agent_a"], mode=TaskMode.SOLO)
         task.claim_producer("agent_a")
 
-        runtime = _SoloRuntime(db, task)
+        runtime = _BuiltinRuntime(db, task)
         runtime.agent = _ReadOnlyAgent()
-        result = SoloWorkRuntime(
+        result = BuiltinWorkRuntime(
             runtime, task, max_turns=10,
             max_read_only_turns=3).run()
 
@@ -1346,9 +1346,9 @@ def test_work_prompt_renders_front_supplied_files():
 def test_solo_read_only_guard_default_is_eight():
     import inspect
 
-    from work.runtime import SoloWorkRuntime
+    from work.runtime import BuiltinWorkRuntime
 
     default = inspect.signature(
-        SoloWorkRuntime.__init__).parameters[
+        BuiltinWorkRuntime.__init__).parameters[
             "max_read_only_turns"].default
     assert default == 8

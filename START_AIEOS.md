@@ -52,7 +52,7 @@ http://127.0.0.1:8000/
 ```text
 端口：      8000
 Front：     agent_a
-Pi Agent：  agent_b,agent_c,agent_d,agent_e
+Pi 引擎 Agent：  agent_b,agent_c,agent_d,agent_e
 Pi CLI：    experiments/pi_compare/pi_node/node_modules/.bin/pi
 日志：      runs/ui/server.log
 PID 文件：  runs/ui/aieos.pid
@@ -87,7 +87,7 @@ PID 文件：  runs/ui/aieos.pid
 # 换端口
 AIEOS_PORT=8001 ./start_aieos.sh start
 
-# 换 Pi Agent
+# 换 Pi 引擎 Agent
 AIEOS_PI_AGENTS=agent_b ./start_aieos.sh start
 
 # 换 Pi CLI 路径

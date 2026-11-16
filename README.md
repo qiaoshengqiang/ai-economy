@@ -5,8 +5,8 @@
 > **Agent 是独立的经济主体，不是被调用的函数。**
 
 **当前版本：`v0.2.0`（开发中）**
-**当前最佳工作方式：Human → Front Agent → Pi Agent → 自主工作**
-**测试基线：`5840 passed, 2 skipped, 30 deselected`**
+**当前最佳工作方式：Human → Front Agent → Pi 引擎 Agent → 自主工作**
+**测试基线：`5844 passed, 2 skipped, 30 deselected`**
 
 > - 当前真实能力、推荐模式与已知限制：[`docs/PROJECT_STATUS.md`](docs/PROJECT_STATUS.md)
 > - 架构长期 Source of Truth：[`ARCHITECTURE_CONSTITUTION.md`](docs/architecture/ARCHITECTURE_CONSTITUTION.md)
@@ -141,7 +141,7 @@ http://127.0.0.1:8000/
 ./aieos logs -f
 ```
 
-默认 Front 是 `小艾`（agent_a），Pi Agent 是 `小博`…`小伊`（agent_b…agent_e）。
+默认 Front 是 `小艾`（agent_a），Pi 引擎 Agent 是 `小博`…`小伊`（agent_b…agent_e）。
 `aieos` 会检查 `.venv`、Pi CLI 和端口；失败时打印最近日志。
 详见 [`START_AIEOS.md`](START_AIEOS.md) 和
 [`docs/architecture/AIEOS_CLI.md`](docs/architecture/AIEOS_CLI.md)。
@@ -191,7 +191,7 @@ AIEOS UI（ui/）
 Front Agent（work/）
   │  handoff / task_text
   ▼
-Pi Agent（work/pi_runtime.py）
+Pi 引擎 Agent（work/pi_runtime.py）
   │  read / write / edit / bash / grep / find / ls
   ▼
 Tool Runtime（tool_runtime/）── 受控执行 ──▶ 公共只读工具库
@@ -258,7 +258,7 @@ ai-economy/
 ├── resources/              ← 公共只读工具库
 ├── config/                 ← config.yaml + llm.yaml
 ├── docs/                   ← 架构文档 / ADR / 历史
-├── tests/                  ← 5840 个测试 + 30 个真实 API 测试
+├── tests/                  ← 5844 个测试 + 30 个真实 API 测试
 │
 ├── tasks/                  ← Task 运行目录（不进 git）
 ├── runs/                   ← UI / 日志 / 输出（不进 git）
@@ -324,7 +324,7 @@ LLM 调用是真实经营成本，会记 `LLM_COST` 并进入 Ledger。
 ./dev.sh test tests/test_ledger.py -k x    # 单个测试
 ```
 
-当前基线：**5840 passed, 2 skipped, 30 deselected**。
+当前基线：**5844 passed, 2 skipped, 30 deselected**。
 
 另有 30 个真实 API 测试，需要 Key 且会产生费用，单独运行：
 

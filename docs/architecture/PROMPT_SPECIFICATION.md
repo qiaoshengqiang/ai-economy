@@ -212,7 +212,7 @@ workspace_read {path, offset?, limit?}
   `draft_read`；
 - `offset` / `limit` 仅保留在执行器 / 适配器里作过渡别名，
   Agent 可见的 prompt 与动作 schema 不再出现；
-- Front / Solo / Pi 已按稳定前缀、易变尾部重排；
+- Front / 内置引擎 / Pi 已按稳定前缀、易变尾部重排；
 - 图片能力按 model profile 声明；
 - 连续只读上限默认 8，可在运行设置调整。
 

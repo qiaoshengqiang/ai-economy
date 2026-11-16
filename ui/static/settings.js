@@ -482,7 +482,7 @@
     const enabled = $("commit-output-enabled").checked;
     return {
       maxTeams: Number($("max-teams").value || 3),
-      maxSoloTurns: Number($("max-solo-turns").value || 24),
+      maxBuiltinTurns: Number($("max-builtin-turns").value || 24),
       maxReadOnlyTurns: Number($("max-read-only-turns").value || 8),
       frontMaxInspect: Number($("front-max-inspect").value || 4),
       commitEnabled: enabled,
@@ -514,8 +514,8 @@
     }[state.commitMode] || "—";
     $("run-summary").innerHTML = [
       ["并行", state.maxTeams],
-      ["单任务", `${state.maxSoloTurns} 轮`],
-      ["Work 时长", state.piTimeoutEnabled
+      ["内置引擎", `${state.maxBuiltinTurns} 轮`],
+      ["Pi 时长", state.piTimeoutEnabled
         ? humanDuration(state.piTimeoutSeconds) : "不限"],
       ["提交", state.commitEnabled ? commitLabel : "未启用"],
     ].map(([key, value]) => `<span><b>${key}</b>${value}</span>`).join("");
@@ -550,7 +550,7 @@
 
   function applyRuntime(state) {
     $("max-teams").value = String(state.maxTeams);
-    $("max-solo-turns").value = String(state.maxSoloTurns);
+    $("max-builtin-turns").value = String(state.maxBuiltinTurns);
     $("max-read-only-turns").value = String(state.maxReadOnlyTurns);
     $("front-max-inspect").value = String(state.frontMaxInspect);
     $("commit-output-enabled").checked = !!state.commitEnabled;
@@ -569,7 +569,8 @@
   function renderRuntime() {
     const regular = data.regular || {};
     $("max-teams").value = String(regular.max_parallel_teams || 3);
-    $("max-solo-turns").value = String(regular.max_solo_turns || 24);
+    $("max-builtin-turns").value = String(
+      regular.max_builtin_turns ?? regular.max_solo_turns ?? 24);
     $("max-read-only-turns").value = String(
       regular.max_read_only_turns ?? 8);
     $("front-max-inspect").value = String(
@@ -597,7 +598,7 @@
         method: "POST",
         body: JSON.stringify({
           max_parallel_teams: state.maxTeams,
-          max_solo_turns: state.maxSoloTurns,
+          max_builtin_turns: state.maxBuiltinTurns,
           max_read_only_turns: state.maxReadOnlyTurns,
           front_max_inspect: state.frontMaxInspect,
           commit_mode: state.commitMode,
@@ -702,7 +703,7 @@
         name: String(agent.name || agent.agent_id),
         enabled: !!agent.enabled,
         archived: !!agent.archived,
-        engine: piAgents.has(agent.agent_id) ? "pi" : "solo",
+        engine: piAgents.has(agent.agent_id) ? "pi" : "builtin",
         status: agent.status || "",
         provider: String(modelRaw.provider || ""),
         model,
@@ -787,7 +788,7 @@
       button.appendChild(copy);
       button.appendChild(el(
         "span", "agent-list-engine",
-        agent.engine === "pi" ? "Pi" : "Solo"));
+        agent.engine === "pi" ? "Pi" : "内置"));
       box.appendChild(button);
     });
   }
@@ -858,8 +859,8 @@
     $("agent-summary").innerHTML = [
       ["Front", front ? front.name : "—"],
       ["Front 模式", frontLabel],
-      ["Work 模式", workLabel],
-      ["Pi Agent", `${piCount} 个`],
+      ["Pi 工作模式", workLabel],
+      ["Pi 引擎 Agent", `${piCount} 个`],
     ].map(([key, value]) => `<span><b>${key}</b>${value}</span>`).join("");
   }
 
@@ -1153,7 +1154,7 @@
     if (currentPane === "regular-runtime") {
       applyRuntime({
         maxTeams: 3,
-        maxSoloTurns: 24,
+        maxBuiltinTurns: 24,
         maxReadOnlyTurns: 8,
         frontMaxInspect: 4,
         commitEnabled: false,
@@ -1179,7 +1180,7 @@
         const initial = (agentInitial.agents || {})[agentId] || {};
         next.agents[agentId].enabled = true;
         next.agents[agentId].archived = false;
-        next.agents[agentId].engine = index === 0 ? "solo" : "pi";
+        next.agents[agentId].engine = index === 0 ? "builtin" : "pi";
         next.agents[agentId].model = initial.model || "";
         next.agents[agentId].credential = initial.credential || "";
         next.agents[agentId].provider = initial.provider || "";
@@ -1741,7 +1742,7 @@
     updateFooter();
   });
   [
-    "max-teams", "max-solo-turns", "max-read-only-turns",
+    "max-teams", "max-builtin-turns", "max-read-only-turns",
     "front-max-inspect",
     "commit-output-repo", "commit-base-ref", "pi-timeout-seconds",
     "prompt-log-enabled", "timezone",

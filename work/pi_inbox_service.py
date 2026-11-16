@@ -1,14 +1,14 @@
 """Pi Worker 的持久 Inbox Service。
 
 Phase 2：消息不再只在 Pi 任务运行期间被消费。
-每个启用的 Pi Agent 都有一个常驻 `PiInboxBridge`：
+每个启用的 Pi 引擎 Agent 都有一个常驻 `PiInboxBridge`：
 
     CommunicationManager
       → PiInboxBridge（常驻线程）
       → agents/<agent_id>/inbox/pi-inbox.md
       → Pi 下一次 phase / turn 读取
 
-🔒 这里不启动 Front / Solo 的收件箱消费者。
+🔒 这里不启动 Front / 内置引擎的收件箱消费者。
    Front Inbox-first 属于 Phase 3。
 """
 
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 
 class PiInboxService:
-    """管理所有 Pi Agent 的常驻 Inbox Bridge。"""
+    """管理所有 Pi 引擎 Agent 的常驻 Inbox Bridge。"""
 
     def __init__(
         self,
@@ -53,7 +53,7 @@ class PiInboxService:
 
     # ------------------------------------------------------------
     def ensure(self, agent_id: str) -> bool:
-        """确保某个 Pi Agent 的常驻 bridge 正在运行。"""
+        """确保某个 Pi 引擎 Agent 的常驻 bridge 正在运行。"""
         key = str(agent_id or "").strip()
         if not key or self.communication is None:
             return False
@@ -96,7 +96,7 @@ class PiInboxService:
             self._set_enabled(key, False)
 
     def sync(self, agent_ids: Iterable[str]) -> None:
-        """按当前 Pi Agent 列表增删常驻 bridge。"""
+        """按当前 Pi 引擎 Agent 列表增删常驻 bridge。"""
         wanted = {
             str(item).strip() for item in (agent_ids or ())
             if str(item).strip()

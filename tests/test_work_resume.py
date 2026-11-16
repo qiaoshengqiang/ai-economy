@@ -50,7 +50,7 @@ def test_rework_persists_selected_role(monkeypatch):
                 SimpleNamespace(agent_id="agent_b", available=True),
             ]
 
-    monkeypatch.setattr(controller_module, "SoloWorkRuntime", _Runner)
+    monkeypatch.setattr(controller_module, "BuiltinWorkRuntime", _Runner)
     saved = []
     task = SimpleNamespace(
         task_id="task_rework", status="IN_PROGRESS", mode="SOLO",

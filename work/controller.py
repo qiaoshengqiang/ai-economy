@@ -1,8 +1,8 @@
 """
-AIEOSController —— Human → Front → Solo Agent 的持续运行控制面
-================================================================
+AIEOSController —— Human → Front → Worker Agent 的持续运行控制面
+==============================================================
 
-当前阶段只跑 Solo（`solo_only=True`）：
+当前阶段只跑 SOLO Task（`solo_only=True`）：
 
     Human 输入
       ↓
@@ -15,7 +15,7 @@ AIEOSController —— Human → Front → Solo Agent 的持续运行控制面
                     ↓
               创建 SOLO Task
                     ↓
-              SoloWorkRuntime
+              BuiltinWorkRuntime
                     ↓
               FrontResult → Human
 
@@ -85,7 +85,7 @@ from work.worker_roles import WorkerRoleError, WorkerRoleStore
 from work.plan import WorkPlan, parse_work_plan
 from work.prompt import WORK_SYSTEM_PROMPT, build_lead_plan_prompt
 from work.roles import WorkContext, WorkRole, resolve_agent_name
-from work.runtime import SoloWorkRuntime
+from work.runtime import BuiltinWorkRuntime
 from work.team_runtime import TeamWorkRuntime
 
 
@@ -267,7 +267,8 @@ class AIEOSController:
         max_agents_per_team: int = 5,
         max_worker_turns: int = 8,
         max_integration_turns: int = 8,
-        max_solo_turns: int = 24,
+        max_builtin_turns: Optional[int] = None,
+        max_solo_turns: Optional[int] = None,
         max_read_only_turns: int = 8,
         front_max_inspect: int = 4,
         cognitive_budget: int = 65536,
@@ -335,7 +336,14 @@ class AIEOSController:
         self.max_agents_per_team = max(2, int(max_agents_per_team))
         self.max_worker_turns = max(1, int(max_worker_turns))
         self.max_integration_turns = max(1, int(max_integration_turns))
-        self.max_solo_turns = max(1, int(max_solo_turns))
+        #: 内置引擎的外层 turn 上限；Pi 引擎使用 pi_timeout_seconds。
+        builtin_turns = (
+            max_builtin_turns
+            if max_builtin_turns is not None
+            else max_solo_turns
+        )
+        self.max_builtin_turns = max(
+            1, int(builtin_turns if builtin_turns is not None else 24))
         self.max_read_only_turns = max(0, int(max_read_only_turns))
         #: Front 每次输入最多 inspect 几次；0 = 不限制。
         self.front_max_inspect = max(0, int(front_max_inspect))
@@ -415,7 +423,7 @@ class AIEOSController:
         )
         self._active_jobs = 0
         self._closed = False
-        #: Phase 2：Pi Agent 的常驻收件箱服务。
+        #: Phase 2：Pi 引擎 Agent 的常驻收件箱服务。
         self._pi_inbox_service: Optional[PiInboxService] = None
         #: Phase 3：Front 的常驻收件箱消费者。
         self._front_inbox_consumer: Optional[InboxConsumer] = None
@@ -466,9 +474,12 @@ class AIEOSController:
         max_teams = data.get("max_parallel_teams")
         if isinstance(max_teams, int) and max_teams > 0:
             self.max_parallel_teams = max_teams
-        max_turns = data.get("max_solo_turns")
+        max_turns = data.get("max_builtin_turns")
+        if not isinstance(max_turns, int) or max_turns <= 0:
+            # 兼容旧 settings 文件。
+            max_turns = data.get("max_solo_turns")
         if isinstance(max_turns, int) and max_turns > 0:
-            self.max_solo_turns = max_turns
+            self.max_builtin_turns = max_turns
         max_read_only = data.get("max_read_only_turns")
         if isinstance(max_read_only, int) and 0 <= max_read_only <= 50:
             self.max_read_only_turns = max_read_only
@@ -562,6 +573,7 @@ class AIEOSController:
         *,
         front_agent: Optional[str] = None,
         max_parallel_teams: Optional[int] = None,
+        max_builtin_turns: Optional[int] = None,
         max_solo_turns: Optional[int] = None,
         max_read_only_turns: Optional[int] = None,
         front_max_inspect: Optional[int] = None,
@@ -599,11 +611,16 @@ class AIEOSController:
                 if value < 1 or value > 8:
                     raise ValueError("max_parallel_teams 必须在 1..8")
                 self.max_parallel_teams = value
-            if max_solo_turns is not None:
-                value = int(max_solo_turns)
+            builtin_turns = (
+                max_builtin_turns
+                if max_builtin_turns is not None
+                else max_solo_turns
+            )
+            if builtin_turns is not None:
+                value = int(builtin_turns)
                 if value < 1 or value > 200:
-                    raise ValueError("max_solo_turns 必须在 1..200")
-                self.max_solo_turns = value
+                    raise ValueError("max_builtin_turns 必须在 1..200")
+                self.max_builtin_turns = value
             if max_read_only_turns is not None:
                 value = int(max_read_only_turns)
                 if value < 0 or value > 50:
@@ -731,7 +748,7 @@ class AIEOSController:
             "front_agent": self.front_agent,
             "max_parallel_teams": self.max_parallel_teams,
             "max_agents_per_team": self.max_agents_per_team,
-            "max_solo_turns": self.max_solo_turns,
+            "max_builtin_turns": self.max_builtin_turns,
             "max_read_only_turns": self.max_read_only_turns,
             "front_max_inspect": self.front_max_inspect,
             "pi_work_agents": sorted(self.pi_work_agents),
@@ -951,7 +968,7 @@ class AIEOSController:
                 ),
                 "archived": archived,
                 "is_front": aid == self.front_agent,
-                "engine": "pi" if self._pi_enabled(aid) else "solo",
+                "engine": "pi" if self._pi_enabled(aid) else "builtin",
                 "model": info.get("model", ""),
                 "credential": info.get("credential", ""),
                 "status": self.availability.state(aid),
@@ -1661,10 +1678,10 @@ class AIEOSController:
                     should_stop=lambda: job.cancelled,
                 )
             else:
-                runner = SoloWorkRuntime(
+                runner = BuiltinWorkRuntime(
                     self.rt, task,
                     brief=decision.brief.to_dict(),
-                    max_turns=self.max_solo_turns,
+                    max_turns=self.max_builtin_turns,
                     max_read_only_turns=self.max_read_only_turns,
                     cognitive_budget=self.cognitive_budget,
                     should_stop=lambda: job.cancelled,
@@ -1873,7 +1890,7 @@ class AIEOSController:
         enabled = bool(getattr(resolved, "inbox_enabled", False))
         communication = getattr(self.rt, "communication", None)
 
-        # ---- Pi Agent 持久 Inbox ----
+        # ---- Pi 引擎 Agent 持久 Inbox ----
         if not enabled or communication is None:
             if self._pi_inbox_service is not None:
                 self._pi_inbox_service.stop_all()
@@ -1919,8 +1936,8 @@ class AIEOSController:
                                 "Front inbox state 开启失败：%s",
                                 self.front_agent, exc_info=True)
 
-        # ---- Solo Inbox（Phase 4）----
-        # Solo 只入队 / 观测，不启动消费者，也不自动调用 Brain。
+        # ---- Builtin Inbox（Phase 4）----
+        # 内置引擎只入队 / 观测，不启动消费者，也不自动调用 Brain。
         if communication is None:
             return
         recorder = self._inbox_recorder()
@@ -1942,7 +1959,7 @@ class AIEOSController:
                     recorder.set_inbox_enabled(agent_id, desired)
             except Exception:                             # noqa: BLE001
                 logger.warning(
-                    "Solo inbox state 更新失败：%s", agent_id,
+                    "Builtin inbox state 更新失败：%s", agent_id,
                     exc_info=True)
 
         # ---- Life 层自动回复（Phase 5，默认 never）----
@@ -2059,7 +2076,7 @@ class AIEOSController:
                 commit_context = ""
         context = (
             f"当前 Front 模式：{self.front_mode}\n"
-            f"当前 Work 模式：{self.work_mode}\n"
+            f"当前 Pi 工作模式：{self.work_mode}（仅 Pi 引擎生效）\n"
             "可用 set_mode 修改；修改后对新任务生效。")
         if commit_context:
             context += "\n" + commit_context
@@ -2630,7 +2647,7 @@ class AIEOSController:
         decision: Any,
         front: Any,
     ) -> tuple[str, List[str]]:
-        """Front handoff → 一个 Agent → SOLO Task → SoloWorkRuntime。"""
+        """Front handoff → 一个 Agent → SOLO Task → Pi / 内置引擎。"""
         role = self.worker_roles.resolve(getattr(decision, "role", ""))
         if role is None:
             self._fail(
@@ -2733,10 +2750,10 @@ class AIEOSController:
                 role_prompt=role_prompt,
                 role=role)
         else:
-            runner = SoloWorkRuntime(
+            runner = BuiltinWorkRuntime(
                 self.rt, task,
                 brief=decision.brief.to_dict(),
-                max_turns=self.max_solo_turns,
+                max_turns=self.max_builtin_turns,
                 max_read_only_turns=self.max_read_only_turns,
                 cognitive_budget=self.cognitive_budget,
                 role_prompt=role_prompt,
@@ -2799,8 +2816,18 @@ class AIEOSController:
         worker: str,
         decision: Any,
     ) -> Dict[str, Any]:
+        """按 Agent 的引擎创建 SOLO Task。"""
         if self._pi_enabled(worker):
             return self._create_solo_task_pi(job, worker, decision)
+        return self._create_builtin_task(job, worker, decision)
+
+    def _create_builtin_task(
+        self,
+        job: WorkJob,
+        worker: str,
+        decision: Any,
+    ) -> Dict[str, Any]:
+        """内置引擎的 SOLO Task：逻辑 Workspace。"""
         run = SimpleNamespace(
             run_id=f"aieos_{job.job_id}",
             root_task_id=None,
@@ -3216,10 +3243,10 @@ class AIEOSController:
                     role_prompt=role_prompt,
                     role=role)
             else:
-                runner = SoloWorkRuntime(
+                runner = BuiltinWorkRuntime(
                     self.rt, task,
                     brief=brief_dict,
-                    max_turns=self.max_solo_turns,
+                    max_turns=self.max_builtin_turns,
                     max_read_only_turns=self.max_read_only_turns,
                     cognitive_budget=self.cognitive_budget,
                     resume_context=resume_context,

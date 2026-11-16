@@ -37,7 +37,7 @@ from work.capabilities import describe_action_params, describe_actions
 from work.roles import WorkContext, WorkRole
 
 
-#: Work 调用（Solo / Team / QA / Leader）使用的 system prompt。
+#: Work 调用（Worker / Team / QA / Leader）使用的 system prompt。
 #:
 #: 🔴 只描述「你在执行一个 Task」这一层。
 #:    Agent 的身份 / Constitution / 经济事实 / 自我模型 **不在这里** ——

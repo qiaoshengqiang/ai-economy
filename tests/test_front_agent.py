@@ -1035,8 +1035,9 @@ def test_front_prompt_explains_role_injection_scope():
     runtime.decide("这个任务用 game_developer 角色")
 
     prompt = prompts[0]
-    assert "只有 Work 模式 = workflow" in prompt
-    assert "Work 模式 = autonomous 时" in prompt
+    assert "只有 Pi 工作模式 = workflow" in prompt
+    assert "Pi 工作模式 = autonomous 时" in prompt
+    assert "内置引擎不读取 Pi 工作模式" in prompt
     assert "direct 阶段也不注入 Role" in prompt
 
 

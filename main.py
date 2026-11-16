@@ -1166,7 +1166,7 @@ def build_runtime(
         journal.initialize_inbox(
             str(agent.agent_id),
             # per-agent 开关由具体 Runtime 设置：
-            # Phase 2 只由 PiInboxService 打开 Pi Agent。
+            # Phase 2 只由 PiInboxService 打开 Pi 引擎 Agent。
             enabled=False,
         )
 

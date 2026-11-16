@@ -884,7 +884,7 @@
       const engine = document.createElement("span");
       engine.className = "agent-engine";
       const isPi = (settings.pi_work_agents || []).includes(agent.agent_id);
-      engine.textContent = isFront ? "FRONT" : (isPi ? "PI" : "SOLO");
+      engine.textContent = isFront ? "FRONT" : (isPi ? "PI" : "BUILTIN");
       row.appendChild(engine);
 
       const mode = document.createElement("span");

@@ -141,7 +141,7 @@ Provider 的 prompt cache 按 **prefix** 命中。顺序建议：
 - 长而稳定的动作文档要放在易变输入之前，不要放最后；
 - 对话窗口尽量避免「最近 N 条滑动」改变开头；必要时用稳定摘要 + 追加。
 
-当前 Front / Solo / Pi 的 prompt 已按这个顺序排列，
+当前 Front / 内置引擎 / Pi 的 prompt 已按这个顺序排列，
 `tests/test_prompt_cache_order.py` 有守卫。
 
 ## 10. 变更流程

@@ -1,21 +1,21 @@
 """
-SoloWorkRuntime —— Work 层最小执行循环
+BuiltinWorkRuntime —— Work 层最小执行循环
 ========================================
 
-目标：让一个 Solo Agent 在**精简上下文**里完成 Task，
+目标：让一个 Worker Agent 在**精简上下文**里完成 SOLO Task，
 而不是每轮注入 Life 层身份 / 经济 / 消息 / 通用验收仪式。
 
     Front Agent
         ↓ Brief
-    Team Lead（= Solo Agent）
+    Front 选中的 Worker Agent
         ↓ 创建 SOLO Task
-    SoloWorkRuntime
+    BuiltinWorkRuntime
         ├─ 最小 Work prompt
         ├─ Work 动作集合（无消息 / 无经济）
         ├─ Task-scoped memory / persistent draft
         └─ work_complete → COMPLETED
 
-🔒 Front 永不创建 Task；本 runtime 也不创建 Task —— Task 由 Team Lead
+🔒 Front 永不创建 Task；本 runtime 也不创建 Task —— Task 由控制面
    通过 TaskCreationService 创建后传入。
 """
 
@@ -110,8 +110,8 @@ def _report_candidate(text: str) -> str:
     return raw
 
 
-class SoloWorkRuntime:
-    """一个 Solo Task 的最小执行循环。"""
+class BuiltinWorkRuntime:
+    """一个 SOLO Task 的内置执行引擎。"""
 
     def __init__(
         self,
@@ -133,7 +133,7 @@ class SoloWorkRuntime:
     ) -> None:
         if task.mode != TaskMode.SOLO:
             raise ValueError(
-                f"SoloWorkRuntime 只接受 SOLO Task；"
+                f"BuiltinWorkRuntime 只接受 SOLO Task；"
                 f"{task.task_id} 是 {task.mode}")
         self.rt = runtime
         self.task = task
@@ -160,7 +160,7 @@ class SoloWorkRuntime:
         self._write_counts: Dict[str, int] = {}
         #: 启动时生成的任务认知报告；注入后续所有 Work prompt。
         self._cognition_report = ""
-        #: 本次 run 开始时从 Solo Inbox 注入的消息（Phase 4）。
+        #: 本次 run 开始时从内置引擎 Inbox 注入的消息（Phase 4）。
         self._initial_inbox = ""
         self._cognition_tokens = 0
         #: 本任务已经查过的工具文档（tool → 全文）。
@@ -218,7 +218,7 @@ class SoloWorkRuntime:
                 return result
 
             result.status = task.status
-            # Phase 4：Solo Agent 的收件箱在 run 开始 / 每轮 work 前
+            # Phase 4：内置引擎 Agent 的收件箱在 run 开始 / 每轮 work 前
             # 作为 checkpoint 注入，不启动常驻消费者，也不自动回复。
             if not self._initial_inbox:
                 self._initial_inbox = self._drain_inbox(actor)
@@ -761,7 +761,7 @@ class SoloWorkRuntime:
     # 上下文
     # ------------------------------------------------------------
     def _drain_inbox(self, actor: str) -> str:
-        """把 Solo 收件箱的消息转成 checkpoint 文本，并标记已交给 Agent。"""
+        """把内置引擎收件箱的消息转成 checkpoint 文本，并标记已交给 Agent。"""
         communication = getattr(self.rt, "communication", None)
         recorder = getattr(communication, "recorder", None)
         if recorder is None:

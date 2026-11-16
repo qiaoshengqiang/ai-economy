@@ -6,13 +6,16 @@
 > 当前已实现：Task Core · Workspace Core v1 · Memory · Draft Buffer Phase 1 ·
 > Tool Runtime · Demand Entry V1 · **Solo 自 SUBMIT/VERIFY/COMPLETE** ·
 > **COMPLETED Reopen / Iteration V1** ·
-> **SoloWorkRuntime + TeamWorkRuntime + Work 精简 prompt** ·
+> **BuiltinWorkRuntime + TeamWorkRuntime + Work 精简 prompt** ·
 > **Front 意图 / Brief / Result 契约** · **AgentAvailability / TeamRegistry**。
 > Front 的真实邀请协议 / 调度排队仍为 `DESIGNED`。
 >
 > 相关 ADR：
 > [ADR-0055](adr/0055-life-work-layering-and-front-agent.md) ·
 > [ADR-0056](adr/0056-solo-completion-and-iteration-reopen.md)
+>
+> **术语：** `Solo` 只表示**任务拓扑**（一个 Agent 独立完成）；
+> 执行引擎是 `Builtin` / `Pi`，不是 `Solo` / `Pi`。
 
 ---
 
@@ -554,7 +557,7 @@ front/contracts.py   FrontBrief / FrontDecision / FrontResult / FrontIntent
 front/runtime.py     FrontAgentRuntime：direct_reply / handoff / rework / follow_up / clarify
 front/parser.py      解析模型输出；rework 只接受 COMPLETED Task
 
-work/runtime.py      SoloWorkRuntime：精简 prompt + Work 动作 + work_complete
+work/runtime.py      BuiltinWorkRuntime：精简 prompt + Work 动作 + work_complete
 work/team_runtime.py TeamWorkRuntime：Leader 计划 / 并行 / 可选 QA / 汇总收尾
 work/plan.py         WorkPlan / WorkItem / Leader 计划解析
 work/replan.py       运行中计划更新（reassign / add / cancel / update）

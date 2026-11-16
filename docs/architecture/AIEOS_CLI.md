@@ -52,8 +52,8 @@ AIEOS_PORT=8001 AIEOS_PI_CLI=/opt/pi ./start_aieos.sh start
 front_agent
 pi_work_agents
 max_parallel_teams
-max_solo_turns
-work_mode / front_mode
+max_builtin_turns
+work_mode（Pi 工作模式）/ front_mode
 commit_mode / commit_output_repo / commit_base_ref / commit_auto_merge
 pi_timeout
 prompt_log

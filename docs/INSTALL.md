@@ -123,7 +123,7 @@ BAILIAN_KEY_AGENT_E=
 DOUBAO_API_KEY=
 ```
 
-最少需要给 Front 使用的 Key。Pi Agent 用到的 Key 由 Agent 配置决定；
+最少需要给 Front 使用的 Key。Pi 引擎 Agent 用到的 Key 由 Agent 配置决定；
 如果只知道一个 DeepSeek Key，可以把它同时填到 A–E，或后续在设置页调整。
 
 **不要把 `.env` 发给任何人，也不要提交到 git。**

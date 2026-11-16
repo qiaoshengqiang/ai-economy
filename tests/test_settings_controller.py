@@ -40,7 +40,7 @@ def test_regular_settings_round_trip(tmp_path):
     try:
         controller.update_settings(
             max_parallel_teams=4,
-            max_solo_turns=12,
+            max_builtin_turns=12,
             pi_work_agents=["agent_b"],
             disabled_agents=["agent_c"],
         )
@@ -49,20 +49,58 @@ def test_regular_settings_round_trip(tmp_path):
 
     data = json.loads(path.read_text("utf-8"))
     assert data["max_parallel_teams"] == 4
-    assert data["max_solo_turns"] == 12
+    assert data["max_builtin_turns"] == 12
     assert data["pi_work_agents"] == ["agent_b"]
     assert data["disabled_agents"] == ["agent_c"]
 
     reloaded = _controller(tmp_path)
     try:
         settings = reloaded.settings_dict()
-        assert settings["max_solo_turns"] == 12
+        assert settings["max_builtin_turns"] == 12
         assert settings["pi_work_agents"] == ["agent_b"]
         assert settings["disabled_agents"] == ["agent_c"]
         facts = {item["agent_id"]: item for item in reloaded._agent_facts()}
         assert facts["agent_c"]["can_work"] is False
     finally:
         reloaded.close()
+
+
+def test_agent_engine_fact_uses_builtin(tmp_path):
+    controller = _controller(tmp_path)
+    try:
+        facts = {
+            item["agent_id"]: item
+            for item in controller.settings_snapshot()["agents"]
+        }
+        assert facts["agent_b"]["engine"] == "builtin"
+
+        controller.update_settings(pi_work_agents=["agent_b"])
+        facts = {
+            item["agent_id"]: item
+            for item in controller.settings_snapshot()["agents"]
+        }
+        assert facts["agent_b"]["engine"] == "pi"
+        assert facts["agent_c"]["engine"] == "builtin"
+    finally:
+        controller.close()
+
+
+def test_old_builtin_turns_key_is_migrated(tmp_path):
+    path = tmp_path / "ui_settings.json"
+    path.write_text(
+        json.dumps({"front_agent": "agent_a", "max_solo_turns": 9}),
+        encoding="utf-8")
+
+    controller = _controller(tmp_path)
+    try:
+        assert controller.settings_dict()["max_builtin_turns"] == 9
+        controller.update_settings(max_builtin_turns=10)
+    finally:
+        controller.close()
+
+    data = json.loads(path.read_text("utf-8"))
+    assert data["max_builtin_turns"] == 10
+    assert "max_solo_turns" not in data
 
 
 def test_archived_agent_round_trip_survives_restart(tmp_path):

@@ -657,11 +657,12 @@ Role 是弱信号；work_profile 依据任务本身判断。
 
 ========== Role 注入条件 ==========
 - Role 是任务元数据，不等于 Worker 已经收到角色提示词。
-- 只有 Work 模式 = workflow，且阶段为 prototype / engineering / evolution
+- 只有 Pi 工作模式 = workflow，且阶段为 prototype / engineering / evolution
   时，才会把角色的 system_prompt + phase_requirements 注入 Worker prompt。
-- Work 模式 = autonomous 时，Worker 只收到 task_text + 最小系统提示，
+- Pi 工作模式 = autonomous 时，Worker 只收到 task_text + 最小系统提示，
   Role 信息不会注入。
-- 即使 Work 模式是 workflow，direct 阶段也不注入 Role。
+- 即使 Pi 工作模式是 workflow，direct 阶段也不注入 Role。
+- 内置引擎不读取 Pi 工作模式；Role 注入条件只适用于 Pi 引擎。
 - 回复只描述实际注入的 Role 条件。
 {mode_section}
 ========== 意图 ==========
@@ -723,9 +724,9 @@ Role 是弱信号；work_profile 依据任务本身判断。
    只读，不导出。
    {{"intent":"inspect","task_id":"...","reason":"..."}}
 
-10. set_mode —— 修改 Front / Work 的全局模式，不创建 Task。
+10. set_mode —— 修改 Front / Pi 的全局模式，不创建 Task。
    front_mode：autonomous | relay（可选）
-   work_mode：workflow | autonomous（可选）
+   work_mode：workflow | autonomous（可选；只影响之后创建的 Pi Task）
    {{"intent":"set_mode","front_mode":"relay","work_mode":"autonomous",
      "reply":"...","reason":"..."}}
    未提供的字段保持不变。修改后对新任务生效。

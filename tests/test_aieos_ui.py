@@ -85,7 +85,8 @@ class _FakeController:
         return "job_retry"
 
     def update_settings(self, *, front_agent=None, max_parallel_teams=None,
-                        max_solo_turns=None, pi_work_agents=None,
+                        max_builtin_turns=None, max_solo_turns=None,
+                        pi_work_agents=None,
                         disabled_agents=None, archived_agents=None,
                         prompt_log_enabled=None,
                         agent_thinking=None, pi_timeout_enabled=None,
@@ -96,8 +97,10 @@ class _FakeController:
             self.settings["front_agent"] = front_agent
         if max_parallel_teams is not None:
             self.settings["max_parallel_teams"] = max_parallel_teams
-        if max_solo_turns is not None:
-            self.settings["max_solo_turns"] = max_solo_turns
+        if max_builtin_turns is not None or max_solo_turns is not None:
+            self.settings["max_builtin_turns"] = (
+                max_builtin_turns
+                if max_builtin_turns is not None else max_solo_turns)
         if pi_work_agents is not None:
             self.settings["pi_work_agents"] = pi_work_agents
         if disabled_agents is not None:
@@ -535,9 +538,9 @@ def test_job_without_members_degrades_to_solo(monkeypatch):
 
     seen = {}
 
-    class _Solo:
+    class _Builtin:
         def __init__(self, _rt, task, **_kwargs):
-            seen["runner"] = "solo"
+            seen["runner"] = "builtin"
             seen["task_id"] = task.task_id
 
         def run(self):
@@ -572,7 +575,7 @@ def test_job_without_members_degrades_to_solo(monkeypatch):
         return {"ok": True, "task_id": "task_solo"}
 
     monkeypatch.setattr(controller, "_create_task", _create)
-    monkeypatch.setattr(controller_module, "SoloWorkRuntime", _Solo)
+    monkeypatch.setattr(controller_module, "BuiltinWorkRuntime", _Builtin)
     monkeypatch.setattr(controller_module, "TeamWorkRuntime", _Team)
 
     job = WorkJob(job_id="job_solo", human_text="写一个 hello.py")
@@ -583,7 +586,7 @@ def test_job_without_members_degrades_to_solo(monkeypatch):
 
     assert seen["members"] == []
     assert seen["mode"] == "SOLO"
-    assert seen["runner"] == "solo"
+    assert seen["runner"] == "builtin"
     assert job.status == "COMPLETED"
     assert job.task_id == "task_solo"
 
@@ -679,9 +682,9 @@ def test_handoff_runs_one_agent_solo_without_leader_plan(monkeypatch):
 
     monkeypatch.setattr(controller, "_leader_plan", _no_plan)
 
-    class _Solo:
+    class _Builtin:
         def __init__(self, _rt, task_, **kwargs):
-            seen["runner"] = "solo"
+            seen["runner"] = "builtin"
             seen["task_id"] = task_.task_id
             seen["max_turns"] = kwargs.get("max_turns")
             seen["cognitive_budget"] = kwargs.get("cognitive_budget")
@@ -689,7 +692,7 @@ def test_handoff_runs_one_agent_solo_without_leader_plan(monkeypatch):
         def run(self):
             return SimpleNamespace(ok=True, tokens=2, turns=1)
 
-    monkeypatch.setattr(controller_module, "SoloWorkRuntime", _Solo)
+    monkeypatch.setattr(controller_module, "BuiltinWorkRuntime", _Builtin)
     monkeypatch.setattr(
         controller_module, "TeamWorkRuntime",
         lambda *_a, **_k: (_ for _ in ()).throw(
@@ -708,7 +711,7 @@ def test_handoff_runs_one_agent_solo_without_leader_plan(monkeypatch):
     assert seen == {
         "worker": "agent_b",
         "goal": "写一个 hello.py",
-        "runner": "solo",
+        "runner": "builtin",
         "task_id": "task_solo",
         "max_turns": 24,
         "cognitive_budget": 65536,
@@ -1680,7 +1683,7 @@ def test_handoff_sends_front_reply(monkeypatch, tmp_path):
                 ok=True, tokens=1, turns=1, status="COMPLETED",
                 summary="done", error="")
 
-    monkeypatch.setattr(controller_module, "SoloWorkRuntime", _FakeRunner)
+    monkeypatch.setattr(controller_module, "BuiltinWorkRuntime", _FakeRunner)
 
     task = SimpleNamespace(task_id="task_x", status="IN_PROGRESS")
     runtime = SimpleNamespace(
@@ -1959,7 +1962,7 @@ def test_follow_up_sends_front_reply(monkeypatch):
                 ok=True, tokens=1, turns=1, status="COMPLETED",
                 summary="done", error="")
 
-    monkeypatch.setattr(controller_module, "SoloWorkRuntime", _FakeRunner)
+    monkeypatch.setattr(controller_module, "BuiltinWorkRuntime", _FakeRunner)
     task = SimpleNamespace(
         task_id="task_follow", status="IN_PROGRESS", mode="SOLO",
         is_open=True, creator="agent_b", participants=["agent_b"],
@@ -2552,7 +2555,7 @@ def test_settings_pages_use_cards_and_agent_master_detail():
     runtime_section = html[runtime_start:agent_start]
     agent_section = html[agent_start:roles_start]
 
-    # 协作方式只在 Agent 页；运行页不再出现 Front / Work 模式。
+    # 协作方式只在 Agent 页；运行页不再出现 Front / Pi 工作模式。
     assert 'id="front-select"' not in runtime_section
     assert 'id="front-mode"' not in runtime_section
     assert 'id="work-mode"' not in runtime_section

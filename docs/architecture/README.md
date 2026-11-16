@@ -39,6 +39,7 @@
 | [COMMUNICATION_MODEL.md](COMMUNICATION_MODEL.md) | 中 | **Communication 是 Agent 基础能力（不绑 Task）· Workspace Event ≠ Agent Message · Runtime Inbox** | 做通信 / Conversation / Inbox 时 |
 | [implementation/AGENT_INBOX_V1_DESIGN.md](implementation/AGENT_INBOX_V1_DESIGN.md) | 中 | **Agent Inbox V1 —— Runtime 持有、持久化、checkpoint 消费**（Phase 0–4 `CURRENT`；Phase 5 V1 `CURRENT`，其余 `DESIGNED`） | 做收件箱 / Agent Runtime / Life 层通信时 |
 | [implementation/AGENT_WAKEUP_V1_DESIGN.md](implementation/AGENT_WAKEUP_V1_DESIGN.md) | 中 | **Agent Wakeup V1 —— 定时唤醒 / 闹钟 / Activity Record**（Phase W1–W4.1 `CURRENT`；V1 先接 Front，核心通用） | 做定时唤醒 / Life Loop / Agent 自我调度时 |
+| [implementation/WORK_ENGINE_NAMING_REFACTOR.md](implementation/WORK_ENGINE_NAMING_REFACTOR.md) | 中 | **Work 引擎语义改造 —— Solo ≠ 内置引擎 · 任务拓扑 / 执行引擎拆分**（`CURRENT`） | 改 Work 引擎 / UI 引擎标签 / Worker 命名时 |
 | [UI_COMMUNICATION_INTEGRATION.md](UI_COMMUNICATION_INTEGRATION.md) | 中 | **UI 通信接入 · Human↔Front · Front↔Worker · Task 生命周期 · Pi inbox/outbox**（Phase 1–4 `CURRENT`） | 做 UI / Front / Worker / Task 通信时 |
 | [TOOL_RUNTIME_V1_DESIGN.md](TOOL_RUNTIME_V1_DESIGN.md) | 中 | **受控代码执行 / 测试 · 公共只读工具库 · 独立 run 目录**（`CURRENT`） | 做代码执行 / 测试 / 工具时 |
 | [OUTPUT_COMMIT.md](OUTPUT_COMMIT.md) | 中 | **任务完成后提交到独立输出仓库 · manual / limited / auto**（`CURRENT`） | 做提交 / 交付 / 输出仓库时 |
@@ -94,7 +95,7 @@ ADR            ← 单个决策的历史与理由（中）
 |---|---|
 | **版本** | **`v0.2.0`**（当前状态见 [`../PROJECT_STATUS.md`](../PROJECT_STATUS.md)） |
 | **阶段** | Post-Change-Pipeline-Phase-1 · Agent Core V1 · Tool Runtime V1 · Pi Work（workflow / autonomous）已实现 |
-| **测试** | 以 `./dev.sh test` 当前输出为准（最近：5840 passed, 2 skipped, 30 deselected） |
+| **测试** | 以 `./dev.sh test` 当前输出为准（最近：5844 passed, 2 skipped, 30 deselected） |
 | **协议** | v1 |
 | **Memory 四层** | Layer 1 `DESIGNED` · **Layer 2 `CURRENT`** · Layer 3/4 `FUTURE`（见 AGENTS.md §4） |
 | **Task Workspace** | `TaskWorkspaceRef` 仍是纯引用；**Workspace Core v1 已实现**（资源树 / 锁 / 版本，ADR-0029） |
