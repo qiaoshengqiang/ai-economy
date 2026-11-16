@@ -36,6 +36,10 @@ FRONT_ACTION_NAMES = frozenset({
     "draft_read", "draft_write", "draft_append", "draft_list",
     "draft_delete",
     "alarm_create", "alarm_list", "alarm_cancel",
+    "short_term_memory_add", "short_term_memory_update",
+    "short_term_memory_reinforce",
+    "long_term_memory_search", "long_term_memory_read",
+    "long_term_memory_consolidate",
 })
 
 #: 自然形状 decision 允许出现的键。用来避免把文件内容里的

@@ -52,6 +52,10 @@ FRONT_ACTION_TYPES = frozenset({
     "draft_read", "draft_write", "draft_append", "draft_list",
     "draft_delete",
     "alarm_create", "alarm_list", "alarm_cancel",
+    "short_term_memory_add", "short_term_memory_update",
+    "short_term_memory_reinforce",
+    "long_term_memory_search", "long_term_memory_read",
+    "long_term_memory_consolidate",
 })
 
 
@@ -398,6 +402,269 @@ class FrontAlarmCancelExecutor:
         )
 
 
+class FrontShortTermMemoryAddExecutor:
+    """`short_term_memory_add` —— 记住一条跨对话的稳定事实。"""
+
+    action_types = frozenset({"short_term_memory_add"})
+
+    def __init__(self, service: Any) -> None:
+        self.service = service
+
+    def execute(self, intent: ActionIntent) -> ActionResult:
+        if self.service is None:
+            return ActionResult(
+                success=False, error="记忆服务未启用",
+                action_id=intent.intent_id,
+                action_type=intent.action_type,
+                metadata={"code": "memory_disabled"})
+        params = dict(getattr(intent, "parameters", None) or {})
+        try:
+            entry = self.service.add(
+                intent.agent_id,
+                summary=str(params.get("summary") or ""),
+                architecture=str(params.get("architecture") or ""),
+                notable=str(params.get("notable") or ""),
+                importance=params.get("importance", 3),
+            )
+            memory = self.service.read(intent.agent_id)
+        except Exception as exc:                              # noqa: BLE001
+            return ActionResult(
+                success=False, error=f"{type(exc).__name__}: {exc}",
+                action_id=intent.intent_id,
+                action_type=intent.action_type,
+                metadata={"code": "short_term_memory_add_failed"})
+        return ActionResult(
+            success=True,
+            output={
+                "entry": entry.to_dict(),
+                "revision": int(memory.revision),
+                "entry_count": len(memory.entries),
+                "needs_compaction": bool(memory.needs_compaction),
+            },
+            action_id=intent.intent_id,
+            action_type=intent.action_type,
+            metadata={"code": None},
+        )
+
+
+class FrontShortTermMemoryUpdateExecutor:
+    action_types = frozenset({"short_term_memory_update"})
+
+    def __init__(self, service: Any) -> None:
+        self.service = service
+
+    def execute(self, intent: ActionIntent) -> ActionResult:
+        if self.service is None:
+            return ActionResult(
+                success=False, error="记忆服务未启用",
+                action_id=intent.intent_id,
+                action_type=intent.action_type,
+                metadata={"code": "memory_disabled"})
+        params = dict(getattr(intent, "parameters", None) or {})
+        expected = params.get("expected_revision")
+        entry_id = str(params.get("entry_id") or "").strip()
+        if expected is None:
+            return ActionResult(
+                success=False, error="需要 expected_revision",
+                action_id=intent.intent_id,
+                action_type=intent.action_type,
+                metadata={"code": "missing_expected_revision"})
+        if not entry_id:
+            return ActionResult(
+                success=False, error="需要 entry_id",
+                action_id=intent.intent_id,
+                action_type=intent.action_type,
+                metadata={"code": "missing_entry_id"})
+        try:
+            memory = self.service.update(
+                intent.agent_id,
+                expected_revision=int(expected),
+                entry_id=entry_id,
+                summary=params.get("summary"),
+                architecture=params.get("architecture"),
+                notable=params.get("notable"),
+                importance=params.get("importance"),
+                remove=bool(params.get("remove", False)),
+            )
+        except Exception as exc:                              # noqa: BLE001
+            return ActionResult(
+                success=False, error=f"{type(exc).__name__}: {exc}",
+                action_id=intent.intent_id,
+                action_type=intent.action_type,
+                metadata={"code": "short_term_memory_update_failed"})
+        return ActionResult(
+            success=True, output=memory.to_dict(),
+            action_id=intent.intent_id,
+            action_type=intent.action_type,
+            metadata={"code": None},
+        )
+
+
+class FrontShortTermMemoryReinforceExecutor:
+    action_types = frozenset({"short_term_memory_reinforce"})
+
+    def __init__(self, service: Any) -> None:
+        self.service = service
+
+    def execute(self, intent: ActionIntent) -> ActionResult:
+        if self.service is None:
+            return ActionResult(
+                success=False, error="记忆服务未启用",
+                action_id=intent.intent_id,
+                action_type=intent.action_type,
+                metadata={"code": "memory_disabled"})
+        params = dict(getattr(intent, "parameters", None) or {})
+        expected = params.get("expected_revision")
+        entry_id = str(params.get("entry_id") or "").strip()
+        if expected is None or not entry_id:
+            return ActionResult(
+                success=False,
+                error="需要 expected_revision + entry_id",
+                action_id=intent.intent_id,
+                action_type=intent.action_type,
+                metadata={"code": "missing_required_field"})
+        try:
+            memory = self.service.reinforce(
+                intent.agent_id,
+                expected_revision=int(expected),
+                entry_id=entry_id,
+                reason=str(params.get("reason") or ""),
+            )
+        except Exception as exc:                              # noqa: BLE001
+            return ActionResult(
+                success=False, error=f"{type(exc).__name__}: {exc}",
+                action_id=intent.intent_id,
+                action_type=intent.action_type,
+                metadata={"code": "short_term_memory_reinforce_failed"})
+        return ActionResult(
+            success=True, output=memory.to_dict(),
+            action_id=intent.intent_id,
+            action_type=intent.action_type,
+            metadata={"code": None},
+        )
+
+
+class FrontLongTermMemorySearchExecutor:
+    action_types = frozenset({"long_term_memory_search"})
+
+    def __init__(self, service: Any) -> None:
+        self.service = service
+
+    def execute(self, intent: ActionIntent) -> ActionResult:
+        if self.service is None:
+            return ActionResult(
+                success=False, error="记忆服务未启用",
+                action_id=intent.intent_id,
+                action_type=intent.action_type,
+                metadata={"code": "memory_disabled"})
+        params = dict(getattr(intent, "parameters", None) or {})
+        try:
+            entries = self.service.search(
+                intent.agent_id, str(params.get("query") or ""))
+        except Exception as exc:                              # noqa: BLE001
+            return ActionResult(
+                success=False, error=f"{type(exc).__name__}: {exc}",
+                action_id=intent.intent_id,
+                action_type=intent.action_type,
+                metadata={"code": "long_term_memory_search_failed"})
+        return ActionResult(
+            success=True,
+            output={"entries": [entry.to_dict() for entry in entries]},
+            action_id=intent.intent_id,
+            action_type=intent.action_type,
+            metadata={"code": None},
+        )
+
+
+class FrontLongTermMemoryReadExecutor:
+    action_types = frozenset({"long_term_memory_read"})
+
+    def __init__(self, service: Any) -> None:
+        self.service = service
+
+    def execute(self, intent: ActionIntent) -> ActionResult:
+        if self.service is None:
+            return ActionResult(
+                success=False, error="记忆服务未启用",
+                action_id=intent.intent_id,
+                action_type=intent.action_type,
+                metadata={"code": "memory_disabled"})
+        params = dict(getattr(intent, "parameters", None) or {})
+        entry_id = str(params.get("entry_id") or "").strip()
+        if not entry_id:
+            return ActionResult(
+                success=False, error="需要 entry_id",
+                action_id=intent.intent_id,
+                action_type=intent.action_type,
+                metadata={"code": "missing_entry_id"})
+        try:
+            data = self.service.read(intent.agent_id, entry_id)
+        except Exception as exc:                              # noqa: BLE001
+            return ActionResult(
+                success=False, error=f"{type(exc).__name__}: {exc}",
+                action_id=intent.intent_id,
+                action_type=intent.action_type,
+                metadata={"code": "long_term_memory_read_failed"})
+        return ActionResult(
+            success=True, output=data,
+            action_id=intent.intent_id,
+            action_type=intent.action_type,
+            metadata={"code": None},
+        )
+
+
+class FrontLongTermMemoryConsolidateExecutor:
+    action_types = frozenset({"long_term_memory_consolidate"})
+
+    def __init__(self, service: Any) -> None:
+        self.service = service
+
+    def execute(self, intent: ActionIntent) -> ActionResult:
+        if self.service is None:
+            return ActionResult(
+                success=False, error="记忆服务未启用",
+                action_id=intent.intent_id,
+                action_type=intent.action_type,
+                metadata={"code": "memory_disabled"})
+        params = dict(getattr(intent, "parameters", None) or {})
+        expected = params.get("expected_revision")
+        summary = str(params.get("summary") or "").strip()
+        if expected is None or not summary:
+            return ActionResult(
+                success=False,
+                error="需要 expected_revision + summary",
+                action_id=intent.intent_id,
+                action_type=intent.action_type,
+                metadata={"code": "missing_required_field"})
+        try:
+            entry, remaining = self.service.consolidate(
+                intent.agent_id,
+                task_id="",
+                expected_revision=int(expected),
+                summary=summary,
+                tasks=params.get("tasks") or [],
+                events=params.get("events") or [],
+                short_term_entry_ids=params.get("short_term_entry_ids")
+                or [],
+            )
+        except Exception as exc:                              # noqa: BLE001
+            return ActionResult(
+                success=False, error=f"{type(exc).__name__}: {exc}",
+                action_id=intent.intent_id,
+                action_type=intent.action_type,
+                metadata={"code": "long_term_memory_consolidate_failed"})
+        return ActionResult(
+            success=True,
+            output={
+                "entry": entry.to_dict(),
+                "short_term_memory": remaining.to_dict(),
+            },
+            action_id=intent.intent_id,
+            action_type=intent.action_type,
+            metadata={"code": None},
+        )
+
+
 def build_front_dispatcher(
     *,
     workspace_of: Callable[[str], Any],
@@ -407,6 +674,8 @@ def build_front_dispatcher(
     web_fetch_fn: Optional[Callable[..., Any]] = None,
     project_root: str = "",
     alarm_service: Any = None,
+    short_term_memory: Any = None,
+    long_term_memory: Any = None,
 ) -> ActionDispatcher:
     """把 Front 的私有空间 / 草稿 / 只读产物动作接成一个 dispatcher。"""
 
@@ -443,6 +712,18 @@ def build_front_dispatcher(
             FrontAlarmCreateExecutor(alarm_service),
             FrontAlarmListExecutor(alarm_service),
             FrontAlarmCancelExecutor(alarm_service),
+        ])
+    if short_term_memory is not None:
+        executors.extend([
+            FrontShortTermMemoryAddExecutor(short_term_memory),
+            FrontShortTermMemoryUpdateExecutor(short_term_memory),
+            FrontShortTermMemoryReinforceExecutor(short_term_memory),
+        ])
+    if long_term_memory is not None:
+        executors.extend([
+            FrontLongTermMemorySearchExecutor(long_term_memory),
+            FrontLongTermMemoryReadExecutor(long_term_memory),
+            FrontLongTermMemoryConsolidateExecutor(long_term_memory),
         ])
     return ActionDispatcher(executors)
 

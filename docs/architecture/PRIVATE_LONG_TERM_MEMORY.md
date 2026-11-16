@@ -5,6 +5,9 @@
 > 长期记忆是对短期记忆的**高级抽象 + 权重反馈**。
 > 具体短期内容保存在 `agent_short_term_memory_archive`，长期条目通过
 > `short_term_entry_ids` 指回它们。
+>
+> **Front**：prompt 注入 `render_top(limit=5)`；可用
+> `long_term_memory_search / read / consolidate` 主动检索与抽象。
 
 ---
 

@@ -303,7 +303,7 @@ def render(memory: PrivateShortTermMemory) -> str:
         lines.append("（还没有短期记忆）")
         return "\n".join(lines)
     for e in sorted(memory.entries, key=lambda x: x.created_at, reverse=True):
-        lines.append(f"- [{e.entry_id}] task={e.task_id or '(digest)'} "
+        lines.append(f"- [{e.entry_id}] task={e.task_id or '—'} "
                      f"importance={e.importance} use_count={e.use_count}\n"
                      f"  summary: {e.summary}")
         if e.architecture:

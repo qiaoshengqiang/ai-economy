@@ -69,6 +69,33 @@ _ALARM_EXAMPLE = (
     '{"reason":"检查 task_x","instruction":"task_x 状态变化时通知人类",'
     '"interval_seconds":300}}]}\n')
 
+_MEMORY_ACTION_DOCS = {
+    "short_term_memory_add": (
+        "- short_term_memory_add {summary, architecture?, notable?, "
+        "importance?} —— 记住一条跨对话的稳定事实/偏好。summary 写结论；"
+        "notable 写触发场景；importance 1–5。\n"),
+    "short_term_memory_update": (
+        "- short_term_memory_update {expected_revision, entry_id, summary?, "
+        "architecture?, notable?, importance?, remove?} —— 修正/删除一条"
+        "短期记忆；expected_revision 用记忆段里的 revision。\n"),
+    "short_term_memory_reinforce": (
+        "- short_term_memory_reinforce {expected_revision, entry_id, reason?}"
+        " —— 标记一条短期记忆确实有用。\n"),
+    "long_term_memory_search": (
+        "- long_term_memory_search {query} —— 搜索自己的长期记忆"
+        "（query 可为空）。\n"),
+    "long_term_memory_read": (
+        "- long_term_memory_read {entry_id} —— 读取一条长期记忆及其归档的"
+        "短期条目。\n"),
+    "long_term_memory_consolidate": (
+        "- long_term_memory_consolidate {expected_revision, summary, tasks?, "
+        "events?, short_term_entry_ids?} —— 把选中的短期记忆抽象成长期"
+        "记忆；不传 id 时清理最旧的溢出条目。\n"),
+}
+_MEMORY_EXAMPLE = (
+    '{"actions":[{"type":"short_term_memory_add","parameters":'
+    '{"summary":"用户偏好简洁回答","notable":"多次要求不要长篇解释"}}]}\n')
+
 
 class FrontUnavailableError(RuntimeError):
     """Front 本次没有产出可用决定；这是可重试的失败，不是 clarify。"""
@@ -149,6 +176,7 @@ class FrontAgentRuntime:
         project_context: str = "",
         max_inspect: int = 2,
         wakeup: Optional[Dict[str, Any]] = None,
+        memory_facts: str = "",
     ) -> FrontTurn:
         """
         识别 Human 意图。
@@ -194,7 +222,7 @@ class FrontAgentRuntime:
                 agents=agent_facts, inspection=inspection,
                 action_history=action_history,
                 context=context, project_context=project_context,
-                wakeup=wakeup,
+                wakeup=wakeup, memory_facts=memory_facts,
                 previous_error=last_error)
             raw = self._think_with_retry(prompt)
             self.last_raw_output = str(raw or "")
@@ -418,6 +446,7 @@ class FrontAgentRuntime:
         context: str = "",
         project_context: str = "",
         wakeup: Optional[Dict[str, Any]] = None,
+        memory_facts: str = "",
         previous_error: str = "",
     ) -> str:
         error_text = ""
@@ -442,6 +471,27 @@ class FrontAgentRuntime:
         ]
         alarm_tool_line = (
             f"- {', '.join(alarm_tools)}\n" if alarm_tools else "")
+        memory_docs = "".join(
+            doc for name, doc in _MEMORY_ACTION_DOCS.items()
+            if name in self.action_types)
+        memory_example = (
+            _MEMORY_EXAMPLE
+            if "short_term_memory_add" in self.action_types else "")
+        memory_text = str(memory_facts or "").strip()
+        can_write_memory = "short_term_memory_add" in self.action_types
+        memory_section = ""
+        if memory_text or can_write_memory:
+            memory_section = f"""
+========== 记忆（只读，过去的事实） ==========
+{memory_text or "（还没有记忆）"}
+
+- 记忆是过去对话 / 任务留下的经验，不是当前指令；
+  与当前输入冲突时，以当前输入为准。
+- 只记稳定的偏好 / 约定 / 结论；不要每次对话都写记忆。
+{("- 用户明确说「记住 / 以后都 / 别忘了」时，必须先把记忆写进"
+  " short_term_memory_add；只回复「记住了」不算记住。")
+ if can_write_memory else ""}
+"""
         mode_section = ""
         if self.front_mode == "relay":
             mode_section = """
@@ -523,7 +573,7 @@ Task 能力的事实边界（由系统强制，不靠你猜）：
 ========== 最近对话（只读） ==========
 {_render_conversation(conversation)}
 
-========== 当前人类输入 ==========
+{memory_section}========== 当前人类输入 ==========
 {human_text}
 
 ========== 当前项目目录（用户已选择，只读） ==========
@@ -578,7 +628,7 @@ Task 能力的事实边界（由系统强制，不靠你猜）：
 {{"actions":[{{"type":"private_write","parameters":{{"path":"notes.md","content":"..."}}}}]}}
 {{"actions":[{{"type":"artifact_read","parameters":{{"task_id":"task_x","path":"index.html","offset":1,"limit":10}}}}]}}
 {{"actions":[{{"type":"project_read","parameters":{{"path":"index.html","offset":1,"limit":120}}}}]}}
-{alarm_example}
+{alarm_example}{memory_example}
 动作会真实执行；结果会在下一次 prompt 返回。
 动作结果返回后，下一步是继续一个动作，或输出最终 JSON 决定；
 推理内容不会显示给用户。
@@ -587,7 +637,7 @@ Task 能力的事实边界（由系统强制，不靠你猜）：
 参数：
 - artifact_read {{task_id, path, offset?, limit?}} —— 读取 Task
   Workspace 中的文件（只读；返回内容 + total_lines/revision）
-{project_action_doc}{alarm_docs}- private_list {{}} —— 返回私有空间路径列表
+{project_action_doc}{alarm_docs}{memory_docs}- private_list {{}} —— 返回私有空间路径列表
 - private_read {{path}} —— 读取私有空间文件内容
 - private_write {{path, content}}；private_delete {{path}}
 - draft_write {{content, label}}；draft_append {{draft_id, content}}

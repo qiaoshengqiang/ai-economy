@@ -52,6 +52,27 @@ class PrivateShortTermMemoryService:
         return text
 
     # ------------------------------------------------------------
+    def add(
+        self,
+        agent_id: str,
+        *,
+        summary: str,
+        architecture: str = "",
+        notable: str = "",
+        importance: int = 3,
+    ) -> ShortTermEntry:
+        """手动追加一条跨对话记忆（不是任务完成摘要）。"""
+        entry = make_entry(
+            task_id="",
+            summary=summary,
+            architecture=architecture,
+            notable=notable,
+            importance=importance,
+        )
+        self.store.add(agent_id, entry)
+        return entry
+
+    # ------------------------------------------------------------
     def add_from_final(self, agent_id: str, task_id: str,
                        snapshot: Optional[Mapping[str, Any]]) -> ShortTermEntry:
         """

@@ -1623,22 +1623,42 @@ class AIEOSController:
         except ValueError:
             return ""
 
+    def _front_memory_facts(self) -> str:
+        """Front 的跨对话记忆：短期 + 长期 top N。
+
+        🔒 只读注入；写入由 Front 自己的记忆动作完成。
+        """
+        agent_id = self.front_agent
+        parts: List[str] = []
+        short_service = getattr(
+            self.rt, "private_short_term_memory", None)
+        if short_service is not None:
+            try:
+                memory = short_service.read(agent_id)
+                if memory.entries:
+                    parts.append(
+                        "短期记忆（最近的经验）：\n"
+                        + short_service.render(agent_id))
+            except Exception:                                 # noqa: BLE001
+                pass
+        long_service = getattr(
+            self.rt, "private_long_term_memory", None)
+        if long_service is not None:
+            try:
+                if long_service.top(agent_id, limit=5):
+                    parts.append(
+                        "长期记忆（top 5）：\n"
+                        + long_service.render_top(agent_id, limit=5))
+            except Exception:                                 # noqa: BLE001
+                pass
+        return "\n\n".join(parts)
+
     def _front_runtime(
         self, project_root: str = "",
     ) -> Optional[FrontAgentRuntime]:
         agent = self._agent(self.front_agent)
         if agent is None or not getattr(agent, "has_brain", False):
             return None
-
-        def _front_think(prompt: str) -> str:
-            # 🔒 Front 不注入 Agent 的身份 / 经济 / Constitution，
-            #    也不看自我模型。它的判断材料已经在 prompt 里。
-            return agent.think(
-                prompt,
-                cognitive=False,
-                system=FRONT_SYSTEM_PROMPT,
-                call_purpose="front",
-            )
 
         dispatcher = build_front_dispatcher(
             workspace_of=self._workspace_of_agent,
@@ -1650,7 +1670,27 @@ class AIEOSController:
                 self.front_agent, url),
             project_root=project_root,
             alarm_service=self.alarm_service,
+            short_term_memory=getattr(
+                self.rt, "private_short_term_memory", None),
+            long_term_memory=getattr(
+                self.rt, "private_long_term_memory", None),
         )
+        system_prompt = FRONT_SYSTEM_PROMPT
+        if "short_term_memory_add" in dispatcher.action_types:
+            system_prompt += (
+                " 当用户要求你记住偏好、约定或结论时，"
+                "必须先调用 short_term_memory_add 写入记忆，再回复；"
+                "只回复「记住了」不算记住。")
+
+        def _front_think(prompt: str) -> str:
+            # 🔒 Front 不注入 Agent 的身份 / 经济 / Constitution，
+            #    也不看自我模型。它的判断材料已经在 prompt 里。
+            return agent.think(
+                prompt,
+                cognitive=False,
+                system=system_prompt,
+                call_purpose="front",
+            )
 
         def _execute(actions: List[Dict[str, Any]]) -> str:
             return execute_front_actions(
@@ -1921,6 +1961,7 @@ class AIEOSController:
             "agents": self._agent_facts(),
             "context": context,
             "project_context": project_context,
+            "memory_facts": self._front_memory_facts(),
         }
         if wakeup is not None:
             kwargs["wakeup"] = wakeup

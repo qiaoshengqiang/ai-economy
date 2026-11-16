@@ -5,6 +5,10 @@
 > 范围：单个 Agent、跨 Task 的近期工作摘要。
 > 长期记忆本次只做 **stub**（清理时接收 digest，不提供检索）。
 > 当前任务的工作结构见 [`PRIVATE_WORKING_MEMORY.md`](PRIVATE_WORKING_MEMORY.md)。
+>
+> **Front（入口 Agent）**：同一张表也用于跨对话保留稳定偏好 / 约定 / 结论；
+> 动作是 `short_term_memory_add / update / reinforce`，
+> prompt 自动注入 `render()`。与当前用户输入冲突时，以当前输入为准。
 
 ---
 

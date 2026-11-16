@@ -30,7 +30,7 @@
 | | |
 |---|---|
 | **阶段** | **`v0.2.0`** · Workspace Core V1 已冻结 · Agent Core V1 · Tool Runtime V1 · Vision V1 · Demand Entry V1 · Pi Work（workflow / autonomous）· Output Commit V1 · Project Workdir V1 · 观察实验 |
-| **测试基线** | 以 `./dev.sh test` 当前输出为准（最近：**5794 passed, 2 skipped, 30 deselected**） |
+| **测试基线** | 以 `./dev.sh test` 当前输出为准（最近：**5802 passed, 2 skipped, 30 deselected**） |
 | **协议版本** | `protocol_version = "1"` |
 | **命令数** | 25（`./dev.sh` 查看全部） |
 | **数据库表** | **32** |
@@ -146,7 +146,7 @@ tool_runtime/   →  core/ + 标准库（subprocess）；不依赖 services/
 
 | Layer | 属于谁 | 状态 | 是什么 / 当前实现 |
 |---|---|---|---|
-| **1** Agent Private Memory | 单个 Agent | `DESIGNED` | 私人经验 / 判断 / 策略。**默认无权读**。有目录与极简文件读写（`Workspace.write_memory`），**无**结构化记忆、检索、经验积累 |
+| **1** Agent Private Memory | 单个 Agent | `CURRENT` | 私人经验 / 判断 / 策略。**默认无权读**。Private Working / Short-Term / Long-Term 三张表 + `memory/` 文件；Front 用短期 / 长期记忆跨对话保留偏好与结论 |
 | **2** Task Shared Context | **Task** | **`CURRENT`** | 共同的任务世界模型。**已实现**：持久化 + 修订历史 + Alignment + 乐观锁。见 [`TASK_SHARED_CONTEXT.md`](docs/architecture/TASK_SHARED_CONTEXT.md) |
 | **3** Task Workspace | Task | **`FUTURE`**（完整模型） | 实际共享的文件与代码。Workspace Core v1 已实现资源树 / Controller / Lock / Revision / Audit / Gateway；Patch / Test / Acceptance 等完整生命周期仍为 `FUTURE`。见 [`TASK_WORKSPACE.md`](docs/architecture/TASK_WORKSPACE.md) |
 | **4** External / World State | 系统外 | `FUTURE` | 外部 API / 网络 / Git remote。**无** |
@@ -168,7 +168,7 @@ tool_runtime/   →  core/ + 标准库（subprocess）；不依赖 services/
 | 回答 | 这个 Agent **知道什么、相信什么、采用什么策略** | 这个 Agent **有哪些私有文件 / 代码 / 工具 / 实验空间** |
 | 内容 | 经验 · 判断 · 偏好 · 私人知识 · 经济经验 · **议价策略** · 私人评价 · 私人规划 | 文件 · 代码 · 工具 · 运行数据 · 实验产物 |
 | 位置 | `agents/<id>/memory/` | `agents/<id>/workspace/` |
-| 状态 | **`DESIGNED`**（只有目录与极简文件读写，无结构化记忆） | **`CURRENT`** —— `Workspace.for_agent()`，由 `Economy` 创建 |
+| 状态 | **`CURRENT`**（结构化记忆在 DB；`memory/` 只放文件型记忆 / Pi 桥） | **`CURRENT`** —— `Workspace.for_agent()`，由 `Economy` 创建 |
 | 属于 | Memory 四层 **Layer 1** | **不在这四层里** |
 | 边界 | 其他 Agent **默认无权读** | `WorkspaceViolationError` —— 路径不许跑出根目录 |
 

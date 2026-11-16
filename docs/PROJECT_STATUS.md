@@ -4,7 +4,7 @@
 > **日期：2026-11-15**
 > **阶段：开发中 / 观察实验**
 > **协议版本：`1`**
-> **测试基线：`5794 passed, 2 skipped, 30 deselected`**
+> **测试基线：`5802 passed, 2 skipped, 30 deselected`**
 
 本文记录**当前真实可用能力、推荐工作方式、已知限制和版本变化**。
 架构的长期权威仍然是
@@ -55,6 +55,9 @@
   闹钟动作说明按 capability 条件渲染。唤醒回合可派发 handoff /
   rework / follow_up（只创建子 Job，最多 8 个 handoff、每个 Worker 一个）。
   Worker handler 仍为 `DESIGNED`。
+- Front 跨对话记忆：prompt 注入短期记忆与长期 top 5；Front 可
+  `short_term_memory_add / update / reinforce` 与
+  `long_term_memory_search / read / consolidate`。
 
 ---
 
@@ -532,7 +535,7 @@ Team 协作
 当前基线：
 
 ```text
-5794 passed, 2 skipped, 30 deselected
+5802 passed, 2 skipped, 30 deselected
 ```
 
 启动说明见 [`../START_AIEOS.md`](../START_AIEOS.md)。

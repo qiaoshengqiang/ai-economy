@@ -103,7 +103,8 @@ class PrivateLongTermMemoryService:
 
         entry = make_entry(
             summary=summary,
-            tasks=tasks or [task_id],
+            tasks=list(
+                tasks or ([task_id] if str(task_id or "").strip() else [])),
             events=events or [],
             short_term_entry_ids=ids,
             weight=1.0 + 0.1 * len(ids),
