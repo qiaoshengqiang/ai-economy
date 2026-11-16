@@ -69,6 +69,33 @@ def test_pi_inbox_bridge_receives_real_message(tmp_path):
         bridge.stop()
 
 
+def test_pi_inbox_peek_then_consume_keeps_new_messages(tmp_path):
+    communication, _recorder = _setup()
+    bridge = PiInboxBridge(
+        communication, agent_id="agent_b", aieos_dir=tmp_path)
+
+    bridge.capture(SimpleNamespace(
+        message_id="msg_1", from_agent="agent_c", to_agent="agent_b",
+        message_type="TEXT", conversation_id="conv_1", created_at="now",
+        payload={"kind": "agent_message", "text": "第一条"},
+    ))
+    first = bridge.peek_for_prompt()
+    assert "第一条" in first
+    assert bridge.inbox_md.exists(), "peek 不能消费"
+
+    bridge.capture(SimpleNamespace(
+        message_id="msg_2", from_agent="agent_c", to_agent="agent_b",
+        message_type="TEXT", conversation_id="conv_1", created_at="now",
+        payload={"kind": "agent_message", "text": "第二条"},
+    ))
+    assert bridge.consume_text(first) is True
+    remaining = bridge.peek_for_prompt()
+    assert "第一条" not in remaining
+    assert "第二条" in remaining
+    assert "第一条" in bridge.archive_md.read_text(encoding="utf-8")
+    assert "第二条" not in bridge.archive_md.read_text(encoding="utf-8")
+
+
 def test_pi_outbox_sends_agent_message(tmp_path):
     communication, recorder = _setup()
     bridge = PiOutboxBridge(

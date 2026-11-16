@@ -110,6 +110,10 @@ class WakeupEvent:
     kind: str = "alarm"
     reason: str = ""
     instruction: str = ""
+    #: 闹钟创建者；自设闹钟时等于 agent_id。
+    created_by: str = ""
+    #: 创建闹钟时关联的 conversation（可空）。
+    conversation_id: str = ""
     task_ids: List[str] = field(default_factory=list)
     tasks: List[Dict[str, Any]] = field(default_factory=list)
     scheduled_for: str = ""
@@ -129,6 +133,8 @@ class WakeupEvent:
             agent_id=alarm.agent_id,
             reason=alarm.reason,
             instruction=alarm.instruction,
+            created_by=alarm.created_by,
+            conversation_id=alarm.conversation_id,
             task_ids=list(alarm.task_ids),
             tasks=[dict(item) for item in (tasks or ())],
             scheduled_for=alarm.next_fire_at,
@@ -144,6 +150,8 @@ class WakeupEvent:
             "kind": self.kind,
             "reason": self.reason,
             "instruction": self.instruction,
+            "created_by": self.created_by,
+            "conversation_id": self.conversation_id,
             "task_ids": list(self.task_ids),
             "tasks": [dict(item) for item in self.tasks],
             "scheduled_for": self.scheduled_for,

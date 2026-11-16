@@ -40,9 +40,11 @@ class AlarmStore:
         dedupe_key: str = "",
         source_message_id: str = "",
         conversation_id: str = "",
+        created_by: str = "",
     ) -> Alarm:
         now = utc_now_iso()
         alarm_id = f"alarm_{uuid.uuid4().hex[:12]}"
+        creator = str(created_by or "").strip() or str(agent_id)
         with self.db.transaction() as conn:
             conn.execute(
                 f"""
@@ -61,7 +63,7 @@ class AlarmStore:
                     str(instruction), json.dumps(list(task_ids)),
                     str(schedule_kind), interval_seconds, str(next_fire_at),
                     max_runs, str(expires_at or ""), str(dedupe_key or ""),
-                    str(agent_id), str(source_message_id or ""),
+                    creator, str(source_message_id or ""),
                     str(conversation_id or ""), now, now,
                 ),
             )
@@ -78,6 +80,31 @@ class AlarmStore:
                    AND status IN ('ACTIVE', 'RUNNING', 'PAUSED')
                 """,
                 (now, str(alarm_id), str(agent_id)),
+            )
+            return cur.rowcount > 0
+
+    def cancel_by_actor(self, actor_id: str, alarm_id: str) -> bool:
+        """取消闹钟：被唤醒者本人，或这个闹钟的创建者。
+
+        🔒 别人设置的委托闹钟，被唤醒者可以拒绝；创建者也可以撤回。
+           无关 Agent 不能取消。
+        """
+        alarm = self.get(str(alarm_id))
+        if alarm is None:
+            return False
+        actor = str(actor_id or "").strip()
+        if actor not in (alarm.agent_id, alarm.created_by):
+            return False
+        now = utc_now_iso()
+        with self.db.transaction() as conn:
+            cur = conn.execute(
+                f"""
+                UPDATE {TABLE_AGENT_ALARMS}
+                   SET status = 'CANCELLED', updated_at = ?
+                 WHERE alarm_id = ?
+                   AND status IN ('ACTIVE', 'RUNNING', 'PAUSED')
+                """,
+                (now, str(alarm_id)),
             )
             return cur.rowcount > 0
 
@@ -144,6 +171,35 @@ class AlarmStore:
              ORDER BY next_fire_at ASC, created_at ASC
             """,
             (str(agent_id),),
+        )
+        return [Alarm.from_row(row) for row in rows]
+
+    def list_for_creator(
+        self,
+        created_by: str,
+        *,
+        agent_id: str = "",
+        include_inactive: bool = False,
+    ) -> List[Alarm]:
+        """列出某个创建者设置的闹钟（可限定被唤醒者）。
+
+        🔒 `created_by` 是**创建者**，不是被唤醒者。自设闹钟时二者相同。
+        """
+        clauses = ["created_by = ?"]
+        params: List[Any] = [str(created_by)]
+        subject = str(agent_id or "").strip()
+        if subject:
+            clauses.append("agent_id = ?")
+            params.append(subject)
+        if not include_inactive:
+            clauses.append("status IN ('ACTIVE', 'RUNNING', 'PAUSED')")
+        rows = self.db.fetchall(
+            f"""
+            SELECT * FROM {TABLE_AGENT_ALARMS}
+             WHERE {' AND '.join(clauses)}
+             ORDER BY next_fire_at ASC, created_at ASC
+            """,
+            tuple(params),
         )
         return [Alarm.from_row(row) for row in rows]
 

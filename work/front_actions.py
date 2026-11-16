@@ -423,25 +423,65 @@ class FrontProjectReadExecutor:
 
 
 class FrontAlarmCreateExecutor:
-    """`alarm_create` —— Front 给自己创建一个持久化闹钟。"""
+    """`alarm_create` —— 给自己或（Front）给其他 Agent 创建闹钟。"""
 
     action_types = frozenset({"alarm_create"})
 
-    def __init__(self, alarm_service: Any) -> None:
+    def __init__(
+        self,
+        alarm_service: Any,
+        *,
+        front_agent: str = "",
+        delegated_alarm_allowed_fn: Optional[Callable[[str], Any]] = None,
+    ) -> None:
         self.alarm_service = alarm_service
+        self.front_agent = str(front_agent or "").strip()
+        self._delegated_alarm_allowed = (
+            delegated_alarm_allowed_fn or (lambda _agent_id: (True, "")))
+
+    @staticmethod
+    def _fail(intent: ActionIntent, message: str, code: str) -> ActionResult:
+        return ActionResult(
+            success=False, error=message,
+            action_id=intent.intent_id,
+            action_type=intent.action_type,
+            metadata={"code": code},
+        )
 
     def execute(self, intent: ActionIntent) -> ActionResult:
         params = dict(getattr(intent, "parameters", None) or {})
         if self.alarm_service is None:
-            return ActionResult(
-                success=False, error="alarm_service 未启用",
-                action_id=intent.intent_id,
-                action_type=intent.action_type,
-                metadata={"code": "alarm_disabled"},
-            )
+            return self._fail(
+                intent, "alarm_service 未启用", "alarm_disabled")
+        target = str(
+            params.get("agent_id") or params.get("target")
+            or intent.agent_id).strip()
+        if not target:
+            return self._fail(
+                intent, "alarm_create 需要 agent_id", "missing_target")
+        delegated = target != intent.agent_id
+        if delegated:
+            if not self.front_agent or intent.agent_id != self.front_agent:
+                return self._fail(
+                    intent,
+                    "只有 Front 可以给其他 Agent 设置闹钟",
+                    "delegated_alarm_forbidden")
+            try:
+                allowed, reason = self._delegated_alarm_allowed(target)
+            except Exception as exc:                          # noqa: BLE001
+                return self._fail(
+                    intent,
+                    f"目标 Agent 检查失败：{type(exc).__name__}: {exc}",
+                    "delegated_alarm_check_failed")
+            if not allowed:
+                return self._fail(
+                    intent,
+                    reason or f"Agent {target} 没有接受委托闹钟",
+                    "delegated_alarm_not_accepted")
         try:
             result = self.alarm_service.create(
-                agent_id=intent.agent_id,
+                agent_id=target,
+                created_by=intent.agent_id,
                 reason=params.get("reason") or "",
                 instruction=params.get("instruction") or "",
                 task_ids=params.get("task_ids") or params.get("task_id") or [],
@@ -458,12 +498,9 @@ class FrontAlarmCreateExecutor:
                 conversation_id=str(params.get("conversation_id") or ""),
             )
         except Exception as exc:                              # noqa: BLE001
-            return ActionResult(
-                success=False, error=f"{type(exc).__name__}: {exc}",
-                action_id=intent.intent_id,
-                action_type=intent.action_type,
-                metadata={"code": "alarm_create_failed"},
-            )
+            return self._fail(
+                intent, f"{type(exc).__name__}: {exc}",
+                "alarm_create_failed")
         return ActionResult(
             success=True, output=result,
             action_id=intent.intent_id,
@@ -475,8 +512,9 @@ class FrontAlarmCreateExecutor:
 class FrontAlarmListExecutor:
     action_types = frozenset({"alarm_list"})
 
-    def __init__(self, alarm_service: Any) -> None:
+    def __init__(self, alarm_service: Any, *, front_agent: str = "") -> None:
         self.alarm_service = alarm_service
+        self.front_agent = str(front_agent or "").strip()
 
     def execute(self, intent: ActionIntent) -> ActionResult:
         if self.alarm_service is None:
@@ -487,11 +525,28 @@ class FrontAlarmListExecutor:
                 metadata={"code": "alarm_disabled"},
             )
         params = dict(getattr(intent, "parameters", None) or {})
+        target = str(params.get("agent_id") or "").strip()
+        include_inactive = bool(params.get("include_inactive", False))
         try:
-            alarms = self.alarm_service.list(
-                intent.agent_id,
-                include_inactive=bool(params.get("include_inactive", False)),
-            )
+            if target and target != intent.agent_id:
+                if not self.front_agent or intent.agent_id != self.front_agent:
+                    return ActionResult(
+                        success=False,
+                        error="只有 Front 可以查看自己给其他 Agent 设置的闹钟",
+                        action_id=intent.intent_id,
+                        action_type=intent.action_type,
+                        metadata={"code": "delegated_alarm_forbidden"},
+                    )
+                alarms = self.alarm_service.list_delegated(
+                    intent.agent_id,
+                    agent_id=target,
+                    include_inactive=include_inactive,
+                )
+            else:
+                alarms = self.alarm_service.list(
+                    intent.agent_id,
+                    include_inactive=include_inactive,
+                )
         except Exception as exc:                              # noqa: BLE001
             return ActionResult(
                 success=False, error=f"{type(exc).__name__}: {exc}",
@@ -542,7 +597,10 @@ class FrontAlarmCancelExecutor:
         return ActionResult(
             success=bool(ok),
             output={"alarm_id": alarm_id, "cancelled": bool(ok)},
-            error=None if ok else "闹钟不存在或不属于当前 Agent",
+            error=(
+                None if ok
+                else "闹钟不存在，或当前 Agent 既不是被唤醒者也不是创建者"
+            ),
             action_id=intent.intent_id,
             action_type=intent.action_type,
             metadata={"code": None if ok else "not_found"},
@@ -824,6 +882,7 @@ def build_front_dispatcher(
     web_fetch_fn: Optional[Callable[..., Any]] = None,
     project_root: str = "",
     alarm_service: Any = None,
+    delegated_alarm_allowed_fn: Optional[Callable[[str], Any]] = None,
     short_term_memory: Any = None,
     long_term_memory: Any = None,
 ) -> ActionDispatcher:
@@ -865,8 +924,13 @@ def build_front_dispatcher(
         executors.append(FrontWebFetchExecutor(web_fetch_fn))
     if alarm_service is not None:
         executors.extend([
-            FrontAlarmCreateExecutor(alarm_service),
-            FrontAlarmListExecutor(alarm_service),
+            FrontAlarmCreateExecutor(
+                alarm_service,
+                front_agent=front_agent,
+                delegated_alarm_allowed_fn=delegated_alarm_allowed_fn,
+            ),
+            FrontAlarmListExecutor(
+                alarm_service, front_agent=front_agent),
             FrontAlarmCancelExecutor(alarm_service),
         ])
     if short_term_memory is not None:

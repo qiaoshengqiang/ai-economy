@@ -77,6 +77,10 @@ from work.front_actions import (
 from work.front_wakeup import FrontWakeupHandler
 from work.handoff import HandoffRuntime
 from work.life_inbox_service import LifeInboxService
+from work.life_policy import LifePolicy
+from work.life_turn import LifeTurnRuntime
+from work.life_wake_service import LifeAlarmWakeupHandler, LifeWakeService
+from work.pi_comm import PiInboxBridge
 from work.pi_inbox_service import PiInboxService
 from work.pi_runtime import PiWorkRuntime
 from work.project_context import render_project_context
@@ -431,6 +435,10 @@ class AIEOSController:
         self._front_inbox_consumer: Optional[InboxConsumer] = None
         #: Phase 5：Life 层空闲 Agent 的可选自动回复。
         self._life_inbox_service: Optional[LifeInboxService] = None
+        #: Life Wake：消息 / 闹钟唤醒（独立于 Work 引擎）。
+        self._life_wake: Optional[LifeWakeService] = None
+        self._life_policy_cache: Dict[str, LifePolicy] = {}
+        self._life_pi_fallback_bridges: Dict[str, Any] = {}
         #: Front 自己的持久草稿（按 agent 私有空间隔离）。
         self._front_drafts_store: Optional[TaskDraftStore] = None
         self._load_settings()
@@ -447,6 +455,7 @@ class AIEOSController:
                 f"Front Agent {self.front_agent!r} 不在 Agent Directory 里")
         self._configure_front_brain()
         self._init_alarms()
+        self._init_life_wake()
 
     # ------------------------------------------------------------
     # 设置 / 状态
@@ -1788,6 +1797,31 @@ class AIEOSController:
                 pass
         return "\n\n".join(parts)
 
+    def _delegated_alarm_allowed(self, agent_id: str) -> tuple:
+        """目标 Agent 是否接受别人给它设置的闹钟。
+
+        🔒 委托闹钟是 **wake request**，不是消息、不是命令。
+           目标 Agent 必须显式开启 `life.accept_delegated_alarms`。
+        """
+        key = str(agent_id or "").strip()
+        if not key:
+            return False, "缺少目标 Agent"
+        if key not in self._agent_ids:
+            return False, f"未知 Agent：{key}"
+        if key in self.disabled_agents or key in self.archived_agents:
+            return False, f"Agent {key} 已停用或归档，不能设置闹钟"
+        resolved = getattr(self.rt, "resolved_config", None)
+        if resolved is None:
+            return False, "当前 Runtime 没有解析配置，无法校验闹钟目标"
+        policy = self._life_policy(key)
+        if not policy.enabled:
+            return False, f"Agent {key} 没有开启 life"
+        if not policy.accept_delegated_alarms:
+            return False, f"Agent {key} 没有接受委托闹钟"
+        if not policy.wake_on_alarm:
+            return False, f"Agent {key} 不会因闹钟唤醒"
+        return True, ""
+
     def _agent_busy(self, agent_id: str) -> bool:
         """Front 的 message_send 只允许发给空闲 Agent。"""
         key = str(agent_id or "").strip()
@@ -1863,6 +1897,7 @@ class AIEOSController:
                 self.front_agent, url),
             project_root=project_root,
             alarm_service=self.alarm_service,
+            delegated_alarm_allowed_fn=self._delegated_alarm_allowed,
             short_term_memory=getattr(
                 self.rt, "private_short_term_memory", None),
             long_term_memory=getattr(
@@ -2039,6 +2074,11 @@ class AIEOSController:
             if (agent_id in self.disabled_agents
                     or agent_id in self.archived_agents):
                 continue
+            life = self._life_policy(agent_id)
+            if life.enabled and life.wake_on_message:
+                # Life Wake Service 已经接管这个 Agent 的消息唤醒；
+                # 不再叠加旧的 LifeInboxService，避免双重回复。
+                continue
             policy = self._inbox_policy_for(agent_id)
             if policy.reply_mode == "auto":
                 auto_policies[agent_id] = policy
@@ -2051,12 +2091,38 @@ class AIEOSController:
             self._life_inbox_service.stop()
             self._life_inbox_service = None
 
+    def _agent_display_name(self, agent_id: str) -> str:
+        key = str(agent_id or "").strip()
+        resolved = getattr(self.rt, "resolved_config", None)
+        if resolved is not None and key:
+            try:
+                name = str(resolved.agent(key).name or "").strip()
+                if name:
+                    return f"{name}（{key}）"
+            except Exception:                                 # noqa: BLE001
+                pass
+        return key or "Agent"
+
     def _on_front_inbox_message(self, message: Any) -> None:
-        """Front Inbox → 把 human_message 对应的 Job 交给执行器。"""
+        """Front Inbox → 把 human_message 对应的 Job 交给执行器。
+
+        Life 层 Agent 的回复（`payload.life=true`）在这里转成一条
+        人类可见的 Front 中转消息；不创建 Task，也不创建新 Job。
+        """
         payload = getattr(message, "payload", None) or {}
         if not isinstance(payload, dict):
             return
-        if str(payload.get("kind") or "") != "human_message":
+        kind = str(payload.get("kind") or "")
+        if kind == "agent_message" and payload.get("life"):
+            text = str(payload.get("text") or "").strip()
+            from_agent = str(getattr(message, "from_agent", "") or "")
+            if text and from_agent and from_agent != self.front_agent:
+                self._message(
+                    "front",
+                    f"{self._agent_display_name(from_agent)} 回复：{text}",
+                )
+            return
+        if kind != "human_message":
             return
         job_id = str(payload.get("job_id") or "").strip()
         if not job_id:
@@ -4612,7 +4678,191 @@ class AIEOSController:
             FrontWakeupHandler(self.run_front_wakeup),
         )
         self.alarm_service = service
+        # Life 唤醒服务需要在 AlarmService 启动前注册 Worker handler。
+        self._init_life_wake()
+        self._register_life_alarm_handlers()
         service.start()
+
+    def _life_policy(self, agent_id: str) -> LifePolicy:
+        key = str(agent_id or "").strip()
+        if key in self._life_policy_cache:
+            return self._life_policy_cache[key]
+        resolved = getattr(self.rt, "resolved_config", None)
+        if resolved is None or not key:
+            policy = LifePolicy()
+        else:
+            try:
+                raw = getattr(resolved.agent(key), "raw", None) or {}
+            except Exception:                                 # noqa: BLE001
+                raw = {}
+            block = raw.get("life") if isinstance(raw, Mapping) else None
+            policy = LifePolicy.from_raw(block)
+        self._life_policy_cache[key] = policy
+        return policy
+
+    def _init_life_wake(self) -> None:
+        """启动消息 / 闹钟唤醒服务；没有任何 Agent 开启 life 时为空操作。"""
+        if self._life_wake is not None:
+            return
+        resolved = getattr(self.rt, "resolved_config", None)
+        if resolved is None:
+            return
+        enabled = [
+            aid for aid in self._agent_ids
+            if aid != self.front_agent and self._life_policy(aid).enabled
+        ]
+        if not enabled:
+            return
+        communication = getattr(self.rt, "communication", None)
+        if communication is None:
+            return
+        turn = LifeTurnRuntime(
+            agent_lookup=self._agent,
+            send_fn=self._send_life_message,
+            alarm_service=self.alarm_service,
+            agent_exists_fn=lambda aid: aid in self._agent_ids,
+            agent_unavailable_reason_fn=self._life_agent_unavailable_reason,
+            system_prompt_fn=self._life_system_prompt,
+        )
+        self._life_wake = LifeWakeService(
+            policy_fn=self._life_policy,
+            turn_runtime=turn,
+            availability=self.availability,
+            agent_ids=[aid for aid in self._agent_ids
+                       if aid != self.front_agent],
+            pi_agents=self.pi_work_agents,
+            pi_bridge_fn=self._life_pi_bridge,
+            pending_messages_fn=self._life_pending_messages,
+            message_lookup_fn=self._life_message_lookup,
+            mark_processed_fn=self._life_mark_processed,
+            conversation_fn=self._life_conversation,
+            alarm_store=(
+                self.alarm_service.store if self.alarm_service else None),
+            disabled_fn=lambda aid: (
+                aid in self.disabled_agents or aid in self.archived_agents),
+        )
+        self._life_wake.start()
+
+    def _register_life_alarm_handlers(self) -> None:
+        if self._life_wake is None:
+            return
+        handler = LifeAlarmWakeupHandler(self._life_wake)
+        for agent_id in self._agent_ids:
+            if agent_id == self.front_agent:
+                continue
+            policy = self._life_policy(agent_id)
+            if not policy.enabled or not policy.wake_on_alarm:
+                continue
+            self._alarm_dispatcher.register(agent_id, handler)
+
+    def _life_agent_unavailable_reason(self, agent_id: str) -> str:
+        key = str(agent_id or "").strip()
+        if not key or key not in self._agent_ids:
+            return f"未知 Agent：{key}"
+        if key in self.disabled_agents or key in self.archived_agents:
+            return f"Agent {key} 已停用或归档"
+        return ""
+
+    def _life_system_prompt(self, agent_id: str) -> str:
+        resolved = getattr(self.rt, "resolved_config", None)
+        if resolved is None:
+            return ""
+        try:
+            return str(resolved.agent(agent_id).system_prompt or "")
+        except Exception:                                     # noqa: BLE001
+            return ""
+
+    def _life_pi_bridge(self, agent_id: str) -> Any:
+        service = self._pi_inbox_service
+        if service is not None:
+            bridge = service.bridge_for(agent_id)
+            if bridge is not None:
+                return bridge
+        communication = getattr(self.rt, "communication", None)
+        if communication is None:
+            return None
+        cached = self._life_pi_fallback_bridges.get(agent_id)
+        if cached is not None:
+            return cached
+        from core.paths import AGENTS_DIR
+        bridge = PiInboxBridge(
+            communication,
+            agent_id=agent_id,
+            inbox_dir=Path(AGENTS_DIR) / str(agent_id) / "inbox",
+        )
+        self._life_pi_fallback_bridges[agent_id] = bridge
+        return bridge
+
+    def _life_pending_messages(self, agent_id: str) -> List[Dict[str, Any]]:
+        recorder = self._inbox_recorder()
+        if recorder is None:
+            return []
+        try:
+            return list(recorder.list_pending(agent_id) or [])
+        except Exception:                                     # noqa: BLE001
+            return []
+
+    def _life_message_lookup(self, message_id: str) -> Optional[Dict[str, Any]]:
+        recorder = self._inbox_recorder()
+        if recorder is None:
+            return None
+        try:
+            return recorder.get_message(message_id)
+        except Exception:                                     # noqa: BLE001
+            return None
+
+    def _life_mark_processed(self, agent_id: str, message_ids: List[str]) -> int:
+        recorder = self._inbox_recorder()
+        if recorder is None:
+            return 0
+        count = 0
+        for message_id in message_ids:
+            try:
+                if recorder.mark_processed_id(message_id, agent_id):
+                    count += 1
+            except Exception:                                 # noqa: BLE001
+                logger.warning(
+                    "Life 标记已处理失败：%s %s",
+                    agent_id, message_id, exc_info=True)
+        return count
+
+    def _life_conversation(self, conversation_id: str) -> List[Dict[str, Any]]:
+        recorder = self._inbox_recorder()
+        if recorder is None:
+            return []
+        try:
+            return list(recorder.conversation(conversation_id) or [])
+        except Exception:                                     # noqa: BLE001
+            return []
+
+    def _send_life_message(
+        self,
+        *,
+        from_agent: str,
+        to_agent: str,
+        text: str,
+        payload: Optional[Mapping[str, Any]] = None,
+        conversation_id: str = "",
+        reply_to: str = "",
+    ) -> Dict[str, Any]:
+        communication = getattr(self.rt, "communication", None)
+        if communication is None:
+            return {"ok": False, "code": "no_communication",
+                    "message": "当前 Runtime 没有通信层"}
+        try:
+            return run_coro(send_message_as(
+                communication,
+                from_agent=from_agent,
+                to_agent=to_agent,
+                message_type="TEXT",
+                text=text,
+                payload=payload,
+                conversation_id=conversation_id or None,
+                reply_to=reply_to or None,
+            ))
+        except Exception as exc:                              # noqa: BLE001
+            return {"ok": False, "code": "send_failed",
+                    "message": f"{type(exc).__name__}: {exc}"}
 
     def _alarm_task_status(self, task_id: str) -> Dict[str, Any]:
         try:
@@ -5015,6 +5265,9 @@ class AIEOSController:
     def close(self) -> None:
         with self._lock:
             self._closed = True
+        if self._life_wake is not None:
+            self._life_wake.stop()
+            self._life_wake = None
         if self.alarm_service is not None:
             self.alarm_service.stop()
             self.alarm_service = None

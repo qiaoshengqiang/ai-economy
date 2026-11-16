@@ -141,10 +141,12 @@ class AlarmService:
         dedupe_key: str = "",
         source_message_id: str = "",
         conversation_id: str = "",
+        created_by: str = "",
     ) -> Dict[str, Any]:
         key = str(agent_id or "").strip()
         if not key:
             raise ValueError("alarm_create 缺少 agent_id")
+        creator = str(created_by or "").strip() or key
         text_reason = str(reason or "").strip()
         text_instruction = str(instruction or "").strip()
         if not text_reason:
@@ -239,19 +241,41 @@ class AlarmService:
             dedupe_key=dedupe,
             source_message_id=str(source_message_id or ""),
             conversation_id=str(conversation_id or ""),
+            created_by=creator,
         )
         self._signal()
         return alarm.to_dict()
 
     def list(self, agent_id: str, *, include_inactive: bool = False) -> List[Dict[str, Any]]:
+        """列出**被唤醒者**自己的闹钟。"""
         return [
             item.to_dict()
             for item in self.store.list_for_agent(
                 agent_id, include_inactive=include_inactive)
         ]
 
+    def list_delegated(
+        self,
+        created_by: str,
+        *,
+        agent_id: str = "",
+        include_inactive: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """列出某个创建者设置的闹钟（Front 管理委托闹钟用）。"""
+        return [
+            item.to_dict()
+            for item in self.store.list_for_creator(
+                created_by,
+                agent_id=agent_id,
+                include_inactive=include_inactive)
+        ]
+
     def cancel(self, agent_id: str, alarm_id: str) -> bool:
-        ok = self.store.cancel(agent_id, alarm_id)
+        """取消闹钟：被唤醒者本人，或这个闹钟的创建者。
+
+        参数名保留 `agent_id` 以兼容旧调用方；语义是「操作者」。
+        """
+        ok = self.store.cancel_by_actor(agent_id, alarm_id)
         if ok:
             self._signal()
         return ok

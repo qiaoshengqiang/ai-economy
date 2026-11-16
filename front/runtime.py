@@ -45,13 +45,17 @@ FRONT_SYSTEM_PROMPT = (
 
 #: 只有 action_types 里真的有 alarm_create 时才拼进 prompt。
 #: 否则会出现「可用动作里没有、参数说明里却在教它用」的矛盾。
-_ALARM_CREATE_DOC = """- alarm_create {reason, instruction, task_ids?, schedule?, interval_seconds?, delay_seconds?, at?, max_runs?, expires_at?, dedupe_key?} —— 给自己创建持久化闹钟。
+_ALARM_CREATE_DOC = """- alarm_create {agent_id?, reason, instruction, task_ids?, schedule?, interval_seconds?, delay_seconds?, at?, max_runs?, expires_at?, dedupe_key?} —— 给自己或（Front）给其他 Agent 创建持久化闹钟。
+  · agent_id 省略 = 自己；指定其他 Agent 时，对方必须开启
+    `life.accept_delegated_alarms`，否则会被拒绝。
+  · 委托闹钟是「未来叫醒对方」的调度请求，不是消息、不是命令；
+    instruction 会出现在**对方**的唤醒里，对方可以按自己的判断处理或取消。
   · schedule 只能是 once / every，可省略：给 interval_seconds 就是 every，
     给 delay_seconds / at 就是 once。
   · interval_seconds 最小 60 秒。
   · at / expires_at 用 UTC ISO8601（例如 2026-11-15T23:00:00Z）；
     用户说本地时间时，按上面的「当前时间」换算成 UTC 再填。
-  · instruction 是写给「下次被唤醒的自己」的指令，会原样出现在唤醒
+  · instruction 是写给「下次被唤醒的自己/对方」的指令，会原样出现在唤醒
     prompt 里：写清要检查什么、什么条件下通知人类。
   · task_ids 可选，最多 5 个；唤醒时提供这些 Task 的只读
     found / status 快照。Task 结束不会自动停止闹钟。
@@ -59,11 +63,14 @@ _ALARM_CREATE_DOC = """- alarm_create {reason, instruction, task_ids?, schedule?
   · 创建结果已经包含 alarm_id / next_fire_at，不需要再 alarm_list 确认。
   · 同样的提醒用 dedupe_key 去重；已有同 key 的活动闹钟会返回原来那个。
   · every 闹钟会自动续期，不要在唤醒轮次里为同一个节奏重复 create。
+  · 想「现在告诉对方一件事」用 message_send；闹钟只负责未来唤醒。
 """
 _ALARM_LIST_DOC = (
-    "- alarm_list {include_inactive?} —— 列出自己的闹钟"
+    "- alarm_list {agent_id?, include_inactive?} —— 列出自己的闹钟；"
+    "指定 agent_id 时只列出**自己创建**给对方的委托闹钟"
     "（含 next_fire_at / fire_count）。\n")
-_ALARM_CANCEL_DOC = "- alarm_cancel {alarm_id} —— 关闭自己的闹钟。\n"
+_ALARM_CANCEL_DOC = (
+    "- alarm_cancel {alarm_id} —— 关闭自己的闹钟，或撤回自己创建的委托闹钟。\n")
 _ALARM_EXAMPLE = (
     '{"actions":[{"type":"alarm_create","parameters":'
     '{"reason":"检查 task_x","instruction":"task_x 状态变化时通知人类",'

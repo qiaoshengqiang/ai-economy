@@ -1126,13 +1126,14 @@ def test_prompt_hides_alarm_actions_when_disabled():
 def test_prompt_documents_alarm_actions_when_enabled():
     prompt = _capture_prompt(action_types=(
         "alarm_create", "alarm_list", "alarm_cancel", "artifact_read"))
-    assert "- alarm_create {reason, instruction" in prompt
+    assert "- alarm_create {agent_id?, reason, instruction" in prompt
+    assert "对方必须开启" in prompt
     assert "interval_seconds 最小 60 秒" in prompt
     assert "UTC ISO8601" in prompt
     assert "dedupe_key" in prompt
     assert "不要在唤醒轮次里为同一个节奏重复 create" in prompt
     assert '"type":"alarm_create"' in prompt
-    assert "- alarm_list {include_inactive?}" in prompt
+    assert "- alarm_list {agent_id?, include_inactive?}" in prompt
     assert "- alarm_cancel {alarm_id}" in prompt
 
 

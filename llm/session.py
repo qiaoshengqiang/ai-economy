@@ -58,7 +58,21 @@ def alarm_scope(alarm_id: str, *, agent_id: str = "") -> str:
     return f"alarm|{alarm}{suffix}"
 
 
+def life_scope(wake_id: str, *, agent_id: str = "") -> str:
+    """Life Turn 的会话 scope。
+
+    闹钟唤醒复用 `alarm|...`，消息 / 混合唤醒用 `life|wake=...`。
+    """
+    wake = str(wake_id or "").strip()
+    if not wake:
+        return ""
+    agent = str(agent_id or "").strip()
+    suffix = f"|agent={agent}" if agent else ""
+    return f"life|wake={wake}{suffix}"
+
+
 __all__ = [
     "SESSION_PREFIX", "SESSION_HASH_CHARS",
     "build_session_id", "front_scope", "task_scope", "alarm_scope",
+    "life_scope",
 ]

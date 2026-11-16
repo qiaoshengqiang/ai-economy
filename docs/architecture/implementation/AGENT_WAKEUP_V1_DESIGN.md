@@ -1,10 +1,12 @@
 # Agent Wakeup V1 —— 定时唤醒与 Agent 闹钟设计
 
-> **状态：Phase W1–W4.1 `CURRENT`；Worker handler `DESIGNED`（2026-11-15）**
+> **状态：Phase W1–W4.1 `CURRENT`；Worker handler 与委托闹钟 `CURRENT`（2026-11-16）**
 >
 > V1 先接入 **Front Agent**；核心数据模型、调度器和
 > `WakeupDispatcher` 从第一天就是**通用 Agent 能力**。
-> Pi / 内置引擎 Worker 的 handler 后续接入，不重新设计核心。
+> Pi / 内置引擎 Worker 的 handler 已由
+> [`AGENT_LIFE_WAKE_V1_DESIGN.md`](AGENT_LIFE_WAKE_V1_DESIGN.md) 接入；
+> Front 可以把闹钟委托给开启 `life.accept_delegated_alarms` 的 Agent。
 > V1 部署假设：一台机器一个 AIEOS UI 进程 = 一个 AlarmService 线程。
 >
 > 相关文档：
@@ -527,7 +529,10 @@ FrontWakeupHandler
 
 不经过 `communication_messages`。
 
-### 8.4 以后的 Worker Handler
+### 8.4 Worker Handler（已由 Life Wake V1 接入）
+
+> 实现见 [`AGENT_LIFE_WAKE_V1_DESIGN.md`](AGENT_LIFE_WAKE_V1_DESIGN.md)。
+> Worker 唤醒进入 **Life Turn**，使用 Agent 的 Brain，不进入 Work 上下文。
 
 **Pi Worker**
 

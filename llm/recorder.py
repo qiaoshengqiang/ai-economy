@@ -134,6 +134,9 @@ class LLMCallRecorder:
     #:    这个值是为「确实存在时」准备的，不是为「猜一个」准备的。
     PURPOSE_UTILITY = "utility"
 
+    #: Life 层唤醒（回复消息 / 处理闹钟）；不是 Work / Task 认知。
+    PURPOSE_LIFE = "life"
+
     #: 调用方没有声明用途。
     #:
     #: 🔴 这是一个**遥测错误标记**，不是正常值（§5.3）：
@@ -142,7 +145,7 @@ class LLMCallRecorder:
     PURPOSE_UNSPECIFIED = "unspecified"
 
     ALL_PURPOSES = frozenset({PURPOSE_COGNITION, PURPOSE_UTILITY,
-                              PURPOSE_UNSPECIFIED})
+                              PURPOSE_LIFE, PURPOSE_UNSPECIFIED})
 
     def record(
         self,

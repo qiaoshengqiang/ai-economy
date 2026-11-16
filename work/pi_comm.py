@@ -157,6 +157,38 @@ class PiInboxBridge:
             self.inbox_md.unlink(missing_ok=True)
         return text
 
+    def peek_for_prompt(self) -> str:
+        """只读取当前 inbox，不消费。
+
+        Life Turn 必须先 peek → 执行 → 成功后再 consume；
+        失败时消息仍留在 inbox，不会因为一次 LLM 失败而丢失。
+        """
+        with self._lock:
+            if not self.inbox_md.is_file():
+                return ""
+            return self.inbox_md.read_text(encoding="utf-8").strip()
+
+    def consume_text(self, expected: str) -> bool:
+        """消费已经成功处理过的一段 inbox；保留处理期间新到的消息。"""
+        target = str(expected or "")
+        if not target.strip():
+            return False
+        with self._lock:
+            if not self.inbox_md.is_file():
+                return False
+            current = self.inbox_md.read_text(encoding="utf-8")
+            if not current.startswith(target):
+                return False
+            remainder = current[len(target):].lstrip("\n")
+            with self.archive_md.open("a", encoding="utf-8") as handle:
+                handle.write(target.rstrip() + "\n\n")
+            if remainder.strip():
+                self.inbox_md.write_text(
+                    remainder.rstrip() + "\n", encoding="utf-8")
+            else:
+                self.inbox_md.unlink(missing_ok=True)
+        return True
+
     def stop(self) -> None:
         self._running = False
         if self._loop is not None:
