@@ -175,6 +175,9 @@ def read_artifact(
     agent_id: str,
     path: str,
     *,
+    start_line: Optional[int] = None,
+    max_lines: Optional[int] = None,
+    #: @deprecated 旧别名；新调用方用 start_line / max_lines。
     offset: Optional[int] = None,
     limit: Optional[int] = None,
 ) -> Dict[str, Any]:
@@ -187,11 +190,12 @@ def read_artifact(
                 "content": ...}
         失败 → {"ok": False, "path": ..., "code": ..., "message": ...}
 
-    `offset` / `limit`（可选）：
-        - offset 是 **1-based** 起始行；省略 = 从第 1 行开始；
-        - limit 是最多返回多少行；省略 = 读到结尾（旧行为）；
+    `start_line` / `max_lines`（可选，**单位是行，不是字符**）：
+        - start_line 是 **1-based** 起始行；省略 = 从第 1 行开始；
+        - max_lines 是最多返回多少行；省略 = 读到结尾；
         - 显式范围最多 `MAX_READ_LINES` 行；
-        - 额外返回 total_lines / start_line / end_line / truncated。
+        - 返回 next_start_line 作为下一页游标；None = 已到结尾。
+        - `offset` / `limit` 仅保留为旧别名，不应在新 prompt 中使用。
 
     【🔒 为什么返回结构要和 write_artifact 一致】
 
@@ -242,7 +246,30 @@ def read_artifact(
     total_lines = len(lines)
     total_chars = len(full_content)
 
-    explicit_range = offset is not None or limit is not None
+    if start_line is not None and offset is not None:
+        try:
+            if int(start_line) != int(offset):
+                return _fail(
+                    target, "bad_pagination",
+                    "不要同时使用 start_line 和 offset")
+        except (TypeError, ValueError):
+            return _fail(target, "bad_pagination",
+                         "start_line / offset 必须是整数行号")
+    if max_lines is not None and limit is not None:
+        try:
+            if int(max_lines) != int(limit):
+                return _fail(
+                    target, "bad_pagination",
+                    "不要同时使用 max_lines 和 limit")
+        except (TypeError, ValueError):
+            return _fail(target, "bad_pagination",
+                         "max_lines / limit 必须是整数行号")
+    if start_line is None:
+        start_line = offset
+    if max_lines is None:
+        max_lines = limit
+
+    explicit_range = start_line is not None or max_lines is not None
     if not explicit_range:
         start_line = 1 if total_lines else 0
         end_line = total_lines
@@ -251,16 +278,16 @@ def read_artifact(
         applied_limit = total_lines
     else:
         try:
-            start_line = int(offset) if offset is not None else 1
-            applied_limit = int(limit) if limit is not None else max(
+            start_line = int(start_line) if start_line is not None else 1
+            applied_limit = int(max_lines) if max_lines is not None else max(
                 1, total_lines - start_line + 1)
         except (TypeError, ValueError):
             return _fail(target, "bad_pagination",
-                         "offset / limit 必须是整数行号")
+                         "start_line / max_lines 必须是整数行号")
         if start_line < 1:
-            return _fail(target, "bad_pagination", "offset 必须 >= 1")
+            return _fail(target, "bad_pagination", "start_line 必须 >= 1")
         if applied_limit < 1:
-            return _fail(target, "bad_pagination", "limit 必须 >= 1")
+            return _fail(target, "bad_pagination", "max_lines 必须 >= 1")
         if applied_limit > MAX_READ_LINES:
             applied_limit = MAX_READ_LINES
 
@@ -272,6 +299,9 @@ def read_artifact(
         if start_line > total_lines:
             truncated = True
 
+    next_start_line = (
+        end_line + 1
+        if truncated and end_line < total_lines else None)
     return {
         "ok": True,
         # 🔒 回**归一化后**的 `target`，不是 Gateway 的 `/plot/x.md`。
@@ -288,10 +318,10 @@ def read_artifact(
         # 范围读取的可观察事实（全文读取时也是同一组字段）。
         "total_chars": total_chars,
         "total_lines": total_lines,
-        "offset": start_line,
-        "limit": applied_limit,
         "start_line": start_line,
+        "max_lines": applied_limit,
         "end_line": end_line,
+        "next_start_line": next_start_line,
         "truncated": truncated,
     }
 

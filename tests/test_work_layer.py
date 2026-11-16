@@ -157,7 +157,7 @@ class TestWorkLifecycle:
 # 1.5 Work 动作参数适配
 # ============================================================
 class TestWorkActionAdapters:
-    def test_read_offset_zero_is_normalized_to_one(self):
+    def test_read_start_line_zero_is_normalized_to_one(self):
         from actions.workspace_read import WorkspaceReadExecutor
         from work.adapters import WorkWorkspaceReadExecutor
 
@@ -177,7 +177,8 @@ class TestWorkActionAdapters:
         result = adapter.execute(intent)
 
         assert result.success is True
-        assert seen["offset"] == 1
+        assert seen["start_line"] == 1
+        assert seen["max_lines"] == 10
 
     def test_missing_write_mode_defaults_to_create(self):
         from actions.workspace_write import WorkspaceWriteExecutor

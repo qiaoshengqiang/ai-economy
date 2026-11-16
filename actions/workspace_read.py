@@ -86,8 +86,9 @@ ACTION_WORKSPACE_READ = "workspace_read"
 #: `content` 必须在列 —— 没有它，「读」这件事就没有发生。
 _OUTPUT_FIELDS = (
     "path", "revision", "chars", "content",
-    "total_chars", "total_lines", "offset", "limit",
-    "start_line", "end_line", "truncated",
+    "total_chars", "total_lines",
+    "start_line", "max_lines", "end_line", "next_start_line",
+    "truncated",
 )
 
 
@@ -199,32 +200,32 @@ class WorkspaceReadExecutor:
         """
         params = dict(getattr(intent, "parameters", None) or {})
         path = str(params.get("path") or "")
-        offset = params.get("offset")
-        limit = params.get("limit")
+        start_line = params.get("start_line")
+        max_lines = params.get("max_lines")
 
         cache_key = None
         metadata = None
-        if ((offset is None or isinstance(offset, int))
-                and (limit is None or isinstance(limit, int))):
+        if ((start_line is None or isinstance(start_line, int))
+                and (max_lines is None or isinstance(max_lines, int))):
             metadata = self._metadata(intent.agent_id, path)
         if metadata is not None:
             cache_key = (
                 path, metadata.get("resource_id"),
-                metadata.get("revision"), offset, limit)
+                metadata.get("revision"), start_line, max_lines)
             cached = self._cache.get(cache_key)
             if cached is not None:
                 self.cache_hits += 1
                 return self._success(intent, dict(cached))
 
         try:
-            if offset is None and limit is None:
+            if start_line is None and max_lines is None:
                 raw = self.read_fn(
                     self.gateway, self.workspace_id, intent.agent_id, path,
                 )
             else:
                 raw = self.read_fn(
                     self.gateway, self.workspace_id, intent.agent_id, path,
-                    offset=offset, limit=limit,
+                    start_line=start_line, max_lines=max_lines,
                 )
         except Exception as exc:                              # noqa: BLE001
             return self._fail(
@@ -245,7 +246,7 @@ class WorkspaceReadExecutor:
                 # 之间的并发写把旧内容记到新 revision 下。
                 self._remember(
                     (path, metadata.get("resource_id"),
-                     raw.get("revision"), offset, limit),
+                     raw.get("revision"), start_line, max_lines),
                     output)
             return self._success(intent, output)
 

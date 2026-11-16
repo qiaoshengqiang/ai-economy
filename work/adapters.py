@@ -40,12 +40,17 @@ class WorkWorkspaceReadExecutor:
         params = dict(getattr(intent, "parameters", None) or {})
         if "path" not in params and "target" in params:
             params["path"] = params.pop("target")
+        # 旧字段名 -> 新的行号字段；新 prompt 只发 start_line / max_lines。
+        if "start_line" not in params and "offset" in params:
+            params["start_line"] = params.pop("offset")
+        if "max_lines" not in params and "limit" in params:
+            params["max_lines"] = params.pop("limit")
         # 模型常把起始行写成 0；行号从 1 开始，直接归一，
         # 不让一次可避免的参数错误烧掉一个 turn。
-        if "offset" in params:
+        if "start_line" in params:
             try:
-                if int(params["offset"]) == 0:
-                    params["offset"] = 1
+                if int(params["start_line"]) == 0:
+                    params["start_line"] = 1
             except (TypeError, ValueError):
                 pass
         return self.inner.execute(replace(intent, parameters=params))

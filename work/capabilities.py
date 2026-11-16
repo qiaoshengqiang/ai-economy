@@ -73,7 +73,9 @@ ACTION_PARAMS = {
     # Workspace
     "workspace_read": (
         '- workspace_read:\n'
-        '  {"path":"<relative path>", "offset":1, "limit":12000}'
+        '  {"path":"<relative path>", "start_line":1, "max_lines":200}\n'
+        '  start_line / max_lines 都是**行号**，不是字符；单次最多 400 行；\n'
+        '  继续下一页用返回的 next_start_line。'
     ),
     "workspace_search": (
         '- workspace_search:\n'

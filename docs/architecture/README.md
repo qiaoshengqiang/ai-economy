@@ -45,6 +45,7 @@
 | [PROJECT_WORKDIR.md](PROJECT_WORKDIR.md) | 中 | **Project Workdir · 直接修改已有项目目录 · shadow snapshot · 项目锁**（Phase 1 `CURRENT`） | 做直接改项目 / 项目目录 / 项目锁时 |
 | [PLATFORM_COMPATIBILITY.md](PLATFORM_COMPATIBILITY.md) | 中 | **平台支持矩阵 · PlatformAdapter 适配指南 · Windows 待办**（POSIX `CURRENT` / Windows `DESIGNED`） | 做 Windows / WSL 移植时 |
 | [PROMPT_WRITING_GUIDELINES.md](PROMPT_WRITING_GUIDELINES.md) | 短 | **Prompt 编写约定 · 事实边界优先 · 硬边界 / 软启发 · 变更流程**（`CURRENT`） | 写 / 改任何注入 LLM 的 prompt 时 |
+| [PROMPT_SPECIFICATION.md](PROMPT_SPECIFICATION.md) | 中 | **Prompt 规范 · 分层结构 · 单位 / 分页 · 缓存顺序 · 不可信数据边界**（`DRAFT`，待确认） | 统一多个 prompt / 设计新 prompt 时 |
 | [adr/](adr/README.md) | 中 | **单个决策**的历史与理由 | 想知道「为什么当初这样定」时 |
 
 **三层分工，不要重复**：
@@ -93,7 +94,7 @@ ADR            ← 单个决策的历史与理由（中）
 |---|---|
 | **版本** | **`v0.2.0`**（当前状态见 [`../PROJECT_STATUS.md`](../PROJECT_STATUS.md)） |
 | **阶段** | Post-Change-Pipeline-Phase-1 · Agent Core V1 · Tool Runtime V1 · Pi Work（workflow / autonomous）已实现 |
-| **测试** | 以 `./dev.sh test` 当前输出为准（最近：5824 passed, 2 skipped, 30 deselected） |
+| **测试** | 以 `./dev.sh test` 当前输出为准（最近：5828 passed, 2 skipped, 30 deselected） |
 | **协议** | v1 |
 | **Memory 四层** | Layer 1 `DESIGNED` · **Layer 2 `CURRENT`** · Layer 3/4 `FUTURE`（见 AGENTS.md §4） |
 | **Task Workspace** | `TaskWorkspaceRef` 仍是纯引用；**Workspace Core v1 已实现**（资源树 / 锁 / 版本，ADR-0029） |

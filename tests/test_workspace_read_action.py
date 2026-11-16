@@ -333,8 +333,9 @@ def test_read_result_shape_matches_write(ws):
         写多出 → `mode`（读没有「写入模式」这个概念）
                  `previous_revision`（读没有「上一个版本」这个概念）
         读多出 → `content`（没有它就等于没读）
-                 + 范围读取元数据：total_chars / total_lines / offset /
-                   limit / start_line / end_line / truncated
+                 + 范围读取元数据：total_chars / total_lines /
+                   start_line / max_lines / end_line / next_start_line /
+                   truncated
     """
     from services.artifacts import read_artifact
 
@@ -346,8 +347,9 @@ def test_read_result_shape_matches_write(ws):
     assert common <= set(r), f"读的返回缺公共字段：{sorted(common - set(r))}"
 
     read_only = {
-        "content", "total_chars", "total_lines", "offset", "limit",
-        "start_line", "end_line", "truncated",
+        "content", "total_chars", "total_lines",
+        "start_line", "max_lines", "end_line", "next_start_line",
+        "truncated",
     }
     assert set(r) - set(w) == read_only, (
         f"读多出的字段应当只有 {sorted(read_only)}，"
@@ -672,7 +674,7 @@ def test_cache_key_includes_read_range():
     from actions.intent import ActionIntent
     ex.execute(ActionIntent(
         action_type="workspace_read",
-        parameters={"path": "x.md", "offset": 1, "limit": 2},
+        parameters={"path": "x.md", "start_line": 1, "max_lines": 2},
         agent_id="novel_reader"))
 
     assert len(reads) == 2, "范围不同不能共用缓存"

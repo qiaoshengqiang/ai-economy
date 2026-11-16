@@ -59,6 +59,29 @@ class TestRangeRead:
         assert out["total_lines"] == 5
         assert out["truncated"] is True
 
+    def test_start_line_and_max_lines(self):
+        gw = _Gateway("a\nb\nc\nd\ne")
+        out = read_artifact(
+            gw, "WS", "agent_a", "x.py", start_line=2, max_lines=2)
+        assert out["content"] == "b\nc"
+        assert out["start_line"] == 2
+        assert out["max_lines"] == 2
+        assert out["end_line"] == 3
+        assert out["next_start_line"] == 4
+        assert out["truncated"] is True
+
+        rest = read_artifact(
+            gw, "WS", "agent_a", "x.py", start_line=4, max_lines=2)
+        assert rest["content"] == "d\ne"
+        assert rest["next_start_line"] is None
+
+    def test_start_line_and_offset_conflict(self):
+        gw = _Gateway("a\nb")
+        out = read_artifact(
+            gw, "WS", "agent_a", "x.py", start_line=1, offset=2)
+        assert out["ok"] is False
+        assert out["code"] == "bad_pagination"
+
     def test_offset_beyond_end(self):
         gw = _Gateway("a\nb")
         out = read_artifact(gw, "WS", "agent_a", "x.py", offset=10, limit=5)
@@ -139,20 +162,22 @@ class TestExecutors:
     def test_read_executor_passes_range(self):
         seen = {}
 
-        def read_fn(gateway, ws, agent, path, *, offset=None, limit=None):
-            seen.update(offset=offset, limit=limit)
+        def read_fn(gateway, ws, agent, path, *, start_line=None,
+                    max_lines=None):
+            seen.update(start_line=start_line, max_lines=max_lines)
             return {"ok": True, "path": path, "revision": 1,
                     "chars": 3, "content": "b\nc",
                     "total_chars": 10, "total_lines": 5,
-                    "offset": 2, "limit": 2, "start_line": 2,
-                    "end_line": 3, "truncated": True}
+                    "start_line": 2, "max_lines": 2,
+                    "end_line": 3, "next_start_line": None,
+                    "truncated": True}
 
         ex = WorkspaceReadExecutor(read_fn, gateway=object(), workspace_id="WS")
         result = ex.execute(ActionIntent(
             action_type=ACTION_WORKSPACE_READ, agent_id="agent_a",
-            parameters={"path": "x.py", "offset": 2, "limit": 2}))
+            parameters={"path": "x.py", "start_line": 2, "max_lines": 2}))
         assert result.success is True
-        assert seen == {"offset": 2, "limit": 2}
+        assert seen == {"start_line": 2, "max_lines": 2}
         assert result.output["start_line"] == 2
 
     def test_edit_executor_uses_intent_agent(self):
@@ -193,7 +218,7 @@ def test_range_header_is_rendered_for_agent():
     )
     intent = ActionIntent(action_type=ACTION_WORKSPACE_READ,
                           agent_id="agent_a",
-                          parameters={"path": "x.py", "offset": 2, "limit": 2})
+                          parameters={"path": "x.py", "start_line": 2, "max_lines": 2})
     text = render_read_results([(intent, result)])
     assert isinstance(text, str)
     assert "[lines 2-3 of 5]" in text

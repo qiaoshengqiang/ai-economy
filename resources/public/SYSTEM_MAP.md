@@ -42,7 +42,7 @@
 |---|---|---|
 | `workspace_write` | 写一个产物到 Task Workspace | `path` · `content` · `write_mode`（`create`/`replace`/`append`，省略时 Work 层默认 `create`）；单次 `content` ≤ 64000 字符 |
 | `workspace_edit` | 用 `old_string → new_string` **局部修改**已存在的文件 | `path` · `old_string` · `new_string` · `replace_all`（可选） · `expected_revision`（可选）；单次 `new_string` ≤ 64000 字符 |
-| `workspace_read` | 读 Task Workspace 里某个文件的**当前内容**（可范围读取） | `path` · `offset`（1-based，可选） · `limit`（可选） |
+| `workspace_read` | 读 Task Workspace 里某个文件的**当前内容**（可按行范围读取） | `path` · `start_line`（1-based，可选） · `max_lines`（最多 400 行，可选）；返回 `next_start_line` 作为下一页游标 |
 | `workspace_search` | 在 Task Workspace 里做**只读字面搜索** | `query` · `path`（可选） · `glob`（可选） · `max_results`（可选） · `case_sensitive`（可选） · `context_lines`（可选） |
 | `message_send` | 按**显式**消息类型发一条消息 | `to` · `text` · `message_type` · `payload` |
 | `public_query` | 查**公共资料**（就是这里） | `name`（读一份）或 `list`（= true 时列清单） |
