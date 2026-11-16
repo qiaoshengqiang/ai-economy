@@ -465,6 +465,7 @@ class OpenAICompatibleProvider(LLMProvider):
         model: str,
         temperature: float,
         max_tokens: int,
+        supports_image_input: Optional[bool] = None,
         **extra: Any,
     ) -> Dict[str, Any]:
         """
@@ -473,11 +474,14 @@ class OpenAICompatibleProvider(LLMProvider):
         单独抽成方法，是为了能被测试直接调用 ——
         不用真的发请求就能验证序列化对不对。
 
-        🔒 图片能力由 Provider 自己声明；不支持图片的 Provider
-           在这里**明确拒绝**，不把 image part 静默丢掉。
+        🔒 图片能力由 provider 或当前 model profile 声明；
+           两者都不支持时**明确拒绝**，不把 image part 静默丢掉。
         """
-        if (messages_have_images(messages)
-                and not getattr(self, "supports_image_input", False)):
+        allows_images = bool(
+            getattr(self, "supports_image_input", False))
+        if supports_image_input:
+            allows_images = True
+        if messages_have_images(messages) and not allows_images:
             raise LLMRequestError(
                 f"provider {self.name!r} 不支持图片输入")
         payload: Dict[str, Any] = {
@@ -1007,6 +1011,9 @@ class OpenAICompatibleProvider(LLMProvider):
         requested_budget = kwargs.pop("requested_cognitive_budget", None)
         # 会话 ID 只用于请求头，绝不进入 payload。
         llm_session_id = str(kwargs.pop("llm_session_id", "") or "").strip()
+        # 当前 model profile 的图片能力；只参与本地校验，不进入 payload。
+        model_supports_images = bool(
+            kwargs.pop("supports_image_input", False))
         effective_tokens, clipped = self.clip_cognitive_budget(
             requested_budget, max_tokens)
         self._last_requested_budget = self._as_budget_int(requested_budget)
@@ -1034,6 +1041,7 @@ class OpenAICompatibleProvider(LLMProvider):
             model=resolved_model,
             temperature=temperature,
             max_tokens=effective_tokens,
+            supports_image_input=model_supports_images,
             **kwargs,
         )
         headers = self.build_headers(session_id=llm_session_id)

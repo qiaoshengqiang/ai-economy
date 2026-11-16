@@ -201,6 +201,8 @@ class WorkJob:
     #: 这次 Job 是否可以直接重试（Front 调用失败 / 输出不可解析）。
     retryable: bool = False
     cancelled: bool = False
+    #: cancel / interrupt。决定停止后 Job 的终态与 Task 是否保留。
+    stop_mode: str = ""
     created_at: str = ""
     updated_at: str = ""
 
@@ -240,6 +242,7 @@ class WorkJob:
                 if self.status in _ENDED_JOB_STATUSES else _now()),
             "retryable": bool(self.retryable),
             "cancelled": self.cancelled,
+            "stop_mode": self.stop_mode,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -2091,6 +2094,9 @@ class AIEOSController:
             job.summary = text
             self._touch(job)
             return
+        if intent == FrontIntent.INTERRUPT:
+            self._interrupt_work(job, decision)
+            return
         if intent == FrontIntent.CANCEL:
             self._cancel_work(job, decision)
             return
@@ -3381,6 +3387,67 @@ class AIEOSController:
     # ------------------------------------------------------------
     # cancel：真正停止执行中的 Task
     # ------------------------------------------------------------
+    def _interrupt_work(self, job: WorkJob, decision: Any) -> None:
+        """暂停执行中的 Task：Job 停下，Task 保持 IN_PROGRESS。
+
+        与 cancel 的区别：
+            cancel    → Task CANCELLED，不能 follow_up
+            interrupt → Task 保持 IN_PROGRESS，可以 follow_up 继续
+        """
+        task_id = str(getattr(decision, "task_id", "") or "").strip()
+        try:
+            task = self.rt.tasks.get(task_id)
+        except Exception:                                     # noqa: BLE001
+            task = None
+        if task is None:
+            self._reply_direct(
+                job, "找不到要中断的任务；它可能已经被清理了。", task_id)
+            return
+        if task.status == TaskStatus.COMPLETED:
+            self._reply_direct(
+                job, f"任务 {task.task_id} 已经完成了，不需要中断。",
+                task.task_id)
+            return
+        if not task.is_open:
+            self._reply_direct(
+                job,
+                f"任务 {task.task_id} 当前是 {task.status}，没有在运行。",
+                task.task_id,
+            )
+            return
+
+        target = None
+        with self._lock:
+            for other in self._jobs.values():
+                if other.job_id == job.job_id:
+                    continue
+                if other.task_id != task.task_id:
+                    continue
+                if other.status in _RUNNING_JOB_STATUSES:
+                    target = other
+                    break
+
+        if target is None:
+            self._reply_direct(
+                job,
+                f"任务 {task.task_id} 当前没有在运行（{task.status}），"
+                "可以直接告诉我继续。",
+                task.task_id,
+            )
+            return
+
+        target.cancelled = True
+        target.stop_mode = "interrupt"
+        self._set_job(target, JobStatus.CANCELLING)
+        self._reply_direct(
+            job,
+            self._front_reply_text(
+                decision,
+                f"正在中断任务 {task.task_id}。它会在当前步骤结束后停下，"
+                "Task 保持 IN_PROGRESS，之后可以继续。"),
+            task.task_id,
+        )
+
     def _cancel_work(self, job: WorkJob, decision: Any) -> None:
         task_id = str(getattr(decision, "task_id", "") or "").strip()
         try:
@@ -3433,6 +3500,7 @@ class AIEOSController:
             return
 
         target.cancelled = True
+        target.stop_mode = "cancel"
         self._set_job(target, JobStatus.CANCELLING)
         self._mark_task_cancelled(
             task, reason=f"Human: {job.human_text}")
@@ -3570,6 +3638,17 @@ class AIEOSController:
             return False
 
     def _finish_cancelled(self, job: WorkJob, task_id: str) -> None:
+        if job.stop_mode == "interrupt":
+            job.status = JobStatus.INTERRUPTED
+            job.summary = "任务已中断，可以继续"
+            job.error = ""
+            self._message(
+                "system",
+                f"任务 {task_id} 已中断；状态保持 IN_PROGRESS，"
+                "可以用 follow_up 继续。",
+                job_id=job.job_id, task_id=task_id)
+            self._touch(job)
+            return
         job.status = JobStatus.CANCELLED
         job.summary = "任务已停止"
         job.error = ""

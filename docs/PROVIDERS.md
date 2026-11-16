@@ -121,6 +121,12 @@ models:
   opencode_qwen:
     provider: opencode
     model_id: qwen3.8-max
+  deepseek-v4.1flash:
+    provider: opencode
+    model_id: deepseek-v4.1-flash
+    supports_reasoning: true
+    # 该模型原生支持图片；必须显式声明，否则 Provider 会拒绝 image part。
+    supports_image_input: true
 
 credentials:
   opencode_key:

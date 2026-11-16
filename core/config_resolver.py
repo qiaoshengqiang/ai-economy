@@ -215,6 +215,8 @@ class ResolvedModel:
     max_output_tokens: Optional[int] = None
     #: 是否支持隐藏推理 / reasoning。
     supports_reasoning: bool = False
+    #: 是否接受图片输入。由 model profile 声明，不能按 provider 一刀切。
+    supports_image_input: bool = False
     #: 模型支持的固定思考强度；UI 的选项只从这里来。
     thinking_levels: Tuple[str, ...] = ()
     source: str = ""
@@ -228,6 +230,7 @@ class ResolvedModel:
                 "context_window": self.context_window,
                 "max_output_tokens": self.max_output_tokens,
                 "supports_reasoning": self.supports_reasoning,
+                "supports_image_input": self.supports_image_input,
                 "thinking_levels": list(self.thinking_levels),
                 "source": self.source}
 
@@ -277,6 +280,7 @@ class ResolvedAgent:
     context_window: Optional[int] = None
     max_output_tokens: Optional[int] = None
     supports_reasoning: bool = False
+    supports_image_input: bool = False
     thinking_levels: Tuple[str, ...] = ()
     system_prompt: str = ""
     #: 其余**原样保留**的 Agent 配置段（economy / capabilities / negotiation /
@@ -299,6 +303,7 @@ class ResolvedAgent:
             "context_window": self.context_window,
             "max_output_tokens": self.max_output_tokens,
             "supports_reasoning": self.supports_reasoning,
+            "supports_image_input": self.supports_image_input,
             "thinking_levels": list(self.thinking_levels),
             "system_prompt_chars": len(self.system_prompt or ""),
             "source": self.source,
@@ -905,6 +910,8 @@ class ConfigResolver:
             context_window=context_window,
             max_output_tokens=max_output_tokens,
             supports_reasoning=bool(raw.get("supports_reasoning", False)),
+            supports_image_input=bool(
+                raw.get("supports_image_input", False)),
             thinking_levels=thinking_levels,
             source=self._src(f"models.{profile}"),
         )
@@ -962,6 +969,7 @@ class ConfigResolver:
             context_window=model.context_window,
             max_output_tokens=model.max_output_tokens,
             supports_reasoning=model.supports_reasoning,
+            supports_image_input=model.supports_image_input,
             thinking_levels=model.thinking_levels,
             # 🔒 `.strip()` 不是装饰 —— 它保持与旧的
             #    `AgentConfig.system_prompt`（`core/config.py` 里也 strip）

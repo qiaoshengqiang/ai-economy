@@ -34,7 +34,10 @@ class FrontIntent:
     REWORK = "rework"
     #: 对进行中 Task 的追问 / 补充 → 路由给 Creator
     FOLLOW_UP = "follow_up"
-    #: Human 明确要求停止进行中的 Task
+    #: Human 要求暂停进行中的 Task：停止当前执行，但 Task 保持
+    #: IN_PROGRESS，之后可以用 follow_up 继续
+    INTERRUPT = "interrupt"
+    #: Human 明确要求停止进行中的 Task（终态，不可继续）
     CANCEL = "cancel"
     #: Human 要求查看某个 Task 的产物（导出到宿主机）
     ARTIFACTS = "artifacts"
@@ -53,7 +56,8 @@ class FrontIntent:
     def all(cls) -> List[str]:
         return [
             cls.DIRECT_REPLY, cls.HANDOFF, cls.REWORK,
-            cls.FOLLOW_UP, cls.CANCEL, cls.ARTIFACTS, cls.CLARIFY,
+            cls.FOLLOW_UP, cls.INTERRUPT, cls.CANCEL,
+            cls.ARTIFACTS, cls.CLARIFY,
             cls.INSPECT, cls.SET_MODE, cls.COMMIT_CONFIRM,
             cls.NO_NOTIFY,
         ]

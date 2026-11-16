@@ -4,7 +4,7 @@
 > **日期：2026-11-15**
 > **阶段：开发中 / 观察实验**
 > **协议版本：`1`**
-> **测试基线：`5816 passed, 2 skipped, 30 deselected`**
+> **测试基线：`5822 passed, 2 skipped, 30 deselected`**
 
 本文记录**当前真实可用能力、推荐工作方式、已知限制和版本变化**。
 架构的长期权威仍然是
@@ -67,6 +67,10 @@
 - Prompt 缓存布局：Front / Solo / Pi 把稳定指令、schema、输出格式前置，
   记忆 / 对话 / 当前输入 / 动作结果 / 当前时间后置；
   `tests/test_prompt_cache_order.py` 守卫顺序。
+- Worker 图片输入按 model profile 声明 `supports_image_input`；
+  OpenCode `deepseek-v4.1-flash` 已开启，其他未声明模型仍然明确失败。
+- Front 新增 `interrupt`：停止当前执行、Task 保持 `IN_PROGRESS`，
+  之后可用 `follow_up` 继续；`cancel` 仍是终态。
 
 ---
 
@@ -544,7 +548,7 @@ Team 协作
 当前基线：
 
 ```text
-5816 passed, 2 skipped, 30 deselected
+5822 passed, 2 skipped, 30 deselected
 ```
 
 启动说明见 [`../START_AIEOS.md`](../START_AIEOS.md)。

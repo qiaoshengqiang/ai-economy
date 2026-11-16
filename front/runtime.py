@@ -558,7 +558,7 @@ Task 能力的事实边界（由系统强制，不靠你猜）：
 - Worker 数量有限：单个 handoff 会等待空闲 Worker；批量派发需要足够
   的空闲 Worker，不够时整批失败。
 - 闹钟续期由 schedule 决定：once 触发后结束；every 按周期自动续期。
-- 本轮不能 cancel / artifacts / commit_confirm / set_mode。
+- 本轮不能 interrupt / cancel / artifacts / commit_confirm / set_mode。
 """
         return f"""{self.agent_identity}
 
@@ -591,6 +591,10 @@ Task 能力的事实边界（由系统强制，不靠你猜）：
 - Worker 会看到 human_text / task_text / front_notes 三部分：
   task_text 是你的执行说明，front_notes 是建议（非硬要求）。
   task_text 写清目标对象、目录和期望结果，Worker 才能独立执行。
+- 用户说「先停一下 / 暂停 / 中断」→ interrupt；
+  说「停止 / 取消 / 不做了」→ cancel。
+  interrupt 后 Task 保持 IN_PROGRESS，可以 follow_up 继续；
+  cancel 是终态，不能继续。
 
 ========== Front 动作（可选，多步） ==========
 可用动作：{actions}
@@ -690,29 +694,33 @@ Role 是弱信号；work_profile 依据任务本身判断。
      "task_text":"...","front_notes":"...",
      "reply":"...","reason":"..."}}
 
-5. cancel —— 停止一个进行中的 Task。
+5. interrupt —— 暂停一个进行中的 Task：当前执行停止，
+   Task 保持 IN_PROGRESS，之后可以 follow_up 继续。
+   {{"intent":"interrupt","task_id":"...","reply":"...","reason":"..."}}
+
+6. cancel —— 停止一个进行中的 Task：Task 变为 CANCELLED，不能继续。
    {{"intent":"cancel","task_id":"...","reply":"...","reason":"..."}}
 
-6. artifacts —— 把 Task 文件导出到宿主机；返回路径，不返回内容。
+7. artifacts —— 把 Task 文件导出到宿主机；返回路径，不返回内容。
    需要展示文件内容时使用 artifact_read。
    {{"intent":"artifacts","task_id":"...","reply":"...","reason":"..."}}
 
-7. clarify —— 当选择很重要时询问人类。
+8. clarify —— 当选择很重要时询问人类。
    {{"intent":"clarify","question":"...","reason":"..."}}
 
-8. inspect —— 只读 Task 事实；每次输入最多 2 次。
+9. inspect —— 只读 Task 事实；每次输入最多 2 次。
    返回 Task 的 workspace_path（Task Workspace 的宿主机路径）和文件列表；
    只读，不导出。
    {{"intent":"inspect","task_id":"...","reason":"..."}}
 
-9. set_mode —— 修改 Front / Work 的全局模式，不创建 Task。
+10. set_mode —— 修改 Front / Work 的全局模式，不创建 Task。
    front_mode：autonomous | relay（可选）
    work_mode：workflow | autonomous（可选）
    {{"intent":"set_mode","front_mode":"relay","work_mode":"autonomous",
      "reply":"...","reason":"..."}}
    未提供的字段保持不变。修改后对新任务生效。
 
-10. commit_confirm —— 人类确认提交一个已完成 Task 的快照。
+11. commit_confirm —— 人类确认提交一个已完成 Task 的快照。
    人类可以用自然语言确认，例如“可以提交”“提交吧”“确认这个版本”“就这个”。
    task_id 和 commit_code 由 Front 从最近完成消息与“待确认提交”列表里推断。
    待确认请求唯一且人类表达明确确认时，可以直接输出 commit_confirm。
@@ -727,8 +735,8 @@ Role 是弱信号；work_profile 依据任务本身判断。
   {{"intent":"cancel","task_id":"task_a","reply":"task_a 已停"}},
   {{"intent":"cancel","task_id":"task_b","reply":"task_b 已停"}}
 ]}}
-控制动作（direct_reply / clarify / cancel / artifacts / set_mode /
-commit_confirm）按你给出的顺序执行。
+控制动作（direct_reply / clarify / interrupt / cancel / artifacts /
+set_mode / commit_confirm）按你给出的顺序执行。
 
 如果人类一次提出多个彼此独立、可分别验收的任务，可以输出多个 handoff：
 - 每个 handoff 必须有自己的 task_text / role / work_profile / preferred_agent；

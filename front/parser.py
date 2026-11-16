@@ -311,6 +311,16 @@ def parse_front_decision(
                 confidence=confidence,
                 reason=str(payload.get("reason") or "")), ""
 
+        if raw_intent == FrontIntent.INTERRUPT:
+            task_id = str(payload.get("task_id") or "").strip()
+            if task_id not in active:
+                return None, "interrupt_task_not_active"
+            return FrontDecision(
+                intent=raw_intent, task_id=task_id,
+                reply=str(payload.get("reply") or "").strip(),
+                confidence=confidence,
+                reason=str(payload.get("reason") or "")), ""
+
         if raw_intent == FrontIntent.CANCEL:
             task_id = str(payload.get("task_id") or "").strip()
             if task_id not in active:

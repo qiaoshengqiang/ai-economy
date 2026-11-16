@@ -302,3 +302,23 @@ class TestCognitionFollowUpWithImage:
         content = last_user["content"]
         assert isinstance(content, list)
         assert any(part.get("type") == "image_url" for part in content)
+
+
+def test_model_profile_can_allow_images_for_generic_provider():
+    from llm.openai_compatible import OpenAICompatibleProvider
+
+    provider = OpenAICompatibleProvider()
+    assert provider.supports_image_input is False
+    payload = provider.build_payload(
+        normalize_messages(_image_message()),
+        "deepseek-v4.1-flash", 0.2, 100,
+        supports_image_input=True,
+    )
+    assert isinstance(payload["messages"][0]["content"], list)
+
+    with pytest.raises(LLMRequestError, match="不支持图片"):
+        provider.build_payload(
+            normalize_messages(_image_message()),
+            "deepseek-v4.1-flash", 0.2, 100,
+            supports_image_input=False,
+        )
