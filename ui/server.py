@@ -229,6 +229,17 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(
                     {"ok": False, "error": str(exc)}, status=404)
             return
+        if path == "/api/memory":
+            query = parse_qs(parsed.query)
+            agent_id = str(
+                (query.get("agent_id") or [self.controller.front_agent])[0]
+                or self.controller.front_agent).strip()
+            try:
+                self._send_json(self.controller.agent_memory(agent_id))
+            except ValueError as exc:
+                self._send_json(
+                    {"ok": False, "error": str(exc)}, status=404)
+            return
         if path.startswith("/api/activities/"):
             run_id = path[len("/api/activities/"):].strip()
             if not run_id or not re.fullmatch(r"[A-Za-z0-9_]+", run_id):
@@ -332,6 +343,35 @@ class Handler(BaseHTTPRequestHandler):
                 job_id = self.controller.answer_question(
                     task_id, answer, option_id=option_id)
                 self._send_json({"ok": True, "job_id": job_id})
+                return
+            if path == "/api/memory/delete":
+                agent_id = str(
+                    payload.get("agent_id")
+                    or self.controller.front_agent).strip()
+                try:
+                    result = self.controller.delete_agent_memory(
+                        agent_id,
+                        kind=str(payload.get("kind") or "").strip(),
+                        entry_id=str(payload.get("entry_id") or "").strip(),
+                        expected_revision=payload.get("expected_revision"),
+                    )
+                except ValueError as exc:
+                    self._send_json(
+                        {"ok": False, "error": str(exc)}, status=400)
+                    return
+                self._send_json({"ok": True, **result})
+                return
+            if path == "/api/memory/clear":
+                agent_id = str(
+                    payload.get("agent_id")
+                    or self.controller.front_agent).strip()
+                try:
+                    result = self.controller.clear_agent_memory(agent_id)
+                except ValueError as exc:
+                    self._send_json(
+                        {"ok": False, "error": str(exc)}, status=400)
+                    return
+                self._send_json({"ok": True, **result})
                 return
             if path == "/api/activities/seen":
                 agent_id = str(

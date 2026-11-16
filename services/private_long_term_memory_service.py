@@ -32,6 +32,12 @@ class PrivateLongTermMemoryService:
     def all(self, agent_id: str) -> List[LongTermEntry]:
         return self.store.all(agent_id)
 
+    def delete(self, agent_id: str, entry_id: str) -> bool:
+        return self.store.delete(agent_id, entry_id)
+
+    def clear(self, agent_id: str) -> int:
+        return self.store.clear(agent_id)
+
     def top(self, agent_id: str, limit: int = TOP_LIMIT
             ) -> List[LongTermEntry]:
         return sorted(self.all(agent_id),

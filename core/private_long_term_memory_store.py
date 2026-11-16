@@ -53,6 +53,21 @@ class PrivateLongTermMemoryStore:
                             sort_keys=True),
                  entry.created_at))
 
+    def delete(self, agent_id: str, entry_id: str) -> bool:
+        with self.db.transaction() as conn:
+            cur = conn.execute(
+                f"DELETE FROM {TABLE_PRIVATE_LONG_TERM_MEMORY} "
+                "WHERE agent_id = ? AND entry_id = ?",
+                (agent_id, entry_id))
+        return int(cur.rowcount or 0) > 0
+
+    def clear(self, agent_id: str) -> int:
+        with self.db.transaction() as conn:
+            cur = conn.execute(
+                f"DELETE FROM {TABLE_PRIVATE_LONG_TERM_MEMORY} "
+                "WHERE agent_id = ?", (agent_id,))
+        return max(0, int(cur.rowcount or 0))
+
     def mark_used(self, agent_id: str, entry_ids: Iterable[str],
                   task_id: str) -> List[LongTermEntry]:
         wanted = {str(x) for x in entry_ids}

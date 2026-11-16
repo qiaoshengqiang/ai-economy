@@ -22,6 +22,17 @@
     detailRun: $("detail-run"),
     detailBody: $("detail-body"),
     detailClose: $("detail-close"),
+    memoryBtn: $("memory-btn"),
+    memoryBackdrop: $("memory-backdrop"),
+    memoryModal: $("memory-modal"),
+    memoryClose: $("memory-close"),
+    memoryAgent: $("memory-agent"),
+    memoryClear: $("memory-clear"),
+    memoryStats: $("memory-stats"),
+    memorySubtitle: $("memory-subtitle"),
+    memoryBody: $("memory-body"),
+    memoryShortCount: $("memory-short-count"),
+    memoryLongCount: $("memory-long-count"),
     messages: $("messages"),
     prompt: $("prompt"),
     submit: $("submit-btn"),
@@ -94,6 +105,12 @@
   let activityLoading = false;
   let lastActivityUnread = -1;
   let openActivityRun = "";
+  let memoryOpen = false;
+  let memoryAgentId = "";
+  let memoryTab = "short";
+  let memoryData = null;
+  let memoryLoading = false;
+  let memoryRequestToken = 0;
   let timingTimer = 0;
   let timingDoneTimer = 0;
   let workdirPath = "";
@@ -1501,6 +1518,299 @@
     }
   }
 
+  /* ---------------- Agent 记忆 ---------------- */
+  function memoryAgents() {
+    const agents = ((state && state.agents) || []).filter(
+      (agent) => !agent.archived);
+    const list = agents.map((agent) => ({
+      agent_id: agent.agent_id,
+      name: agent.name || agent.agent_id,
+      role: agent.agent_id === ((state && state.front_agent) || "")
+        ? "Front" : "Agent",
+    }));
+    if (!list.length) {
+      const frontId = (state && state.front_agent) || "agent_a";
+      list.push({ agent_id: frontId, name: frontId, role: "Front" });
+    }
+    return list;
+  }
+
+  function memoryAgentName(agentId) {
+    const agent = memoryAgents().find((item) => item.agent_id === agentId);
+    return agent ? agent.name : agentId;
+  }
+
+  function populateMemoryAgents() {
+    const list = memoryAgents();
+    els.memoryAgent.textContent = "";
+    list.forEach((agent) => {
+      const option = document.createElement("option");
+      option.value = agent.agent_id;
+      option.textContent = `${agent.name}（${agent.agent_id}）`;
+      els.memoryAgent.appendChild(option);
+    });
+    if (!list.some((agent) => agent.agent_id === memoryAgentId)) {
+      memoryAgentId = (state && state.front_agent)
+        || (list[0] && list[0].agent_id) || "";
+    }
+    els.memoryAgent.value = memoryAgentId;
+  }
+
+  function setMemoryOpen(open) {
+    memoryOpen = Boolean(open);
+    els.memoryModal.classList.toggle("open", memoryOpen);
+    els.memoryBackdrop.classList.toggle("open", memoryOpen);
+    els.memoryBtn.classList.toggle("active", memoryOpen);
+    els.memoryBtn.setAttribute("aria-expanded", String(memoryOpen));
+    if (memoryOpen) {
+      populateMemoryAgents();
+      loadMemory(memoryAgentId);
+    }
+  }
+
+  async function loadMemory(agentId) {
+    if (!agentId) return;
+    const token = ++memoryRequestToken;
+    memoryLoading = true;
+    try {
+      const data = await api(
+        `/api/memory?agent_id=${encodeURIComponent(agentId)}`);
+      if (token !== memoryRequestToken || agentId !== memoryAgentId) return;
+      memoryData = data;
+      renderMemory();
+    } catch (error) {
+      if (token !== memoryRequestToken) return;
+      memoryData = null;
+      els.memoryBody.textContent = "";
+      const box = document.createElement("div");
+      box.className = "memory-empty";
+      const title = document.createElement("strong");
+      title.textContent = "记忆读取失败";
+      const detail = document.createElement("div");
+      detail.textContent = error.message;
+      box.append(title, detail);
+      els.memoryBody.appendChild(box);
+    } finally {
+      if (token === memoryRequestToken) memoryLoading = false;
+    }
+  }
+
+  function memoryNode(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+
+  function memoryTime(value) {
+    const text = String(value || "");
+    if (!text) return "—";
+    const date = new Date(text);
+    if (Number.isNaN(date.getTime())) return text;
+    const pad = (number) => String(number).padStart(2, "0");
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-`
+      + `${pad(date.getDate())} ${pad(date.getHours())}:`
+      + `${pad(date.getMinutes())}`;
+  }
+
+  function renderMemory() {
+    const data = memoryData;
+    const agentSelect = els.memoryAgent;
+    const agentId = memoryAgentId || agentSelect.value;
+    const agent = memoryAgents().find((item) => item.agent_id === agentId);
+    els.memorySubtitle.textContent = agent
+      ? `${agent.name}（${agent.agent_id}）· ${agent.role}`
+      : agentId;
+    if (!data) {
+      els.memoryStats.textContent = "";
+      els.memoryShortCount.textContent = "";
+      els.memoryLongCount.textContent = "";
+      return;
+    }
+    const short = data.short || { revision: 0, entries: [] };
+    const long = data.long || [];
+    const shortEntries = short.entries || [];
+    els.memoryStats.textContent = "";
+    [
+      ["短期 revision", short.revision],
+      ["短期条目", shortEntries.length],
+      ["长期条目", long.length],
+    ].forEach(([label, value]) => {
+      const chip = memoryNode("span", "memory-stat");
+      chip.appendChild(document.createTextNode(label));
+      chip.appendChild(memoryNode("b", "", String(value)));
+      els.memoryStats.appendChild(chip);
+    });
+    if (short.needs_compaction) {
+      els.memoryStats.appendChild(memoryNode(
+        "span", "memory-stat warn",
+        "短期记忆超过一半，建议抽象成长期记忆"));
+    }
+    els.memoryShortCount.textContent = String(shortEntries.length);
+    els.memoryLongCount.textContent = String(long.length);
+    els.memoryClear.disabled = !shortEntries.length && !long.length;
+
+    els.memoryBody.textContent = "";
+    const items = memoryTab === "short" ? shortEntries : long;
+    if (!items.length) {
+      const box = memoryNode("div", "memory-empty");
+      const title = memoryNode("strong", "", memoryTab === "short"
+        ? "还没有短期记忆" : "还没有长期记忆");
+      box.appendChild(title);
+      box.appendChild(document.createTextNode(memoryTab === "short"
+        ? "Agent 在对话 / 工作里写入后，会出现在这里。"
+        : "短期记忆积累后，可以用 long_term_memory_consolidate 抽象成长期记忆。"));
+      els.memoryBody.appendChild(box);
+      return;
+    }
+    items.forEach((entry) => {
+      els.memoryBody.appendChild(memoryTab === "short"
+        ? renderShortMemory(entry) : renderLongMemory(entry));
+    });
+  }
+
+  function memoryEntryActions(entry, kind) {
+    const actions = memoryNode("div", "memory-entry-actions");
+    const remove = memoryNode("button", "memory-mini danger", "删除");
+    remove.type = "button";
+    remove.addEventListener("click", () => deleteMemoryEntry(kind, entry));
+    actions.appendChild(remove);
+    return actions;
+  }
+
+  function renderShortMemory(entry) {
+    const card = memoryNode("div", "memory-entry");
+    const top = memoryNode("div", "memory-entry-top");
+    top.appendChild(memoryNode(
+      "span", `memory-badge imp${entry.importance}`,
+      `importance ${entry.importance}`));
+    top.appendChild(memoryNode("span", "memory-date",
+      memoryTime(entry.created_at)));
+    top.appendChild(memoryNode("span", "memory-id", entry.entry_id));
+    top.appendChild(memoryEntryActions(entry, "short"));
+    card.appendChild(top);
+    card.appendChild(memoryNode("p", "memory-summary", entry.summary));
+    if (entry.notable) {
+      card.appendChild(memoryNode("p", "memory-notable", entry.notable));
+    }
+    if (entry.architecture) {
+      card.appendChild(memoryNode("pre", "memory-arch", entry.architecture));
+    }
+    const meta = memoryNode("div", "memory-meta");
+    meta.appendChild(memoryNode(
+      "span", "memory-chip", `use_count ${entry.use_count}`));
+    meta.appendChild(memoryNode(
+      "span", "memory-chip mono", entry.task_id || "跨对话"));
+    card.appendChild(meta);
+    return card;
+  }
+
+  function renderLongMemory(entry) {
+    const card = memoryNode("div", "memory-entry");
+    const top = memoryNode("div", "memory-entry-top");
+    top.appendChild(memoryNode(
+      "span", "memory-badge weight",
+      `weight ${Number(entry.weight || 0).toFixed(1)}`));
+    top.appendChild(memoryNode("span", "memory-date",
+      memoryTime(entry.created_at)));
+    top.appendChild(memoryNode("span", "memory-id", entry.entry_id));
+    const actions = memoryEntryActions(entry, "long");
+    const ids = entry.short_term_entry_ids || [];
+    let sub = null;
+    if (ids.length) {
+      const toggle = memoryNode(
+        "button", "memory-mini", `关联短期 ${ids.length}`);
+      toggle.type = "button";
+      sub = memoryNode("div", "memory-sublist", ids.join(" · "));
+      sub.hidden = true;
+      toggle.addEventListener("click", () => { sub.hidden = !sub.hidden; });
+      actions.insertBefore(toggle, actions.firstChild);
+    }
+    top.appendChild(actions);
+    card.appendChild(top);
+    card.appendChild(memoryNode("p", "memory-summary", entry.summary));
+    if (sub) card.appendChild(sub);
+    const meta = memoryNode("div", "memory-meta");
+    meta.appendChild(memoryNode(
+      "span", "memory-chip", `use_count ${entry.use_count}`));
+    (entry.tasks || []).forEach((task) => {
+      meta.appendChild(memoryNode("span", "memory-chip mono", task));
+    });
+    (entry.events || []).forEach((event) => {
+      meta.appendChild(memoryNode("span", "memory-chip", event));
+    });
+    card.appendChild(meta);
+    return card;
+  }
+
+  async function deleteMemoryEntry(kind, entry) {
+    const ok = await confirmDialog({
+      tone: "danger",
+      title: kind === "short" ? "删除这条短期记忆？" : "删除这条长期记忆？",
+      message: "删除后无法恢复。",
+      detailsTitle: "将删除：",
+      details: [String(entry.summary || entry.entry_id || "")],
+      confirmText: "删除",
+      cancelText: "取消",
+    });
+    if (!ok) return;
+    try {
+      const payload = {
+        agent_id: memoryAgentId,
+        kind,
+        entry_id: entry.entry_id,
+      };
+      if (kind === "short") {
+        payload.expected_revision = (memoryData.short || {}).revision || 0;
+      }
+      const data = await api("/api/memory/delete", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      memoryData = data;
+      renderMemory();
+      showToast("已删除记忆");
+    } catch (error) {
+      showToast(`删除失败：${error.message}`, true);
+    }
+  }
+
+  async function clearMemory() {
+    if (!memoryData) return;
+    const shortCount = (memoryData.short || {}).entries?.length || 0;
+    const longCount = (memoryData.long || []).length;
+    const ok = await confirmDialog({
+      tone: "danger",
+      title: "清空这个 Agent 的记忆？",
+      message: "短期记忆、归档和长期记忆都会被删除，无法恢复。",
+      target: memoryAgentName(memoryAgentId),
+      detailsTitle: "将删除：",
+      details: [
+        `短期记忆 ${shortCount} 条`,
+        `长期记忆 ${longCount} 条`,
+        "已归档的短期记忆",
+      ],
+      confirmText: "清空记忆",
+      cancelText: "取消",
+    });
+    if (!ok) return;
+    try {
+      const data = await api("/api/memory/clear", {
+        method: "POST",
+        body: JSON.stringify({ agent_id: memoryAgentId }),
+      });
+      memoryData = data.memory;
+      renderMemory();
+      const deleted = data.deleted || {};
+      const total = Number(deleted.short_term || 0)
+        + Number(deleted.archived || 0)
+        + Number(deleted.long_term || 0);
+      showToast(`已清空 ${total} 条记忆记录`);
+    } catch (error) {
+      showToast(`清空失败：${error.message}`, true);
+    }
+  }
+
   function render() {
     if (!state) return;
     const settings = state.settings || {};
@@ -1526,6 +1836,12 @@
     if (unread !== lastActivityUnread) {
       lastActivityUnread = unread;
       if (activityOpen) loadActivities();
+    }
+    if (memoryOpen) {
+      const agents = memoryAgents();
+      if (els.memoryAgent.options.length !== agents.length) {
+        populateMemoryAgents();
+      }
     }
     checkPendingFront();
     if (!pendingFront && els.frontTiming.classList.contains("idle")) {
@@ -1756,6 +2072,39 @@
       }
     });
   }
+  if (els.memoryBtn) {
+    els.memoryBtn.addEventListener("click", () => {
+      setMemoryOpen(!memoryOpen);
+    });
+    els.memoryClose.addEventListener("click", () => setMemoryOpen(false));
+    els.memoryBackdrop.addEventListener("click", () => setMemoryOpen(false));
+    els.memoryClear.addEventListener("click", clearMemory);
+    els.memoryAgent.addEventListener("change", () => {
+      memoryAgentId = els.memoryAgent.value;
+      memoryTab = "short";
+      document.querySelectorAll("[data-memory-tab]").forEach((tab) => {
+        tab.classList.toggle("active", tab.dataset.memoryTab === "short");
+      });
+      loadMemory(memoryAgentId);
+    });
+    document.querySelectorAll("[data-memory-tab]").forEach((tab) => {
+      tab.addEventListener("click", () => {
+        memoryTab = tab.dataset.memoryTab;
+        document.querySelectorAll("[data-memory-tab]").forEach((other) => {
+          other.classList.toggle("active", other === tab);
+        });
+        renderMemory();
+      });
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape") return;
+      if (els.memoryModal.classList.contains("open")) {
+        event.preventDefault();
+        setMemoryOpen(false);
+      }
+    });
+  }
+
   document.addEventListener("keydown", (event) => {
     if (!confirmResolver) return;
     if (event.key === "Escape") {

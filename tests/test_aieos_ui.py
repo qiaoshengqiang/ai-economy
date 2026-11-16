@@ -163,6 +163,44 @@ class _FakeController:
             }]},
         }}
 
+    def agent_memory(self, agent_id):
+        if agent_id != "agent_a":
+            raise ValueError(f"未知 Agent：{agent_id!r}")
+        return {
+            "agent_id": agent_id,
+            "short": {
+                "revision": 1,
+                "entries": [{
+                    "entry_id": "stm_1",
+                    "summary": "用户偏好简洁",
+                    "importance": 4,
+                }],
+                "needs_compaction": False,
+            },
+            "long": [],
+        }
+
+    def delete_agent_memory(self, agent_id, *, kind, entry_id,
+                            expected_revision=None):
+        return {
+            "agent_id": agent_id,
+            "short": {"revision": 2, "entries": [],
+                      "needs_compaction": False},
+            "long": [],
+        }
+
+    def clear_agent_memory(self, agent_id):
+        return {
+            "agent_id": agent_id,
+            "deleted": {"short_term": 1, "archived": 2, "long_term": 0},
+            "memory": {
+                "agent_id": agent_id,
+                "short": {"revision": 0, "entries": [],
+                          "needs_compaction": False},
+                "long": [],
+            },
+        }
+
     def inbox_pending(self, agent_id, *, limit=50):
         if agent_id != "agent_a":
             raise ValueError(f"未知 Agent：{agent_id!r}")
@@ -2643,3 +2681,31 @@ def test_pi_task_creation_persists_project_workdir(db, tmp_path):
     task = store.get(created["task_id"])
     assert task.acceptance["workspace_mode"] == "project"
     assert task.acceptance["project_path"] == str(project.resolve())
+
+
+def test_memory_api(server):
+    _fake, base = server
+    status, body = _get(base + "/api/memory?agent_id=agent_a")
+    assert status == 200
+    payload = json.loads(body)
+    assert payload["agent_id"] == "agent_a"
+    assert payload["short"]["revision"] == 1
+    assert payload["short"]["entries"][0]["summary"] == "用户偏好简洁"
+
+    status, payload = _post(base + "/api/memory/delete", {
+        "agent_id": "agent_a",
+        "kind": "short",
+        "entry_id": "stm_1",
+        "expected_revision": 1,
+    })
+    assert status == 200
+    assert payload["ok"] is True
+    assert payload["short"]["entries"] == []
+
+    status, payload = _post(base + "/api/memory/clear", {
+        "agent_id": "agent_a",
+    })
+    assert status == 200
+    assert payload["ok"] is True
+    assert payload["deleted"]["short_term"] == 1
+    assert payload["memory"]["short"]["revision"] == 0

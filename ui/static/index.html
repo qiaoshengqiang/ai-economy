@@ -16,6 +16,19 @@
       <span class="pill front" id="front-badge" title="Front Agent 当前模式">Front: —</span>
       <span class="pill work-auto" id="work-mode-badge" title="Worker 当前模式">Work: —</span>
       <span class="pill" id="running-badge">Running: 0</span>
+      <button class="memory-btn" id="memory-btn" type="button"
+        title="Agent 记忆" aria-label="Agent 记忆"
+        aria-expanded="false" aria-controls="memory-modal">
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <rect x="7" y="7" width="10" height="10" rx="2"
+            fill="none" stroke="currentColor" stroke-width="1.8" />
+          <rect x="10" y="10" width="4" height="4" rx="1"
+            fill="none" stroke="currentColor" stroke-width="1.4" />
+          <path d="M9.5 3v4M14.5 3v4M9.5 17v4M14.5 17v4M3 9.5h4M3 14.5h4M17 9.5h4M17 14.5h4"
+            fill="none" stroke="currentColor" stroke-width="1.6"
+            stroke-linecap="round" />
+        </svg>
+      </button>
       <button class="activity-bell" id="activity-bell" type="button"
         title="Agent 活动记录" aria-label="Agent 活动记录"
         aria-expanded="false" aria-controls="activity-drawer">
@@ -148,6 +161,43 @@
     <div class="detail-foot">
       这里只显示该次唤醒的模型原始输出，不解析、不美化。它不是聊天消息，
       也不代表 Task 的领域状态。
+    </div>
+  </section>
+
+  <div class="memory-backdrop" id="memory-backdrop"></div>
+  <section class="memory-modal" id="memory-modal" role="dialog"
+    aria-modal="true" aria-labelledby="memory-title">
+    <div class="memory-head">
+      <div>
+        <h2 id="memory-title">Agent 记忆</h2>
+        <p id="memory-subtitle">—</p>
+      </div>
+      <div class="memory-head-actions">
+        <label class="memory-agent">
+          <span>Agent</span>
+          <select id="memory-agent"></select>
+        </label>
+        <button class="memory-danger" id="memory-clear" type="button">清空记忆</button>
+        <button class="memory-close" id="memory-close" type="button" aria-label="关闭">✕</button>
+      </div>
+    </div>
+
+    <div class="memory-stats" id="memory-stats"></div>
+
+    <div class="memory-tabs">
+      <button class="memory-tab active" type="button" data-memory-tab="short">
+        短期记忆<span class="count" id="memory-short-count"></span>
+      </button>
+      <button class="memory-tab" type="button" data-memory-tab="long">
+        长期记忆<span class="count" id="memory-long-count"></span>
+      </button>
+    </div>
+
+    <div class="memory-body" id="memory-body"></div>
+
+    <div class="memory-foot">
+      记忆只属于该 Agent；Front 每轮自动读取短期记忆 + 长期记忆 top 5。
+      记忆不是聊天记录，也不会改变 Task 的领域状态。
     </div>
   </section>
 

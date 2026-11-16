@@ -195,6 +195,20 @@ class PrivateShortTermMemoryStore:
                  agent_id, current.revision))
             return memory
 
+    def clear(self, agent_id: str) -> Dict[str, int]:
+        """清空该 Agent 的当前短期记忆与归档（不可恢复）。"""
+        with self.db.transaction() as conn:
+            current = conn.execute(
+                f"DELETE FROM {TABLE_PRIVATE_SHORT_TERM_MEMORY} "
+                "WHERE agent_id = ?", (agent_id,))
+            archived = conn.execute(
+                f"DELETE FROM {TABLE_PRIVATE_SHORT_TERM_ARCHIVE} "
+                "WHERE agent_id = ?", (agent_id,))
+        return {
+            "short_term": max(0, int(current.rowcount or 0)),
+            "archived": max(0, int(archived.rowcount or 0)),
+        }
+
     def archived_entries(self, agent_id: str,
                          long_term_entry_id: Optional[str] = None
                          ) -> List[Dict[str, Any]]:

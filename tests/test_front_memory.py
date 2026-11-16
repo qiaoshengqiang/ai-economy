@@ -213,3 +213,57 @@ def test_front_prompt_shows_memory_trigger_even_when_empty():
     assert "（还没有记忆）" in prompt
     assert "必须先把记忆写进" in prompt
     assert "只回复「记住了」不算记住" in prompt
+
+
+def _controller_with_memory(tmp_path, db, short, long):
+    from work.controller import AIEOSController
+
+    runtime = SimpleNamespace(
+        directory=SimpleNamespace(all=lambda: [
+            SimpleNamespace(agent_id="agent_a")]),
+        economy=SimpleNamespace(agent=lambda _aid: SimpleNamespace(
+            has_brain=True, brain=None, workspace=None)),
+        tasks=SimpleNamespace(list_tasks=lambda limit=50: []),
+        private_short_term_memory=short,
+        private_long_term_memory=long,
+    )
+    return AIEOSController(runtime, front_agent="agent_a")
+
+
+def test_controller_memory_snapshot_delete_and_clear(tmp_path):
+    db, short, long, _dispatcher = _memory(tmp_path)
+    controller = _controller_with_memory(tmp_path, db, short, long)
+    try:
+        first = short.add("agent_a", summary="偏好 A")
+        snapshot = controller.agent_memory("agent_a")
+        assert len(snapshot["short"]["entries"]) == 1
+        assert snapshot["long"] == []
+
+        updated = controller.delete_agent_memory(
+            "agent_a", kind="short", entry_id=first.entry_id,
+            expected_revision=snapshot["short"]["revision"])
+        assert updated["short"]["entries"] == []
+
+        short.add("agent_a", summary="偏好 B")
+        short.add("agent_a", summary="偏好 C")
+        memory = short.read("agent_a")
+        ids = [entry.entry_id for entry in memory.entries]
+        long.consolidate(
+            "agent_a", task_id="", expected_revision=memory.revision,
+            summary="长期偏好", short_term_entry_ids=ids)
+        assert len(long.all("agent_a")) == 1
+        long_entry = long.all("agent_a")[0]
+
+        updated = controller.delete_agent_memory(
+            "agent_a", kind="long", entry_id=long_entry.entry_id)
+        assert updated["long"] == []
+
+        short.add("agent_a", summary="准备清空")
+        cleared = controller.clear_agent_memory("agent_a")
+        assert cleared["deleted"]["long_term"] == 0
+        assert cleared["memory"]["short"]["entries"] == []
+        assert cleared["memory"]["long"] == []
+        assert cleared["memory"]["short"]["revision"] == 0
+    finally:
+        controller.close()
+        db.close()

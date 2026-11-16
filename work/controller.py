@@ -1018,6 +1018,85 @@ class AIEOSController:
             "activities": items,
         }
 
+    def agent_memory(self, agent_id: str) -> Dict[str, Any]:
+        """Agent 的短期 / 长期记忆快照（只读）。"""
+        key = str(agent_id or "").strip()
+        if key not in self._agent_ids:
+            raise ValueError(f"未知 Agent：{key!r}")
+        short_service = getattr(
+            self.rt, "private_short_term_memory", None)
+        long_service = getattr(
+            self.rt, "private_long_term_memory", None)
+        memory = short_service.read(key) if short_service else None
+        entries = [entry.to_dict() for entry in memory.entries] if memory else []
+        long_entries = (
+            [entry.to_dict() for entry in long_service.all(key)]
+            if long_service else [])
+        return {
+            "agent_id": key,
+            "short": {
+                "revision": int(memory.revision) if memory else 0,
+                "entries": entries,
+                "needs_compaction": bool(memory.needs_compaction)
+                if memory else False,
+            },
+            "long": long_entries,
+        }
+
+    def delete_agent_memory(
+        self, agent_id: str, *, kind: str, entry_id: str,
+        expected_revision: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """删除一条短期 / 长期记忆。"""
+        key = str(agent_id or "").strip()
+        if key not in self._agent_ids:
+            raise ValueError(f"未知 Agent：{key!r}")
+        target = str(entry_id or "").strip()
+        if not target:
+            raise ValueError("缺少 entry_id")
+        if kind == "short":
+            service = getattr(self.rt, "private_short_term_memory", None)
+            if service is None:
+                raise ValueError("短期记忆服务未启用")
+            memory = service.read(key)
+            revision = (
+                int(expected_revision)
+                if expected_revision is not None
+                else int(memory.revision))
+            service.update(
+                key, expected_revision=revision,
+                entry_id=target, remove=True)
+        elif kind == "long":
+            service = getattr(self.rt, "private_long_term_memory", None)
+            if service is None:
+                raise ValueError("长期记忆服务未启用")
+            if not service.delete(key, target):
+                raise ValueError("长期记忆不存在")
+        else:
+            raise ValueError("kind 必须是 short / long")
+        return self.agent_memory(key)
+
+    def clear_agent_memory(self, agent_id: str) -> Dict[str, Any]:
+        """清空该 Agent 的短期 + 归档 + 长期记忆；不可恢复。"""
+        key = str(agent_id or "").strip()
+        if key not in self._agent_ids:
+            raise ValueError(f"未知 Agent：{key!r}")
+        short_service = getattr(
+            self.rt, "private_short_term_memory", None)
+        long_service = getattr(
+            self.rt, "private_long_term_memory", None)
+        deleted: Dict[str, int] = {
+            "short_term": 0, "archived": 0, "long_term": 0}
+        if short_service is not None:
+            deleted.update(short_service.clear(key))
+        if long_service is not None:
+            deleted["long_term"] = int(long_service.clear(key))
+        return {
+            "agent_id": key,
+            "deleted": deleted,
+            "memory": self.agent_memory(key),
+        }
+
     def activity_detail(self, run_id: str) -> Dict[str, Any]:
         """单条 Activity 详情：打开时取一次，不参与轮询。"""
         key = str(run_id or "").strip()

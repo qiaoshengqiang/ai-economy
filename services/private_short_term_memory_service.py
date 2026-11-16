@@ -52,6 +52,11 @@ class PrivateShortTermMemoryService:
         return text
 
     # ------------------------------------------------------------
+    def clear(self, agent_id: str) -> Dict[str, int]:
+        """清空当前短期记忆与归档；不可恢复。"""
+        return self.store.clear(agent_id)
+
+    # ------------------------------------------------------------
     def add(
         self,
         agent_id: str,
