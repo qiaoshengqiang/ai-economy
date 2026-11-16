@@ -206,8 +206,12 @@ workspace_read {path, offset?, limit?}
 
 ## 当前已落地的相关改动
 
-- `workspace_read` 使用 `start_line` / `max_lines` / `next_start_line`，
-  `offset` / `limit` 仅保留兼容别名；
+- 按行读取统一使用 `start_line` / `max_lines` / `next_start_line`：
+  `workspace_read` · `artifact_read` · `project_read`；
+- 按字符读取统一使用 `start_char` / `max_chars` / `next_start_char`：
+  `draft_read`；
+- `offset` / `limit` 仅保留在执行器 / 适配器里作过渡别名，
+  Agent 可见的 prompt 与动作 schema 不再出现；
 - Front / Solo / Pi 已按稳定前缀、易变尾部重排；
 - 图片能力按 model profile 声明；
 - 连续只读上限默认 8，可在运行设置调整。

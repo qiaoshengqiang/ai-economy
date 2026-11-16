@@ -859,8 +859,8 @@ def test_action_written_as_intent_is_still_an_action_step():
         "intent": "artifact_read",
         "task_id": "task_x",
         "path": "index.html",
-        "offset": 1,
-        "limit": 10,
+        "start_line": 1,
+        "max_lines": 10,
         "reason": "show first lines",
     })
     actions, error = parse_front_actions(text)
@@ -872,7 +872,7 @@ def test_action_written_as_intent_is_still_an_action_step():
         "type": "artifact_read",
         "parameters": {
             "task_id": "task_x", "path": "index.html",
-            "offset": 1, "limit": 10,
+            "start_line": 1, "max_lines": 10,
         },
     }]
 

@@ -58,11 +58,26 @@ def test_read_project_file_returns_requested_lines(tmp_path):
     target.write_text(
         "\n".join(f"line{index}" for index in range(10)), encoding="utf-8")
 
-    result = read_project_file(str(tmp_path), "a.txt", offset=3, limit=2)
+    result = read_project_file(
+        str(tmp_path), "a.txt", start_line=3, max_lines=2)
 
     assert result["content"] == "line2\nline3"
     assert result["total_lines"] == 10
-    assert result["next_offset"] == 5
+    assert result["start_line"] == 3
+    assert result["max_lines"] == 2
+    assert result["next_start_line"] == 5
+
+
+def test_read_project_file_keeps_old_aliases(tmp_path):
+    target = tmp_path / "a.txt"
+    target.write_text(
+        "\n".join(f"line{index}" for index in range(10)), encoding="utf-8")
+
+    result = read_project_file(str(tmp_path), "a.txt", offset=3, limit=2)
+
+    assert result["content"] == "line2\nline3"
+    assert result["start_line"] == 3
+    assert result["next_start_line"] == 5
 
 
 def test_read_project_file_rejects_path_escape(tmp_path):

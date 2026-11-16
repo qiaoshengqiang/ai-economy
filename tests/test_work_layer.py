@@ -180,6 +180,20 @@ class TestWorkActionAdapters:
         assert seen["start_line"] == 1
         assert seen["max_lines"] == 10
 
+    def test_conflicting_row_aliases_are_rejected(self):
+        from actions.workspace_read import WorkspaceReadExecutor
+        from work.adapters import WorkWorkspaceReadExecutor
+
+        adapter = WorkWorkspaceReadExecutor(
+            WorkspaceReadExecutor(lambda *_a, **_k: {"ok": True}))
+        result = adapter.execute(ActionIntent(
+            action_type="workspace_read",
+            parameters={"path": "a.js", "start_line": 1, "offset": 2},
+            agent_id="agent_a"))
+
+        assert result.success is False
+        assert result.metadata["code"] == "bad_pagination"
+
     def test_missing_write_mode_defaults_to_create(self):
         from actions.workspace_write import WorkspaceWriteExecutor
         from work.adapters import WorkWorkspaceWriteExecutor
@@ -654,6 +668,23 @@ class TestTaskDraftStore:
         draft = first.write("agent_a", "task 1 draft")
         assert second.read("agent_a", draft["draft_id"])["ok"] is False
         assert second.list("agent_a")["count"] == 0
+
+    def test_read_pages_by_char_with_cursor(self, tmp_path):
+        workspace = Workspace(tmp_path / "agent_a", "agent_a")
+        store = TaskDraftStore(
+            task_id="task_1", workspace_of=lambda aid: workspace)
+        draft = store.write("agent_a", "0123456789")
+
+        first = store.read(
+            "agent_a", draft["draft_id"], start_char=0, max_chars=4)
+        assert first["content"] == "0123"
+        assert first["next_start_char"] == 4
+
+        rest = store.read(
+            "agent_a", draft["draft_id"],
+            start_char=first["next_start_char"], max_chars=10)
+        assert rest["content"] == "456789"
+        assert rest["next_start_char"] is None
 
 
 # ============================================================

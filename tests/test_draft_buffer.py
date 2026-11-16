@@ -52,10 +52,18 @@ def test_draft_buffer_isolated_by_agent_and_supports_append_read():
     appended = buf.append("agent_a", created["draft_id"], " world")
     assert appended["ok"] and appended["chars"] == 11
 
-    got = buf.read("agent_a", created["draft_id"], offset=6, limit=5)
+    got = buf.read(
+        "agent_a", created["draft_id"], start_char=6, max_chars=5)
     assert got["ok"] and got["content"] == "world"
     assert got["total_chars"] == 11
+    assert got["start_char"] == 6
+    assert got["max_chars"] == 5
+    assert got["next_start_char"] is None
     assert got["truncated"] is False
+
+    # 旧别名仍然映射到字符位置（过渡期兼容）。
+    alias = buf.read("agent_a", created["draft_id"], offset=6, limit=5)
+    assert alias["content"] == "world"
 
     listed = buf.list("agent_a")
     assert listed["count"] == 1
@@ -97,6 +105,50 @@ def test_draft_actions_validate_and_call_functions():
 def test_draft_read_is_observable_and_list_renders():
     from actions.read_payload import OBSERVABLE_ACTIONS
     assert ACTION_DRAFT_READ in OBSERVABLE_ACTIONS
+
+
+def test_draft_read_pages_by_char_and_returns_next_cursor():
+    buf = DraftBuffer()
+    created = buf.write("agent_a", "0123456789")
+    draft_id = created["draft_id"]
+
+    first = buf.read("agent_a", draft_id, start_char=0, max_chars=4)
+    assert first["content"] == "0123"
+    assert first["next_start_char"] == 4
+    assert first["truncated"] is True
+
+    second = buf.read(
+        "agent_a", draft_id,
+        start_char=first["next_start_char"], max_chars=4)
+    assert second["content"] == "4567"
+    assert second["next_start_char"] == 8
+
+
+def test_draft_read_executor_uses_char_fields_and_maps_aliases():
+    seen = {}
+
+    def read(agent_id, draft_id, *, start_char, max_chars):
+        seen.update(start_char=start_char, max_chars=max_chars)
+        return {"ok": True, "draft_id": draft_id, "content": "x"}
+
+    ex = DraftReadExecutor(read)
+    result = ex.execute(ActionIntent(
+        action_type="draft_read", agent_id="a",
+        parameters={"draft_id": "d1", "start_char": 2, "max_chars": 3}))
+    assert result.success is True
+    assert seen == {"start_char": 2, "max_chars": 3}
+
+    alias = ex.execute(ActionIntent(
+        action_type="draft_read", agent_id="a",
+        parameters={"draft_id": "d1", "offset": 4, "limit": 5}))
+    assert alias.success is True
+    assert seen == {"start_char": 4, "max_chars": 5}
+
+    conflict = ex.execute(ActionIntent(
+        action_type="draft_read", agent_id="a",
+        parameters={"draft_id": "d1", "start_char": 1, "offset": 4}))
+    assert conflict.success is False
+    assert conflict.metadata["code"] == "bad_pagination"
 
 
 def test_batch_promote_action_calls_once_for_multiple_files():

@@ -33,8 +33,8 @@ _DRAFT_META_FIELDS = (
     "created_at", "updated_at",
 )
 _READ_FIELDS = (
-    "draft_id", "label", "offset", "limit", "chars", "total_chars",
-    "content", "truncated", "sha256",
+    "draft_id", "label", "start_char", "max_chars", "next_start_char",
+    "chars", "total_chars", "content", "truncated", "sha256",
 )
 
 
@@ -140,7 +140,8 @@ class DraftAppendExecutor(_DraftBase):
 
 class DraftReadExecutor(_DraftBase):
     action_types = frozenset({ACTION_DRAFT_READ})
-    _allowed = frozenset({"draft_id", "offset", "limit"})
+    _allowed = frozenset(
+        {"draft_id", "start_char", "max_chars", "offset", "limit"})
 
     def execute(self, intent: ActionIntent) -> ActionResult:
         params, failed = self._params(intent)
@@ -150,11 +151,34 @@ class DraftReadExecutor(_DraftBase):
         if not draft_id:
             return self._fail(intent, "draft_read 需要 draft_id",
                               code="missing_draft_id")
+        # 旧字段名 -> 字符字段；新 prompt 只发 start_char / max_chars。
+        if "start_char" in params and "offset" in params:
+            try:
+                same = int(params["start_char"]) == int(params["offset"])
+            except (TypeError, ValueError):
+                same = False
+            if not same:
+                return self._fail(
+                    intent, "不要同时使用 start_char 和 offset",
+                    code="bad_pagination")
+        if "max_chars" in params and "limit" in params:
+            try:
+                same = int(params["max_chars"]) == int(params["limit"])
+            except (TypeError, ValueError):
+                same = False
+            if not same:
+                return self._fail(
+                    intent, "不要同时使用 max_chars 和 limit",
+                    code="bad_pagination")
+        if "start_char" not in params and "offset" in params:
+            params["start_char"] = params.pop("offset")
+        if "max_chars" not in params and "limit" in params:
+            params["max_chars"] = params.pop("limit")
         try:
             raw = self.fn(
                 intent.agent_id, draft_id,
-                offset=params.get("offset", 0),
-                limit=params.get("limit", 12_000))
+                start_char=params.get("start_char", 0),
+                max_chars=params.get("max_chars", 12_000))
         except Exception as exc:                              # noqa: BLE001
             return self._fail(intent, f"{type(exc).__name__}: {exc}",
                               code="executor_error")

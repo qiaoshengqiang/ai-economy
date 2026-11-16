@@ -871,7 +871,9 @@ def build_task_prompt(
 
 ========== 你可以使用的动作 ==========
 - `workspace_read`
-  可给 `offset`（1-based 起始行）/ `limit`（最多行数）；显式范围最多 400 行。
+  可给 `start_line`（1-based 起始行）/ `max_lines`（最多行数）；
+  两者都是**行号**，不是字符；显式范围最多 400 行；下一页用
+  返回的 `next_start_line`。
 - `workspace_search`
   `query` / `path`（可选）/ `glob`（可选）/ `max_results`（可选）/
   `case_sensitive` / `context_lines`；只读，返回 path/line/snippet。
@@ -909,7 +911,9 @@ def build_task_prompt(
 - `draft_write` / `draft_append` / `draft_read` / `draft_list` /
   `draft_delete`：**私有草稿区**。
   `draft_write(content, label?)` 返回 draft_id；`draft_append` 分块追加；
-  `draft_read(draft_id, offset?, limit?)` 按字符范围读取。
+  `draft_read(draft_id, start_char?, max_chars?)` 按**字符位置**读取：
+  start_char 从 0 开始，max_chars 默认 12000、最大 32000；
+  下一页用返回的 next_start_char。
   草稿不是项目文件，不参与验收；系统不会自动 promotion。
 - `workspace_promote_drafts`
   `items`: `[{{"draft_id": "...", "path": "...",

@@ -54,7 +54,7 @@ from core.task import Task, TaskMode, TaskStatus
 from core.timezones import DEFAULT_TIMEZONE, normalize_timezone
 from demand.task_creation import TaskCreationService
 from services.alarm_service import AlarmService, WakeupDispatcher
-from services.artifacts import read_artifact
+from services.artifacts import MAX_READ_LINES, read_artifact
 from work.artifact_export import (
     ArtifactExportError, export_task_workspace,
 )
@@ -4709,15 +4709,41 @@ class AIEOSController:
         task_id: str,
         path: str,
         *,
+        start_line: Any = None,
+        max_lines: Any = None,
         offset: Any = None,
         limit: Any = None,
     ) -> Dict[str, Any]:
-        """Front 只读一个 Task Workspace 文件；不创建 Task、不读宿主路径。"""
+        """Front 只读一个 Task Workspace 文件；不创建 Task、不读宿主路径。
+
+        `start_line` / `max_lines` 的**单位是行**；`offset` / `limit`
+        仅保留为旧别名，新 prompt 不再使用。
+        """
         task_id = str(task_id or "").strip()
         path = str(path or "").strip()
         if not task_id or not path:
             return {"ok": False, "code": "bad_request",
                     "message": "artifact_read 需要 task_id 和 path"}
+        if start_line is not None and offset is not None:
+            try:
+                if int(start_line) != int(offset):
+                    return {"ok": False, "code": "bad_pagination",
+                            "message": "不要同时使用 start_line 和 offset"}
+            except (TypeError, ValueError):
+                return {"ok": False, "code": "bad_pagination",
+                        "message": "start_line / offset 必须是整数"}
+        if max_lines is not None and limit is not None:
+            try:
+                if int(max_lines) != int(limit):
+                    return {"ok": False, "code": "bad_pagination",
+                            "message": "不要同时使用 max_lines 和 limit"}
+            except (TypeError, ValueError):
+                return {"ok": False, "code": "bad_pagination",
+                        "message": "max_lines / limit 必须是整数"}
+        if start_line is None:
+            start_line = offset
+        if max_lines is None:
+            max_lines = limit
         try:
             task = self.rt.tasks.get(task_id)
         except Exception:                                     # noqa: BLE001
@@ -4740,35 +4766,32 @@ class AIEOSController:
                         "message": f"{type(exc).__name__}: {exc}"}
             lines = full_content.splitlines()
             total_lines = len(lines)
-            explicit = offset is not None or limit is not None
-            if not explicit:
-                content = full_content
-                start_line = 1 if total_lines else 0
-                end_line = total_lines
-            else:
-                try:
-                    start_line = int(offset) if offset is not None else 1
-                    applied_limit = (
-                        int(limit) if limit is not None else max(
-                            1, total_lines - start_line + 1))
-                except (TypeError, ValueError):
-                    return {"ok": False, "code": "bad_pagination",
-                            "message": "offset / limit 必须是整数"}
-                if start_line < 1:
-                    start_line = 1
-                if applied_limit < 1:
-                    return {"ok": False, "code": "bad_pagination",
-                            "message": "limit 必须 >= 1"}
-                end_line = min(total_lines, start_line + applied_limit - 1)
-                content = "\n".join(lines[start_line - 1:end_line])
+            try:
+                page_start = int(start_line) if start_line is not None else 1
+                applied_limit = int(max_lines) if max_lines is not None else 200
+            except (TypeError, ValueError):
+                return {"ok": False, "code": "bad_pagination",
+                        "message": "start_line / max_lines 必须是整数"}
+            if page_start < 1:
+                page_start = 1
+            if applied_limit < 1:
+                return {"ok": False, "code": "bad_pagination",
+                        "message": "max_lines 必须 >= 1"}
+            applied_limit = min(applied_limit, MAX_READ_LINES)
+            end_line = min(total_lines, page_start + applied_limit - 1)
+            content = "\n".join(lines[page_start - 1:end_line])
+            truncated = (page_start > 1) or (end_line < total_lines)
             return {
                 "ok": True, "task_id": task_id, "path": path,
                 "content": content, "chars": len(content),
                 "total_chars": len(full_content),
                 "total_lines": total_lines,
-                "start_line": start_line, "end_line": end_line,
-                "truncated": explicit and (
-                    start_line > 1 or end_line < total_lines),
+                "start_line": page_start, "max_lines": applied_limit,
+                "end_line": end_line,
+                "next_start_line": (
+                    end_line + 1
+                    if truncated and end_line < total_lines else None),
+                "truncated": truncated,
                 "read_as": "pi_task_directory",
             }
         workspace_id = str(getattr(task, "workspace_id", "") or "")
@@ -4786,21 +4809,22 @@ class AIEOSController:
         if gateway is None:
             return {"ok": False, "code": "no_gateway",
                     "message": "当前 Runtime 没有 Workspace Gateway"}
-        # 默认只取 200 行，避免一次读入整份大文件；调用方可用 limit 覆盖。
-        effective_limit = 200 if limit is None else limit
+        # 默认只取 200 行，避免一次读入整份大文件；调用方可用 max_lines 覆盖。
+        effective_max_lines = 200 if max_lines is None else max_lines
         try:
-            effective_offset = (
-                int(offset) if offset is not None else None)
-            effective_limit = int(effective_limit)
+            effective_start_line = (
+                int(start_line) if start_line is not None else None)
+            effective_max_lines = int(effective_max_lines)
         except (TypeError, ValueError):
             return {"ok": False, "code": "bad_pagination",
-                    "message": "offset / limit 必须是整数"}
-        if effective_offset is not None and effective_offset < 1:
-            effective_offset = 1
+                    "message": "start_line / max_lines 必须是整数"}
+        if effective_start_line is not None and effective_start_line < 1:
+            effective_start_line = 1
         try:
             raw = read_artifact(
                 gateway, workspace_id, actor, path,
-                offset=effective_offset, limit=effective_limit)
+                start_line=effective_start_line,
+                max_lines=effective_max_lines)
         except Exception as exc:                              # noqa: BLE001
             return {"ok": False, "code": "read_failed",
                     "message": f"{type(exc).__name__}: {exc}"}

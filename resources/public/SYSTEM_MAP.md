@@ -78,6 +78,8 @@
 > Demand 入口还提供**私有草稿**：`draft_write` / `draft_append` /
 > `draft_read` / `draft_list` / `draft_delete`，以及一次可落盘多个文件的
 > `workspace_promote_drafts`。草稿不是项目文件，只有显式 promotion 才落盘。
+> `draft_read` 用 `start_char` / `max_chars` 按**字符位置**读取（`start_char`
+> 从 0 开始），返回 `next_start_char` 作为下一页游标。
 
 **公共工具库**（只读，由项目预装）：
 `python` · `pytest` · `node` · `playwright`

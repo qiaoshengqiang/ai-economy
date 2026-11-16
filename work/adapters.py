@@ -41,6 +41,30 @@ class WorkWorkspaceReadExecutor:
         if "path" not in params and "target" in params:
             params["path"] = params.pop("target")
         # 旧字段名 -> 新的行号字段；新 prompt 只发 start_line / max_lines。
+        if "start_line" in params and "offset" in params:
+            try:
+                same = int(params["start_line"]) == int(params["offset"])
+            except (TypeError, ValueError):
+                same = False
+            if not same:
+                return ActionResult(
+                    success=False,
+                    error="不要同时使用 start_line 和 offset",
+                    action_id=intent.intent_id,
+                    action_type=intent.action_type,
+                    metadata={"code": "bad_pagination"})
+        if "max_lines" in params and "limit" in params:
+            try:
+                same = int(params["max_lines"]) == int(params["limit"])
+            except (TypeError, ValueError):
+                same = False
+            if not same:
+                return ActionResult(
+                    success=False,
+                    error="不要同时使用 max_lines 和 limit",
+                    action_id=intent.intent_id,
+                    action_type=intent.action_type,
+                    metadata={"code": "bad_pagination"})
         if "start_line" not in params and "offset" in params:
             params["start_line"] = params.pop("offset")
         if "max_lines" not in params and "limit" in params:

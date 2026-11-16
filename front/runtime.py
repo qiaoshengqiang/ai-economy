@@ -509,8 +509,9 @@ class FrontAgentRuntime:
             and "project_read" in self.action_types)
         project_action_doc = (
             "- project_list {path?, depth?} —— 列出当前项目目录（只读）\n"
-            "- project_read {path, offset?, limit?} —— 读取当前项目目录里的\n"
-            "  文本文件（只读；返回内容 + total_lines）\n"
+            "- project_read {path, start_line?, max_lines?} —— 读取当前项目\n"
+            "  目录里的文本文件（只读）。start_line / max_lines 都是**行号**，\n"
+            "  不是字符；继续下一页用返回的 next_start_line。\n"
             if project_actions else "")
         project_fact_doc = (
             "- project_list / project_read 的访问范围是当前选中的项目目录。\n"
@@ -601,8 +602,8 @@ Task 能力的事实边界（由系统强制，不靠你猜）：
 
 你可以在最终 intent 之前返回只包含动作的步骤：
 {{"actions":[{{"type":"private_write","parameters":{{"path":"notes.md","content":"..."}}}}]}}
-{{"actions":[{{"type":"artifact_read","parameters":{{"task_id":"task_x","path":"index.html","offset":1,"limit":10}}}}]}}
-{{"actions":[{{"type":"project_read","parameters":{{"path":"index.html","offset":1,"limit":120}}}}]}}
+{{"actions":[{{"type":"artifact_read","parameters":{{"task_id":"task_x","path":"index.html","start_line":1,"max_lines":10}}}}]}}
+{{"actions":[{{"type":"project_read","parameters":{{"path":"index.html","start_line":1,"max_lines":120}}}}]}}
 {alarm_example}{memory_example}
 动作会真实执行；结果会在下一次 prompt 返回。
 动作结果返回后，下一步是继续一个动作，或输出最终 JSON 决定；
@@ -610,15 +611,18 @@ Task 能力的事实边界（由系统强制，不靠你猜）：
 `artifact_read` / `project_read` 是**动作**：放在 `actions` 里；
 `intent` 只放最终决定。
 参数：
-- artifact_read {{task_id, path, offset?, limit?}} —— 读取 Task
-  Workspace 中的文件（只读；返回内容 + total_lines/revision）
+- artifact_read {{task_id, path, start_line?, max_lines?}} —— 读取 Task
+  Workspace 中的文件（只读）。start_line / max_lines 都是**行号**，
+  不是字符；默认 200 行；继续下一页用返回的 next_start_line。
 {project_action_doc}{alarm_docs}{memory_docs}- private_list {{}} —— 返回私有空间路径列表
 - private_read {{path}} —— 读取私有空间文件内容
 - private_write {{path, content}}；private_delete {{path}}
 - draft_write {{content, label}}；draft_append {{draft_id, content}}
 - web_search {{query, count?, need_content?, ori_question?}} —— 查询外部实时信息
 - web_fetch {{url}} —— 读取一个公开网页的 Markdown 内容
-- draft_read {{draft_id}}；draft_list {{}}；draft_delete {{draft_id}}
+- draft_read {{draft_id, start_char?, max_chars?}} —— 按**字符位置**读取草稿；
+  start_char 从 0 开始，max_chars 默认 12000；下一页用 next_start_char
+- draft_list {{}}；draft_delete {{draft_id}}
 
 能力事实：
 - artifact_read 直接读取 Task Workspace 内容；用于

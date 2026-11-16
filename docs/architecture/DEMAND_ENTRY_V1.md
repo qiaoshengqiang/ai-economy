@@ -351,7 +351,8 @@ Provisioning 仍然是 Creator 的显式动作，不由 `task_create` 自动创�
 
 - `draft_write(content, label?)` → draft_id；
 - `draft_append(draft_id, content)`；
-- `draft_read(draft_id, offset?, limit?)`（observable）；
+- `draft_read(draft_id, start_char?, max_chars?)`（observable；
+  `start_char` 0-based，返回 `next_start_char`）；
 - `draft_list` / `draft_delete`；
 - `workspace_promote_drafts(items=[...])`：
   - 一次 Action 写多个文件；

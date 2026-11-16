@@ -104,7 +104,9 @@ ACTION_PARAMS = {
     ),
     "draft_read": (
         '- draft_read:\n'
-        '  {"draft_id":"<id>", "offset":0, "limit":12000}'
+        '  {"draft_id":"<id>", "start_char":0, "max_chars":12000}\n'
+        '  start_char / max_chars 都是**字符位置**，不是行号；\n'
+        '  继续下一页用返回的 next_start_char。'
     ),
     "draft_list": '- draft_list:\n  {}',
     "draft_delete": '- draft_delete:\n  {"draft_id":"<id>"}',

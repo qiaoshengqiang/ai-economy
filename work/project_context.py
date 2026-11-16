@@ -314,10 +314,18 @@ def list_project(
 def read_project_file(
     root: Any,
     path: Any,
-    offset: Any = 1,
-    limit: Any = 200,
+    start_line: Any = None,
+    max_lines: Any = None,
+    *,
+    offset: Any = None,
+    limit: Any = None,
 ) -> Dict[str, Any]:
-    """读取项目里的一个文本文件（只读）。"""
+    """读取项目里的一个文本文件（只读，按行分页）。
+
+    `start_line` / `max_lines` 的**单位是行**，不是字符：
+    `start_line` 是 1-based 起始行，`max_lines` 是最多返回行数。
+    `offset` / `limit` 仅保留为旧别名，新 prompt 不再使用。
+    """
     root_path = _resolved_root(root)
     target = _resolve(root_path, path)
     if not target.exists():
@@ -345,19 +353,45 @@ def read_project_file(
     text = raw.decode("utf-8", errors="replace")
     lines = text.splitlines()
     total = len(lines)
+    if start_line is not None and offset is not None:
+        try:
+            if int(start_line) != int(offset):
+                raise ProjectAccessError(
+                    "不要同时使用 start_line 和 offset")
+        except (TypeError, ValueError) as exc:
+            raise ProjectAccessError(
+                "start_line / offset 必须是整数") from exc
+    if max_lines is not None and limit is not None:
+        try:
+            if int(max_lines) != int(limit):
+                raise ProjectAccessError(
+                    "不要同时使用 max_lines 和 limit")
+        except (TypeError, ValueError) as exc:
+            raise ProjectAccessError(
+                "max_lines / limit 必须是整数") from exc
+    if start_line is None:
+        start_line = offset
+    if max_lines is None:
+        max_lines = limit
     try:
-        offset_value = max(1, int(offset or 1))
+        start = max(1, int(start_line if start_line is not None else 1))
     except (TypeError, ValueError):
-        offset_value = 1
+        start = 1
     try:
-        limit_value = max(1, min(int(limit or 200), _MAX_READ_LINES))
+        count = max(
+            1, min(int(max_lines if max_lines is not None else 200),
+                   _MAX_READ_LINES))
     except (TypeError, ValueError):
-        limit_value = 200
-    selected = lines[offset_value - 1: offset_value - 1 + limit_value]
+        count = 200
+    selected = lines[start - 1: start - 1 + count]
     content = "\n".join(selected)
-    has_more = offset_value - 1 + len(selected) < total
+    delivered = len(selected)
+    has_more = start - 1 + delivered < total
     if len(content) > _MAX_CONTENT_CHARS:
-        content = content[:_MAX_CONTENT_CHARS] + "\n…（截断）"
+        cut = content[:_MAX_CONTENT_CHARS]
+        # 只把完整行算作已交付；被字符上限截断的那一行留给下一页。
+        delivered = cut.count("\n")
+        content = cut + "\n…（截断）"
         has_more = True
     return {
         "ok": True,
@@ -366,10 +400,9 @@ def read_project_file(
         "content": content,
         "chars": len(content),
         "total_lines": total,
-        "offset": offset_value,
-        "limit": limit_value,
-        "next_offset": (
-            offset_value + len(selected) if has_more else None),
+        "start_line": start,
+        "max_lines": count,
+        "next_start_line": (start + delivered if has_more else None),
     }
 
 

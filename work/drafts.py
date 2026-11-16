@@ -201,24 +201,47 @@ class TaskDraftStore:
             return {"ok": True, **updated.to_meta()}
 
     def read(self, agent_id: str, draft_id: Any, *,
-             offset: Any = 0, limit: Any = DEFAULT_READ_CHARS) -> Dict[str, Any]:
+             start_char: Any = None,
+             max_chars: Any = None,
+             offset: Any = None,
+             limit: Any = None) -> Dict[str, Any]:
         with self._lock:
             draft = self._bucket(agent_id).get(str(draft_id or "").strip())
         if draft is None:
             return {"ok": False, "code": "draft_not_found",
                     "message": f"没有草稿 {draft_id!r}"}
+        if start_char is not None and offset is not None:
+            try:
+                if int(start_char) != int(offset):
+                    return {"ok": False, "code": "bad_pagination",
+                            "message": "不要同时使用 start_char 和 offset"}
+            except (TypeError, ValueError):
+                return {"ok": False, "code": "bad_pagination",
+                        "message": "start_char / offset 必须是整数"}
+        if max_chars is not None and limit is not None:
+            try:
+                if int(max_chars) != int(limit):
+                    return {"ok": False, "code": "bad_pagination",
+                            "message": "不要同时使用 max_chars 和 limit"}
+            except (TypeError, ValueError):
+                return {"ok": False, "code": "bad_pagination",
+                        "message": "max_chars / limit 必须是整数"}
+        if start_char is None:
+            start_char = offset if offset is not None else 0
+        if max_chars is None:
+            max_chars = limit if limit is not None else DEFAULT_READ_CHARS
         try:
-            start = int(offset) if offset is not None else 0
-            count = int(limit) if limit is not None else DEFAULT_READ_CHARS
+            start = int(start_char)
+            count = int(max_chars)
         except (TypeError, ValueError):
             return {"ok": False, "code": "bad_pagination",
-                    "message": "offset / limit 必须是整数"}
+                    "message": "start_char / max_chars 必须是整数"}
         if start < 0:
             return {"ok": False, "code": "bad_pagination",
-                    "message": "offset 必须 >= 0"}
+                    "message": "start_char 必须 >= 0"}
         if count <= 0:
             return {"ok": False, "code": "bad_pagination",
-                    "message": "limit 必须 > 0"}
+                    "message": "max_chars 必须 > 0"}
         count = min(count, MAX_READ_CHARS)
         body = draft.content[start:start + count]
         end = start + len(body)
@@ -226,8 +249,9 @@ class TaskDraftStore:
             "ok": True,
             "draft_id": draft.draft_id,
             "label": draft.label,
-            "offset": start,
-            "limit": count,
+            "start_char": start,
+            "max_chars": count,
+            "next_start_char": end if end < draft.chars else None,
             "chars": len(body),
             "total_chars": draft.chars,
             "content": body,

@@ -2031,11 +2031,11 @@ def test_front_artifact_read_uses_task_workspace(monkeypatch):
     calls = {}
 
     def fake_read(_gateway, workspace_id, agent_id, path, *,
-                  offset=None, limit=None):
+                  start_line=None, max_lines=None):
         calls.update({
             "gateway": _gateway, "workspace_id": workspace_id,
             "agent_id": agent_id, "path": path,
-            "offset": offset, "limit": limit,
+            "start_line": start_line, "max_lines": max_lines,
         })
         return {
             "ok": True, "path": path, "content": "line1\nline2",
@@ -2046,7 +2046,7 @@ def test_front_artifact_read_uses_task_workspace(monkeypatch):
     controller = AIEOSController(runtime, front_agent="agent_a")
     try:
         result = controller._front_artifact_read(
-            "task_x", "index.html", offset=1, limit=2)
+            "task_x", "index.html", start_line=1, max_lines=2)
         missing = controller._front_artifact_read(
             "task_missing", "index.html")
     finally:
@@ -2058,7 +2058,7 @@ def test_front_artifact_read_uses_task_workspace(monkeypatch):
     assert calls == {
         "gateway": gateway, "workspace_id": "WS-X",
         "agent_id": "agent_b", "path": "index.html",
-        "offset": 1, "limit": 2,
+        "start_line": 1, "max_lines": 2,
     }
     assert missing["ok"] is False
     assert missing["code"] == "not_found"
@@ -2262,7 +2262,7 @@ def test_pi_task_artifact_read_reads_disk(tmp_path):
         result = controller._front_artifact_read(
             "task_pi_disk", "index.html")
         paged = controller._front_artifact_read(
-            "task_pi_disk", "index.html", offset=1, limit=1)
+            "task_pi_disk", "index.html", start_line=1, max_lines=1)
     finally:
         controller.close()
 
@@ -2272,6 +2272,9 @@ def test_pi_task_artifact_read_reads_disk(tmp_path):
     assert paged["ok"] is True
     assert paged["total_lines"] == 1
     assert paged["content"] == "<html>pi</html>"
+    assert paged["start_line"] == 1
+    assert paged["max_lines"] == 1
+    assert paged["next_start_line"] is None
 
 
 def test_chat_polling_does_not_clear_text_selection():

@@ -44,6 +44,37 @@ from services.private_workspace import (
 from work.project_context import list_project, read_project_file
 
 
+def _row_paging(params: Dict[str, Any]) -> tuple[Any, Any, str]:
+    """把按行分页参数归一成 `start_line` / `max_lines`。
+
+    `offset` / `limit` 只是旧别名；两者同时出现且不一致时明确报错，
+    不做静默取舍。返回 `(start_line, max_lines, error)`。
+    """
+    start = params.get("start_line")
+    count = params.get("max_lines")
+    old_start = params.get("offset")
+    old_count = params.get("limit")
+    if start is not None and old_start is not None:
+        try:
+            same = int(start) == int(old_start)
+        except (TypeError, ValueError):
+            same = False
+        if not same:
+            return None, None, "不要同时使用 start_line 和 offset"
+    if count is not None and old_count is not None:
+        try:
+            same = int(count) == int(old_count)
+        except (TypeError, ValueError):
+            same = False
+        if not same:
+            return None, None, "不要同时使用 max_lines 和 limit"
+    if start is None:
+        start = old_start
+    if count is None:
+        count = old_count
+    return start, count, ""
+
+
 FRONT_ACTION_TYPES = frozenset({
     "artifact_read",
     "project_list", "project_read",
@@ -160,11 +191,20 @@ class FrontArtifactReadExecutor:
                 action_type=intent.action_type,
                 metadata={"code": "bad_request"},
             )
+        start_line, max_lines, paging_error = _row_paging(params)
+        if paging_error:
+            return ActionResult(
+                success=False,
+                error=paging_error,
+                action_id=intent.intent_id,
+                action_type=intent.action_type,
+                metadata={"code": "bad_pagination"},
+            )
         try:
             raw = self.read_fn(
                 task_id, path,
-                offset=params.get("offset"),
-                limit=params.get("limit"))
+                start_line=start_line,
+                max_lines=max_lines)
         except Exception as exc:                              # noqa: BLE001
             return ActionResult(
                 success=False,
@@ -251,12 +291,21 @@ class FrontProjectReadExecutor:
                 action_type=intent.action_type,
                 metadata={"code": "bad_request"},
             )
+        start_line, max_lines, paging_error = _row_paging(params)
+        if paging_error:
+            return ActionResult(
+                success=False,
+                error=paging_error,
+                action_id=intent.intent_id,
+                action_type=intent.action_type,
+                metadata={"code": "bad_pagination"},
+            )
         try:
             raw = read_project_file(
                 self.project_root,
                 path,
-                offset=params.get("offset"),
-                limit=params.get("limit"),
+                start_line=start_line,
+                max_lines=max_lines,
             )
         except Exception as exc:                              # noqa: BLE001
             return ActionResult(

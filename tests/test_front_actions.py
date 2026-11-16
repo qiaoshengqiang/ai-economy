@@ -79,12 +79,13 @@ def test_front_action_set_is_scoped():
 def test_front_can_read_task_artifact(tmp_path):
     calls = []
 
-    def artifact_read(task_id, path, *, offset=None, limit=None):
-        calls.append((task_id, path, offset, limit))
+    def artifact_read(task_id, path, *, start_line=None, max_lines=None):
+        calls.append((task_id, path, start_line, max_lines))
         return {
             "ok": True, "task_id": task_id, "path": path,
             "content": "line1\nline2", "chars": 11,
-            "total_lines": 2, "offset": 1, "limit": 2,
+            "total_lines": 2, "start_line": 1, "max_lines": 2,
+            "next_start_line": None,
         }
 
     _workspace, dispatcher = _setup(
@@ -93,13 +94,31 @@ def test_front_can_read_task_artifact(tmp_path):
         dispatcher,
         [{"type": "artifact_read", "parameters": {
             "task_id": "task_x", "path": "index.html",
-            "offset": 1, "limit": 2}}],
+            "start_line": 1, "max_lines": 2}}],
         agent_id="agent_a",
     )
 
     assert calls == [("task_x", "index.html", 1, 2)]
     assert "line1" in receipt
     assert "artifact_read" in receipt
+
+
+def test_front_artifact_read_rejects_conflicting_paging_aliases(tmp_path):
+    def artifact_read(task_id, path, *, start_line=None, max_lines=None):
+        raise AssertionError("冲突参数不应该触发真实读取")
+
+    _workspace, dispatcher = _setup(
+        tmp_path, artifact_read_fn=artifact_read)
+    receipt = execute_front_actions(
+        dispatcher,
+        [{"type": "artifact_read", "parameters": {
+            "task_id": "task_x", "path": "index.html",
+            "start_line": 1, "offset": 2}}],
+        agent_id="agent_a",
+    )
+
+    assert "bad_pagination" in receipt
+    assert "不要同时使用 start_line 和 offset" in receipt
 
 
 def test_front_can_list_and_read_project(tmp_path):
@@ -115,7 +134,7 @@ def test_front_can_list_and_read_project(tmp_path):
         [
             {"type": "project_list", "parameters": {}},
             {"type": "project_read", "parameters": {
-                "path": "index.html", "offset": 1, "limit": 5}},
+                "path": "index.html", "start_line": 1, "max_lines": 5}},
         ],
         agent_id="agent_a",
     )
@@ -124,6 +143,23 @@ def test_front_can_list_and_read_project(tmp_path):
     assert "project_read" in receipt
     assert "index.html" in receipt
     assert "<title>Demo</title>" in receipt
+
+
+def test_front_project_read_rejects_conflicting_paging_aliases(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "index.html").write_text("<html></html>", encoding="utf-8")
+
+    _workspace, dispatcher = _setup(
+        tmp_path, project_root=str(project))
+    receipt = execute_front_actions(
+        dispatcher,
+        [{"type": "project_read", "parameters": {
+            "path": "index.html", "start_line": 1, "offset": 2}}],
+        agent_id="agent_a",
+    )
+
+    assert "bad_pagination" in receipt
 
 
 def test_project_actions_are_unavailable_without_workdir(tmp_path):
