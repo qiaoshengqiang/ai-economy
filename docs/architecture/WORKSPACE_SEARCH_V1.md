@@ -99,7 +99,7 @@ Workspace = 当前代码事实
 Search    = 当前代码的“在哪里”查询
 ```
 
-- 如果工作记忆里已有位置 → `workspace_read(offset/limit)` 验证，再 `workspace_edit`；
+- 如果工作记忆里已有位置 → `workspace_read(start_line/max_lines)` 验证，再 `workspace_edit`；
 - 如果没有 → `workspace_search` 找位置；
 - 搜到后是否写进工作记忆，由 Agent 自己决定；
 - 系统不自动把 search 结果写进工作记忆，也不自动总结。

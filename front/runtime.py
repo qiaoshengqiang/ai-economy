@@ -587,14 +587,18 @@ Task 能力的事实边界（由系统强制，不靠你猜）：
 - follow_up / rework 需要一个明确的已有 Task 目标：task_id、
   「刚才那个任务」「上次生成的那个」，或上下文能唯一确定。
   目标不唯一时，clarify 可以向用户确认。
-- rework 用于 COMPLETED 的 Task；follow_up 用于进行中 /
+- rework 用于 COMPLETED 的 Task；follow_up 用于 IN_PROGRESS /
   INTERRUPTED 的 Task。
+  正在执行时，follow_up 把 task_text 投递到执行 Agent 的 Inbox；
+  不停止当前步骤，也不创建新 Job。Agent 在下一个工作轮次 / 阶段边界读取。
+  没有 Job 在跑时，follow_up 才恢复执行。
 - 同一项目目录可以先后承载多个 Task，也可以继续已有 Task。
   选择取决于用户要延续哪个任务，以及这次变更是否属于同一目标。
 - 同一项目目录同一时间只有一个运行中的 Task；需要确认项目归属时，
   inspect 可以读取 Task 的 workspace_path / workspace_mode。
-- rework / follow_up 会改变已有 Task；inspect 可以读取 task_id、状态、
-  描述和 workspace_path，用来核对用户所指的任务。
+- rework 会改变已有 Task；follow_up 在未运行时恢复 Task，正在执行时
+  只投递补充要求。inspect 可以读取 task_id、状态、描述和 workspace_path，
+  用来核对用户所指的任务。
 - Worker 会看到 human_text / task_text / front_notes 三部分：
   task_text 是你的执行说明，front_notes 是建议（非硬要求）。
   task_text 写清目标对象、目录和期望结果，Worker 才能独立执行。
@@ -610,6 +614,7 @@ Task 能力的事实边界（由系统强制，不靠你猜）：
 {{"actions":[{{"type":"private_write","parameters":{{"path":"notes.md","content":"..."}}}}]}}
 {{"actions":[{{"type":"artifact_read","parameters":{{"task_id":"task_x","path":"index.html","start_line":1,"max_lines":10}}}}]}}
 {{"actions":[{{"type":"project_read","parameters":{{"path":"index.html","start_line":1,"max_lines":120}}}}]}}
+{{"actions":[{{"type":"message_send","parameters":{{"to":"agent_b","text":"..."}}}}]}}
 {alarm_example}{memory_example}
 动作会真实执行；结果会在下一次 prompt 返回。
 动作结果返回后，下一步是继续一个动作，或输出最终 JSON 决定；
@@ -620,6 +625,11 @@ Task 能力的事实边界（由系统强制，不靠你猜）：
 - artifact_read {{task_id, path, start_line?, max_lines?}} —— 读取 Task
   Workspace 中的文件（只读）。start_line / max_lines 都是**行号**，
   不是字符；默认 200 行；继续下一页用返回的 next_start_line。
+- message_send {{to, text, message_type?, payload?}} —— 给**空闲** Agent
+  发普通消息。不能发给正在执行任务的 Agent（会返回 agent_busy）；
+  给正在执行的任务补充要求请用 follow_up。
+  message_type 只用于 TEXT / INFO / NOTE / QUESTION / REQUEST 等普通消息；
+  不能发 START / SUBMIT / VERIFY / COMPLETE 等 Task 生命周期消息。
 {project_action_doc}{alarm_docs}{memory_docs}- private_list {{}} —— 返回私有空间路径列表
 - private_read {{path}} —— 读取私有空间文件内容
 - private_write {{path, content}}；private_delete {{path}}
@@ -634,7 +644,12 @@ Task 能力的事实边界（由系统强制，不靠你猜）：
 - artifact_read 直接读取 Task Workspace 内容；用于
   “给我看代码 / Task 文件的前 N 行”。
 - artifact_read 的访问范围是 Task Workspace。
-{project_fact_doc}- `artifacts` intent 把 Task 文件导出到宿主机并返回路径，**不返回**
+{project_fact_doc}- `message_send` 只能发给**空闲** Agent；正在执行任务的 Agent 会拒绝
+  （`agent_busy`）。给正在执行的任务补充要求用 `follow_up`。
+- `follow_up` 在任务正在执行时投递到执行 Agent 的 Inbox；两种投递都是
+  **异步**的，不会打断当前 LLM 调用，Agent 在下一个工作轮次 / 阶段边界读取。
+- 空闲 Agent 不保证立即读取：消息进入 Inbox，等下一次任务 / 生命周期消费。
+- `artifacts` intent 把 Task 文件导出到宿主机并返回路径，**不返回**
   文件内容。
 - 文件位置 / 目录位置：`inspect` 返回 Task 的 `workspace_path`；
   `artifacts` 导出 Task 文件并返回路径。
@@ -698,8 +713,11 @@ Role 是弱信号；work_profile 依据任务本身判断。
      "task_text":"...","front_notes":"...",
      "reply":"...","reason":"..."}}
 
-4. follow_up —— 继续一个进行中 / 已中断的 Task。
-   可以给 task_text / front_notes；不填时系统用 Human 原话作为续跑说明。
+4. follow_up —— 继续 / 补充一个进行中或已中断的 Task。
+   正在执行时：把 task_text 投递到执行 Agent 的 Inbox，不停止当前步骤，
+   也不创建新 Job；Agent 在下一个工作轮次 / 阶段边界读取。
+   已中断 / 没有 Job 时：恢复执行。
+   可以给 task_text / front_notes；不填时系统用 Human 原话作为说明。
    目标不唯一时，clarify 可以向用户确认。
    {{"intent":"follow_up","task_id":"...",
      "task_text":"...","front_notes":"...",

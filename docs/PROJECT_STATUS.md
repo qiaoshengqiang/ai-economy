@@ -4,7 +4,7 @@
 > **日期：2026-11-15**
 > **阶段：开发中 / 观察实验**
 > **协议版本：`1`**
-> **测试基线：`5848 passed, 2 skipped, 30 deselected`**
+> **测试基线：`5853 passed, 2 skipped, 30 deselected`**
 
 本文记录**当前真实可用能力、推荐工作方式、已知限制和版本变化**。
 架构的长期权威仍然是
@@ -81,6 +81,9 @@
 - 内置引擎 Work loop 改为 **append-only conversation + 定期压缩**：
   后续轮次追加增量事实，不再从零重建 prompt；超过阈值后保留 base +
   最近几轮，旧轮次压成摘要（ADR-0061）。
+- Front 新增 `message_send`：只能给空闲 Agent 发普通消息；
+  正在执行任务的 Agent 返回 `agent_busy`。`follow_up` 对 live Task
+  改为投递到执行 Agent 的 Inbox，不再只回复“正在执行中”。
 - 读取分页字段统一：按行用 `start_line` / `max_lines` / `next_start_line`
   （`workspace_read` · `artifact_read` · `project_read`），按字符用
   `start_char` / `max_chars` / `next_start_char`（`draft_read`）；
@@ -571,7 +574,7 @@ Team 协作
 当前基线：
 
 ```text
-5848 passed, 2 skipped, 30 deselected
+5853 passed, 2 skipped, 30 deselected
 ```
 
 启动说明见 [`../START_AIEOS.md`](../START_AIEOS.md)。

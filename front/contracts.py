@@ -32,7 +32,8 @@ class FrontIntent:
     HANDOFF = "handoff"
     #: 对已完成 Task 的返工 → 路由给 Creator → Reopen
     REWORK = "rework"
-    #: 对进行中 Task 的追问 / 补充 → 路由给 Creator
+    #: 对进行中 Task 的追问 / 补充 → 路由给 Creator。
+    #: 正在执行时投递到执行 Agent 的 Inbox；未运行时恢复执行。
     FOLLOW_UP = "follow_up"
     #: Human 要求暂停进行中的 Task：停止当前执行，但 Task 保持
     #: IN_PROGRESS，之后可以用 follow_up 继续

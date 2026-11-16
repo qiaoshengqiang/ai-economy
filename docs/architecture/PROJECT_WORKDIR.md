@@ -156,7 +156,7 @@ Front 可以只读项目目录：
 
 ```text
 project_list { path?, depth? }
-project_read { path, offset?, limit? }
+project_read { path, start_line?, max_lines? }
 ```
 
 边界：

@@ -55,6 +55,7 @@ from core.timezones import DEFAULT_TIMEZONE, normalize_timezone
 from demand.task_creation import TaskCreationService
 from services.alarm_service import AlarmService, WakeupDispatcher
 from services.artifacts import MAX_READ_LINES, read_artifact
+from services.messaging import send_message_as
 from work.artifact_export import (
     ArtifactExportError, export_task_workspace,
 )
@@ -68,6 +69,7 @@ from work.availability import AgentAvailability
 from work.checkpoint import (
     RunCheckpoint, checkpoint_from_rounds, dumps as checkpoint_dumps,
 )
+from work.comm_bridge import run_coro
 from work.drafts import TaskDraftStore
 from work.front_actions import (
     build_front_dispatcher, execute_front_actions,
@@ -1786,6 +1788,61 @@ class AIEOSController:
                 pass
         return "\n\n".join(parts)
 
+    def _agent_busy(self, agent_id: str) -> bool:
+        """Front 的 message_send 只允许发给空闲 Agent。"""
+        key = str(agent_id or "").strip()
+        if not key:
+            return False
+        if self.availability.state(key) == AgentAvailability.WORKING:
+            return True
+        with self._lock:
+            for job in self._jobs.values():
+                if job.status not in _RUNNING_JOB_STATUSES:
+                    continue
+                if key == str(getattr(job, "leader", "") or ""):
+                    return True
+                if key in (getattr(job, "members", None) or []):
+                    return True
+        return False
+
+    def _send_front_message(
+        self,
+        *,
+        to_agent: str,
+        text: Any = None,
+        message_type: str = "TEXT",
+        payload: Optional[Mapping[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Front 作为发送方，经 CommunicationManager 发一条消息。"""
+        communication = getattr(self.rt, "communication", None)
+        if communication is None:
+            return {"ok": False, "code": "no_communication",
+                    "message": "当前 Runtime 没有通信层"}
+        try:
+            return run_coro(send_message_as(
+                communication,
+                from_agent=self.front_agent,
+                to_agent=to_agent,
+                message_type=message_type,
+                text=None if text is None else str(text),
+                payload=payload,
+            ))
+        except Exception as exc:                              # noqa: BLE001
+            return {
+                "ok": False, "code": "send_failed",
+                "message": f"{type(exc).__name__}: {exc}",
+            }
+
+    def _front_message_send_fn(self, _comm: Any = None,
+                               **kwargs: Any) -> Dict[str, Any]:
+        """`MessageSendExecutor` 的注入 fn。"""
+        return self._send_front_message(
+            to_agent=str(kwargs.get("to_agent") or ""),
+            text=kwargs.get("text"),
+            message_type=str(kwargs.get("message_type") or "TEXT"),
+            payload=kwargs.get("payload"),
+        )
+
     def _front_runtime(
         self, project_root: str = "", *, llm_session_scope: str = "",
     ) -> Optional[FrontAgentRuntime]:
@@ -1797,6 +1854,9 @@ class AIEOSController:
             workspace_of=self._workspace_of_agent,
             drafts=self._front_drafts(),
             artifact_read_fn=self._front_artifact_read,
+            message_send_fn=self._front_message_send_fn,
+            agent_busy_fn=self._agent_busy,
+            front_agent=self.front_agent,
             web_search_fn=lambda query, **kwargs: self.web_search(
                 self.front_agent, query, **kwargs),
             web_fetch_fn=lambda url: self.web_fetch(
@@ -3047,13 +3107,64 @@ class AIEOSController:
     # ------------------------------------------------------------
     # follow_up / rework：继续或重跑已有 Task
     # ------------------------------------------------------------
+    def _deliver_live_follow_up(
+        self, job: WorkJob, task: Any, decision: Any,
+    ) -> None:
+        """把 follow_up 的补充要求投递到正在执行 Agent 的 Inbox。"""
+        worker = str(
+            getattr(task, "contractor", "")
+            or getattr(task, "creator", "")
+            or "").strip()
+        if not worker:
+            self._reply_direct(
+                job,
+                f"任务 {task.task_id} 没有可用的执行 Agent，"
+                "无法投递补充要求。",
+                task.task_id,
+            )
+            return
+        brief = getattr(decision, "brief", None)
+        instruction = str(
+            getattr(brief, "task_text", "")
+            or job.human_text
+            or "").strip()
+        if not instruction:
+            self._reply_direct(
+                job, "补充要求为空，没有投递。", task.task_id)
+            return
+        job.task_id = task.task_id
+        result = self._send_front_message(
+            to_agent=worker,
+            text=instruction,
+            message_type="TEXT",
+            payload={
+                "kind": "task_follow_up",
+                "task_id": task.task_id,
+                "job_id": job.job_id,
+            },
+        )
+        if not result.get("ok"):
+            self._reply_direct(
+                job,
+                f"补充要求没有发出去："
+                f"{result.get('message') or result.get('code') or '未知错误'}",
+                task.task_id,
+            )
+            return
+        self._reply_direct(
+            job,
+            f"已把补充要求转给正在执行的任务 {task.task_id}；"
+            f"{worker} 会在下一个工作轮次 / 阶段边界看到它。",
+            task.task_id,
+        )
+
     def _resume_or_rework(
         self,
         job: WorkJob,
         decision: Any,
         front: Any,
     ) -> tuple[str, List[str]]:
-        """Front 指向已有 Task 时，真正恢复执行 / Reopen，而不是只回一句话。"""
+        """Front 指向已有 Task：live follow_up 投递 Inbox；否则恢复 / Reopen。"""
         try:
             task = self.rt.tasks.get(decision.task_id)
         except Exception:                                     # noqa: BLE001
@@ -3061,6 +3172,18 @@ class AIEOSController:
         if task is None:
             self._reply_direct(
                 job, "找不到这个任务；它可能已经被清理了。", decision.task_id)
+            return "", []
+
+        if self._is_live(task.task_id):
+            if decision.intent == FrontIntent.FOLLOW_UP:
+                self._deliver_live_follow_up(job, task, decision)
+            else:
+                self._reply_direct(
+                    job,
+                    f"任务 {task.task_id} 正在执行中（{task.status}），"
+                    "完成后才能返工。",
+                    task.task_id,
+                )
             return "", []
 
         role_id = str(getattr(decision, "role", "") or "").strip()
@@ -3106,15 +3229,6 @@ class AIEOSController:
                 f"任务 {task.task_id} 是旧的 Team 任务；当前只支持 Solo，"
                 "不能继续它。请重新提交为一个新任务；"
                 "如果要停止它，直接说停止。",
-                task.task_id,
-            )
-            return "", []
-
-        if self._is_live(task.task_id):
-            self._reply_direct(
-                job,
-                f"任务 {task.task_id} 正在执行中（{task.status}），"
-                "完成后我会把结果告诉你。",
                 task.task_id,
             )
             return "", []

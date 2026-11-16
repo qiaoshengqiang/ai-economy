@@ -167,6 +167,8 @@ Human ≠ Agent
 | Human → Front 输入 | **是** | Life 层会话；`conversation_id` |
 | Front → Human 回复 | **是** | `reply_to` 指向 Human 消息 |
 | Front → Worker handoff / 邀请 | **是** | `TASK_OFFER` / `ACCEPT` / `REJECT` |
+| Front → 正在执行的 Task 补充要求 | **是** | `follow_up` 投递到执行 Agent 的 Inbox；不创建新 Job |
+| Front → 空闲 Agent 普通消息 | **是** | `message_send`；正在执行任务的 Agent 会返回 `agent_busy` |
 | Worker → Front 结果 / 提问 | **是** | `task_id` 可选 |
 | Worker ↔ Worker 显式沟通 | **是，有限制** | 只承载 Agent 判断/通知，不承载任务状态 |
 | Task START / SUBMIT / VERIFY / COMPLETE | **可以走消息触发** | Task Core 仍是状态权威 |

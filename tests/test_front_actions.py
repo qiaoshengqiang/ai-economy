@@ -17,13 +17,20 @@ from work.front_actions import (
 )
 
 
-def _setup(tmp_path, artifact_read_fn=None, project_root=""):
+def _setup(
+    tmp_path, artifact_read_fn=None, project_root="",
+    message_send_fn=None, agent_busy_fn=None, front_agent="agent_a",
+):
     workspace = Workspace(tmp_path / "agent_a", "agent_a")
     drafts = TaskDraftStore(
         task_id="front", workspace_of=lambda _aid: workspace)
     dispatcher = build_front_dispatcher(
         workspace_of=lambda _aid: workspace, drafts=drafts,
-        artifact_read_fn=artifact_read_fn, project_root=project_root)
+        artifact_read_fn=artifact_read_fn,
+        message_send_fn=message_send_fn,
+        agent_busy_fn=agent_busy_fn,
+        front_agent=front_agent,
+        project_root=project_root)
     return workspace, dispatcher
 
 
@@ -65,6 +72,7 @@ def test_front_can_write_and_read_drafts(tmp_path):
 
 def test_front_action_set_is_scoped():
     assert "artifact_read" in FRONT_ACTION_TYPES
+    assert "message_send" in FRONT_ACTION_TYPES
     assert {"project_list", "project_read"} <= FRONT_ACTION_TYPES
     assert {
         "private_read", "private_write", "private_list", "private_delete",
@@ -101,6 +109,70 @@ def test_front_can_read_task_artifact(tmp_path):
     assert calls == [("task_x", "index.html", 1, 2)]
     assert "line1" in receipt
     assert "artifact_read" in receipt
+
+
+def test_front_can_message_idle_agent(tmp_path):
+    calls = []
+
+    def send(_comm, *, from_agent, to_agent, message_type, text, payload):
+        calls.append({
+            "from_agent": from_agent, "to_agent": to_agent,
+            "message_type": message_type, "text": text,
+            "payload": payload,
+        })
+        return {
+            "ok": True, "message_id": "msg_1", "to": to_agent,
+            "message_type": message_type,
+        }
+
+    _workspace, dispatcher = _setup(
+        tmp_path, message_send_fn=send,
+        agent_busy_fn=lambda _aid: False)
+    receipt = execute_front_actions(
+        dispatcher,
+        [{"type": "message_send", "parameters": {
+            "to": "agent_b", "text": "顺便看一下测试"}}],
+        agent_id="agent_a",
+    )
+
+    assert calls == [{
+        "from_agent": "agent_a", "to_agent": "agent_b",
+        "message_type": "TEXT", "text": "顺便看一下测试",
+        "payload": None,
+    }]
+    assert "msg_1" in receipt
+
+
+def test_front_message_send_rejects_busy_and_lifecycle(tmp_path):
+    calls = []
+
+    def send(_comm, **kwargs):
+        calls.append(kwargs)
+        return {"ok": True, "to": kwargs.get("to_agent"),
+                "message_type": kwargs.get("message_type")}
+
+    _workspace, dispatcher = _setup(
+        tmp_path, message_send_fn=send,
+        agent_busy_fn=lambda aid: aid == "agent_b")
+
+    busy = execute_front_actions(
+        dispatcher,
+        [{"type": "message_send", "parameters": {
+            "to": "agent_b", "text": "hi"}}],
+        agent_id="agent_a",
+    )
+    forbidden = execute_front_actions(
+        dispatcher,
+        [{"type": "message_send", "parameters": {
+            "to": "agent_c", "message_type": "SUBMIT",
+            "text": "提交"}}],
+        agent_id="agent_a",
+    )
+
+    assert calls == []
+    assert "agent_busy" in busy
+    assert "follow_up" in busy
+    assert "forbidden_message_type" in forbidden
 
 
 def test_front_artifact_read_rejects_conflicting_paging_aliases(tmp_path):

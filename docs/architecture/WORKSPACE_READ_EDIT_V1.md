@@ -25,7 +25,7 @@ workspace_write(path, replace, 全文)  → 重新输出全文
 V1 补两个动作：
 
 ```text
-workspace_read(path, offset, limit)   → 范围读取
+workspace_read(path, start_line, max_lines) → 范围读取
 workspace_edit(path, old_string, new_string) → 局部替换
 ```
 
@@ -147,7 +147,7 @@ not_participant
 覆盖：
 
 - 全文读取向后兼容；
-- offset/limit、越界、400 行上限、total/truncated；
+- start_line/max_lines、越界、400 行上限、total/truncated；
 - 唯一命中、0 命中、多命中、replace_all；
 - stale revision、no_change、空 old_string；
 - executor 的 agent_id 不可伪造；

@@ -138,10 +138,14 @@ LLM → 动作（private_* / draft_*）→ 真实结果回喂
 ```
 
 - 可用动作：
-  - `artifact_read {task_id, path, offset?, limit?}`：只读 Task Workspace
-    文件内容；不创建 Task，不读宿主绝对路径；
-  - `project_list {path?, depth?}` / `project_read {path, offset?, limit?}`：
-    只读当前选中的项目目录；仅在 Human 选择了 `workdir` 时可用；
+  - `artifact_read {task_id, path, start_line?, max_lines?}`：只读
+    Task Workspace 文件内容；不创建 Task，不读宿主绝对路径；
+  - `project_list {path?, depth?}` /
+    `project_read {path, start_line?, max_lines?}`：只读当前选中的
+    项目目录；仅在 Human 选择了 `workdir` 时可用；
+  - `message_send {to, text, message_type?, payload?}`：给**空闲**
+    Agent 发普通消息；正在执行任务的 Agent 返回 `agent_busy`；
+    给正在执行的任务补充要求用 `follow_up`；
   - `private_read` / `private_write` / `private_list` /
     `private_delete`；`draft_read` / `draft_write` / `draft_append` /
     `draft_list` / `draft_delete`。

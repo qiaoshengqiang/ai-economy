@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from work.controller import _is_interruption
+from types import SimpleNamespace
+
+from front import FrontBrief, FrontDecision, FrontIntent
+from work.controller import (
+    AIEOSController, JobStatus, WorkJob, _is_interruption,
+)
 from work.pi_runtime import PiWorkRuntime
 
 
@@ -25,6 +30,73 @@ def test_pi_session_id_reuses_only_same_iteration():
     assert PiWorkRuntime._pi_session_id(
         "task_1", 2,
         {"iteration": 2, "session_id": "task_1.i2"}) == "task_1.i2"
+
+
+def test_live_follow_up_is_delivered_to_inbox(monkeypatch):
+    class _Directory:
+        def all(self):
+            return [
+                SimpleNamespace(agent_id="agent_a"),
+                SimpleNamespace(agent_id="agent_b"),
+            ]
+
+    task = SimpleNamespace(
+        task_id="task_live", status="IN_PROGRESS", mode="SOLO",
+        is_open=True, contractor="agent_b", creator="agent_b",
+        participants=["agent_b"], workspace_id="WS", iteration=1,
+        description="原始任务", acceptance={})
+    runtime = SimpleNamespace(
+        directory=_Directory(),
+        economy=SimpleNamespace(
+            agent=lambda _aid: SimpleNamespace(
+                has_brain=True, brain=None)),
+        tasks=SimpleNamespace(
+            get=lambda _tid: task,
+            list_tasks=lambda limit=50: [],
+        ),
+    )
+    controller = AIEOSController(runtime, front_agent="agent_a")
+    job = WorkJob(job_id="job_front", human_text="补充一下")
+    target = WorkJob(
+        job_id="job_running", human_text="原任务",
+        task_id=task.task_id, status=JobStatus.RUNNING,
+        leader="agent_b", members=["agent_b"])
+    controller._jobs[job.job_id] = job
+    controller._jobs[target.job_id] = target
+    assert controller._agent_busy("agent_b") is True
+
+    sent = {}
+
+    def fake_send(**kwargs):
+        sent.update(kwargs)
+        return {"ok": True, "message_id": "msg_follow"}
+
+    monkeypatch.setattr(controller, "_send_front_message", fake_send)
+    decision = FrontDecision(
+        intent=FrontIntent.FOLLOW_UP,
+        task_id=task.task_id,
+        brief=FrontBrief(
+            goal="补充",
+            human_text="补充一下",
+            task_text="请把失败用例修掉",
+        ),
+        reply="我转告他。",
+    )
+    try:
+        controller._resume_or_rework(job, decision, None)
+    finally:
+        controller.close()
+
+    assert sent["to_agent"] == "agent_b"
+    assert sent["text"] == "请把失败用例修掉"
+    assert sent["payload"]["kind"] == "task_follow_up"
+    assert sent["payload"]["task_id"] == task.task_id
+    assert job.task_id == task.task_id
+    assert job.status == JobStatus.DIRECT_REPLY
+    assert "已把补充要求" in job.summary
+    # live follow_up 不重启、不改写 Task description。
+    assert "续跑要求" not in task.description
+    assert target.status == JobStatus.RUNNING
 
 
 def test_rework_persists_selected_role(monkeypatch):

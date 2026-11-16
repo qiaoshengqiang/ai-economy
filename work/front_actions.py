@@ -11,6 +11,14 @@ Front 不是 Work Agent，但需要在自己的私有空间里准备文件/草�
 
     project_list / project_read
 
+也可以给**空闲** Agent 发普通消息：
+
+    message_send
+
+🔒 `message_send` **不能**发给正在执行任务的 Agent；给正在执行的
+   Task 补充要求用 Front 的 `follow_up`（投递到执行 Agent 的 Inbox）。
+🔒 `message_send` 不能发送 Task 生命周期 / 协商消息。
+
 🔒 这里**没有** Task / Workspace 写入 / run_tool：
    · Front 不创建 Task；
    · Front 不写 Task Workspace；
@@ -22,12 +30,14 @@ Front 不是 Work Agent，但需要在自己的私有空间里准备文件/草�
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from typing import Any, Callable, Dict, Iterable, List, Optional
 
 from actions import (
     ActionDispatcher,
     ActionIntent,
     ActionResult,
+    MessageSendExecutor,
     DraftAppendExecutor,
     DraftDeleteExecutor,
     DraftListExecutor,
@@ -75,8 +85,96 @@ def _row_paging(params: Dict[str, Any]) -> tuple[Any, Any, str]:
     return start, count, ""
 
 
+#: Front 不能发送 Task 生命周期 / 协商消息。
+#: 这些消息会改变 Task 状态或创建 Task，必须由 Task 参与者通过
+#: Task / Negotiation 机制发送，不能由 Front 代发。
+FRONT_FORBIDDEN_MESSAGE_TYPES = frozenset({
+    "TASK_OFFER", "COUNTER_OFFER", "ACCEPT", "REJECT",
+    "START", "SUBMIT", "VERIFY", "COMPLETE",
+    "PAYMENT_REQUEST",
+})
+
+
+class FrontMessageSendExecutor:
+    """Front 的 `message_send`：只能发给**空闲** Agent 的普通消息。"""
+
+    action_types = frozenset({"message_send"})
+
+    def __init__(
+        self,
+        send_fn: Callable[..., Any],
+        *,
+        is_busy: Optional[Callable[[str], bool]] = None,
+        front_agent: str = "",
+    ) -> None:
+        self._inner = MessageSendExecutor(send_fn, comm=None)
+        self._is_busy = is_busy or (lambda _agent_id: False)
+        self.front_agent = str(front_agent or "").strip()
+
+    def execute(self, intent: ActionIntent) -> ActionResult:
+        params = dict(getattr(intent, "parameters", None) or {})
+        to_agent = str(params.get("to") or "").strip()
+        message_type = str(
+            params.get("message_type") or "TEXT").strip().upper()
+        text = str(params.get("text") or "").strip()
+        payload = params.get("payload")
+
+        if not to_agent:
+            return self._fail(
+                intent, "message_send 需要收件人 to",
+                code="missing_recipient")
+        if to_agent == self.front_agent:
+            return self._fail(
+                intent, "不能给自己发消息", code="self_recipient")
+        if message_type in FRONT_FORBIDDEN_MESSAGE_TYPES:
+            return self._fail(
+                intent,
+                "Front 不能发送 Task 生命周期 / 协商消息；"
+                "这些消息必须由 Task 参与者发送",
+                code="forbidden_message_type")
+        if payload is not None and not isinstance(payload, dict):
+            return self._fail(
+                intent, "payload 必须是对象", code="bad_payload")
+        if not text and not payload:
+            return self._fail(
+                intent, "message_send 需要 text 或 payload",
+                code="empty_message")
+        try:
+            busy = bool(self._is_busy(to_agent))
+        except Exception:                                     # noqa: BLE001
+            busy = False
+        if busy:
+            return self._fail(
+                intent,
+                f"Agent {to_agent} 正在执行任务，不能用 message_send；"
+                "给正在执行的任务补充要求请用 follow_up",
+                code="agent_busy")
+
+        params.update({
+            "to": to_agent,
+            "message_type": message_type,
+            "text": text or None,
+            "payload": payload,
+        })
+        return self._inner.execute(
+            replace(intent, parameters=params))
+
+    def _fail(
+        self, intent: ActionIntent, message: str, *, code: str,
+    ) -> ActionResult:
+        return ActionResult(
+            success=False,
+            output=None,
+            error=message,
+            action_id=intent.intent_id,
+            action_type=intent.action_type,
+            metadata={"code": code},
+        )
+
+
 FRONT_ACTION_TYPES = frozenset({
     "artifact_read",
+    "message_send",
     "project_list", "project_read",
     "web_search", "web_fetch",
     "private_read", "private_write", "private_list", "private_delete",
@@ -719,6 +817,9 @@ def build_front_dispatcher(
     workspace_of: Callable[[str], Any],
     drafts: Any = None,
     artifact_read_fn: Optional[Callable[..., Any]] = None,
+    message_send_fn: Optional[Callable[..., Any]] = None,
+    agent_busy_fn: Optional[Callable[[str], bool]] = None,
+    front_agent: str = "",
     web_search_fn: Optional[Callable[..., Any]] = None,
     web_fetch_fn: Optional[Callable[..., Any]] = None,
     project_root: str = "",
@@ -747,6 +848,12 @@ def build_front_dispatcher(
         ])
     if artifact_read_fn is not None:
         executors.append(FrontArtifactReadExecutor(artifact_read_fn))
+    if message_send_fn is not None:
+        executors.append(FrontMessageSendExecutor(
+            message_send_fn,
+            is_busy=agent_busy_fn,
+            front_agent=front_agent,
+        ))
     if str(project_root or "").strip():
         executors.extend([
             FrontProjectListExecutor(project_root),

@@ -85,6 +85,7 @@
 | [0059](0059-task-level-output-repo-binding.md) | **Task 级输出仓库绑定** | Accepted（**已实现；Project Repo Mode 为 FUTURE**） | 全局仓库无法覆盖不同项目 | Output Commit |
 | [0060](0060-project-workdir-direct-edit.md) | **Project Workdir —— 直接修改用户项目目录** | Accepted（**Phase 1 已实现；worktree / 项目提交为 FUTURE**） | 只能生成新产物 / 不能改已有项目 | Work / Workspace |
 | [0061](0061-builtin-work-append-only-conversation.md) | **内置 Work 引擎 Append-only Conversation** | Accepted（**V1 已实现**） | 每轮重建 prompt，cache hit ~70% | Work / LLM |
+| [0062](0062-front-message-send-and-live-follow-up.md) | **Front message_send 与 live follow_up** | Accepted（**V1 已实现**） | Front 无法给运行中 Agent 补充要求 | Front / Communication |
 | [0028](0028-read-visibility-and-native-communication.md) | **Read 靠 Task Participation；Communication 是 Agent 基础能力** | Accepted（实现为 FUTURE） | Read / Visibility / Communication | Workspace / Communication |
 
 ---

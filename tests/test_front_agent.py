@@ -348,6 +348,9 @@ def test_front_prompt_is_human_facing_and_does_not_invent_constraints():
     assert "没有创建 Task 的动作" in prompt
     assert "INTERRUPTED" in prompt
     assert "follow_up 可以恢复它" in prompt
+    assert "message_send" in prompt
+    assert "正在执行时，follow_up 把 task_text 投递到执行 Agent 的 Inbox" in prompt
+    assert "不能发给正在执行任务的 Agent" in prompt
     assert "artifacts" in prompt
     assert "一个回合内多个动作" in prompt
     assert "同一个 Worker 一个回合只能接一个执行动作" in prompt
