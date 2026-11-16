@@ -1639,9 +1639,9 @@ def test_task_detail_js_renders_cache_ratio():
 def test_llm_summary_includes_cache_ratio():
     calls = {
         "calls": 2,
-        "input_tokens": 100,
+        "input_tokens": 1000,
         "output_tokens": 50,
-        "cache_read_tokens": 300,
+        "cache_read_tokens": 900,
         "cache_write_tokens": 0,
         "latency_ms": 2000.0,
         "cost_ai": 0.5,
@@ -1661,8 +1661,8 @@ def test_llm_summary_includes_cache_ratio():
     finally:
         controller.close()
 
-    assert summary["cache_read_tokens"] == 300
-    assert summary["cache_hit_rate"] == 0.75
+    assert summary["cache_read_tokens"] == 900
+    assert summary["cache_hit_rate"] == 0.9
     assert summary["allowance_usd"] == 0.00002
 
 

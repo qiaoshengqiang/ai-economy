@@ -3855,16 +3855,20 @@ class AIEOSController:
         input_tokens = int(row["input_tokens"] or 0)
         cache_read = int(_value("cache_read_tokens") or 0)
         cache_write = int(_value("cache_write_tokens") or 0)
-        cache_total = input_tokens + cache_read + cache_write
+        # 🔒 `input_tokens` 来自 `prompt_tokens`，已经包含 cache_read /
+        #    cache_write（DeepSeek 与 OpenCode 实测如此）。
+        #    命中率的分母就是它；不能再加一次 cache_read，
+        #    否则 98% 会被算成 49%。
+        cache_hit_rate = (
+            min(1.0, cache_read / input_tokens)
+            if input_tokens else 0.0)
         return {
             "calls": calls,
             "input_tokens": input_tokens,
             "output_tokens": int(row["output_tokens"] or 0),
             "cache_read_tokens": cache_read,
             "cache_write_tokens": cache_write,
-            "cache_hit_rate": (
-                round(cache_read / cache_total, 4)
-                if cache_total else 0.0),
+            "cache_hit_rate": round(cache_hit_rate, 4),
             "allowance_usd": round(float(_value("allowance_usd") or 0), 6),
             "latency_ms": latency_ms,
             "avg_latency_ms": (

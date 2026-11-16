@@ -363,13 +363,16 @@ SELECT
   SUM(input_tokens) AS input,
   SUM(cache_read_tokens) AS cache_read,
   ROUND(
-    1.0 * SUM(cache_read_tokens) /
-    NULLIF(SUM(input_tokens + cache_read_tokens), 0), 4
+    1.0 * SUM(cache_read_tokens) / NULLIF(SUM(input_tokens), 0), 4
   ) AS cache_hit_rate,
   SUM(allowance_usd) AS allowance
 FROM llm_calls
 WHERE task_id = 'task_x';
 ```
+
+> `input_tokens` 来自 `prompt_tokens`，**已经包含**缓存读取
+> （DeepSeek / OpenCode 实测如此）。命中率的分母就是它，
+> 不要再加一次 `cache_read_tokens`。
 
 ### `This OpenCode Go model is hosted outside Europe and the United States`
 
