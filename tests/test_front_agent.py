@@ -577,9 +577,35 @@ def test_inspect_is_bounded():
             "看看",
             active_tasks=[{"task_id": "task_1",
                            "status": "IN_PROGRESS"}],
+            max_inspect=2,
         )
 
-    assert len(calls) == 2, "最多 inspect 2 次"
+    assert len(calls) == 2, "显式设置 max_inspect=2 时最多 inspect 2 次"
+
+
+def test_inspect_zero_means_unlimited():
+    responses = [
+        {"intent": "inspect", "task_id": "task_1"},
+        {"intent": "inspect", "task_id": "task_1"},
+        {"intent": "inspect", "task_id": "task_1"},
+        {"intent": "direct_reply", "reply": "好"},
+    ]
+
+    def think(prompt):
+        return json.dumps(responses.pop(0), ensure_ascii=False)
+
+    calls = []
+    runtime = FrontAgentRuntime(
+        "front", think, inspect_fn=lambda tid: calls.append(tid) or {"x": 1})
+
+    decision = runtime.decide(
+        "看看",
+        active_tasks=[{"task_id": "task_1", "status": "IN_PROGRESS"}],
+        max_inspect=0,
+    )
+
+    assert decision.intent == FrontIntent.DIRECT_REPLY
+    assert len(calls) == 3
 
 
 def test_inspect_without_capability_is_retryable_error():

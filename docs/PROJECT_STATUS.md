@@ -4,7 +4,7 @@
 > **日期：2026-11-15**
 > **阶段：开发中 / 观察实验**
 > **协议版本：`1`**
-> **测试基线：`5838 passed, 2 skipped, 30 deselected`**
+> **测试基线：`5840 passed, 2 skipped, 30 deselected`**
 
 本文记录**当前真实可用能力、推荐工作方式、已知限制和版本变化**。
 架构的长期权威仍然是
@@ -72,6 +72,8 @@
 - Front 新增 `interrupt`：停止当前执行、Task 保持 `IN_PROGRESS`，
   之后可用 `follow_up` 继续；`cancel` 仍是终态。
 - 连续只读保护默认从 4 轮提高到 8 轮；设置 → 运行可调整（0 = 不限制）。
+- Front `inspect` 每次输入上限默认从 2 提高到 4；设置 → 运行可调整
+  （0–20，0 = 不限制）。
 - 读取分页字段统一：按行用 `start_line` / `max_lines` / `next_start_line`
   （`workspace_read` · `artifact_read` · `project_read`），按字符用
   `start_char` / `max_chars` / `next_start_char`（`draft_read`）；
@@ -553,7 +555,7 @@ Team 协作
 当前基线：
 
 ```text
-5838 passed, 2 skipped, 30 deselected
+5840 passed, 2 skipped, 30 deselected
 ```
 
 启动说明见 [`../START_AIEOS.md`](../START_AIEOS.md)。

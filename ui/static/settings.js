@@ -484,6 +484,7 @@
       maxTeams: Number($("max-teams").value || 3),
       maxSoloTurns: Number($("max-solo-turns").value || 24),
       maxReadOnlyTurns: Number($("max-read-only-turns").value || 8),
+      frontMaxInspect: Number($("front-max-inspect").value || 4),
       commitEnabled: enabled,
       commitOutputRepo: enabled
         ? $("commit-output-repo").value.trim() : "",
@@ -551,6 +552,7 @@
     $("max-teams").value = String(state.maxTeams);
     $("max-solo-turns").value = String(state.maxSoloTurns);
     $("max-read-only-turns").value = String(state.maxReadOnlyTurns);
+    $("front-max-inspect").value = String(state.frontMaxInspect);
     $("commit-output-enabled").checked = !!state.commitEnabled;
     $("commit-output-repo").value = state.commitOutputRepo || "";
     setRadio("commit-mode", state.commitMode || "manual");
@@ -570,6 +572,8 @@
     $("max-solo-turns").value = String(regular.max_solo_turns || 24);
     $("max-read-only-turns").value = String(
       regular.max_read_only_turns ?? 8);
+    $("front-max-inspect").value = String(
+      regular.front_max_inspect ?? 4);
     $("commit-output-enabled").checked = !!String(
       regular.commit_output_repo || "").trim();
     $("commit-output-repo").value = regular.commit_output_repo || "";
@@ -595,6 +599,7 @@
           max_parallel_teams: state.maxTeams,
           max_solo_turns: state.maxSoloTurns,
           max_read_only_turns: state.maxReadOnlyTurns,
+          front_max_inspect: state.frontMaxInspect,
           commit_mode: state.commitMode,
           commit_output_repo: state.commitOutputRepo,
           commit_base_ref: state.commitBaseRef,
@@ -1150,6 +1155,7 @@
         maxTeams: 3,
         maxSoloTurns: 24,
         maxReadOnlyTurns: 8,
+        frontMaxInspect: 4,
         commitEnabled: false,
         commitOutputRepo: "",
         commitMode: "manual",
@@ -1736,6 +1742,7 @@
   });
   [
     "max-teams", "max-solo-turns", "max-read-only-turns",
+    "front-max-inspect",
     "commit-output-repo", "commit-base-ref", "pi-timeout-seconds",
     "prompt-log-enabled", "timezone",
   ].forEach((id) => {

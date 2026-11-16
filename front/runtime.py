@@ -174,7 +174,7 @@ class FrontAgentRuntime:
         agents: Iterable[Dict[str, Any]] = (),
         context: str = "",
         project_context: str = "",
-        max_inspect: int = 2,
+        max_inspect: int = 4,
         wakeup: Optional[Dict[str, Any]] = None,
         memory_facts: str = "",
     ) -> FrontTurn:
@@ -193,8 +193,10 @@ class FrontAgentRuntime:
         `project_context` 是用户当前选中项目目录的只读摘要；空字符串表示
         没有选择项目目录。
 
-        `inspect` 是只读能力，不是最终决定；最多 `max_inspect` 次。
+        `inspect` 是只读能力，不是最终决定；最多 `max_inspect` 次，
+        `0` 表示不限制。
         """
+        max_inspect = max(0, int(max_inspect))
         active = [
             _task_ref(item) for item in active_tasks
             if _task_ref(item)
@@ -223,7 +225,7 @@ class FrontAgentRuntime:
                 action_history=action_history,
                 context=context, project_context=project_context,
                 wakeup=wakeup, memory_facts=memory_facts,
-                previous_error=last_error)
+                max_inspect=max_inspect, previous_error=last_error)
             raw = self._think_with_retry(prompt)
             self.last_raw_output = str(raw or "")
 
@@ -277,7 +279,7 @@ class FrontAgentRuntime:
                         raise FrontUnavailableError(
                             "inspect_unavailable：Front 需要读取任务事实，"
                             "但当前没有 inspect 能力")
-                    if inspect_count >= max_inspect:
+                    if max_inspect and inspect_count >= max_inspect:
                         raise FrontUnavailableError(
                             f"inspect_limit：本次最多 inspect {max_inspect} 次")
                     try:
@@ -447,6 +449,7 @@ class FrontAgentRuntime:
         project_context: str = "",
         wakeup: Optional[Dict[str, Any]] = None,
         memory_facts: str = "",
+        max_inspect: int = 4,
         previous_error: str = "",
     ) -> str:
         error_text = ""
@@ -456,6 +459,9 @@ class FrontAgentRuntime:
                 "。继续下一步；最终仍要输出一个合法的 JSON。\n")
         actions = ", ".join(self.action_types) or "（无）"
         now_text = render_now(self.timezone)
+        inspect_cap_text = (
+            f"每次输入最多 {max_inspect} 次"
+            if max_inspect else "每次输入不限次数")
         alarm_docs = ""
         alarm_example = ""
         if "alarm_create" in self.action_types:
@@ -712,7 +718,7 @@ Role 是弱信号；work_profile 依据任务本身判断。
 8. clarify —— 当选择很重要时询问人类。
    {{"intent":"clarify","question":"...","reason":"..."}}
 
-9. inspect —— 只读 Task 事实；每次输入最多 2 次。
+9. inspect —— 只读 Task 事实；{inspect_cap_text}。
    返回 Task 的 workspace_path（Task Workspace 的宿主机路径）和文件列表；
    只读，不导出。
    {{"intent":"inspect","task_id":"...","reason":"..."}}

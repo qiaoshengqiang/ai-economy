@@ -417,3 +417,29 @@ def test_read_only_turn_limit_round_trip(tmp_path):
 
     data = json.loads(path.read_text("utf-8"))
     assert data["max_read_only_turns"] == 12
+
+
+def test_front_inspect_limit_round_trip(tmp_path):
+    path = tmp_path / "ui_settings.json"
+    controller = _controller(tmp_path)
+    try:
+        assert controller.settings_dict()["front_max_inspect"] == 4
+        controller.update_settings(front_max_inspect=0)
+        assert controller.settings_dict()["front_max_inspect"] == 0
+        controller.update_settings(front_max_inspect=12)
+        assert controller.settings_dict()["front_max_inspect"] == 12
+        with pytest.raises(ValueError, match="0..20"):
+            controller.update_settings(front_max_inspect=-1)
+        with pytest.raises(ValueError, match="0..20"):
+            controller.update_settings(front_max_inspect=21)
+    finally:
+        controller.close()
+
+    reloaded = _controller(tmp_path)
+    try:
+        assert reloaded.settings_dict()["front_max_inspect"] == 12
+    finally:
+        reloaded.close()
+
+    data = json.loads(path.read_text("utf-8"))
+    assert data["front_max_inspect"] == 12

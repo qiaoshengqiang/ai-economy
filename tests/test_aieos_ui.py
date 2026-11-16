@@ -2115,7 +2115,8 @@ def test_front_turn_passes_selected_project(tmp_path):
             has_brain=True, brain=None, workspace=None)),
         tasks=SimpleNamespace(list_tasks=lambda limit=50: []),
     )
-    controller = AIEOSController(runtime, front_agent="agent_a")
+    controller = AIEOSController(
+        runtime, front_agent="agent_a", front_max_inspect=6)
 
     class _Front:
         def __init__(self):
@@ -2140,6 +2141,7 @@ def test_front_turn_passes_selected_project(tmp_path):
     assert str(project.resolve()) in context
     assert "index.html" in context
     assert "Demo" in context
+    assert front.kwargs["max_inspect"] == 6
 
 
 def test_pi_task_creation_skips_shared_context(db):

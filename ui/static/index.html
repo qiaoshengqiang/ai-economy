@@ -629,6 +629,20 @@
                 </div>
               </div>
 
+              <div class="setting-row">
+                <div class="setting-label">
+                  <span>Front 查询任务事实次数</span>
+                  <small>每次输入最多 inspect 几次；inspect 是只读查询 Task 事实，不创建或修改 Task。0 = 不限制。</small>
+                </div>
+                <div class="setting-control">
+                  <div class="inline-control">
+                    <input id="front-max-inspect" type="number" min="0" max="20" />
+                    <span class="unit">次</span>
+                    <span class="range">0–20</span>
+                  </div>
+                </div>
+              </div>
+
               <div class="switch-row">
                 <label class="switch">
                   <input id="pi-timeout-enabled" type="checkbox" checked />
