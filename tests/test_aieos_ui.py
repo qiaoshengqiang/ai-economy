@@ -1626,6 +1626,46 @@ def test_task_detail_js_renders_call_latency():
     assert "avg_latency_ms" in js
 
 
+def test_task_detail_js_renders_cache_ratio():
+    from pathlib import Path
+
+    js = (Path(__file__).resolve().parent.parent
+          / "ui" / "static" / "task.js").read_text(encoding="utf-8")
+    assert "cache_hit_rate" in js
+    assert "cache_read_tokens" in js
+    assert "缓存命中" in js
+
+
+def test_llm_summary_includes_cache_ratio():
+    calls = {
+        "calls": 2,
+        "input_tokens": 100,
+        "output_tokens": 50,
+        "cache_read_tokens": 300,
+        "cache_write_tokens": 0,
+        "latency_ms": 2000.0,
+        "cost_ai": 0.5,
+        "allowance_usd": 0.00002,
+    }
+    runtime = SimpleNamespace(
+        directory=_Directory(["agent_a"]),
+        economy=SimpleNamespace(agent=lambda aid: SimpleNamespace(
+            has_brain=True)),
+        tasks=SimpleNamespace(list_tasks=lambda limit=50: []),
+        recorder=SimpleNamespace(
+            db=SimpleNamespace(fetchone=lambda *a, **k: calls)),
+    )
+    controller = AIEOSController(runtime, front_agent="agent_a")
+    try:
+        summary = controller._llm_summary("task_x")
+    finally:
+        controller.close()
+
+    assert summary["cache_read_tokens"] == 300
+    assert summary["cache_hit_rate"] == 0.75
+    assert summary["allowance_usd"] == 0.00002
+
+
 def test_handoff_sends_front_reply(monkeypatch, tmp_path):
     from front import FrontBrief, FrontDecision, FrontIntent
     from work.controller import WorkJob

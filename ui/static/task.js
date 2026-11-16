@@ -411,6 +411,20 @@
     if (totalTime) line += ` · 总耗时 ${totalTime}`;
     if (avgTime) line += ` · 平均 ${avgTime}/call`;
     els.llm.appendChild(el("div", "file-row", line));
+
+    if (Number(llm.calls || 0) > 0) {
+      const cacheRead = Number(llm.cache_read_tokens || 0);
+      const cacheWrite = Number(llm.cache_write_tokens || 0);
+      const hitRate = Number(llm.cache_hit_rate || 0) * 100;
+      let cacheLine =
+        `缓存命中 ${hitRate.toFixed(1)}% · ` +
+        `读 ${cacheRead} · 写 ${cacheWrite}`;
+      const allowance = Number(llm.allowance_usd || 0);
+      if (allowance > 0) {
+        cacheLine += ` · Go allowance $${allowance.toFixed(6)}`;
+      }
+      els.llm.appendChild(el("div", "file-row", cacheLine));
+    }
   }
 
   function renderExecutions(data) {
