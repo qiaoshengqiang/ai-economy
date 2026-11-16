@@ -1173,13 +1173,14 @@ class BuiltinWorkRuntime:
         if not assistant_text and segments:
             assistant_text = str(
                 getattr(segments[-1], "content", "") or "").strip()
-        if assistant_text:
-            self._conversation.append({
-                "role": "assistant",
-                "content": assistant_text,
-                "aieos_round_summary": True,
-            })
-            self._maybe_compact_conversation()
+        if not assistant_text:
+            assistant_text = "（恢复轮没有输出可用总结）"
+        self._conversation.append({
+            "role": "assistant",
+            "content": assistant_text,
+            "aieos_round_summary": True,
+        })
+        self._maybe_compact_conversation()
         result.tokens += sum(
             int(getattr(s, "tokens", 0) or 0) for s in segments)
         result.actions += len(intents)
