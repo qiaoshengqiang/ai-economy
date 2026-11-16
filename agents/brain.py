@@ -77,6 +77,9 @@ class BrainSettings:
     supports_reasoning: bool = False
     #: 模型是否接受图片输入；由 model profile 声明。
     supports_image_input: bool = False
+    #: 模型的工具调用格式：`standard` / `dsml`；空 = 用 Provider 默认值。
+    #: 🔒 由 model profile 声明，不能按 provider 一刀切。
+    tool_call_format: str = ""
     #: 模型支持的固定思考强度；UI 的选项来自这里。
     thinking_levels: tuple = ()
 
@@ -117,6 +120,8 @@ class BrainSettings:
             supports_reasoning=bool(resolved.supports_reasoning),
             supports_image_input=bool(
                 getattr(resolved, "supports_image_input", False)),
+            tool_call_format=str(
+                getattr(resolved, "tool_call_format", "") or ""),
             thinking_levels=tuple(resolved.thinking_levels or ()),
             credential_ref=str(resolved.credential_profile or ""),
         )
@@ -141,6 +146,9 @@ class BrainSettings:
             system_prompt=str(agent_config.system_prompt or ""),
             temperature=float(agent_config.temperature),
             max_tokens=int(agent_config.max_tokens),
+            # 旧路径没有 model profile，无法声明模型级格式；
+            # 交给 Provider 默认值。生产路径必须走 from_resolved_agent()。
+            tool_call_format="",
             credential_ref=str(getattr(agent_config, "credential_ref", "") or ""),
         )
 
@@ -840,6 +848,19 @@ class Brain:
             if enabled and effort and "reasoning_effort" not in kwargs:
                 kwargs["reasoning_effort"] = effort
 
+        # ---- 工具调用格式 ---------------------------------------------
+        #
+        # 🔒 这是 **model profile** 的属性，不是 provider 的属性。
+        #    同一个 OpenAI-compatible 代理可能同时承载 DeepSeek（DSML）
+        #    与 Qwen / Kimi / GLM（标准 tool_calls）。
+        #
+        # 🔒 临时切换 provider 时不沿用原模型的格式：新 provider 没有
+        #    对应的 model profile，交给它自己的默认值。
+        if "tool_call_format" not in kwargs:
+            kwargs["tool_call_format"] = (
+                "" if provider_switched
+                else str(self.settings.tool_call_format or ""))
+
         logger.debug(
             "%s 的大脑正在思考（provider=%s model=%s）",
             self.agent_id,
@@ -849,7 +870,7 @@ class Brain:
 
         # --- 调用 ---
         try:
-                # ============================================================
+            # ============================================================
             # §7 Provider 请求边界取证 —— **最重要的一环**
             # ============================================================
             #
@@ -891,12 +912,12 @@ class Brain:
                 model=effective_model,
                 temperature=effective_temperature,
                 max_tokens=effective_max_tokens,
-                    requested_cognitive_budget=preference,
-                    llm_session_id=llm_session_id,
-                    supports_image_input=bool(
-                        self.settings.supports_image_input),
-                    **kwargs,
-                )
+                requested_cognitive_budget=preference,
+                llm_session_id=llm_session_id,
+                supports_image_input=bool(
+                    self.settings.supports_image_input),
+                **kwargs,
+            )
         except Exception as exc:
             self.failure_count += 1
 

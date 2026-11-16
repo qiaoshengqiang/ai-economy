@@ -31,6 +31,7 @@ from core.config_resolver import (
     ConfigLoader, ConfigResolver, ConfigValidator, ConfigurationError,
     LLM_CONFIG_SECTIONS, THINKING_LEVELS, merge_llm_sections,
 )
+from core.dsml import TOOL_CALL_FORMATS
 from core.paths import (
     ENV_FILE, GLOBAL_CONFIG_FILE, GLOBAL_LLM_CONFIG_FILE,
 )
@@ -604,7 +605,12 @@ class SystemConfigAdmin:
                 f"未知 thinking level：{unknown}；允许：{list(THINKING_LEVELS)}。")
         if not levels:
             raise SettingsAdminError("thinking_levels 不能为空。")
-        models[profile] = {
+
+        # 🔒 这里必须**合并**，不能整体覆盖：
+        #    UI 表单只编辑一部分字段（例如没有 supports_image_input），
+        #    整体覆盖会把用户手工写的 / 未来新增的字段静默删掉。
+        existing = dict(models.get(profile) or {})
+        updates = {
             "provider": provider,
             "model_id": model_id,
             "context_window": context_window,
@@ -612,6 +618,19 @@ class SystemConfigAdmin:
             "supports_reasoning": bool(payload.get("supports_reasoning")),
             "thinking_levels": levels,
         }
+        raw_tool_call_format = payload.get("tool_call_format")
+        if raw_tool_call_format is not None and str(
+                raw_tool_call_format).strip():
+            # 显式声明才写入；空值 / 缺省 = 保留 existing 里的值，
+            # 原本没有就交给 Provider 默认值（`llm/` 的知识）。
+            tool_call_format = str(raw_tool_call_format).strip().lower()
+            if tool_call_format not in TOOL_CALL_FORMATS:
+                raise SettingsAdminError(
+                    f"未知 tool_call_format：{raw_tool_call_format!r}；"
+                    f"允许：{list(TOOL_CALL_FORMATS)}。")
+            updates["tool_call_format"] = tool_call_format
+        existing.update(updates)
+        models[profile] = existing
         llm["models"] = models
 
     def _delete_model(

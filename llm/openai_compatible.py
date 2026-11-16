@@ -66,6 +66,10 @@ from llm.base import (
     normalize_messages,
 )
 
+from core.dsml import (
+    DEFAULT_TOOL_CALL_FORMAT as _DEFAULT_TOOL_CALL_FORMAT,
+    TOOL_CALL_FORMATS,
+)
 from core.logging_setup import get_logger  # noqa: E402
 
 logger = get_logger(__name__)
@@ -342,37 +346,91 @@ class OpenAICompatibleProvider(LLMProvider):
         self.call_count = 0
         self.error_count = 0
 
+    #: 这个 provider 在模型**没有声明** `tool_call_format` 时的默认值。
+    #:
+    #: 🔒 `deepseek` 子类把它设为 `dsml`（保持历史行为）；
+    #:    通用 OpenAI 兼容层保持 `standard` —— 不能因为走代理
+    #:    就把所有 DeepSeek / Qwen / Kimi / GLM 都当成 DSML。
+    DEFAULT_TOOL_CALL_FORMAT = _DEFAULT_TOOL_CALL_FORMAT
+
+    @classmethod
+    def normalize_tool_call_format(cls, value: Any) -> str:
+        """把配置值归一化；未知值退回该 provider 的安全默认值。"""
+        fmt = str(value or "").strip().lower()
+        if fmt in TOOL_CALL_FORMATS:
+            return fmt
+        return cls.DEFAULT_TOOL_CALL_FORMAT
+
     def _augment_response(
-        self, response: "LLMResponse", message: Mapping[str, Any]
+        self,
+        response: "LLMResponse",
+        message: Mapping[str, Any],
+        tool_call_format: Optional[str] = None,
     ) -> "LLMResponse":
         """把厂商返回里的结构化工具调用转成中性形状。
 
-        默认实现只读标准 OpenAI `tool_calls`；厂商特有格式由子类覆盖。
+        顺序是固定的：
+
+            1. 标准 OpenAI `tool_calls` **永远优先**；
+            2. 只有模型显式声明 `tool_call_format: dsml`、且没有标准调用时，
+               才从 content 里恢复 DSML。
+
+        🔒 DSML 是 **DeepSeek V4 系列**的标记，不是通用协议。
+           同一个 OpenAI-compatible 代理可能同时承载 Qwen / Kimi / GLM，
+           所以这里按**模型**判断，不按 provider 一刀切。
         """
-        raw_calls = message.get("tool_calls") if isinstance(message, Mapping) else None
-        if not isinstance(raw_calls, list):
-            return response
+        fmt = self.normalize_tool_call_format(tool_call_format)
+        raw_calls = (
+            message.get("tool_calls")
+            if isinstance(message, Mapping) else None)
         calls = []
-        for item in raw_calls:
-            if not isinstance(item, Mapping):
-                continue
-            fn = item.get("function")
-            if not isinstance(fn, Mapping):
-                continue
-            name = str(fn.get("name") or "").strip()
-            args = fn.get("arguments")
-            if not name or not isinstance(args, str):
-                continue
-            call = {
-                "type": "function",
-                "function": {"name": name, "arguments": args},
-            }
-            if item.get("id"):
-                call["id"] = str(item["id"])
-            calls.append(call)
+        if isinstance(raw_calls, list):
+            for item in raw_calls:
+                if not isinstance(item, Mapping):
+                    continue
+                fn = item.get("function")
+                if not isinstance(fn, Mapping):
+                    continue
+                name = str(fn.get("name") or "").strip()
+                args = fn.get("arguments")
+                if not name or not isinstance(args, str):
+                    continue
+                call = {
+                    "type": "function",
+                    "function": {"name": name, "arguments": args},
+                }
+                if item.get("id"):
+                    call["id"] = str(item["id"])
+                calls.append(call)
         if calls:
             response.tool_calls = calls
             response.tool_calls_source = "api"
+            return response
+
+        if fmt != "dsml":
+            return response
+
+        # 只在真的需要时才加载 vendored DeepSeek parser。
+        from llm.dsml import dsml_mode, parse_dsml_tool_calls
+
+        result = parse_dsml_tool_calls(response.content)
+        if not result.found:
+            return response
+
+        mode = dsml_mode()
+        response.metadata["dsml"] = {
+            "found": True,
+            "parsed": bool(result.tool_calls),
+            "count": len(result.tool_calls),
+            "error": result.error,
+            "mode": mode,
+        }
+        if result.tool_calls:
+            response.tool_calls = result.tool_calls
+            response.tool_calls_source = "dsml"
+            if mode == "execute":
+                # 解析成功后不再把内部标记投喂给下一轮/总结。
+                response.content = result.content
         return response
 
     # ------------------------------------------------------------
@@ -703,6 +761,8 @@ class OpenAICompatibleProvider(LLMProvider):
         result: HTTPResult,
         model: str,
         latency_ms: float,
+        *,
+        tool_call_format: Optional[str] = None,
     ) -> LLMResponse:
         """
         把厂商的返回 JSON 转成统一的 LLMResponse。
@@ -814,9 +874,11 @@ class OpenAICompatibleProvider(LLMProvider):
             },
         )
 
-        # 厂商特有的后处理（例如 DeepSeek 的 DSML 恢复）。
-        # 🔒 默认 no-op；子类只能在这里**补充中性事实**，不能改业务语义。
-        response = self._augment_response(response, message)
+        # 厂商特有的后处理（例如按模型声明的 DSML 恢复）。
+        # 🔒 默认只读标准 `tool_calls`；子类只能在这里**补充中性事实**，
+        #    不能改业务语义。
+        response = self._augment_response(
+            response, message, tool_call_format=tool_call_format)
 
         # ============================================================
         # 🔒 §七：「空 content」不许悄悄成功
@@ -1014,6 +1076,8 @@ class OpenAICompatibleProvider(LLMProvider):
         # 当前 model profile 的图片能力；只参与本地校验，不进入 payload。
         model_supports_images = bool(
             kwargs.pop("supports_image_input", False))
+        # 当前 model profile 的工具调用格式；只参与响应后处理，不进入 payload。
+        tool_call_format = kwargs.pop("tool_call_format", None)
         effective_tokens, clipped = self.clip_cognitive_budget(
             requested_budget, max_tokens)
         self._last_requested_budget = self._as_budget_int(requested_budget)
@@ -1086,7 +1150,9 @@ class OpenAICompatibleProvider(LLMProvider):
             self._raise_for_status(result)
 
         try:
-            response = self.parse_response(result, resolved_model, latency_ms)
+            response = self.parse_response(
+                result, resolved_model, latency_ms,
+                tool_call_format=tool_call_format)
         except LLMRequestError:
             self.error_count += 1
             raise

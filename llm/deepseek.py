@@ -35,7 +35,6 @@ from __future__ import annotations
 #     `from llm.deepseek import HTTPResult, default_http_post`。
 #     原地转发一下，它们的 import 就还能用，不用改。
 #     这属于「保持向后兼容」的小技巧，成本极低。
-from llm.dsml import dsml_mode, parse_dsml_tool_calls
 from llm.openai_compatible import (  # noqa: F401
     HTTPPost,
     HTTPResult,
@@ -77,37 +76,10 @@ class DeepSeekProvider(OpenAICompatibleProvider):
     # 图片只允许放在 user 消息里（见 llm/base.py 的 normalize）。
     supports_image_input = True
 
-    # ---------------- DeepSeek 特有的返回后处理 ----------------
-    def _augment_response(self, response, message):
-        """标准 tool_calls 优先；否则从 content 的 DSML 恢复。
-
-        🔒 这里只产生中性 `{name, arguments}`；是否执行由 `actions/`
-           （以及 `AIEOS_DSML_MODE`）决定。shadow 模式不改 content；
-           execute 模式才把 DSML 块从 content 去掉。
-        """
-        response = super()._augment_response(response, message)
-        if response.tool_calls:
-            return response
-
-        result = parse_dsml_tool_calls(response.content)
-        if not result.found:
-            return response
-
-        mode = dsml_mode()
-        response.metadata["dsml"] = {
-            "found": True,
-            "parsed": bool(result.tool_calls),
-            "count": len(result.tool_calls),
-            "error": result.error,
-            "mode": mode,
-        }
-        if result.tool_calls:
-            response.tool_calls = result.tool_calls
-            response.tool_calls_source = "dsml"
-            if mode == "execute":
-                # 解析成功后不再把内部标记投喂给下一轮/总结。
-                response.content = result.content
-        return response
+    # DeepSeek 的**未声明**默认格式就是 DSML（保持历史行为）。
+    # 具体模型仍可在 `models.<profile>.tool_call_format` 显式覆盖，
+    # 例如经代理走标准 tool_calls 的部署。
+    DEFAULT_TOOL_CALL_FORMAT = "dsml"
 
     # ---------------- DeepSeek 特有的错误含义 ----------------
     def _extra_status_hint(self, status: int) -> str:

@@ -86,6 +86,7 @@
 | [0060](0060-project-workdir-direct-edit.md) | **Project Workdir —— 直接修改用户项目目录** | Accepted（**Phase 1 已实现；worktree / 项目提交为 FUTURE**） | 只能生成新产物 / 不能改已有项目 | Work / Workspace |
 | [0061](0061-builtin-work-append-only-conversation.md) | **内置 Work 引擎 Append-only Conversation** | Accepted（**V1 已实现**） | 每轮重建 prompt，cache hit ~70% | Work / LLM |
 | [0062](0062-front-message-send-and-live-follow-up.md) | **Front message_send 与 live follow_up** | Accepted（**V1 已实现**） | Front 无法给运行中 Agent 补充要求 | Front / Communication |
+| [0063](0063-model-level-tool-call-format.md) | **工具调用格式按 model profile 声明** | Accepted（**V1 已实现**） | DSML 只在 DeepSeekProvider，代理路径丢失工具调用 | LLM / Config |
 | [0028](0028-read-visibility-and-native-communication.md) | **Read 靠 Task Participation；Communication 是 Agent 基础能力** | Accepted（实现为 FUTURE） | Read / Visibility / Communication | Workspace / Communication |
 
 ---

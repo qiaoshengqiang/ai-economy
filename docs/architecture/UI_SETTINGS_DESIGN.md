@@ -59,6 +59,7 @@ default_model / request（高级 JSON）
 ```text
 profile / provider / model_id
 context_window / max_output_tokens / supports_reasoning / thinking_levels
+tool_call_format
 ```
 
 上下文语义：
@@ -68,7 +69,23 @@ context_window / max_output_tokens / supports_reasoning / thinking_levels
 | `context_window` | 模型 | 模型总上下文窗口 |
 | `max_output_tokens` | 模型 | 默认最大输出；同一 model profile 的所有 Agent 共享 |
 | `thinking_levels` | 模型 | 固定思考强度集合，Agent 卡片选项只从这里来 |
+| `tool_call_format` | 模型 | `standard` / `dsml`；只有声明 `dsml` 的模型才从 `content` 里恢复 DSML |
 | `cognitive_budget` | Runtime | 单次调用输出硬上限（不能高于模型上限） |
+
+`tool_call_format` 必须按 **model profile** 声明，不能按 provider 一刀切：
+同一个 OpenAI-compatible 代理（例如 OpenCode）可能同时承载
+DeepSeek（DSML）、Qwen / Kimi / GLM（标准 `tool_calls`）。
+
+默认值由 **Provider** 决定（`core/` 不认识厂商，未声明时留空）：
+
+```text
+adapter = deepseek             → dsml（保持历史行为）
+其他 adapter（含代理）          → standard
+```
+
+系统设置编辑模型时**合并**已有字段，不整体覆盖；
+UI 表单之外的 `supports_image_input` 等字段不会被静默删除。
+旧客户端不传 `tool_call_format` 时不会写入猜测值，Provider 默认值继续生效。
 
 Agent 不再声明 `brain.max_tokens`；模型 profile 是上下文与输出配置的
 **唯一来源**。原生 Brain 调用的实际输出上限：

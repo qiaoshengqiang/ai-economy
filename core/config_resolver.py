@@ -57,6 +57,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple
 
+from core.dsml import TOOL_CALL_FORMATS
+
 # ============================================================
 # 异常
 # ============================================================
@@ -217,6 +219,10 @@ class ResolvedModel:
     supports_reasoning: bool = False
     #: 是否接受图片输入。由 model profile 声明，不能按 provider 一刀切。
     supports_image_input: bool = False
+    #: 这个模型的工具调用格式：`standard` / `dsml`；空 = 用 Provider 默认值。
+    #: 🔒 必须按 **model profile** 声明 —— 同一个代理同时承载
+    #:    DeepSeek、Qwen、Kimi、GLM，按 provider 一刀切会误伤它们。
+    tool_call_format: str = ""
     #: 模型支持的固定思考强度；UI 的选项只从这里来。
     thinking_levels: Tuple[str, ...] = ()
     source: str = ""
@@ -231,6 +237,7 @@ class ResolvedModel:
                 "max_output_tokens": self.max_output_tokens,
                 "supports_reasoning": self.supports_reasoning,
                 "supports_image_input": self.supports_image_input,
+                "tool_call_format": self.tool_call_format,
                 "thinking_levels": list(self.thinking_levels),
                 "source": self.source}
 
@@ -281,6 +288,8 @@ class ResolvedAgent:
     max_output_tokens: Optional[int] = None
     supports_reasoning: bool = False
     supports_image_input: bool = False
+    #: 工具调用格式（来自 model profile）；空 = 用 Provider 默认值。
+    tool_call_format: str = ""
     thinking_levels: Tuple[str, ...] = ()
     system_prompt: str = ""
     #: 其余**原样保留**的 Agent 配置段（economy / capabilities / negotiation /
@@ -304,6 +313,7 @@ class ResolvedAgent:
             "max_output_tokens": self.max_output_tokens,
             "supports_reasoning": self.supports_reasoning,
             "supports_image_input": self.supports_image_input,
+            "tool_call_format": self.tool_call_format,
             "thinking_levels": list(self.thinking_levels),
             "system_prompt_chars": len(self.system_prompt or ""),
             "source": self.source,
@@ -877,6 +887,21 @@ class ConfigResolver:
                 f"{sorted((self.canonical.get('models') or {}))}")
         provider_name = _require_text(raw.get("provider"),
                                       f"models.{profile}.provider")
+        provider = self.provider(provider_name)
+        raw_tool_call_format = raw.get("tool_call_format")
+        if raw_tool_call_format is None:
+            # 未声明 → 交给 Provider 的默认值决定（`llm/` 的知识）。
+            # 🔒 `core/` 不认识任何厂商 / adapter 名字，也不做
+            #    「deepseek → dsml」这类分支；DSML 是模型级事实，
+            #    由 `models.<profile>.tool_call_format` 显式声明。
+            tool_call_format = ""
+        else:
+            tool_call_format = str(raw_tool_call_format).strip().lower()
+            if tool_call_format not in TOOL_CALL_FORMATS:
+                raise ConfigurationError(
+                    f"models.{profile}.tool_call_format = "
+                    f"{raw_tool_call_format!r} 不合法；允许："
+                    f"{list(TOOL_CALL_FORMATS)}。")
         context_window = _optional_positive_int(
             raw.get("context_window"), f"models.{profile}.context_window")
         max_output_tokens = _optional_positive_int(
@@ -906,12 +931,13 @@ class ConfigResolver:
             profile=profile,
             model_id=_require_text(raw.get("model_id"),
                                    f"models.{profile}.model_id"),
-            provider=self.provider(provider_name),
+            provider=provider,
             context_window=context_window,
             max_output_tokens=max_output_tokens,
             supports_reasoning=bool(raw.get("supports_reasoning", False)),
             supports_image_input=bool(
                 raw.get("supports_image_input", False)),
+            tool_call_format=tool_call_format,
             thinking_levels=thinking_levels,
             source=self._src(f"models.{profile}"),
         )
@@ -970,6 +996,7 @@ class ConfigResolver:
             max_output_tokens=model.max_output_tokens,
             supports_reasoning=model.supports_reasoning,
             supports_image_input=model.supports_image_input,
+            tool_call_format=model.tool_call_format,
             thinking_levels=model.thinking_levels,
             # 🔒 `.strip()` 不是装饰 —— 它保持与旧的
             #    `AgentConfig.system_prompt`（`core/config.py` 里也 strip）

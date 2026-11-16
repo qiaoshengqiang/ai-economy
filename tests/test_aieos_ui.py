@@ -2514,6 +2514,35 @@ def test_settings_provider_and_model_are_one_page():
     assert "await load(editing.provider)" in js
 
 
+def test_model_editor_exposes_tool_call_format():
+    from pathlib import Path
+
+    static = Path(__file__).resolve().parent.parent / "ui" / "static"
+    html = (static / "index.html").read_text(encoding="utf-8")
+    js = (static / "settings.js").read_text(encoding="utf-8")
+
+    assert 'id="model-tool-call-format"' in html
+    assert "标准 OpenAI tool_calls" in html
+    assert "DeepSeek DSML" in html
+
+    start = js.index("function modelSnapshot()")
+    end = js.index("function credentialSnapshot()", start)
+    snapshot = js[start:end]
+    assert "tool_call_format" in snapshot
+
+    start = js.index("function editModel(profile)")
+    end = js.index("function newModel()", start)
+    edit = js[start:end]
+    assert "model-tool-call-format" in edit
+    assert "raw.tool_call_format || defaultToolCallFormat(provider)" in edit
+    assert 'raw.adapter === "deepseek" ? "dsml" : "standard"' in js
+
+    start = js.index("async function saveModel()")
+    end = js.index("async function deleteModel(", start)
+    save = js[start:end]
+    assert "tool_call_format" in save
+
+
 def test_agent_question_bubble_and_answer_ui():
     from pathlib import Path
 

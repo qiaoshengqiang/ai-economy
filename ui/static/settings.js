@@ -216,6 +216,11 @@
     };
   }
 
+  function defaultToolCallFormat(provider) {
+    const raw = ((data.system && data.system.providers) || {})[provider] || {};
+    return raw.adapter === "deepseek" ? "dsml" : "standard";
+  }
+
   function modelSnapshot() {
     return {
       profile: $("model-profile").value.trim(),
@@ -224,6 +229,7 @@
       context_window: Number($("model-context").value || 600000),
       max_output_tokens: Number($("model-output").value || 16384),
       supports_reasoning: $("model-reasoning").checked,
+      tool_call_format: $("model-tool-call-format").value || "standard",
       thinking_levels: [...document.querySelectorAll(
         "#model-thinking-levels input:checked")].map((box) => box.value),
     };
@@ -414,7 +420,8 @@
         isDefault ? `${profile} · 默认` : profile,
         `${(raw || {}).model_id || "?"} · context ${
           (raw || {}).context_window || "?"} / output ${
-          (raw || {}).max_output_tokens || "?"}`,
+          (raw || {}).max_output_tokens || "?"} · ${
+          (raw || {}).tool_call_format || defaultToolCallFormat(provider)}`,
         [
           ["编辑", () => editModel(profile)],
           ["删除", () => deleteModel(profile), true],
@@ -1365,6 +1372,8 @@
     $("model-context").value = String(raw.context_window || 600000);
     $("model-output").value = String(raw.max_output_tokens || 16384);
     $("model-reasoning").checked = !!raw.supports_reasoning;
+    $("model-tool-call-format").value = (
+      raw.tool_call_format || defaultToolCallFormat(provider));
     const levels = new Set(raw.thinking_levels || []);
     document.querySelectorAll("#model-thinking-levels input").forEach((box) => {
       box.checked = levels.has(box.value);
@@ -1388,6 +1397,7 @@
     $("model-context").value = "600000";
     $("model-output").value = "16384";
     $("model-reasoning").checked = true;
+    $("model-tool-call-format").value = defaultToolCallFormat(editing.provider);
     document.querySelectorAll("#model-thinking-levels input").forEach((box) => {
       box.checked = box.value === "off";
     });
@@ -1409,6 +1419,7 @@
       context_window: Number($("model-context").value || 600000),
       max_output_tokens: Number($("model-output").value || 16384),
       supports_reasoning: $("model-reasoning").checked,
+      tool_call_format: $("model-tool-call-format").value || "standard",
       thinking_levels: [...document.querySelectorAll(
         "#model-thinking-levels input:checked")].map((box) => box.value),
     };

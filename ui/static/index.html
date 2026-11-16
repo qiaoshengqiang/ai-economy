@@ -440,6 +440,18 @@
                       <div class="setting-control"><input id="model-id" placeholder="deepseek-chat" /></div>
                     </div>
                     <div class="setting-row">
+                      <div class="setting-label">
+                        <span>工具调用格式</span>
+                        <small>只有模型实际输出 DSML 时才选 DSML；普通模型保持标准 tool_calls。</small>
+                      </div>
+                      <div class="setting-control">
+                        <select id="model-tool-call-format">
+                          <option value="standard">标准 OpenAI tool_calls</option>
+                          <option value="dsml">DeepSeek DSML</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div class="setting-row">
                       <div class="setting-label"><span>上下文窗口</span></div>
                       <div class="setting-control">
                         <div class="inline-control">
