@@ -392,6 +392,8 @@ class Handler(BaseHTTPRequestHandler):
                     front_agent=payload.get("front_agent"),
                     max_parallel_teams=payload.get("max_parallel_teams"),
                     max_solo_turns=payload.get("max_solo_turns"),
+                    max_read_only_turns=payload.get(
+                        "max_read_only_turns"),
                     pi_work_agents=payload.get("pi_work_agents"),
                     disabled_agents=payload.get("disabled_agents"),
                     archived_agents=payload.get("archived_agents"),

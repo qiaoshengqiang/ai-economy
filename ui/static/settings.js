@@ -483,6 +483,7 @@
     return {
       maxTeams: Number($("max-teams").value || 3),
       maxSoloTurns: Number($("max-solo-turns").value || 24),
+      maxReadOnlyTurns: Number($("max-read-only-turns").value || 8),
       commitEnabled: enabled,
       commitOutputRepo: enabled
         ? $("commit-output-repo").value.trim() : "",
@@ -549,6 +550,7 @@
   function applyRuntime(state) {
     $("max-teams").value = String(state.maxTeams);
     $("max-solo-turns").value = String(state.maxSoloTurns);
+    $("max-read-only-turns").value = String(state.maxReadOnlyTurns);
     $("commit-output-enabled").checked = !!state.commitEnabled;
     $("commit-output-repo").value = state.commitOutputRepo || "";
     setRadio("commit-mode", state.commitMode || "manual");
@@ -566,6 +568,8 @@
     const regular = data.regular || {};
     $("max-teams").value = String(regular.max_parallel_teams || 3);
     $("max-solo-turns").value = String(regular.max_solo_turns || 24);
+    $("max-read-only-turns").value = String(
+      regular.max_read_only_turns ?? 8);
     $("commit-output-enabled").checked = !!String(
       regular.commit_output_repo || "").trim();
     $("commit-output-repo").value = regular.commit_output_repo || "";
@@ -590,6 +594,7 @@
         body: JSON.stringify({
           max_parallel_teams: state.maxTeams,
           max_solo_turns: state.maxSoloTurns,
+          max_read_only_turns: state.maxReadOnlyTurns,
           commit_mode: state.commitMode,
           commit_output_repo: state.commitOutputRepo,
           commit_base_ref: state.commitBaseRef,
@@ -1144,6 +1149,7 @@
       applyRuntime({
         maxTeams: 3,
         maxSoloTurns: 24,
+        maxReadOnlyTurns: 8,
         commitEnabled: false,
         commitOutputRepo: "",
         commitMode: "manual",
@@ -1729,9 +1735,9 @@
     updateFooter();
   });
   [
-    "max-teams", "max-solo-turns", "commit-output-repo",
-    "commit-base-ref", "pi-timeout-seconds", "prompt-log-enabled",
-    "timezone",
+    "max-teams", "max-solo-turns", "max-read-only-turns",
+    "commit-output-repo", "commit-base-ref", "pi-timeout-seconds",
+    "prompt-log-enabled", "timezone",
   ].forEach((id) => {
     const node = $(id);
     node.addEventListener("change", () => {

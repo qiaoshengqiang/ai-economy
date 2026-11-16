@@ -615,6 +615,20 @@
                 </div>
               </div>
 
+              <div class="setting-row">
+                <div class="setting-label">
+                  <span>连续只读轮次上限</span>
+                  <small>连续多轮只读且没有写入 / 执行时中断本次运行；0 = 不限制。</small>
+                </div>
+                <div class="setting-control">
+                  <div class="inline-control">
+                    <input id="max-read-only-turns" type="number" min="0" max="50" />
+                    <span class="unit">轮</span>
+                    <span class="range">0–50</span>
+                  </div>
+                </div>
+              </div>
+
               <div class="switch-row">
                 <label class="switch">
                   <input id="pi-timeout-enabled" type="checkbox" checked />

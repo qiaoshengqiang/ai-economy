@@ -268,6 +268,7 @@ class AIEOSController:
         max_worker_turns: int = 8,
         max_integration_turns: int = 8,
         max_solo_turns: int = 24,
+        max_read_only_turns: int = 8,
         cognitive_budget: int = 65536,
         solo_only: bool = True,
         pi_work_agents: Any = (),
@@ -334,6 +335,7 @@ class AIEOSController:
         self.max_worker_turns = max(1, int(max_worker_turns))
         self.max_integration_turns = max(1, int(max_integration_turns))
         self.max_solo_turns = max(1, int(max_solo_turns))
+        self.max_read_only_turns = max(0, int(max_read_only_turns))
         self.cognitive_budget = max(1, int(cognitive_budget))
         self.pi_work_agents = {
             str(item).strip() for item in (pi_work_agents or ())
@@ -464,6 +466,9 @@ class AIEOSController:
         max_turns = data.get("max_solo_turns")
         if isinstance(max_turns, int) and max_turns > 0:
             self.max_solo_turns = max_turns
+        max_read_only = data.get("max_read_only_turns")
+        if isinstance(max_read_only, int) and 0 <= max_read_only <= 50:
+            self.max_read_only_turns = max_read_only
         pi_agents = data.get("pi_work_agents")
         if isinstance(pi_agents, list):
             self.pi_work_agents = {
@@ -552,6 +557,7 @@ class AIEOSController:
         front_agent: Optional[str] = None,
         max_parallel_teams: Optional[int] = None,
         max_solo_turns: Optional[int] = None,
+        max_read_only_turns: Optional[int] = None,
         pi_work_agents: Optional[List[str]] = None,
         disabled_agents: Optional[List[str]] = None,
         archived_agents: Optional[List[str]] = None,
@@ -591,6 +597,12 @@ class AIEOSController:
                 if value < 1 or value > 200:
                     raise ValueError("max_solo_turns 必须在 1..200")
                 self.max_solo_turns = value
+            if max_read_only_turns is not None:
+                value = int(max_read_only_turns)
+                if value < 0 or value > 50:
+                    raise ValueError(
+                        "max_read_only_turns 必须在 0..50")
+                self.max_read_only_turns = value
             if pi_work_agents is not None:
                 wanted = {
                     str(item).strip() for item in pi_work_agents
@@ -707,6 +719,7 @@ class AIEOSController:
             "max_parallel_teams": self.max_parallel_teams,
             "max_agents_per_team": self.max_agents_per_team,
             "max_solo_turns": self.max_solo_turns,
+            "max_read_only_turns": self.max_read_only_turns,
             "pi_work_agents": sorted(self.pi_work_agents),
             "disabled_agents": sorted(self.disabled_agents),
             "archived_agents": sorted(self.archived_agents),
@@ -1638,6 +1651,7 @@ class AIEOSController:
                     self.rt, task,
                     brief=decision.brief.to_dict(),
                     max_turns=self.max_solo_turns,
+                    max_read_only_turns=self.max_read_only_turns,
                     cognitive_budget=self.cognitive_budget,
                     should_stop=lambda: job.cancelled,
                     round_sink=lambda payload: self._record_round(
@@ -2706,6 +2720,7 @@ class AIEOSController:
                 self.rt, task,
                 brief=decision.brief.to_dict(),
                 max_turns=self.max_solo_turns,
+                max_read_only_turns=self.max_read_only_turns,
                 cognitive_budget=self.cognitive_budget,
                 role_prompt=role_prompt,
                 should_stop=lambda: job.cancelled,
@@ -3188,6 +3203,7 @@ class AIEOSController:
                     self.rt, task,
                     brief=brief_dict,
                     max_turns=self.max_solo_turns,
+                    max_read_only_turns=self.max_read_only_turns,
                     cognitive_budget=self.cognitive_budget,
                     resume_context=resume_context,
                     role_prompt=role_prompt,

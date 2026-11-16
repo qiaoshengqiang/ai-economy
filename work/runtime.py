@@ -123,7 +123,7 @@ class SoloWorkRuntime:
         max_turns: int = 12,
         max_cognition_steps: int = 2,
         max_work_steps: int = 4,
-        max_read_only_turns: int = 4,
+        max_read_only_turns: int = 8,
         cognitive_budget: int = 65536,
         resume_context: str = "",
         role_prompt: str = "",

@@ -393,3 +393,27 @@ def test_timezone_defaults_to_beijing_and_persists(tmp_path):
 
     data = json.loads(path.read_text("utf-8"))
     assert data["timezone"] == "UTC"
+
+
+def test_read_only_turn_limit_round_trip(tmp_path):
+    path = tmp_path / "ui_settings.json"
+    controller = _controller(tmp_path)
+    try:
+        assert controller.settings_dict()["max_read_only_turns"] == 8
+        controller.update_settings(max_read_only_turns=12)
+        assert controller.settings_dict()["max_read_only_turns"] == 12
+        with pytest.raises(ValueError, match="0..50"):
+            controller.update_settings(max_read_only_turns=-1)
+        with pytest.raises(ValueError, match="0..50"):
+            controller.update_settings(max_read_only_turns=51)
+    finally:
+        controller.close()
+
+    reloaded = _controller(tmp_path)
+    try:
+        assert reloaded.settings_dict()["max_read_only_turns"] == 12
+    finally:
+        reloaded.close()
+
+    data = json.loads(path.read_text("utf-8"))
+    assert data["max_read_only_turns"] == 12

@@ -1309,3 +1309,14 @@ def test_work_prompt_renders_front_supplied_files():
 
     assert "Front 提供的文件" in prompt
     assert "FRONT-CODE" in prompt
+
+
+def test_solo_read_only_guard_default_is_eight():
+    import inspect
+
+    from work.runtime import SoloWorkRuntime
+
+    default = inspect.signature(
+        SoloWorkRuntime.__init__).parameters[
+            "max_read_only_turns"].default
+    assert default == 8

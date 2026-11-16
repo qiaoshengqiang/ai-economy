@@ -4,7 +4,7 @@
 > **日期：2026-11-15**
 > **阶段：开发中 / 观察实验**
 > **协议版本：`1`**
-> **测试基线：`5822 passed, 2 skipped, 30 deselected`**
+> **测试基线：`5824 passed, 2 skipped, 30 deselected`**
 
 本文记录**当前真实可用能力、推荐工作方式、已知限制和版本变化**。
 架构的长期权威仍然是
@@ -71,6 +71,7 @@
   OpenCode `deepseek-v4.1-flash` 已开启，其他未声明模型仍然明确失败。
 - Front 新增 `interrupt`：停止当前执行、Task 保持 `IN_PROGRESS`，
   之后可用 `follow_up` 继续；`cancel` 仍是终态。
+- 连续只读保护默认从 4 轮提高到 8 轮；设置 → 运行可调整（0 = 不限制）。
 
 ---
 
@@ -548,7 +549,7 @@ Team 协作
 当前基线：
 
 ```text
-5822 passed, 2 skipped, 30 deselected
+5824 passed, 2 skipped, 30 deselected
 ```
 
 启动说明见 [`../START_AIEOS.md`](../START_AIEOS.md)。
