@@ -52,6 +52,16 @@ def _response_with_call(*, content: str = "", source: str = "dsml") -> LLMRespon
     )
 
 
+def test_run_cognition_returns_messages_for_append_only():
+    agent = _Agent(LLMResponse(
+        content='{"decision":"reply","content":"ok"}',
+        provider="deepseek", model="deepseek-flash"))
+
+    run = run_cognition(agent, "go")
+
+    assert run.messages == [{"role": "user", "content": "go"}]
+
+
 def test_execute_mode_maps_validated_tool_call_to_action(monkeypatch):
     monkeypatch.setenv("AIEOS_DSML_MODE", "execute")
     agent = _Agent(_response_with_call())

@@ -216,6 +216,7 @@ def run_cognition(
     #    那会白花一次调用，而且模型看到的还是一句「什么都没有」。
     follow_up_used = False
     base = _as_message_list(messages)
+    last_messages: Any = list(base) if base is not None else []
 
     if work_loop and base is not None:
         # decision → work（最多 N 步）→ decision checkpoint
@@ -237,6 +238,7 @@ def run_cognition(
                  "content": str(getattr(last_seg, "content", "") or "")},
                 {"role": "user", "content": prompt},
             ]
+            last_messages = list(work_messages)
             seg = _run_one_segment(
                 agent, agent_id, work_messages, generate_kwargs,
                 index=len(segments), phase="work",
@@ -280,6 +282,7 @@ def run_cognition(
                  "content": str(getattr(last_seg, "content", "") or "")},
                 {"role": "user", "content": summary_prompt},
             ]
+            last_messages = list(summary_messages)
             seg = _run_one_segment(
                 agent, agent_id, summary_messages, generate_kwargs,
                 index=len(segments), phase="summary",
@@ -320,6 +323,7 @@ def run_cognition(
                  "content": str(getattr(last_seg, "content", "") or "")},
                 {"role": "user", "content": checkpoint_prompt},
             ]
+            last_messages = list(checkpoint_messages)
             seg = _run_one_segment(
                 agent, agent_id, checkpoint_messages, generate_kwargs,
                 index=len(segments), phase="decision",
@@ -354,6 +358,7 @@ def run_cognition(
                  "content": str(getattr(seg0, "content", "") or "")},
                 {"role": "user", "content": prompt2},
             ]
+            last_messages = list(follow_up_messages)
             seg1 = _run_one_segment(agent, agent_id, follow_up_messages,
                                    generate_kwargs, index=1, phase="work",
                                    repair_malformed=repair_malformed,
@@ -408,6 +413,7 @@ def run_cognition(
         thinking=_last_thinking(segments),
         cognitive_budget=_last_cognitive_budget(segments),
         summary=round_summary,
+        messages=list(last_messages),
     )
 
 

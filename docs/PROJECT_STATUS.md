@@ -4,7 +4,7 @@
 > **日期：2026-11-15**
 > **阶段：开发中 / 观察实验**
 > **协议版本：`1`**
-> **测试基线：`5844 passed, 2 skipped, 30 deselected`**
+> **测试基线：`5848 passed, 2 skipped, 30 deselected`**
 
 本文记录**当前真实可用能力、推荐工作方式、已知限制和版本变化**。
 架构的长期权威仍然是
@@ -78,6 +78,9 @@
   `BuiltinWorkRuntime`，UI 引擎标签为「内置 / Pi」；
   `max_solo_turns` → `max_builtin_turns`（旧 settings 键与
   `--solo-turns` 仅保留兼容）。
+- 内置引擎 Work loop 改为 **append-only conversation + 定期压缩**：
+  后续轮次追加增量事实，不再从零重建 prompt；超过阈值后保留 base +
+  最近几轮，旧轮次压成摘要（ADR-0061）。
 - 读取分页字段统一：按行用 `start_line` / `max_lines` / `next_start_line`
   （`workspace_read` · `artifact_read` · `project_read`），按字符用
   `start_char` / `max_chars` / `next_start_char`（`draft_read`）；
@@ -203,6 +206,7 @@ Prototype 原型生成
 
 - 有自己的 Cognition / Work 循环；
 - 有轮次、认知预算、只读轮次等约束；
+- Work loop 使用 **append-only conversation + 定期压缩**（ADR-0061）；
 - **不读取 `work_mode`**；
 - 因此目前只有工作流式执行，没有自主模式。
 
@@ -567,7 +571,7 @@ Team 协作
 当前基线：
 
 ```text
-5844 passed, 2 skipped, 30 deselected
+5848 passed, 2 skipped, 30 deselected
 ```
 
 启动说明见 [`../START_AIEOS.md`](../START_AIEOS.md)。

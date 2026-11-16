@@ -5,6 +5,11 @@ BuiltinWorkRuntime —— Work 层最小执行循环
 目标：让一个 Worker Agent 在**精简上下文**里完成 SOLO Task，
 而不是每轮注入 Life 层身份 / 经济 / 消息 / 通用验收仪式。
 
+上下文策略：**append-only conversation + 定期压缩**。
+稳定 base prompt 只写一次；后续轮次追加增量事实与 assistant 总结，
+而不是从零重建整个 prompt。超过阈值后保留 base + 最近几轮，
+旧轮次压成摘要（ADR-0061）。
+
     Front Agent
         ↓ Brief
     Front 选中的 Worker Agent
@@ -40,6 +45,7 @@ from work.images import make_image_resolver
 from work.lifecycle import WorkLifecycle, WorkLifecycleError
 from work.prompt import (
     WORK_SYSTEM_PROMPT, build_cognition_prompt, build_work_prompt,
+    build_work_update_prompt,
 )
 from work.roles import (
     WorkContext, WorkResult, WorkRole, resolve_agent_name,
@@ -124,6 +130,8 @@ class BuiltinWorkRuntime:
         max_cognition_steps: int = 2,
         max_work_steps: int = 4,
         max_read_only_turns: int = 8,
+        max_conversation_chars: int = 80_000,
+        keep_recent_rounds: int = 3,
         cognitive_budget: int = 65536,
         resume_context: str = "",
         role_prompt: str = "",
@@ -144,6 +152,10 @@ class BuiltinWorkRuntime:
         #: 连续多少轮只读就中断本次 run（0 = 不设上限）。
         #: 中断不是失败：Task 保持 IN_PROGRESS，checkpoint 可续跑。
         self.max_read_only_turns = max(0, int(max_read_only_turns))
+        #: Append-only conversation 的压缩阈值；超过后把旧轮次压成摘要。
+        self.max_conversation_chars = max(4_000, int(max_conversation_chars))
+        #: 压缩时保留最近多少轮原始消息。
+        self.keep_recent_rounds = max(1, int(keep_recent_rounds))
         self.cognitive_budget = max(1, int(cognitive_budget))
         #: 上一次 run 的只读 checkpoint；注入 cognition 和第一轮 Work。
         self.resume_context = str(resume_context or "").strip()
@@ -165,12 +177,14 @@ class BuiltinWorkRuntime:
         self._cognition_tokens = 0
         #: 本任务已经查过的工具文档（tool → 全文）。
         #:
-        #: 🔴 每轮 Work prompt 都是**从零重建**的：模型上一轮读到的文档
-        #:    在下一轮已经不在上下文里，只剩它自己写的总结。把文档按
-        #:    工具名留在内存里、每轮重新注入，工具约束才不会逐轮衰减成
-        #:    「我记得读过」（实测里 Playwright 的 BASE_URL / smoke gate
-        #:    就是这样丢的）。
+        #: Append-only 模式下文档只注入一次；压缩后重新注入。
         self._tool_docs: Dict[str, str] = {}
+        #: 已经注入过 conversation 的工具文档名。
+        self._tool_docs_seen: set = set()
+        #: Append-only 会话；第一条是稳定 base prompt，后面追加 assistant
+        #: 总结与 user 增量事实。压缩时保留 base + 最近几轮。
+        self._conversation: List[Dict[str, Any]] = []
+        self._compactions = 0
         #: Work 阶段真实注册的动作集合；认知阶段用它展示「下一阶段有什么」。
         self._work_dispatcher: Any = None
         self.lifecycle = WorkLifecycle(
@@ -194,6 +208,10 @@ class BuiltinWorkRuntime:
             status=task.status,
             iteration=task.iteration,
         )
+        # 每次 run（包括 Reopen）都从新的 append-only 会话开始。
+        self._conversation = []
+        self._tool_docs_seen = set()
+        self._compactions = 0
 
         try:
             if self._stopped():
@@ -484,32 +502,42 @@ class BuiltinWorkRuntime:
                 result.error = "任务已被停止"
                 return result
             context = self._context(actor)
-            resume_text = ""
-            if turn == 1 and self.resume_context:
-                resume_text = (
-                    "\n========== 上一次运行检查点（只读） ==========\n"
-                    + self.resume_context + "\n")
-            if self.role_prompt:
-                resume_text = self.role_prompt + "\n" + resume_text
             inbox_now = self._drain_inbox(actor)
-            inbox_text = "\n".join(filter(None, [
-                self._initial_inbox if turn == 1 else "",
-                inbox_now,
-            ]))
-            if inbox_text:
-                resume_text = inbox_text + "\n" + resume_text
-            prompt = build_work_prompt(
-                context,
-                task_description=task.description,
-                runtime=self.rt,
-                last_turn=last_turn_facts,
-                extra_instruction=resume_text,
-                tool_docs=self._tool_docs,
-                available_actions=dispatcher.action_types,
-            )
+            if not self._conversation:
+                # 第一轮：完整 base prompt；之后只追加增量事实。
+                first_extra = ""
+                if self.resume_context:
+                    first_extra = (
+                        "\n========== 上一次运行检查点（只读） ==========\n"
+                        + self.resume_context + "\n")
+                if self.role_prompt:
+                    first_extra = self.role_prompt + "\n" + first_extra
+                first_inbox = "\n".join(filter(None, [
+                    self._initial_inbox, inbox_now,
+                ]))
+                if first_inbox:
+                    first_extra = first_inbox + "\n" + first_extra
+                base_prompt = build_work_prompt(
+                    context,
+                    task_description=task.description,
+                    runtime=self.rt,
+                    last_turn=None,
+                    extra_instruction=first_extra,
+                    tool_docs=self._tool_docs,
+                    available_actions=dispatcher.action_types,
+                )
+                self._conversation.append(
+                    {"role": "user", "content": base_prompt})
+                self._tool_docs_seen.update(self._tool_docs)
+            else:
+                update = self._build_update_prompt(
+                    context, last_turn_facts, inbox_now)
+                self._conversation.append(
+                    {"role": "user", "content": update})
+            messages = list(self._conversation)
             try:
                 run = agent.act(
-                    messages=prompt,
+                    messages=messages,
                     dispatcher=dispatcher,
                     execute=True,
                     task_id=task.task_id,
@@ -541,6 +569,23 @@ class BuiltinWorkRuntime:
             intents = list(getattr(run, "action_intents", None) or [])
             results = list(getattr(run, "action_results", None) or [])
             self._collect_tool_docs(intents, results)
+            # Append-only：用这次请求的真实消息列表继续 conversation，
+            # 再把本轮 assistant 输出接上。这样下一轮的前缀就是上一轮请求。
+            recorded = list(getattr(run, "messages", None) or [])
+            if recorded:
+                self._conversation = recorded
+            assistant_text = str(getattr(run, "summary", "") or "").strip()
+            if not assistant_text and segments:
+                assistant_text = str(
+                    getattr(segments[-1], "content", "") or "").strip()
+            if not assistant_text:
+                assistant_text = "（本轮没有输出可用总结）"
+            self._conversation.append({
+                "role": "assistant",
+                "content": assistant_text,
+                "aieos_round_summary": True,
+            })
+            self._maybe_compact_conversation()
             tokens = sum(
                 int(getattr(s, "tokens", 0) or 0) for s in segments)
             result.turns = turn
@@ -643,6 +688,8 @@ class BuiltinWorkRuntime:
                 "latency_ms": round(sum(
                     float(getattr(seg, "latency_ms", 0) or 0)
                     for seg in segments), 1),
+                "conversation_chars": self._conversation_chars(),
+                "compactions": self._compactions,
                 "thinking": getattr(run, "thinking", None),
                 "cognitive_budget": getattr(
                     getattr(agent, "brain", None),
@@ -958,6 +1005,98 @@ class BuiltinWorkRuntime:
         agent = self._agent(agent_id)
         return getattr(agent, "workspace", None)
 
+    def _build_update_prompt(
+        self,
+        context: WorkContext,
+        last_turn_facts: Optional[Dict[str, Any]],
+        inbox_text: str,
+    ) -> str:
+        """生成本轮追加到 conversation 的 user 增量。"""
+        new_docs = {
+            name: content
+            for name, content in self._tool_docs.items()
+            if name not in self._tool_docs_seen
+        }
+        self._tool_docs_seen.update(new_docs)
+        last = dict(last_turn_facts) if last_turn_facts else None
+        if last is not None:
+            # 总结已经是上一条 assistant 消息；不要在新 user 消息里重复。
+            last["round_summary"] = ""
+        return build_work_update_prompt(
+            context,
+            runtime=self.rt,
+            last_turn=last,
+            extra_instruction=inbox_text,
+            tool_docs=new_docs,
+        )
+
+    def _conversation_chars(self) -> int:
+        return sum(
+            len(str(message.get("content") or ""))
+            for message in self._conversation
+        )
+
+    def _maybe_compact_conversation(self) -> None:
+        """超过阈值时，把旧轮次压成一条摘要，保留最近几轮原文。
+
+        压缩本身会造成一次 cache miss；之后继续 append，缓存重新建立。
+        """
+        total = self._conversation_chars()
+        if total <= self.max_conversation_chars:
+            return
+        base = self._conversation[0]
+        rest = self._conversation[1:]
+        # `aieos_round_summary` 标记每轮结束；用它保留最近 N 个**完整轮次**。
+        summary_indices = [
+            index for index, message in enumerate(rest)
+            if message.get("aieos_round_summary")
+        ]
+        if len(summary_indices) > self.keep_recent_rounds:
+            cutoff = summary_indices[-self.keep_recent_rounds - 1]
+            old = rest[:cutoff + 1]
+            recent = rest[cutoff + 1:]
+        else:
+            keep = 2 * self.keep_recent_rounds
+            if len(rest) <= keep:
+                return
+            old = rest[:-keep]
+            recent = rest[-keep:]
+        summary_messages = [
+            message for message in old
+            if message.get("aieos_round_summary")
+        ]
+        if not summary_messages:
+            # 兼容没有标记的旧 conversation。
+            summary_messages = [
+                message for message in old
+                if str(message.get("role") or "") == "assistant"
+            ]
+        summaries = [
+            str(message.get("content") or "").strip()
+            for message in summary_messages
+        ]
+        summaries = [item for item in summaries if item]
+        compressed = "\n\n".join(f"- {item}" for item in summaries)
+        if len(compressed) > 8_000:
+            compressed = compressed[-8_000:]
+        compact = {
+            "role": "user",
+            "content": (
+                "========== 更早轮次压缩摘要 ==========\n"
+                + (compressed or "（无）")),
+        }
+        self._conversation = [base, compact] + list(recent)
+        # 压缩可能把工具文档留在旧轮次里；下一轮重新注入。
+        self._tool_docs_seen.clear()
+        self._compactions += 1
+        self._event(
+            "work_context_compacted",
+            before_chars=total,
+            after_chars=self._conversation_chars(),
+            summaries=len(summaries),
+            kept_messages=len(recent) + 2,
+        )
+
     def _force_action(
         self,
         actor: str,
@@ -971,26 +1110,34 @@ class BuiltinWorkRuntime:
         """连续两轮没动作时，用最小恢复提示再要一次明确动作。"""
         if self._stopped():
             return False
-        context = self._context(actor)
-        prompt = build_work_prompt(
-            context,
-            task_description=self.task.description,
-            runtime=self.rt,
-            tool_docs=self._tool_docs,
-            available_actions=dispatcher.action_types,
-            extra_instruction=(
-                "\n========== 恢复提示 ==========\n"
-                "你连续两轮没有输出任何动作（只回了文字或格式不可解析）。\n"
-                "请给出一个明确动作。\n"
-                "- 如果工作已经完成，调用 work_complete；\n"
-                "- 如果还没完成，给出一个具体动作继续。\n\n"
-                "你上一轮的文字（截断）：\n"
-                f"{last_content[:1200]}\n"
-            ),
+        recovery = (
+            "\n========== 恢复提示 ==========\n"
+            "你连续两轮没有输出任何动作（只回了文字或格式不可解析）。\n"
+            "请给出一个明确动作。\n"
+            "- 如果工作已经完成，调用 work_complete；\n"
+            "- 如果还没完成，给出一个具体动作继续。\n\n"
+            "你上一轮的文字（截断）：\n"
+            f"{last_content[:1200]}\n"
         )
+        if self._conversation:
+            self._conversation.append(
+                {"role": "user", "content": recovery})
+            messages: Any = list(self._conversation)
+        else:
+            context = self._context(actor)
+            base = build_work_prompt(
+                context,
+                task_description=self.task.description,
+                runtime=self.rt,
+                tool_docs=self._tool_docs,
+                available_actions=dispatcher.action_types,
+                extra_instruction=recovery,
+            )
+            self._conversation = [{"role": "user", "content": base}]
+            messages = list(self._conversation)
         try:
             run = agent.act(
-                messages=prompt,
+                messages=messages,
                 dispatcher=dispatcher,
                 execute=True,
                 task_id=self.task.task_id,
@@ -1019,6 +1166,20 @@ class BuiltinWorkRuntime:
         segments = list(getattr(run, "segments", None) or [])
         intents = list(getattr(run, "action_intents", None) or [])
         results = list(getattr(run, "action_results", None) or [])
+        recorded = list(getattr(run, "messages", None) or [])
+        if recorded:
+            self._conversation = recorded
+        assistant_text = str(getattr(run, "summary", "") or "").strip()
+        if not assistant_text and segments:
+            assistant_text = str(
+                getattr(segments[-1], "content", "") or "").strip()
+        if assistant_text:
+            self._conversation.append({
+                "role": "assistant",
+                "content": assistant_text,
+                "aieos_round_summary": True,
+            })
+            self._maybe_compact_conversation()
         result.tokens += sum(
             int(getattr(s, "tokens", 0) or 0) for s in segments)
         result.actions += len(intents)

@@ -741,6 +741,46 @@ class _BuiltinRuntime:
         self.experiment_run_id = "test"
 
 
+class _AppendOnlyAgent(_FakeAgent):
+    """跑两轮只读 + 第三轮完成；记录 work 调用看到的 messages。"""
+
+    def __init__(self):
+        super().__init__()
+        self.work_prompts = []
+        self.work_calls = 0
+
+    def act(self, *, messages, dispatcher, **kwargs):
+        if kwargs.get("initial_phase") == "cognition":
+            return SimpleNamespace(
+                segments=[SimpleNamespace(
+                    tokens=2, content="COGNITION-REPORT",
+                    is_truncated=False)],
+                action_intents=[], action_results=[])
+        self.work_calls += 1
+        self.work_prompts.append(messages)
+        if self.work_calls < 3:
+            intent = ActionIntent(
+                action_type="workspace_read",
+                parameters={"path": "missing.txt"}, agent_id="agent_a")
+        else:
+            intent = ActionIntent(
+                action_type="work_complete",
+                parameters={"result_ref": "append-v1",
+                            "summary": "append-only 完成"},
+                agent_id="agent_a")
+        action_result = dispatcher.dispatch(intent)
+        return SimpleNamespace(
+            segments=[SimpleNamespace(
+                tokens=3,
+                content=f"ROUND-{self.work_calls}-SUMMARY",
+                is_truncated=False)],
+            action_intents=[intent],
+            action_results=[action_result],
+            summary=f"ROUND-{self.work_calls}-SUMMARY",
+            messages=list(messages) if isinstance(messages, list) else messages,
+        )
+
+
 class _NoActionThenCompleteAgent(_FakeAgent):
     def __init__(self):
         super().__init__()
@@ -974,6 +1014,38 @@ class TestBuiltinWorkRuntime:
         assert result.status == TaskStatus.COMPLETED
         assert runtime.agent.calls == 3
         assert runtime.tasks.get(task.task_id).status == TaskStatus.COMPLETED
+
+    def test_append_only_conversation_keeps_base_and_compacts(self, db):
+        task = Task.create(
+            task_id="T-APPEND-ONLY", creator="agent_a",
+            description="append-only 测试", workspace_id="WS-X",
+            participants=["agent_a"], mode=TaskMode.SOLO)
+        task.claim_producer("agent_a")
+
+        runtime = _BuiltinRuntime(db, task)
+        runtime.agent = _AppendOnlyAgent()
+        runner = BuiltinWorkRuntime(
+            runtime, task, max_turns=4,
+            max_conversation_chars=4_000, keep_recent_rounds=1)
+        result = runner.run()
+
+        assert result.ok is True, result.error
+        assert len(runtime.agent.work_prompts) >= 2
+        first = runtime.agent.work_prompts[0]
+        second = runtime.agent.work_prompts[1]
+        assert isinstance(first, list) and isinstance(second, list)
+        # base prompt 没有被重写
+        assert first[0]["content"] == second[0]["content"]
+        # 第一轮 assistant 总结进入下一轮前缀
+        assert any(
+            message.get("role") == "assistant"
+            and "ROUND-1-SUMMARY" in str(message.get("content") or "")
+            for message in second)
+        # 超过阈值后触发压缩，保留最近轮次
+        assert runner._compactions >= 1
+        assert any(
+            "更早轮次压缩摘要" in str(message.get("content") or "")
+            for message in runner._conversation)
 
     def test_malformed_action_json_is_not_used_as_cognition_report(self, db):
         """

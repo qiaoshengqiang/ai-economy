@@ -84,6 +84,7 @@
 | [0058](0058-output-commit-and-authorization-modes.md) | **Output Commit 与三种授权模式** | Accepted（**manual / limited / auto 已实现；push / 复杂 merge 为 FUTURE**） | 交付物无版本化 / 提交权限不清 | Output Commit |
 | [0059](0059-task-level-output-repo-binding.md) | **Task 级输出仓库绑定** | Accepted（**已实现；Project Repo Mode 为 FUTURE**） | 全局仓库无法覆盖不同项目 | Output Commit |
 | [0060](0060-project-workdir-direct-edit.md) | **Project Workdir —— 直接修改用户项目目录** | Accepted（**Phase 1 已实现；worktree / 项目提交为 FUTURE**） | 只能生成新产物 / 不能改已有项目 | Work / Workspace |
+| [0061](0061-builtin-work-append-only-conversation.md) | **内置 Work 引擎 Append-only Conversation** | Accepted（**V1 已实现**） | 每轮重建 prompt，cache hit ~70% | Work / LLM |
 | [0028](0028-read-visibility-and-native-communication.md) | **Read 靠 Task Participation；Communication 是 Agent 基础能力** | Accepted（实现为 FUTURE） | Read / Visibility / Communication | Workspace / Communication |
 
 ---

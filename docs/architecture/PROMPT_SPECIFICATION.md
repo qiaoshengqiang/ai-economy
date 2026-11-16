@@ -213,6 +213,8 @@ workspace_read {path, offset?, limit?}
 - `offset` / `limit` 仅保留在执行器 / 适配器里作过渡别名，
   Agent 可见的 prompt 与动作 schema 不再出现；
 - Front / 内置引擎 / Pi 已按稳定前缀、易变尾部重排；
+- 内置引擎 Work loop 使用 **append-only conversation + 定期压缩**：
+  稳定 base 只写一次，后续轮次追加增量事实（ADR-0061）；
 - 图片能力按 model profile 声明；
 - 连续只读上限默认 8，可在运行设置调整。
 

@@ -557,7 +557,7 @@ front/contracts.py   FrontBrief / FrontDecision / FrontResult / FrontIntent
 front/runtime.py     FrontAgentRuntime：direct_reply / handoff / rework / follow_up / clarify
 front/parser.py      解析模型输出；rework 只接受 COMPLETED Task
 
-work/runtime.py      BuiltinWorkRuntime：精简 prompt + Work 动作 + work_complete
+work/runtime.py      BuiltinWorkRuntime：append-only conversation + 压缩 + Work 动作
 work/team_runtime.py TeamWorkRuntime：Leader 计划 / 并行 / 可选 QA / 汇总收尾
 work/plan.py         WorkPlan / WorkItem / Leader 计划解析
 work/replan.py       运行中计划更新（reassign / add / cancel / update）

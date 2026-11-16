@@ -246,4 +246,4 @@ docs / tests
 | Phase 1：用户可见 / API / prompt | `DONE` | engine=builtin；UI 内置 / Pi；Pi 工作模式；内置引擎最大轮次 |
 | Phase 2：代码符号 / 设置键 | `DONE` | BuiltinWorkRuntime；max_builtin_turns + 旧键 / CLI 兼容 |
 | Phase 3：文档 / 注释 | `DONE` | 文档、prompt、预览页、注释统一 |
-| 全量测试 + 基线 | `DONE` | 5844 passed, 2 skipped, 30 deselected |
+| 全量测试 + 基线 | `DONE` | 5848 passed, 2 skipped, 30 deselected |

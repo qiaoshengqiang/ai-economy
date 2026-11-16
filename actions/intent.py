@@ -449,6 +449,10 @@ class CognitiveRunResult:
     #: 本轮 `summary` 阶段产出的完整文字总结（没有 summary 阶段时为空）。
     summary: str = ""
 
+    #: 最后一次请求实际使用的消息列表（**不含** system）。
+    #: Append-only Runtime 用它继续同一个 conversation；不参与日志序列化。
+    messages: List[Any] = field(default_factory=list)
+
     @property
     def action_intent(self) -> Optional[ActionIntent]:
         """向后兼容：**第一个**动作。"""

@@ -475,6 +475,39 @@ workspace_id: {context.workspace_id}
 """
 
 
+def build_work_update_prompt(
+    context: WorkContext,
+    *,
+    runtime: Any = None,
+    last_turn: Optional[Dict[str, Any]] = None,
+    extra_instruction: str = "",
+    tool_docs: Optional[Dict[str, str]] = None,
+) -> str:
+    """Append-only 模式的**增量 user 消息**。
+
+    稳定契约 / 动作 schema / 任务 / Brief / 认知报告已经在第一条
+    base prompt 里；这里只追加会变化的事实，避免每轮重写整个 prompt。
+    """
+    workspace = context.workspace_facts or _render_workspace(
+        runtime, context.workspace_id, context.agent_id)
+    memory = context.memory_facts or "（没有任务级记忆）"
+    drafts = context.draft_facts or "（没有草稿）"
+    parts = ["========== 本轮更新 =========="]
+    if last_turn:
+        parts.append(_render_last_turn(last_turn))
+    parts.append(
+        "========== Workspace 事实 ==========\n"
+        f"workspace_id: {context.workspace_id}\n{workspace}")
+    parts.append(
+        "========== 任务级记忆（私有工作记忆） ==========\n" + memory)
+    parts.append("========== 当前草稿 ==========\n" + drafts)
+    if tool_docs:
+        parts.append(_render_tool_docs(tool_docs))
+    if extra_instruction:
+        parts.append(extra_instruction)
+    return "\n\n".join(part for part in parts if part)
+
+
 # ============================================================
 # Team 模式
 # ============================================================
