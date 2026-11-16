@@ -4,7 +4,7 @@
 > **日期：2026-11-15**
 > **阶段：开发中 / 观察实验**
 > **协议版本：`1`**
-> **测试基线：`5811 passed, 2 skipped, 30 deselected`**
+> **测试基线：`5814 passed, 2 skipped, 30 deselected`**
 
 本文记录**当前真实可用能力、推荐工作方式、已知限制和版本变化**。
 架构的长期权威仍然是
@@ -63,6 +63,9 @@
 - LLM 缓存基础：OpenCode Go 按 conversation / task / alarm 派生
   `x-opencode-session`（含 provider/model）；`llm_calls` 记录
   cache_read / cache_write / allowance / billing_source / session_id。
+- Prompt 缓存布局：Front / Solo / Pi 把稳定指令、schema、输出格式前置，
+  记忆 / 对话 / 当前输入 / 动作结果 / 当前时间后置；
+  `tests/test_prompt_cache_order.py` 守卫顺序。
 
 ---
 
@@ -540,7 +543,7 @@ Team 协作
 当前基线：
 
 ```text
-5811 passed, 2 skipped, 30 deselected
+5814 passed, 2 skipped, 30 deselected
 ```
 
 启动说明见 [`../START_AIEOS.md`](../START_AIEOS.md)。

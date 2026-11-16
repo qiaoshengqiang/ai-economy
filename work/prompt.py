@@ -282,22 +282,6 @@ def build_cognition_prompt(
 请产出一份认知报告，说明你理解了什么、打算如何推进。
 这份报告会注入后续每一次决策。
 
-========== 人类任务原文 ==========
-{task_description}
-
-========== 完成标准（Definition of Done） ==========
-{criteria}
-
-========== Brief ==========
-{_render_brief(context.brief)}
-
-========== 上一次运行检查点（只读） ==========
-{resume_context.strip() or "（无）"}
-
-========== 环境事实 ==========
-workspace_id: {context.workspace_id}
-{workspace}
-
 ========== 本阶段可用动作（只读） ==========
 {describe_actions(available_actions)}
 
@@ -329,6 +313,22 @@ workspace_id: {context.workspace_id}
 
 报告应覆盖这个 Task 真正重要的内容：需求、环境、方法、风险、计划，
 以及你如何判断它已经完成。
+
+========== 人类任务原文 ==========
+{task_description}
+
+========== 完成标准（Definition of Done） ==========
+{criteria}
+
+========== Brief ==========
+{_render_brief(context.brief)}
+
+========== 上一次运行检查点（只读） ==========
+{resume_context.strip() or "（无）"}
+
+========== 环境事实 ==========
+workspace_id: {context.workspace_id}
+{workspace}
 """
 
 
@@ -382,43 +382,9 @@ def build_work_prompt(
 
     return f"""{context.agent_identity}
 
-你正在处理 Task {context.task_id}
-（第 {context.iteration} 次迭代）。
-
 ========== 角色 ==========
 {role_text}
 
-========== 任务 ==========
-{task_description}
-
-========== Brief ==========
-{_render_brief(context.brief)}
-
-========== 完成标准（Definition of Done） ==========
-{criteria}
-
-========== Front 要求的回复格式 ==========
-{reply_style or "（无；简洁、友好，先结论后产物）"}
-
-========== 任务认知（启动快照） ==========
-{str(context.cognition_report or "").strip()
- or "（没有认知报告；使用任务原文和当前环境）"}
-
-> 这只是启动快照。环境可能已经变化；需要时请重新读取或搜索，
-> 并以当前环境为准。
-
-========== Workspace 事实 ==========
-workspace_id: {context.workspace_id}
-{workspace}
-
-========== 任务级记忆（私有工作记忆） ==========
-{memory}
-
-========== 当前草稿 ==========
-{drafts}
-{_render_last_turn(last_turn)}
-{extra_instruction}
-{_render_tool_docs(tool_docs)}
 ========== 决策 / 执行 ==========
 每次调用处于 decision 或 work 阶段：
 - decision：决定下一步；
@@ -471,6 +437,41 @@ thinking 是可选的；省略表示保持当前设置。
            {{"type":"workspace_write","parameters":{{...}}}}]}}
 动作按顺序执行；一个失败不会阻塞后面的动作。如果整个输出被截断，
 则所有动作都不会执行。
+
+========== 当前 Task ==========
+{context.task_id}（第 {context.iteration} 次迭代）
+
+========== 任务 ==========
+{task_description}
+
+========== Brief ==========
+{_render_brief(context.brief)}
+
+========== 完成标准（Definition of Done） ==========
+{criteria}
+
+========== Front 要求的回复格式 ==========
+{reply_style or "（无；简洁、友好，先结论后产物）"}
+
+========== 任务认知（启动快照） ==========
+{str(context.cognition_report or "").strip()
+ or "（没有认知报告；使用任务原文和当前环境）"}
+
+> 这只是启动快照。环境可能已经变化；需要时请重新读取或搜索，
+> 并以当前环境为准。
+
+========== Workspace 事实 ==========
+workspace_id: {context.workspace_id}
+{workspace}
+
+========== 任务级记忆（私有工作记忆） ==========
+{memory}
+
+========== 当前草稿 ==========
+{drafts}
+{_render_last_turn(last_turn)}
+{extra_instruction}
+{_render_tool_docs(tool_docs)}
 """
 
 

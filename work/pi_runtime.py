@@ -927,24 +927,18 @@ Task Workspace 放本次任务的交付物和验收产物。
             if role_section else ""
         )
         if phase == "direct":
-            return f"""========== 任务 ==========
-{task_text}
-
-========== 环境事实 ==========
-{env}
-
-直接完成这个任务，产出集中在任务需要的阶段成果上。
+            return f"""直接完成这个任务，产出集中在任务需要的阶段成果上。
 完成时在 `{result_path}` 写总结，说明交付内容、文件路径和验证情况。
 最后一行输出 `TASK_COMPLETE`。
-"""
-        if phase == "prototype":
-            return f"""========== 任务 ==========
+
+========== 任务 ==========
 {task_text}
 
 ========== 环境事实 ==========
 {env}
-{role_block}
-这是原型阶段。先把想法变成实际成果，再补充计划。
+"""
+        if phase == "prototype":
+            return f"""{role_block}这是原型阶段。先把想法变成实际成果，再补充计划。
 
 请尽可能构建一个完整、有实际体验的初始原型。你可以自主决定成果的
 形式、结构、内容、交互或实现方式；优先让核心体验真正成立。
@@ -955,15 +949,15 @@ Task Workspace 放本次任务的交付物和验收产物。
 2. 建议写一份简短的 `PROTOTYPE.md`，记录设计意图和关键取舍；
    如果任务不适合阶段文档，可以省略；
 3. 最后一行输出 `PROTOTYPE_READY`。
-"""
-        if phase == "engineering":
-            return f"""========== 任务 ==========
+
+========== 任务 ==========
 {task_text}
-{role_block}
+
 ========== 环境事实 ==========
 {env}
-
-原型阶段已经结束。现在进入工程阶段。
+"""
+        if phase == "engineering":
+            return f"""{role_block}原型阶段已经结束。现在进入工程阶段。
 
 请先理解上一阶段记录的设计意图，然后检查现有产物的内容、结构和实际效果。
 实际运行、使用或检查产物，发现问题并修复；必要时调整结构。
@@ -977,20 +971,17 @@ Task Workspace 放本次任务的交付物和验收产物。
 1. 写一份简短的 `ENGINEERING.md`，记录检查了什么、发现了什么、改了什么、
    还剩什么；长度随内容需要，测试报告按实际情况取舍；
 2. 最后一行输出 `ENGINEERING_READY`。
+
+========== 任务 ==========
+{task_text}
+
+========== 环境事实 ==========
+{env}
 """
         if phase == "evolution":
             issues = self._work_state.get("open_issues") or []
             issue_text = "\n".join(f"- {item}" for item in issues) or "（暂无记录）"
-            return f"""========== 任务 ==========
-{task_text}
-{role_block}
-========== 环境事实 ==========
-{env}
-
-========== 未解决问题 ==========
-{issue_text}
-
-进入持续迭代阶段。继续基于当前产物、设计记录、最近工具结果和未解决问题
+            return f"""{role_block}进入持续迭代阶段。继续基于当前产物、设计记录、最近工具结果和未解决问题
 工作，自主决定下一步，直到原始目标满足。
 
 在阶段性修改后做整体验证，而不是每次改动都跑完整回归。
@@ -999,6 +990,15 @@ Task Workspace 放本次任务的交付物和验收产物。
 完成时：
 1. 在 `{result_path}` 写最终总结；
 2. 最后一行输出 `TASK_COMPLETE`。
+
+========== 任务 ==========
+{task_text}
+
+========== 环境事实 ==========
+{env}
+
+========== 未解决问题 ==========
+{issue_text}
 """
         raise ValueError(f"未知 Work phase：{phase!r}")
 

@@ -562,41 +562,15 @@ Task 能力的事实边界（由系统强制，不靠你猜）：
 """
         return f"""{self.agent_identity}
 
-当前时间：{now_text}
-
 你是面向人类的入口。
-{wakeup_section}
 
 请自然对话，使用人类使用的语言。你可以使用自己的私有 workspace 和草稿，
 也可以把工作交给 Work Agent。Task 由 Work Agent 创建；你没有创建 Task 的动作。
-
-========== 最近对话（只读） ==========
-{_render_conversation(conversation)}
-
-{memory_section}========== 当前人类输入 ==========
-{human_text}
-
-========== 当前项目目录（用户已选择，只读） ==========
-{project_context or "（当前没有选择项目目录）"}
 
 ========== 输入方式事实 ==========
 - 用户可能使用语音输入；转写文本可能有错字、漏字、断句或同音词错误。
 - 遇到语义不顺、指代不清或明显错乱时，先结合上下文确认；
   clarify 可以用来向用户确认目标。
-
-========== Agent 事实（只读） ==========
-{_render_agents(agents)}
-- 名字用于称呼；`preferred_agent` 必须填 Agent ID（例如 `agent_b`），
-  不要填显示名。
-
-========== Worker 角色（只读） ==========
-{_render_roles(self.roles)}
-
-========== 进行中的 Task（只读） ==========
-{_render_tasks(active)}
-
-========== 已完成的 Task（只读） ==========
-{_render_tasks(completed)}
 
 ========== 任务判断事实 ==========
 - 当前选中的项目目录、已有 Task、以及两者之间的关系，是三个独立事实。
@@ -617,9 +591,6 @@ Task 能力的事实边界（由系统强制，不靠你猜）：
 - Worker 会看到 human_text / task_text / front_notes 三部分：
   task_text 是你的执行说明，front_notes 是建议（非硬要求）。
   task_text 写清目标对象、目录和期望结果，Worker 才能独立执行。
-
-========== 检查结果（只读） ==========
-{_render_inspection(inspection)}
 
 ========== Front 动作（可选，多步） ==========
 可用动作：{actions}
@@ -663,12 +634,6 @@ handoff 可以携带你在 `brief.files` 里准备好的文件：
 [{{"path":"index.html","from_private":"snake.html"}}]
 [{{"path":"index.html","draft_id":"draft_..."}}]
 
-========== 动作结果 / 状态 ==========
-{_render_actions(action_history)}
-
-========== 其他上下文 ==========
-{context or "（无）"}
-{error_text}
 ========== 交付模式（work_profile） ==========
 - direct：单文件 / 单次操作，不需要运行程序或浏览器验证；
 - standard：一个可运行或可检查的交付物，需要一次工程验证；
@@ -783,6 +748,44 @@ commit_confirm）按你给出的顺序执行。
 状态为 INTERRUPTED 的 Task 当前没有运行；follow_up 可以恢复它。
 最终输出是一个 JSON 对象。普通文本会作为 direct_reply 显示；
 执行任务使用结构化 intent。
+
+{memory_section}
+{wakeup_section}
+
+========== 最近对话（只读） ==========
+{_render_conversation(conversation)}
+
+========== 当前人类输入 ==========
+{human_text}
+
+========== 当前项目目录（用户已选择，只读） ==========
+{project_context or "（当前没有选择项目目录）"}
+
+========== Agent 事实（只读） ==========
+{_render_agents(agents)}
+- 名字用于称呼；`preferred_agent` 必须填 Agent ID（例如 `agent_b`），
+  不要填显示名。
+
+========== Worker 角色（只读） ==========
+{_render_roles(self.roles)}
+
+========== 进行中的 Task（只读） ==========
+{_render_tasks(active)}
+
+========== 已完成的 Task（只读） ==========
+{_render_tasks(completed)}
+
+========== 检查结果（只读） ==========
+{_render_inspection(inspection)}
+
+========== 动作结果 / 状态 ==========
+{_render_actions(action_history)}
+
+========== 其他上下文 ==========
+{context or "（无）"}
+{error_text}
+
+当前时间：{now_text}
 """
 
 
