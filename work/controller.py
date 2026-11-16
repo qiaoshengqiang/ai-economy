@@ -43,6 +43,7 @@ from types import SimpleNamespace
 from typing import Any, Dict, List, Mapping, Optional
 
 from llm import prompt_log
+from llm.session import alarm_scope, front_scope
 from llm.web_search import WebSearchClient, WebSearchError
 from commit.models import CommitMode, CommitStatus
 from commit.service import CommitError, OutputCommitService
@@ -1454,7 +1455,12 @@ class AIEOSController:
                     self._run_handoff_solo(job, precomputed, None)
                 return
             self._set_job(job, JobStatus.FRONT_ANALYZING)
-            front = self._front_runtime(self._front_project_root(job))
+            front = self._front_runtime(
+                self._front_project_root(job),
+                llm_session_scope=front_scope(
+                    job.conversation_id or job.job_id,
+                    agent_id=self.front_agent),
+            )
             if front is None:
                 self._fail(job, "Front Agent 没有可用的 Brain")
                 return
@@ -1733,7 +1739,7 @@ class AIEOSController:
         return "\n\n".join(parts)
 
     def _front_runtime(
-        self, project_root: str = "",
+        self, project_root: str = "", *, llm_session_scope: str = "",
     ) -> Optional[FrontAgentRuntime]:
         agent = self._agent(self.front_agent)
         if agent is None or not getattr(agent, "has_brain", False):
@@ -1769,6 +1775,7 @@ class AIEOSController:
                 cognitive=False,
                 system=system_prompt,
                 call_purpose="front",
+                llm_session_scope=llm_session_scope,
             )
 
         def _execute(actions: List[Dict[str, Any]]) -> str:
@@ -3813,6 +3820,11 @@ class AIEOSController:
                 SELECT COUNT(*) AS calls,
                        COALESCE(SUM(input_tokens), 0) AS input_tokens,
                        COALESCE(SUM(output_tokens), 0) AS output_tokens,
+                       COALESCE(SUM(cache_read_tokens), 0)
+                           AS cache_read_tokens,
+                       COALESCE(SUM(cache_write_tokens), 0)
+                           AS cache_write_tokens,
+                       COALESCE(SUM(allowance_usd), 0) AS allowance_usd,
                        COALESCE(SUM(latency_ms), 0) AS latency_ms,
                        COALESCE(SUM(cost_ai), 0) AS cost_ai
                   FROM llm_calls
@@ -3823,17 +3835,37 @@ class AIEOSController:
         except Exception:                                     # noqa: BLE001
             return {"calls": 0, "input_tokens": 0,
                     "output_tokens": 0, "latency_ms": 0.0,
-                    "avg_latency_ms": 0.0, "cost_ai": 0.0}
+                    "avg_latency_ms": 0.0, "cost_ai": 0.0,
+                    "cache_read_tokens": 0, "cache_write_tokens": 0,
+                    "cache_hit_rate": 0.0, "allowance_usd": 0.0}
         if row is None:
             return {"calls": 0, "input_tokens": 0,
                     "output_tokens": 0, "latency_ms": 0.0,
-                    "avg_latency_ms": 0.0, "cost_ai": 0.0}
+                    "avg_latency_ms": 0.0, "cost_ai": 0.0,
+                    "cache_read_tokens": 0, "cache_write_tokens": 0,
+                    "cache_hit_rate": 0.0, "allowance_usd": 0.0}
+        def _value(name: str) -> Any:
+            try:
+                return row[name]
+            except (KeyError, IndexError):
+                return 0
+
         calls = int(row["calls"] or 0)
         latency_ms = round(float(row["latency_ms"] or 0), 1)
+        input_tokens = int(row["input_tokens"] or 0)
+        cache_read = int(_value("cache_read_tokens") or 0)
+        cache_write = int(_value("cache_write_tokens") or 0)
+        cache_total = input_tokens + cache_read + cache_write
         return {
             "calls": calls,
-            "input_tokens": int(row["input_tokens"] or 0),
+            "input_tokens": input_tokens,
             "output_tokens": int(row["output_tokens"] or 0),
+            "cache_read_tokens": cache_read,
+            "cache_write_tokens": cache_write,
+            "cache_hit_rate": (
+                round(cache_read / cache_total, 4)
+                if cache_total else 0.0),
+            "allowance_usd": round(float(_value("allowance_usd") or 0), 6),
             "latency_ms": latency_ms,
             "avg_latency_ms": (
                 round(latency_ms / calls, 1) if calls else 0.0),
@@ -4398,7 +4430,11 @@ class AIEOSController:
     def _run_front_wakeup(self, job: WorkJob) -> WakeupResult:
         prompt_log.bind_job(job.job_id)
         try:
-            front = self._front_runtime("")
+            front = self._front_runtime(
+                "",
+                llm_session_scope=alarm_scope(
+                    job.wakeup_id, agent_id=self.front_agent),
+            )
             if front is None:
                 self._fail(job, "Front Agent 没有可用的 Brain")
                 return WakeupResult(

@@ -577,6 +577,22 @@ class LLMResponse:
     output_tokens: Optional[int] = None
     total_tokens: Optional[int] = None
 
+    #: 命中缓存的输入 token（provider 返回才填；None = 不知道）。
+    #: OpenCode 在 `usage.opencode.tokens.cache_read`；
+    #: OpenAI 兼容在 `usage.prompt_tokens_details.cached_tokens`。
+    cache_read_tokens: Optional[int] = None
+    #: 写入缓存的输入 token（Anthropic `cache_creation_input_tokens`；
+    #: OpenCode `cache_write_5m + cache_write_1h`）。
+    cache_write_tokens: Optional[int] = None
+    #: Provider 侧真实美元成本（OpenCode `usage.cost`）。
+    provider_cost_usd: Optional[float] = None
+    #: Go 套餐用量扣减（OpenCode `usage.opencode.allowance`）。
+    allowance_usd: Optional[float] = None
+    #: 计费来源：free / balance / go / go-plus / byok（OpenCode）。
+    billing_source: str = ""
+    #: 本次调用使用的 LLM 会话 ID（用于缓存 / 路由关联）。
+    llm_session_id: str = ""
+
     # 这些 token 数是从哪来的（api / estimated / unknown）
     token_source: str = TOKEN_SOURCE_UNKNOWN
 

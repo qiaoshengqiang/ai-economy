@@ -50,6 +50,7 @@ from core.logging_setup import get_logger
 from llm.base import LLMResponse, Message
 from llm.recorder import LLMCallRecorder
 from llm.router import LLMRouter
+from llm.session import build_session_id, task_scope
 
 logger = get_logger(__name__)
 
@@ -582,6 +583,9 @@ class Brain:
         record: bool = True,
         task_id: Optional[str] = None,
         session_started_at: Optional[str] = None,
+        #: 逻辑会话 scope（front|... / task|... / alarm|...）。
+        #: Provider 用它生成缓存/路由 header；不传时按 task/agent 派生。
+        llm_session_scope: Optional[str] = None,
         #: 🔴 Cognitive Budget V1：Agent 请求的认知预算（max_tokens 上限）。
         #: Runtime 负责裁剪；**禁止**由 AIC 余额换算而来。
         requested_cognitive_budget: Optional[int] = None,
@@ -740,6 +744,23 @@ class Brain:
         else:
             effective_model = self.settings.model or None
 
+        # ---- LLM 会话（缓存 / 路由）----------------------------------
+        # 同一逻辑对话复用同一个值；不同 Task / 对话 / 闹钟必须不同。
+        # provider/model 也进 hash：换模型就换会话，避免跨模型复用。
+        session_scope = str(llm_session_scope or "").strip()
+        if not session_scope and task_id:
+            session_scope = task_scope(
+                str(task_id), agent_id=self.settings.agent_id)
+        if not session_scope:
+            session_scope = (
+                f"agent|{self.settings.agent_id}"
+                f"|purpose={call_purpose or 'utility'}")
+        llm_session_id = build_session_id(
+            session_scope,
+            provider=effective_provider,
+            model=effective_model or "",
+        )
+
         # 显式传入 > phase 策略 > config 默认值
         phase_key = str(phase or "").strip().lower()
         phase_temperature = self.temperature_policy.get(phase_key)
@@ -867,6 +888,7 @@ class Brain:
                 temperature=effective_temperature,
                 max_tokens=effective_max_tokens,
                     requested_cognitive_budget=preference,
+                    llm_session_id=llm_session_id,
                     **kwargs,
                 )
         except Exception as exc:

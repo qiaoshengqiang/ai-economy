@@ -97,9 +97,16 @@ providers:
     base_url: https://opencode.ai/inference/go/openai/v1
     timeout_seconds: 300
     request:
-      extra_headers:
-        # Go 端点要求稳定会话 ID，否则返回 MissingSessionID。
-        x-opencode-session: ses_aieos_local
+      # Go 要求每个对话一个稳定的会话 ID。
+      # Runtime 会自动按 conversation / task / alarm 派生并发送；
+      # 这里只声明 header 名，不再写死具体值。
+      session_header: x-opencode-session
+
+# 会话 ID 由 Runtime 自动派生（不要手填）：
+#   Front 对话   front|conv=<conversation_id>|agent=<agent_id>
+#   Task / Pi    task|<task_id>|agent=<agent_id>
+#   闹钟唤醒     alarm|<alarm_id>|agent=<agent_id>
+# 最终值还会拼上 provider + model 再 hash，换模型自动换会话。
 
 models:
   opencode_glm:
@@ -324,15 +331,44 @@ Go 端点缺少请求头：
 x-opencode-session: ses_...
 ```
 
-仓库预置的 `opencode` provider 已经带了这个头。
-如果你自己新建 provider，需要在「高级 request」里填：
+仓库预置的 `opencode` provider 会自动按 conversation / task / alarm
+派生稳定会话 ID。如果你自己新建 provider，只需要声明 header 名：
 
 ```json
 {
-  "extra_headers": {
-    "x-opencode-session": "ses_aieos_local"
-  }
+  "session_header": "x-opencode-session"
 }
+```
+
+不要再写死 `extra_headers.x-opencode-session`：固定值不能代表
+per-conversation 会话，Go 的缓存 / 路由优化不会生效。
+
+### 缓存观测
+
+每次调用会在 `llm_calls` 记录：
+
+```text
+cache_read_tokens   命中缓存的输入 token
+cache_write_tokens  写入缓存的 token
+allowance_usd       Go 套餐扣减（usage.opencode.allowance）
+billing_source      free / balance / go / go-plus / byok
+llm_session_id      本次使用的会话 ID
+```
+
+快速看某次 Task 的缓存效果：
+
+```sql
+SELECT
+  COUNT(*) AS calls,
+  SUM(input_tokens) AS input,
+  SUM(cache_read_tokens) AS cache_read,
+  ROUND(
+    1.0 * SUM(cache_read_tokens) /
+    NULLIF(SUM(input_tokens + cache_read_tokens), 0), 4
+  ) AS cache_hit_rate,
+  SUM(allowance_usd) AS allowance
+FROM llm_calls
+WHERE task_id = 'task_x';
 ```
 
 ### `This OpenCode Go model is hosted outside Europe and the United States`
@@ -398,7 +434,9 @@ Agent
 
 - provider 的 `base_url`
 - provider 的 `chat_path`（默认 `/chat/completions`）
-- provider 的 `request.extra_headers`（例如 OpenCode 的 `x-opencode-session`）
+- provider 的 `request.session_header`（例如 OpenCode 的
+  `x-opencode-session`；值由 Runtime 按 Task 派生，不是静态配置）
+- provider 的 `request.extra_headers`（非会话类静态头）
 - provider 的 `request.max_tokens_field` / `request.extra_body`
 - Agent 自己的 credential
 

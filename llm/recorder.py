@@ -192,6 +192,12 @@ class LLMCallRecorder:
             latency_ms = float(response.latency_ms or 0.0)
             simulated = 1 if response.simulated else 0
             token_source = response.token_source
+            cache_read_tokens = response.cache_read_tokens
+            cache_write_tokens = response.cache_write_tokens
+            provider_cost_usd = response.provider_cost_usd
+            allowance_usd = response.allowance_usd
+            billing_source = response.billing_source or None
+            llm_session_id = response.llm_session_id or None
         else:
             row_provider = provider or "unknown"
             row_model = model or ""
@@ -202,6 +208,12 @@ class LLMCallRecorder:
             simulated = 0
             # 调用都失败了，自然拿不到 usage
             token_source = TOKEN_SOURCE_UNKNOWN
+            cache_read_tokens = None
+            cache_write_tokens = None
+            provider_cost_usd = None
+            allowance_usd = None
+            billing_source = None
+            llm_session_id = None
 
         with self.db.transaction() as conn:
             conn.execute(
@@ -217,9 +229,12 @@ class LLMCallRecorder:
                     finish_reason, output_status,
                     requested_credential_ref, requested_credential_source,
                     requested_credential_env,
-                    call_purpose, cognition_turn_id, experiment_run_id
+                    call_purpose, cognition_turn_id, experiment_run_id,
+                    cache_read_tokens, cache_write_tokens,
+                    provider_cost_usd, allowance_usd, billing_source,
+                    llm_session_id
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     call_id,
@@ -260,6 +275,12 @@ class LLMCallRecorder:
                     else self.PURPOSE_UNSPECIFIED,
                     cognition_turn_id,
                     experiment_run_id,
+                    cache_read_tokens,
+                    cache_write_tokens,
+                    provider_cost_usd,
+                    allowance_usd,
+                    billing_source,
+                    llm_session_id,
                 ),
             )
 

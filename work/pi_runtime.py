@@ -32,6 +32,7 @@ from core.identity import format_agent_identity
 from core.task import Task, TaskMode, TaskStatus
 from core.task_execution import TaskResultRef
 from llm.base import LLMResponse, TOKEN_SOURCE_API
+from llm.session import build_session_id, task_scope
 from work.llm_proxy import AIEOSLLMProxy
 from work.lifecycle import WorkLifecycle
 from work.pi_comm import PiInboxBridge, PiOutboxBridge
@@ -1240,6 +1241,11 @@ Task Workspace 放本次任务的交付物和验收产物。
                         chat_path=spec.chat_path,
                         provider_request=spec.request,
                         timeout_seconds=self.proxy_timeout_seconds,
+                        session_id=build_session_id(
+                            task_scope(task.task_id, agent_id=actor),
+                            provider=provider,
+                            model=model,
+                        ),
                     )
                     try:
                         proxy_base = proxy.start()

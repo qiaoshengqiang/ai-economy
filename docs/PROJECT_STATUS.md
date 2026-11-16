@@ -4,7 +4,7 @@
 > **日期：2026-11-15**
 > **阶段：开发中 / 观察实验**
 > **协议版本：`1`**
-> **测试基线：`5804 passed, 2 skipped, 30 deselected`**
+> **测试基线：`5811 passed, 2 skipped, 30 deselected`**
 
 本文记录**当前真实可用能力、推荐工作方式、已知限制和版本变化**。
 架构的长期权威仍然是
@@ -60,6 +60,9 @@
   `long_term_memory_search / read / consolidate`。
 - Agent 记忆面板：header 芯片入口；按 Agent 查看短期 / 长期记忆；
   支持删除单条与清空（短期 + 归档 + 长期）。
+- LLM 缓存基础：OpenCode Go 按 conversation / task / alarm 派生
+  `x-opencode-session`（含 provider/model）；`llm_calls` 记录
+  cache_read / cache_write / allowance / billing_source / session_id。
 
 ---
 
@@ -537,7 +540,7 @@ Team 协作
 当前基线：
 
 ```text
-5804 passed, 2 skipped, 30 deselected
+5811 passed, 2 skipped, 30 deselected
 ```
 
 启动说明见 [`../START_AIEOS.md`](../START_AIEOS.md)。

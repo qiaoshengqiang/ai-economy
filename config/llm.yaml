@@ -29,8 +29,9 @@ providers:
     base_url: https://opencode.ai/inference/go/openai/v1
     timeout_seconds: 300
     request:
-      extra_headers:
-        x-opencode-session: ses_aieos_local
+      # 由 Runtime 按 conversation / task / alarm 传入稳定会话 ID。
+      # 静态 extra_headers 只能兜底，不能代替 per-conversation 会话。
+      session_header: x-opencode-session
 models:
   deepseek_chat:
     provider: deepseek

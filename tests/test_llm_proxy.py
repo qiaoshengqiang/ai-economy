@@ -185,3 +185,36 @@ def test_proxy_uses_provider_endpoint_headers_and_payload_fields():
     assert body["max_completion_tokens"] == 32
     assert "max_tokens" not in body
     assert body["thinking"] == {"type": "disabled"}
+
+
+def test_proxy_sends_dynamic_session_header():
+    upstream, upstream_url = _upstream()
+    runtime = SimpleNamespace(recorder=None, experiment_run_id="exp")
+    proxy = AIEOSLLMProxy(
+        runtime, agent_id="agent_b", task_id="task_x",
+        api_key="oc_sk_test", provider="opencode", model="glm-5.3",
+        upstream_base_url=upstream_url + "/openai/v1",
+        provider_request={
+            "session_header": "x-opencode-session",
+            "extra_headers": {"x-opencode-session": "ses_static"},
+        },
+        session_id="ses_task_level",
+    )
+    base = proxy.start()
+    try:
+        request = urllib.request.Request(
+            base + "/v1/chat/completions",
+            data=json.dumps({
+                "model": "glm-5.3",
+                "messages": [{"role": "user", "content": "hi"}],
+            }).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST")
+        urllib.request.urlopen(request, timeout=5).read()
+    finally:
+        proxy.stop()
+        upstream.shutdown()
+        upstream.server_close()
+
+    headers = {k.lower(): v for k, v in _Upstream.last_headers.items()}
+    assert headers["x-opencode-session"] == "ses_task_level"

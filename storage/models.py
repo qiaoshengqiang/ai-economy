@@ -253,6 +253,15 @@ SCHEMA_STATEMENTS: Final[tuple[str, ...]] = (
         output_tokens   INTEGER NOT NULL DEFAULT 0,
         total_tokens    INTEGER NOT NULL DEFAULT 0,
 
+        -- 缓存 / provider 计费遥测（OpenCode Go 的 usage.opencode）。
+        -- 允许 NULL：NULL = provider 没返回，0 = 确实为 0。
+        cache_read_tokens  INTEGER,
+        cache_write_tokens INTEGER,
+        provider_cost_usd  REAL,
+        allowance_usd      REAL,
+        billing_source     TEXT,
+        llm_session_id     TEXT,
+
         -- 这次调用发生时，系统用的兑换比例快照。
         -- 为什么要存下来？
         --     如果以后你调整了兑换比例，历史记录仍然能按
@@ -1408,6 +1417,13 @@ COLUMN_MIGRATIONS: Final[dict] = {
         ("requested_credential_ref", "TEXT"),
         ("requested_credential_source", "TEXT"),
         ("requested_credential_env", "TEXT"),
+        # 2026-11-16：缓存 / provider 计费遥测（OpenCode Go）。
+        ("cache_read_tokens", "INTEGER"),
+        ("cache_write_tokens", "INTEGER"),
+        ("provider_cost_usd", "REAL"),
+        ("allowance_usd", "REAL"),
+        ("billing_source", "TEXT"),
+        ("llm_session_id", "TEXT"),
     ],
     # Step 4B 给 tasks 加了「需要什么能力」。
     # 老库里的任务是 NULL（表示「没有声明能力要求」），这是合理的默认值，

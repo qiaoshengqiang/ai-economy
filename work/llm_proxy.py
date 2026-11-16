@@ -25,6 +25,7 @@ from typing import Any, Dict, Mapping, Optional
 
 from llm import prompt_log
 from llm.base import LLMResponse, TOKEN_SOURCE_API
+from llm.openai_compatible import OpenAICompatibleProvider
 
 #: 给上游的默认 UA。部分网关（Cloudflare）会拦截 urllib 默认 UA。
 _PROXY_USER_AGENT = "AIEOS-Pi-Proxy/0.2"
@@ -198,6 +199,7 @@ class AIEOSLLMProxy:
         chat_path: str = "/chat/completions",
         provider_request: Optional[Mapping[str, Any]] = None,
         timeout_seconds: float = 300.0,
+        session_id: str = "",
     ) -> None:
         self.rt = runtime
         self.agent_id = str(agent_id)
@@ -221,6 +223,10 @@ class AIEOSLLMProxy:
             dict(extra_body) if isinstance(extra_body, Mapping) else {})
         self.max_tokens_field = str(
             request.get("max_tokens_field") or "max_tokens")
+        #: 每请求会话 header（OpenCode Go 的 x-opencode-session）。
+        self.session_header = str(
+            request.get("session_header") or "").strip()
+        self.session_id = str(session_id or "").strip()
         self.timeout_seconds = float(timeout_seconds)
         self._server: Optional[ThreadingHTTPServer] = None
         self._thread: Optional[threading.Thread] = None
@@ -298,6 +304,8 @@ class AIEOSLLMProxy:
             if name.strip().lower() in _AUTH_HEADERS:
                 continue
             headers[name] = value
+        if self.session_header and self.session_id:
+            headers[self.session_header] = self.session_id
         return headers
 
     def record_usage(
@@ -322,6 +330,7 @@ class AIEOSLLMProxy:
         total_tokens = int(
             usage.get("total_tokens")
             or (input_tokens + output_tokens))
+        cache_usage = OpenAICompatibleProvider._read_cache_usage(usage)
         response = LLMResponse(
             content="",
             provider=self.provider,
@@ -329,6 +338,12 @@ class AIEOSLLMProxy:
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             total_tokens=total_tokens,
+            cache_read_tokens=cache_usage["cache_read_tokens"],
+            cache_write_tokens=cache_usage["cache_write_tokens"],
+            provider_cost_usd=cache_usage["provider_cost_usd"],
+            allowance_usd=cache_usage["allowance_usd"],
+            billing_source=cache_usage["billing_source"],
+            llm_session_id=self.session_id,
             latency_ms=max(0.0, (time.perf_counter() - started) * 1000.0),
             token_source=TOKEN_SOURCE_API,
             finish_reason=finish_reason,

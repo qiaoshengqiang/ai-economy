@@ -331,6 +331,10 @@ class OpenAICompatibleProvider(LLMProvider):
             {str(k): str(v) for k, v in extra_headers.items()}
             if isinstance(extra_headers, Mapping) else {}
         )
+        #: 每请求会话 header 的名字（例如 Go 的 x-opencode-session）。
+        #: 值由 `generate(..., llm_session_id=...)` 传入；静态 extra_headers
+        #: 只能作为兜底，不能替代 per-conversation 会话。
+        self.session_header = str(cfg.get("session_header") or "").strip()
 
         # 可替换的 HTTP 层
         self._http_post: HTTPPost = http_post or default_http_post
@@ -493,7 +497,7 @@ class OpenAICompatibleProvider(LLMProvider):
 
         return payload
 
-    def build_headers(self) -> Dict[str, str]:
+    def build_headers(self, *, session_id: str = "") -> Dict[str, str]:
         """构造请求头。Key 只在这里出现，不会进日志。"""
         headers = {
             "Content-Type": "application/json",
@@ -510,6 +514,10 @@ class OpenAICompatibleProvider(LLMProvider):
                 # 认证头只能来自 Credential，不能写进普通配置。
                 continue
             headers[name] = value
+        # 动态会话头优先级高于静态 extra_headers：同一个 provider 实例
+        # 会被多个 Agent / Task 共享，静态值不能代表“当前对话”。
+        if self.session_header and session_id:
+            headers[self.session_header] = str(session_id)
         return headers
 
     # ------------------------------------------------------------
@@ -561,6 +569,77 @@ class OpenAICompatibleProvider(LLMProvider):
             notes["usage_missing"] = True
 
         return input_tokens, output_tokens, total_tokens, notes
+
+    @staticmethod
+    def _read_cache_usage(raw_usage: Any) -> Dict[str, Any]:
+        """读取缓存 / 计费字段；缺失一律 None，不猜。
+
+        OpenCode 的权威字段：
+            usage.opencode.tokens.cache_read
+            usage.opencode.tokens.cache_write_5m / cache_write_1h
+            usage.opencode.allowance
+            usage.opencode.billing_source
+            usage.cost
+        兼容 OpenAI / Anthropic 的常见字段作为 fallback。
+        """
+        result: Dict[str, Any] = {
+            "cache_read_tokens": None,
+            "cache_write_tokens": None,
+            "provider_cost_usd": None,
+            "allowance_usd": None,
+            "billing_source": "",
+        }
+        if not isinstance(raw_usage, Mapping):
+            return result
+
+        def _int(value: Any) -> Optional[int]:
+            if value is None or isinstance(value, bool):
+                return None
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return None
+
+        def _float(value: Any) -> Optional[float]:
+            if value is None or isinstance(value, bool):
+                return None
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return None
+
+        opencode = raw_usage.get("opencode")
+        if isinstance(opencode, Mapping):
+            tokens = opencode.get("tokens")
+            if isinstance(tokens, Mapping):
+                result["cache_read_tokens"] = _int(tokens.get("cache_read"))
+                writes = [
+                    _int(tokens.get("cache_write_5m")),
+                    _int(tokens.get("cache_write_1h")),
+                ]
+                known_writes = [value for value in writes if value is not None]
+                if known_writes:
+                    result["cache_write_tokens"] = sum(known_writes)
+            result["allowance_usd"] = _float(opencode.get("allowance"))
+            result["billing_source"] = str(
+                opencode.get("billing_source") or "")
+            result["provider_cost_usd"] = _float(raw_usage.get("cost"))
+
+        details = raw_usage.get("prompt_tokens_details")
+        if (
+            result["cache_read_tokens"] is None
+            and isinstance(details, Mapping)
+        ):
+            result["cache_read_tokens"] = _int(details.get("cached_tokens"))
+        if result["cache_read_tokens"] is None:
+            result["cache_read_tokens"] = _int(
+                raw_usage.get("cache_read_input_tokens"))
+        if result["cache_write_tokens"] is None:
+            result["cache_write_tokens"] = _int(
+                raw_usage.get("cache_creation_input_tokens"))
+        if result["provider_cost_usd"] is None:
+            result["provider_cost_usd"] = _float(raw_usage.get("cost"))
+        return result
 
     #: 🔒 Cognitive Budget 的结构边界。
     #:    Agent **不能**要求低于 MIN（那几乎必然截断）或高于 MAX
@@ -685,6 +764,7 @@ class OpenAICompatibleProvider(LLMProvider):
         input_tokens, output_tokens, total_tokens, notes = self._read_usage(
             data.get("usage")
         )
+        cache_usage = self._read_cache_usage(data.get("usage"))
         token_source = (
             TOKEN_SOURCE_API if total_tokens is not None else TOKEN_SOURCE_UNKNOWN
         )
@@ -709,6 +789,11 @@ class OpenAICompatibleProvider(LLMProvider):
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             total_tokens=total_tokens,
+            cache_read_tokens=cache_usage["cache_read_tokens"],
+            cache_write_tokens=cache_usage["cache_write_tokens"],
+            provider_cost_usd=cache_usage["provider_cost_usd"],
+            allowance_usd=cache_usage["allowance_usd"],
+            billing_source=cache_usage["billing_source"],
             token_source=token_source,
             latency_ms=latency_ms,
             raw_response=dict(data),
@@ -920,6 +1005,8 @@ class OpenAICompatibleProvider(LLMProvider):
         #   🔒 明令禁止：AIC balance → max_tokens 的自动换算。
         #      `max_tokens` 是**上限**，不是 Agent 必须消耗的 token 数。
         requested_budget = kwargs.pop("requested_cognitive_budget", None)
+        # 会话 ID 只用于请求头，绝不进入 payload。
+        llm_session_id = str(kwargs.pop("llm_session_id", "") or "").strip()
         effective_tokens, clipped = self.clip_cognitive_budget(
             requested_budget, max_tokens)
         self._last_requested_budget = self._as_budget_int(requested_budget)
@@ -949,7 +1036,7 @@ class OpenAICompatibleProvider(LLMProvider):
             max_tokens=effective_tokens,
             **kwargs,
         )
-        headers = self.build_headers()
+        headers = self.build_headers(session_id=llm_session_id)
 
         started = time.perf_counter()
         try:
@@ -1002,6 +1089,7 @@ class OpenAICompatibleProvider(LLMProvider):
                 f"{self._scrub(str(exc))}"
             ) from exc
 
+        response.llm_session_id = llm_session_id
         self.call_count += 1
         return response
 
