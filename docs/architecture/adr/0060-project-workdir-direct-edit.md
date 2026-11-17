@@ -4,6 +4,7 @@
 - **时间**：2026-11-13
 - **Supersedes**：无
 - **Superseded by**：无
+- **补充**：[ADR-0065](0065-worker-workspace-recon-and-target-scope.md)（Worker recon + target scope）
 
 ## Context
 

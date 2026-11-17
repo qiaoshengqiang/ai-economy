@@ -145,6 +145,35 @@ class TaskSnapshotStore:
         self._run(["config", "gc.auto", "0"], check=True)
         return True
 
+    def reset_history(self, reason: str = "scope_changed") -> None:
+        """把旧快照仓库移到 archive，下一轮从新 scope 的 baseline 开始。
+
+        🔒 用于 Workspace Recon 改变 target 的情况：旧快照可能覆盖父目录，
+           不能和新 target 的 baseline/final 混在一起。
+        """
+        if not self.directory.aieos.exists():
+            return
+        has_history = (
+            self.git_dir.exists() or self.index_path.exists()
+            or self.records_path.exists()
+        )
+        if not has_history:
+            return
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        archive = self.directory.aieos / "snapshot-history" / stamp
+        archive.mkdir(parents=True, exist_ok=True)
+        (archive / "reason.txt").write_text(
+            f"{reason}\n", encoding="utf-8")
+        for path in (self.git_dir, self.index_path, self.records_path):
+            if not path.exists():
+                continue
+            target = archive / path.name
+            try:
+                path.replace(target)
+            except OSError:
+                # 跨设备/权限异常时不阻塞新任务；旧目录留在原处。
+                pass
+
     # ------------------------------------------------------------
     def capture(
         self,

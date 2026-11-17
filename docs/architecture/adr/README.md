@@ -88,6 +88,7 @@
 | [0062](0062-front-message-send-and-live-follow-up.md) | **Front message_send 与 live follow_up** | Accepted（**V1 已实现**） | Front 无法给运行中 Agent 补充要求 | Front / Communication |
 | [0063](0063-model-level-tool-call-format.md) | **工具调用格式按 model profile 声明** | Accepted（**V1 已实现**） | DSML 只在 DeepSeekProvider，代理路径丢失工具调用 | LLM / Config |
 | [0064](0064-agent-life-wake-and-delegated-alarms.md) | **Agent Life Wake 与委托闹钟** | Accepted（**V1 已实现**） | Worker 收消息不醒 / Front 只能给自己设闹钟 | Life / Communication / Wakeup |
+| [0065](0065-worker-workspace-recon-and-target-scope.md) | **Worker Workspace Recon 与 Target Scope** | Accepted（**V1 已实现**） | 父目录全量快照 2.64GB / 120s 超时 / 2.9GB 对象 | Work / Workspace |
 | [0028](0028-read-visibility-and-native-communication.md) | **Read 靠 Task Participation；Communication 是 Agent 基础能力** | Accepted（实现为 FUTURE） | Read / Visibility / Communication | Workspace / Communication |
 
 ---

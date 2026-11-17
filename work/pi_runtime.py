@@ -43,6 +43,9 @@ from work.roles import WorkResult
 from work.task_snapshot import SnapshotRecord, TaskSnapshotStore
 from work.worker_roles import render_role_prompt
 from work.task_directory import TaskDirectory
+from work.workspace_plan import (
+    WorkspacePlan, WorkspacePlanError, parse_workspace_plan,
+)
 
 
 @dataclass(frozen=True)
@@ -108,6 +111,10 @@ class PiWorkRuntime:
         #: project 模式 = 用户项目目录；否则 = Task Workspace。
         self.workdir = Path(task_directory.workdir)
         self.project_mode = bool(task_directory.project_mode)
+        #: Worker recon 决定的计划；None = 还没判断。
+        self._workspace_plan: Optional[WorkspacePlan] = None
+        self._initial_target = str(
+            task_directory.project_target or ".")
         self.project_lock_manager = project_lock_manager
         self.pi_cli_path = str(pi_cli_path or "pi")
         self.pi_provider = str(pi_provider or "")
@@ -720,6 +727,16 @@ Task Workspace 放本次任务的交付物和验收产物。
             "- （项目目录：变更见 final snapshot）"
             if self.project_mode else "- （空）"
         ]
+        workspace_lines = ""
+        if self.project_mode:
+            plan = state.get("workspace_plan") or {}
+            workspace_lines = (
+                "\n## Workspace\n"
+                f"- root: {state.get('workspace_root', '')}\n"
+                f"- target: {state.get('workspace_target', '.')}\n"
+                f"- mode: {state.get('workspace_mode', '')}\n"
+                f"- reason: {plan.get('reason', '') if isinstance(plan, dict) else ''}\n"
+            )
         content = f"""# 任务文档
 
 ## 任务目标
@@ -733,7 +750,7 @@ Task Workspace 放本次任务的交付物和验收产物。
 - session: {state.get('session_id', '')}
 - last_error: {state.get('last_error', '') or '（无）'}
 - updated_at: {state.get('updated_at', '')}
-
+{workspace_lines}
 ## 迭代 / 阶段历史
 {chr(10).join(history_lines)}
 
@@ -1137,6 +1154,211 @@ Task Workspace 放本次任务的交付物和验收产物。
             self.event_sink(event)
 
     # ------------------------------------------------------------
+    # ------------------------------------------------------------
+    # Workspace Recon —— Worker 先判断“新建 / 修改”，再决定锁与快照范围
+    # ------------------------------------------------------------
+    @staticmethod
+    def _last_assistant_stop_reason(events: List[Dict[str, Any]]) -> str:
+        for event in reversed(events):
+            if event.get("type") != "message_end":
+                continue
+            message = event.get("message") or {}
+            if message.get("role") == "assistant":
+                return str(message.get("stopReason") or "")
+        return ""
+
+    def _recon_prompt(self) -> str:
+        acceptance = getattr(self.task, "acceptance", None) or {}
+        hint = ""
+        if isinstance(acceptance, dict):
+            hint = str(
+                acceptance.get("focus_path")
+                or acceptance.get("project_subdir")
+                or "").strip()
+        root = self.task_directory.project_root or self.workdir
+        lines = [
+            "You are doing workspace recon only. Do not write files.",
+            "Use read / grep / find / ls to inspect the workspace.",
+            "",
+            f"Workspace root: {root}",
+            f"Task: {self.task.description or self.task.task_id}",
+        ]
+        if hint:
+            lines.append(f"Human mentioned path hint: {hint}")
+        lines.extend([
+            "",
+            "Decide whether this task should:",
+            "- create a new project/subdirectory under the workspace root;",
+            "- modify an existing project/subdirectory;",
+            "- or is unclear / ambiguous.",
+            "",
+            "Output ONLY a JSON object, no Markdown:",
+            '{"mode":"create|modify|mixed|unclear",'
+            '"target_path":"relative/path/from/root",'
+            '"reason":"one sentence","confidence":0.0}',
+            "",
+            "target_path must be relative to workspace root; use '.' for root.",
+            "For mode=create, the target should not exist or be empty.",
+        ])
+        return "\n".join(lines)
+
+    def _recon_workspace(
+        self, actor: str,
+    ) -> tuple[Optional[WorkspacePlan], str]:
+        """只读侦察。返回 (plan, error)。失败时不写文件、不上锁、不快照。"""
+        if not self.project_mode:
+            return WorkspacePlan(
+                mode="modify", target_path=".", reason="Task Workspace"), ""
+        root = self.task_directory.project_root or self.workdir
+        self.task_directory.ensure()
+        spec = self._provider_spec()
+        provider, model = spec.provider, spec.model
+        proxy = None
+        try:
+            if self.use_llm_proxy:
+                material = self._credential_material(provider)
+                if not material:
+                    return None, (
+                        f"Agent 没有可用的 {provider} credential，"
+                        "无法启动 Recon LLM proxy")
+                proxy = AIEOSLLMProxy(
+                    self.rt,
+                    agent_id=actor,
+                    task_id=self.task.task_id,
+                    api_key=material,
+                    provider=provider,
+                    model=model,
+                    upstream_base_url=spec.base_url,
+                    chat_path=spec.chat_path,
+                    provider_request=spec.request,
+                    timeout_seconds=self.proxy_timeout_seconds,
+                    session_id=build_session_id(
+                        task_scope(self.task.task_id, agent_id=actor)
+                        + "|recon",
+                        provider=provider,
+                        model=model,
+                    ),
+                )
+                proxy_base = proxy.start()
+                pi_agent_dir = self._write_pi_models(proxy_base, model)
+                env = self._pi_env("aieos-proxy", include_key=False)
+                env["PI_CODING_AGENT_DIR"] = str(pi_agent_dir)
+                client_provider = "aieos-proxy"
+            else:
+                env = self._pi_env(provider)
+                if self.pi_agent_dir is not None:
+                    env["PI_CODING_AGENT_DIR"] = str(self.pi_agent_dir)
+                client_provider = provider
+
+            thinking = self._phase_thinking(
+                "autonomous" if self.work_mode == "autonomous"
+                else "prototype")
+            client = PiRpcClient(
+                cli_path=self.pi_cli_path,
+                cwd=root,
+                env=env,
+                provider=client_provider,
+                model=model,
+                system_prompt=(
+                    self._agent_identity()
+                    + "\n\nYou are doing read-only workspace recon. "
+                    "Do not create or modify files."
+                ),
+                session_dir=self.task_directory.session_dir,
+                session_id=f"{self.task.task_id}-recon",
+                tools="read,grep,find,ls",
+                extra_args=self.extra_args + ["--thinking", thinking],
+            )
+            run = client.run(
+                self._recon_prompt(),
+                timeout_seconds=self.timeout_seconds,
+                should_stop=self.should_stop,
+                event_sink=None,
+            )
+            self._emit_rounds(run.events, actor, phase="recon")
+            if not self.use_llm_proxy:
+                self._record_usage(actor, run.events, provider, model)
+            if run.aborted or self.should_stop():
+                return None, "Workspace recon 被停止"
+            if run.error:
+                return None, f"Workspace recon 失败：{run.error}"
+            stop_reason = self._last_assistant_stop_reason(run.events)
+            text = self._last_assistant_text(run.events)
+            if not text:
+                detail = (
+                    "reasoning 耗尽输出预算"
+                    if stop_reason == "length"
+                    else "模型没有输出可解析的计划")
+                return None, f"Workspace recon 没有结果：{detail}"
+            if stop_reason == "length":
+                return None, (
+                    "Workspace recon 输出被截断（finish_reason=length）；"
+                    "请提高模型输出上限或降低思考强度后重试。"
+                    "本轮没有创建目录、没有上锁、没有快照。")
+            try:
+                plan = parse_workspace_plan(
+                    text, workspace_root=root)
+            except WorkspacePlanError as exc:
+                return None, f"Workspace recon 计划不合法：{exc}"
+            self.task_directory.write_json(
+                "workspace_plan.json", plan.to_dict())
+            return plan, ""
+        except Exception as exc:                              # noqa: BLE001
+            return None, (
+                f"Workspace recon 失败：{type(exc).__name__}: {exc}")
+        finally:
+            if proxy is not None:
+                proxy.stop()
+
+    def _apply_workspace_plan(self, plan: WorkspacePlan) -> None:
+        self._workspace_plan = plan
+        if not self.project_mode:
+            return
+        if plan.target_path != self._initial_target:
+            # 旧快照可能覆盖父目录；不能和新 target 的 baseline 混用。
+            self.snapshots.reset_history(
+                f"target_changed:{self._initial_target}->{plan.target_path}")
+        self.task_directory.set_project_target(plan.target_path)
+        self.workdir = Path(self.task_directory.workdir)
+        # 记忆桥在 recon 之前按 workspace_root 构造；目标确定后更新。
+        self.memory.task_workspace = self.workdir
+        self.snapshots = TaskSnapshotStore(self.task_directory)
+        self._work_state = {
+            **getattr(self, "_work_state", {}),
+            "workspace_root": str(self.task_directory.project_root or ""),
+            "workspace_target": plan.target_path,
+            "workspace_mode": plan.mode,
+            "workspace_plan": plan.to_dict(),
+        }
+
+    def _prepare_project_target(self, plan: WorkspacePlan) -> str:
+        """上锁之后再次检查并创建目标目录；返回错误文案或空串。"""
+        if plan.mode == "unclear":
+            return (
+                "Workspace recon 无法判断这是新建还是修改；"
+                "请补充目标路径或确认要修改哪个项目。")
+        target = self.workdir
+        if target.exists():
+            if not target.is_dir():
+                return f"目标路径不是目录：{target}"
+            if plan.mode == "create":
+                try:
+                    non_empty = any(target.iterdir())
+                except OSError:
+                    non_empty = True
+                if non_empty:
+                    return (
+                        "Workspace recon 判断为新建，但目标目录在上锁前"
+                        "已经出现内容；请重新判断。")
+        elif plan.mode in ("modify", "mixed"):
+            return f"Workspace recon 判断为修改，但目标目录不存在：{target}"
+        try:
+            self.task_directory.ensure_project_target(
+                create=(plan.mode == "create"))
+        except Exception as exc:                              # noqa: BLE001
+            return f"无法创建/确认项目目标：{type(exc).__name__}: {exc}"
+        return ""
+
     def run(self) -> WorkResult:
         task = self.task
         actor = task.contractor or task.creator
@@ -1147,12 +1369,6 @@ Task Workspace 放本次任务的交付物和验收产物。
         )
         lock = None
         inbox_started = False
-        if self.project_mode and self.project_lock_manager is not None:
-            try:
-                lock = self.project_lock_manager.acquire(self.workdir)
-            except Exception as exc:                          # noqa: BLE001
-                result.error = str(exc)
-                return result
         try:
             if self.should_stop():
                 result.error = "任务已被停止"
@@ -1160,6 +1376,47 @@ Task Workspace 放本次任务的交付物和验收产物。
             if task.status == TaskStatus.COMPLETED:
                 result.summary = task.note or "任务已经处于 COMPLETED"
                 return result
+            if task.status not in (
+                TaskStatus.CREATED, TaskStatus.ACCEPTED,
+                TaskStatus.IN_PROGRESS, TaskStatus.SUBMITTED,
+                TaskStatus.VERIFIED,
+            ):
+                result.error = (
+                    f"Task 当前是 {task.status}，不能开始 Pi Work run")
+                result.status = task.status
+                return result
+
+            # 🔒 project 模式：先让 Worker 只读判断目标，再决定锁/快照。
+            self.task_directory.ensure()
+            plan: Optional[WorkspacePlan] = None
+            if self.project_mode:
+                plan, recon_error = self._recon_workspace(actor)
+                if recon_error:
+                    result.error = recon_error
+                    result.status = task.status
+                    return result
+                assert plan is not None
+                if plan.mode == "unclear":
+                    result.error = (
+                        "Workspace recon 无法判断这是新建还是修改；"
+                        "请补充目标路径或确认要修改哪个项目。")
+                    result.status = task.status
+                    return result
+                self._apply_workspace_plan(plan)
+                if self.project_lock_manager is not None:
+                    try:
+                        lock = self.project_lock_manager.acquire(
+                            self.workdir)
+                    except Exception as exc:                  # noqa: BLE001
+                        result.error = str(exc)
+                        result.status = task.status
+                        return result
+                target_error = self._prepare_project_target(plan)
+                if target_error:
+                    result.error = target_error
+                    result.status = task.status
+                    return result
+
             if task.status in (TaskStatus.CREATED, TaskStatus.ACCEPTED):
                 task = self.lifecycle.start(task, actor=actor)
                 self.task = task
@@ -1196,9 +1453,13 @@ Task Workspace 放本次任务的交付物和验收产物。
                 try:
                     loaded = json.loads(state_path.read_text("utf-8"))
                     if isinstance(loaded, dict):
-                        self._work_state = loaded
+                        # recon 已经写入 workspace_root / target / plan；
+                        # 合并旧状态时不能把它们覆盖掉。
+                        self._work_state = {
+                            **loaded, **self._work_state,
+                        }
                 except (OSError, ValueError):
-                    self._work_state = {}
+                    pass
             self._session_id = self._pi_session_id(
                 task.task_id, task.iteration, self._work_state)
             self._work_state["session_id"] = self._session_id

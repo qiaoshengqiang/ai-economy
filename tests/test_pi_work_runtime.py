@@ -496,10 +496,32 @@ def test_pi_project_workdir_modifies_existing_project(db, monkeypatch, tmp_path)
 
     class _FakePiClient:
         def __init__(self, **kwargs):
-            seen["cwd"] = Path(kwargs["cwd"])
+            self.is_recon = (
+                str(kwargs.get("tools") or "") == "read,grep,find,ls")
+            seen.setdefault("cwds", []).append(Path(kwargs["cwd"]))
 
         def run(self, prompt, *, timeout_seconds, should_stop, event_sink):
-            (self_cwd := seen["cwd"])
+            (self_cwd := seen["cwds"][-1])
+            if self.is_recon:
+                events = [
+                    {"type": "turn_start", "_received_at": 1.0},
+                    {
+                        "type": "message_end", "_received_at": 2.0,
+                        "message": {
+                            "role": "assistant",
+                            "content": [{
+                                "type": "text",
+                                "text": json.dumps({
+                                    "mode": "modify",
+                                    "target_path": ".",
+                                    "reason": "已有 app.py",
+                                }),
+                            }],
+                        },
+                    },
+                    {"type": "turn_end", "_received_at": 3.0},
+                ]
+                return PiRunResult(events=events, exit_code=0)
             (self_cwd / "app.py").write_text(
                 "value = 2\n", encoding="utf-8")
             (self_cwd / "new_module.py").write_text(
@@ -535,7 +557,8 @@ def test_pi_project_workdir_modifies_existing_project(db, monkeypatch, tmp_path)
     result = runner.run()
 
     assert result.ok is True, result.error
-    assert seen["cwd"] == project.resolve()
+    assert seen["cwds"][0] == project.resolve(), "recon 在 workspace_root"
+    assert seen["cwds"][-1] == project.resolve(), "target='.' 仍在项目根"
     assert (project / "app.py").read_text(encoding="utf-8") == "value = 2\n"
     assert (project / "new_module.py").exists()
     assert not (project / "TASK_DOC.md").exists()
@@ -553,6 +576,115 @@ def test_pi_project_workdir_modifies_existing_project(db, monkeypatch, tmp_path)
     assert [item.label for item in snapshots] == [
         "baseline", "phase:autonomous:end", "final"]
     assert snapshots[-1].files == 3
+
+
+def test_pi_project_recon_creates_subdir_and_snapshots_only_it(
+        db, monkeypatch, tmp_path):
+    parent = tmp_path / "projects"
+    parent.mkdir()
+    (parent / "unrelated").mkdir()
+    (parent / "unrelated" / "big.txt").write_text(
+        "x" * 100_000, encoding="utf-8")
+
+    task = Task.create(
+        task_id="T-PI-RECON-CREATE", creator="agent_c",
+        description="在父目录下新建 pelican-cycling 小游戏",
+        workspace_id="WS-RECON", participants=["agent_c"],
+        acceptance={
+            "workspace_mode": "project",
+            "project_path": str(parent),
+            "work_mode": "autonomous",
+        },
+        mode=TaskMode.SOLO)
+    task.claim_producer("agent_c")
+    store = TaskStore(db)
+    store.save(task)
+
+    workspace = _FakeWorkspace(tmp_path / "agent_c")
+    runtime = SimpleNamespace(
+        tasks=store,
+        economy=SimpleNamespace(agent=lambda aid: SimpleNamespace(
+            has_brain=True, brain=_FakeBrain(), workspace=workspace)),
+        private_working_memory=_FakeWorkingMemory(),
+        private_short_term_memory=_FakeShortMemory(),
+        private_long_term_memory=_FakeLongMemory(),
+        recorder=_Recorder(),
+        experiment_run_id="exp-recon",
+    )
+    directory = TaskDirectoryManager(
+        tmp_path / "tasks").for_task(task.task_id, workdir=parent)
+    seen = {"cwds": []}
+
+    class _FakePiClient:
+        def __init__(self, **kwargs):
+            self.is_recon = (
+                str(kwargs.get("tools") or "") == "read,grep,find,ls")
+            seen["cwds"].append(Path(kwargs["cwd"]))
+
+        def run(self, prompt, *, timeout_seconds, should_stop, event_sink):
+            cwd = seen["cwds"][-1]
+            if self.is_recon:
+                events = [{
+                    "type": "message_end",
+                    "message": {
+                        "role": "assistant",
+                        "content": [{
+                            "type": "text",
+                            "text": json.dumps({
+                                "mode": "create",
+                                "target_path": "pelican-cycling",
+                                "reason": "目标目录不存在",
+                            }),
+                        }],
+                    },
+                }]
+                return PiRunResult(events=events, exit_code=0)
+            assert cwd == (parent / "pelican-cycling").resolve()
+            (cwd / "index.html").write_text("<html>game</html>", "utf-8")
+            events = [{
+                "type": "message_end",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "done"}],
+                },
+            }]
+            if event_sink is not None:
+                for event in events:
+                    event_sink(event)
+            return PiRunResult(events=events, exit_code=0)
+
+    monkeypatch.setattr(
+        "work.pi_runtime.PiRpcClient", _FakePiClient, raising=True)
+    runner = PiWorkRuntime(
+        runtime, task,
+        task_directory=directory,
+        pi_cli_path="fake-pi",
+        use_llm_proxy=False,
+        work_mode="autonomous",
+        phase_plan=["autonomous"],
+        project_lock_manager=ProjectLockManager(tmp_path / "locks"),
+    )
+    result = runner.run()
+
+    assert result.ok is True, result.error
+    assert seen["cwds"][0] == parent.resolve(), "recon 使用 workspace_root"
+    assert seen["cwds"][-1] == (parent / "pelican-cycling").resolve()
+    assert (parent / "pelican-cycling" / "index.html").exists()
+
+    manifest = json.loads(
+        (directory.aieos / "manifest.json").read_text("utf-8"))
+    assert manifest["workdir"] == str(
+        (parent / "pelican-cycling").resolve())
+    assert manifest["project_root"] == str(parent.resolve())
+    assert manifest["project_target"] == "pelican-cycling"
+    assert {item["path"] for item in manifest["files"]} == {"index.html"}
+
+    snapshots = TaskSnapshotStore(directory).list()
+    assert [item.label for item in snapshots] == [
+        "baseline", "phase:autonomous:end", "final"]
+    # baseline 是空目录；final 只有目标子目录里的文件。
+    assert snapshots[0].files == 0
+    assert snapshots[-1].files == 1
 
 
 def test_pi_provider_spec_uses_resolved_provider_endpoint(tmp_path):
