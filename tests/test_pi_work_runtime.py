@@ -258,8 +258,7 @@ def test_pi_work_runtime_completes_and_ingests_memory(db, monkeypatch, tmp_path)
         "http://127.0.0.1:9/v1", "glm-5.3-flash")
     pi_settings = json.loads(
         (models_dir / "settings.json").read_text("utf-8"))
-    assert pi_settings["httpIdleTimeoutMs"] == int(
-        min(runner.timeout_seconds, 900.0) * 1000)
+    assert pi_settings["httpIdleTimeoutMs"] == 300_000
 
     runner._work_state.update({
         "workspace_root": "/tmp/root",

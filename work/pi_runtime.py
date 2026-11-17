@@ -411,13 +411,10 @@ class PiWorkRuntime:
         (directory / "models.json").write_text(
             json.dumps(payload, ensure_ascii=False, indent=2),
             encoding="utf-8")
-        # Pi 的 HTTP idle timeout 默认只有 300s：模型思考时间较长、
-        # 或上游网关短时间内不发送 SSE chunk 时，请求会被判定为
-        # `UND_ERR_BODY_TIMEOUT`，然后整轮重试。这里放宽到最多 15 分钟，
-        # 超过仍视为连接已死，交给 Pi 重试；真正的总时限由 timeout_seconds
-        # 的 watchdog 负责。
-        idle_timeout_ms = int(
-            min(max(0.0, self.timeout_seconds), 900.0) * 1000)
+        # Pi 的 HTTP idle timeout 固定为 300s（与 Pi 默认一致）。
+        # 上游长时间不发送 SSE chunk 时会报 UND_ERR_BODY_TIMEOUT，并由 Pi
+        # 自动重试；这是预期行为。显式写入，避免依赖 Pi 未来默认值。
+        idle_timeout_ms = 300_000
         # 显式固定 Pi 的自动压缩设置，不依赖 Pi 未来默认值。
         # 阈值 = contextWindow - reserveTokens；keepRecentTokens 保留最近上下文。
         (directory / "settings.json").write_text(
