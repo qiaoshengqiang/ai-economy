@@ -260,6 +260,7 @@
     const latency = formatDuration(seg.latency_ms);
     if (latency) head.appendChild(badge(latency));
     if (seg.finish_reason) head.appendChild(badge(seg.finish_reason));
+    if (seg.error) head.appendChild(badge("error", "bad"));
     if (seg.truncated) head.appendChild(badge("truncated", "warn"));
     phase.appendChild(head);
 
@@ -267,6 +268,11 @@
     const decision = seg.decision || {};
     const modelReasoning = String(seg.model_reasoning || "");
     const decisionReasoning = String(decision.reasoning || "");
+
+    if (seg.error) {
+      phase.appendChild(el("div", "thinking-label", "error"));
+      phase.appendChild(pre(seg.error, "error"));
+    }
 
     // thinking = provider 的隐藏推理。没有就只显示 output / reasoning，
     // 绝不再把整段回复原文同时当成 thinking 和 output。

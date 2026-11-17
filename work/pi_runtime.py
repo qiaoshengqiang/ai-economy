@@ -411,6 +411,13 @@ class PiWorkRuntime:
         (directory / "models.json").write_text(
             json.dumps(payload, ensure_ascii=False, indent=2),
             encoding="utf-8")
+        # Pi 的 HTTP idle timeout 默认只有 300s：模型思考时间较长、
+        # 或上游网关短时间内不发送 SSE chunk 时，请求会被判定为
+        # `UND_ERR_BODY_TIMEOUT`，然后整轮重试。这里放宽到最多 15 分钟，
+        # 超过仍视为连接已死，交给 Pi 重试；真正的总时限由 timeout_seconds
+        # 的 watchdog 负责。
+        idle_timeout_ms = int(
+            min(max(0.0, self.timeout_seconds), 900.0) * 1000)
         # 显式固定 Pi 的自动压缩设置，不依赖 Pi 未来默认值。
         # 阈值 = contextWindow - reserveTokens；keepRecentTokens 保留最近上下文。
         (directory / "settings.json").write_text(
@@ -420,6 +427,7 @@ class PiWorkRuntime:
                     "reserveTokens": 16384,
                     "keepRecentTokens": 20000,
                 },
+                "httpIdleTimeoutMs": idle_timeout_ms,
             }, ensure_ascii=False, indent=2),
             encoding="utf-8")
         return directory
@@ -1040,6 +1048,15 @@ Task Workspace 放本次任务的交付物和验收产物。
             last_error = str(error or previous_error)
         else:
             last_error = previous_error
+        # recon 结果不是阶段状态，不能因为一次 _write_work_state 就被抹掉。
+        workspace_state = {
+            key: self._work_state[key]
+            for key in (
+                "workspace_root", "workspace_target",
+                "workspace_mode", "workspace_plan",
+            )
+            if key in self._work_state
+        }
         self._work_state = {
             "iteration": int(self.task.iteration or 1),
             "phase": phase,
@@ -1055,6 +1072,7 @@ Task Workspace 放本次任务的交付物和验收产物。
             "open_issues": list(self._work_state.get("open_issues") or []),
             "history": history,
             "updated_at": datetime.now(timezone.utc).isoformat(),
+            **workspace_state,
         }
         self.task_directory.write_json("work_state.json", self._work_state)
         self._write_task_doc()
@@ -2025,6 +2043,7 @@ Task Workspace 放本次任务的交付物和验收产物。
                     "tokens": int(usage.get("totalTokens") or 0),
                     "latency_ms": 0.0,
                     "finish_reason": message.get("stopReason"),
+                    "error": str(message.get("errorMessage") or ""),
                     "truncated": str(
                         message.get("stopReason") or "").lower() == "length",
                 }

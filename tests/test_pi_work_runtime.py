@@ -253,6 +253,26 @@ def test_pi_work_runtime_completes_and_ingests_memory(db, monkeypatch, tmp_path)
         "prototype", status="completed", thinking="max")
     state = json.loads(state_path.read_text("utf-8"))
     assert state["last_error"] == ""
+
+    models_dir = runner._write_pi_models(
+        "http://127.0.0.1:9/v1", "glm-5.3-flash")
+    pi_settings = json.loads(
+        (models_dir / "settings.json").read_text("utf-8"))
+    assert pi_settings["httpIdleTimeoutMs"] == int(
+        min(runner.timeout_seconds, 900.0) * 1000)
+
+    runner._work_state.update({
+        "workspace_root": "/tmp/root",
+        "workspace_target": "sub",
+        "workspace_mode": "create",
+        "workspace_plan": {"mode": "create", "target_path": "sub"},
+    })
+    runner._write_work_state("prototype", status="running", thinking="max")
+    state = json.loads(state_path.read_text("utf-8"))
+    assert state["workspace_root"] == "/tmp/root"
+    assert state["workspace_target"] == "sub"
+    assert state["workspace_mode"] == "create"
+    assert state["workspace_plan"]["target_path"] == "sub"
     assert rounds[0]["segments"][0]["actions"][0]["action_type"] == "write"
     assert rounds[0]["segments"][0]["results"][0]["success"] is True
 
@@ -732,6 +752,45 @@ def test_pi_provider_spec_uses_resolved_provider_endpoint(tmp_path):
     assert spec.chat_url == (
         "https://opencode.ai/inference/go/openai/v1/chat/completions")
     assert spec.request["extra_headers"]["x-opencode-session"] == "ses_test"
+
+
+def test_rounds_record_upstream_error(tmp_path):
+    task = Task.create(
+        task_id="T-PI-ROUND-ERROR", creator="agent_c",
+        description="recon error round",
+        workspace_id="WS-ROUND-ERROR", participants=["agent_c"],
+        mode=TaskMode.SOLO)
+    task.claim_producer("agent_c")
+    directory = TaskDirectoryManager(
+        tmp_path / "tasks").for_task(task.task_id)
+    runtime = SimpleNamespace(
+        tasks=SimpleNamespace(),
+        economy=SimpleNamespace(agent=lambda _aid: SimpleNamespace(
+            has_brain=True, brain=_FakeBrain(),
+            workspace=_FakeWorkspace(tmp_path / "agent_c"))),
+        communication=None,
+    )
+    runner = PiWorkRuntime(
+        runtime, task,
+        task_directory=directory,
+        use_llm_proxy=False,
+    )
+    events = [
+        {"type": "turn_start", "_received_at": 1.0},
+        {"type": "message_end", "_received_at": 2.0, "message": {
+            "role": "assistant",
+            "stopReason": "error",
+            "errorMessage": "terminated: Body Timeout Error",
+            "content": [{"type": "text", "text": "partial plan"}],
+        }},
+        {"type": "turn_end", "_received_at": 3.0},
+    ]
+
+    rounds = runner._rounds_from_events(events, "agent_c", phase="recon")
+
+    assert rounds[0]["segments"][0]["error"] == (
+        "terminated: Body Timeout Error")
+    assert rounds[0]["segments"][0]["finish_reason"] == "error"
 
 
 def test_last_assistant_error_surfaces_upstream_message():
