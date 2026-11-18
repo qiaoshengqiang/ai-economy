@@ -56,6 +56,12 @@ from demand.task_creation import TaskCreationService
 from services.alarm_service import AlarmService, WakeupDispatcher
 from services.artifacts import MAX_READ_LINES, read_artifact
 from services.messaging import send_message_as
+from services.private_workspace import (
+    delete_private,
+    list_private,
+    read_private,
+    write_private,
+)
 from work.artifact_export import (
     ArtifactExportError, export_task_workspace,
 )
@@ -78,6 +84,7 @@ from work.front_wakeup import FrontWakeupHandler
 from work.handoff import HandoffRuntime
 from work.life_inbox_service import LifeInboxService
 from work.life_policy import LifePolicy
+from work.life_tools import LifeTools, clip_text, list_task_files, read_text_slice
 from work.life_turn import LifeTurnRuntime
 from work.life_wake_service import LifeAlarmWakeupHandler, LifeWakeService
 from work.pi_comm import PiInboxBridge
@@ -4704,6 +4711,404 @@ class AIEOSController:
         self._life_policy_cache[key] = policy
         return policy
 
+    def _life_tools(self) -> LifeTools:
+        """组合 Life 层的只读任务视图 + 私有空间/记忆动作。
+
+        🔒 任务只读；私有空间/记忆走既有 Service；这里只做参数校验和裁剪。
+        """
+        def _agent_workspace(agent_id: str) -> Any:
+            agent = self._agent(agent_id)
+            return getattr(agent, "workspace", None)
+
+        def _read_json(path: Path) -> Any:
+            try:
+                return json.loads(Path(path).read_text(encoding="utf-8"))
+            except (OSError, ValueError, TypeError):
+                return None
+
+        def _task_error(task: Any) -> str:
+            try:
+                directory = self._task_directory(task)
+                state = _read_json(
+                    directory.aieos / "work_state.json") or {}
+                error = str(state.get("last_error") or "")
+                if not error:
+                    checkpoint = self._read_checkpoint(task.task_id)
+                    if checkpoint is not None:
+                        error = str(checkpoint.error or "")
+                return clip_text(error, 300)
+            except Exception:                                 # noqa: BLE001
+                return ""
+
+        def _own_task(agent_id: str, task_id: str) -> Any:
+            try:
+                task = self.rt.tasks.get(str(task_id or ""))
+            except Exception:                                 # noqa: BLE001
+                task = None
+            if task is None or not task.is_participant(agent_id):
+                return None
+            return task
+
+        def recent_tasks(
+            agent_id: str, limit: int,
+        ) -> List[Dict[str, Any]]:
+            try:
+                tasks = self.rt.tasks.list_tasks(limit=200)
+            except Exception:                                 # noqa: BLE001
+                return []
+            own = [task for task in tasks
+                   if task.is_participant(agent_id)]
+            own.sort(
+                key=lambda task: str(
+                    getattr(task, "updated_at", "") or ""),
+                reverse=True)
+            out: List[Dict[str, Any]] = []
+            for task in own[:max(1, min(int(limit or 5), 10))]:
+                out.append({
+                    "task_id": task.task_id,
+                    "status": task.status,
+                    "iteration": task.iteration,
+                    "updated_at": task.updated_at,
+                    "description": clip_text(task.description, 160),
+                    "last_error": _task_error(task),
+                })
+            return out
+
+        def task_inspect(
+            agent_id: str, task_id: str,
+        ) -> Dict[str, Any]:
+            task = _own_task(agent_id, task_id)
+            if task is None:
+                return {
+                    "ok": False, "code": "not_participant",
+                    "message": "这个任务不存在，或你不在参与方中",
+                }
+            directory = self._task_directory(task)
+            aieos = directory.aieos
+            plan = _read_json(aieos / "workspace_plan.json") or {}
+            state = _read_json(aieos / "work_state.json") or {}
+            manifest = _read_json(aieos / "manifest.json") or {}
+            snapshots = _read_json(aieos / "snapshots.json") or {}
+            acceptance = getattr(task, "acceptance", None) or {}
+            if not isinstance(acceptance, Mapping):
+                acceptance = {}
+            criteria = acceptance.get("criteria") or []
+            if not isinstance(criteria, list):
+                criteria = [criteria]
+            manifest_files = manifest.get("files") or []
+            if not isinstance(manifest_files, list):
+                manifest_files = []
+            snapshot = manifest.get("snapshot") or {}
+            if isinstance(snapshot, Mapping):
+                snapshot = {
+                    key: snapshot.get(key)
+                    for key in ("label", "created_at", "files", "bytes",
+                                "commit", "tree")
+                }
+            rounds: List[Dict[str, Any]] = []
+            for item in self._rounds(task.task_id)[-5:]:
+                if not isinstance(item, Mapping):
+                    continue
+                errors = []
+                for segment in item.get("segments") or []:
+                    if (isinstance(segment, Mapping)
+                            and segment.get("error")):
+                        errors.append(clip_text(segment.get("error"), 300))
+                rounds.append({
+                    "round": item.get("round"),
+                    "phase": item.get("phase"),
+                    "tokens": item.get("tokens"),
+                    "latency_ms": item.get("latency_ms"),
+                    "summary": clip_text(item.get("summary"), 600),
+                    "errors": errors[:3],
+                })
+            checkpoint_data: Any = None
+            checkpoint = self._read_checkpoint(task.task_id)
+            if checkpoint is not None:
+                checkpoint_data = checkpoint.to_dict()
+                checkpoint_data["summary"] = clip_text(
+                    checkpoint_data.get("summary"), 1000)
+                checkpoint_data["error"] = clip_text(
+                    checkpoint_data.get("error"), 600)
+                checkpoint_data["files"] = list(
+                    checkpoint_data.get("files") or [])[:20]
+            snapshot_records = snapshots.get("snapshots") or []
+            if not isinstance(snapshot_records, list):
+                snapshot_records = []
+            snapshot_records = [
+                {
+                    key: item.get(key)
+                    for key in ("label", "phase", "files", "bytes",
+                                "created_at")
+                }
+                for item in snapshot_records[-3:]
+                if isinstance(item, Mapping)
+            ]
+            return {
+                "ok": True,
+                "task": {
+                    "task_id": task.task_id,
+                    "status": task.status,
+                    "live": self._is_live(task.task_id),
+                    "iteration": task.iteration,
+                    "creator": task.creator,
+                    "contractor": task.contractor,
+                    "participants": list(task.participants or []),
+                    "updated_at": task.updated_at,
+                    "description": clip_text(task.description, 2000),
+                    "acceptance": {
+                        "workspace_mode": acceptance.get("workspace_mode"),
+                        "project_path": acceptance.get("project_path"),
+                        "work_mode": acceptance.get("work_mode"),
+                        "front_mode": acceptance.get("front_mode"),
+                        "role": acceptance.get("role"),
+                        "work_profile": acceptance.get("work_profile"),
+                        "criteria": [
+                            clip_text(item, 300)
+                            for item in criteria[:3]
+                        ],
+                    },
+                },
+                "workspace": {
+                    "mode": (
+                        "project" if directory.project_mode else "task"),
+                    "workdir": str(directory.workdir),
+                    "target": directory.project_target or ".",
+                    "plan": plan,
+                    "work_state": {
+                        key: state.get(key)
+                        for key in (
+                            "phase", "status", "last_error",
+                            "open_issues", "updated_at",
+                            "workspace_target", "workspace_mode",
+                        )
+                    },
+                    "work_history": list(
+                        state.get("history") or [])[-5:],
+                    "manifest": {
+                        "files": len(manifest_files),
+                        "paths": [
+                            item.get("path") for item in manifest_files[:50]
+                            if isinstance(item, Mapping)
+                        ],
+                        "snapshot": snapshot,
+                    },
+                    "snapshots": snapshot_records,
+                },
+                "rounds": rounds,
+                "checkpoint": checkpoint_data,
+            }
+
+        def task_files(
+            agent_id: str, task_id: str,
+        ) -> Dict[str, Any]:
+            task = _own_task(agent_id, task_id)
+            if task is None:
+                return {
+                    "ok": False, "code": "not_participant",
+                    "message": "这个任务不存在，或你不在参与方中",
+                }
+            directory = self._task_directory(task)
+            manifest = _read_json(
+                directory.aieos / "manifest.json") or {}
+            files = manifest.get("files") if isinstance(
+                manifest, Mapping) else None
+            return list_task_files(directory.workdir, files)
+
+        def task_read(
+            agent_id: str, task_id: str, path: str,
+            start_line: int, max_lines: int,
+        ) -> Dict[str, Any]:
+            task = _own_task(agent_id, task_id)
+            if task is None:
+                return {
+                    "ok": False, "code": "not_participant",
+                    "message": "这个任务不存在，或你不在参与方中",
+                }
+            directory = self._task_directory(task)
+            return read_text_slice(
+                directory.workdir, path,
+                start_line=start_line, max_lines=max_lines)
+
+        def private_list(agent_id: str) -> Dict[str, Any]:
+            workspace = _agent_workspace(agent_id)
+            if workspace is None:
+                return {"ok": False, "code": "no_private_workspace",
+                        "message": "没有私有空间"}
+            return list_private(workspace)
+
+        def private_read(
+            agent_id: str, path: str, start_line: int, max_lines: int,
+        ) -> Dict[str, Any]:
+            workspace = _agent_workspace(agent_id)
+            if workspace is None:
+                return {"ok": False, "code": "no_private_workspace",
+                        "message": "没有私有空间"}
+            return read_text_slice(
+                workspace.root, path,
+                start_line=start_line, max_lines=max_lines)
+
+        def private_write(
+            agent_id: str, path: str, content: Any,
+        ) -> Dict[str, Any]:
+            workspace = _agent_workspace(agent_id)
+            if workspace is None:
+                return {"ok": False, "code": "no_private_workspace",
+                        "message": "没有私有空间"}
+            return write_private(workspace, path, content)
+
+        def private_delete(agent_id: str, path: str) -> Dict[str, Any]:
+            workspace = _agent_workspace(agent_id)
+            if workspace is None:
+                return {"ok": False, "code": "no_private_workspace",
+                        "message": "没有私有空间"}
+            return delete_private(workspace, path)
+
+        def short_term_service() -> Any:
+            return getattr(self.rt, "private_short_term_memory", None)
+
+        def long_term_service() -> Any:
+            return getattr(self.rt, "private_long_term_memory", None)
+
+        def short_term_render(agent_id: str) -> str:
+            service = short_term_service()
+            if service is None:
+                return ""
+            return service.render(agent_id)
+
+        def long_term_render(agent_id: str) -> str:
+            service = long_term_service()
+            if service is None:
+                return ""
+            return service.render_top(agent_id)
+
+        def short_term_read(agent_id: str) -> Dict[str, Any]:
+            service = short_term_service()
+            if service is None:
+                return {"ok": False, "code": "memory_disabled",
+                        "message": "短期记忆服务未启用"}
+            memory = service.read(agent_id)
+            return {"ok": True, "memory": memory.to_dict()}
+
+        def short_term_add(
+            agent_id: str, summary: str, architecture: str,
+            notable: str, importance: int,
+        ) -> Dict[str, Any]:
+            service = short_term_service()
+            if service is None:
+                return {"ok": False, "code": "memory_disabled",
+                        "message": "短期记忆服务未启用"}
+            entry = service.add(
+                agent_id, summary=summary,
+                architecture=architecture, notable=notable,
+                importance=importance)
+            memory = service.read(agent_id)
+            return {
+                "ok": True, "entry": entry.to_dict(),
+                "memory": memory.to_dict(),
+            }
+
+        def short_term_update(
+            agent_id: str, expected_revision: int, entry_id: str,
+            summary: Any, architecture: Any, notable: Any,
+            importance: Any, remove: bool,
+        ) -> Dict[str, Any]:
+            service = short_term_service()
+            if service is None:
+                return {"ok": False, "code": "memory_disabled",
+                        "message": "短期记忆服务未启用"}
+            memory = service.update(
+                agent_id,
+                expected_revision=int(expected_revision),
+                entry_id=entry_id,
+                summary=summary,
+                architecture=architecture,
+                notable=notable,
+                importance=importance,
+                remove=bool(remove))
+            return {"ok": True, "memory": memory.to_dict()}
+
+        def short_term_reinforce(
+            agent_id: str, expected_revision: int, entry_id: str,
+            reason: str,
+        ) -> Dict[str, Any]:
+            service = short_term_service()
+            if service is None:
+                return {"ok": False, "code": "memory_disabled",
+                        "message": "短期记忆服务未启用"}
+            memory = service.reinforce(
+                agent_id,
+                expected_revision=int(expected_revision),
+                entry_id=entry_id,
+                reason=reason)
+            return {"ok": True, "memory": memory.to_dict()}
+
+        def long_term_search(
+            agent_id: str, query: str,
+        ) -> Dict[str, Any]:
+            service = long_term_service()
+            if service is None:
+                return {"ok": False, "code": "memory_disabled",
+                        "message": "长期记忆服务未启用"}
+            entries = service.search(agent_id, query)
+            return {
+                "ok": True,
+                "entries": [entry.to_dict() for entry in entries],
+            }
+
+        def long_term_read(
+            agent_id: str, entry_id: str,
+        ) -> Dict[str, Any]:
+            service = long_term_service()
+            if service is None:
+                return {"ok": False, "code": "memory_disabled",
+                        "message": "长期记忆服务未启用"}
+            data = service.read(agent_id, entry_id)
+            return {"ok": True, **data}
+
+        def long_term_consolidate(
+            agent_id: str, expected_revision: int, summary: str,
+            tasks: List[Any], events: List[Any],
+            short_term_entry_ids: List[Any],
+        ) -> Dict[str, Any]:
+            service = long_term_service()
+            if service is None:
+                return {"ok": False, "code": "memory_disabled",
+                        "message": "长期记忆服务未启用"}
+            entry, remaining = service.consolidate(
+                agent_id, task_id="",
+                expected_revision=int(expected_revision),
+                summary=summary,
+                tasks=list(tasks or []),
+                events=list(events or []),
+                short_term_entry_ids=list(
+                    short_term_entry_ids or []))
+            return {
+                "ok": True,
+                "entry": entry.to_dict(),
+                "short_term_memory": remaining.to_dict(),
+            }
+
+        return LifeTools(
+            short_term_render=short_term_render,
+            long_term_render=long_term_render,
+            recent_tasks=recent_tasks,
+            task_inspect=task_inspect,
+            task_files=task_files,
+            task_read=task_read,
+            private_list=private_list,
+            private_read=private_read,
+            private_write=private_write,
+            private_delete=private_delete,
+            short_term_read=short_term_read,
+            short_term_add=short_term_add,
+            short_term_update=short_term_update,
+            short_term_reinforce=short_term_reinforce,
+            long_term_search=long_term_search,
+            long_term_read=long_term_read,
+            long_term_consolidate=long_term_consolidate,
+        )
+
     def _init_life_wake(self) -> None:
         """启动消息 / 闹钟唤醒服务；没有任何 Agent 开启 life 时为空操作。"""
         if self._life_wake is not None:
@@ -4727,6 +5132,7 @@ class AIEOSController:
             agent_exists_fn=lambda aid: aid in self._agent_ids,
             agent_unavailable_reason_fn=self._life_agent_unavailable_reason,
             system_prompt_fn=self._life_system_prompt,
+            tools=self._life_tools(),
         )
         self._life_wake = LifeWakeService(
             policy_fn=self._life_policy,

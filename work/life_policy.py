@@ -23,10 +23,29 @@ from typing import Any, Mapping, Tuple
 
 #: Life Turn 允许的动作集合。
 LIFE_ACTIONS: Tuple[str, ...] = (
+    # 原有：消息 / 闹钟
     "message_send",
     "alarm_create",
     "alarm_list",
     "alarm_cancel",
+    # 任务只读
+    "task_list",
+    "task_inspect",
+    "task_content_list",
+    "task_content_read",
+    # 私有空间
+    "private_list",
+    "private_read",
+    "private_write",
+    "private_delete",
+    # 私有记忆
+    "short_term_memory_read",
+    "short_term_memory_add",
+    "short_term_memory_update",
+    "short_term_memory_reinforce",
+    "long_term_memory_search",
+    "long_term_memory_read",
+    "long_term_memory_consolidate",
     "no_op",
 )
 

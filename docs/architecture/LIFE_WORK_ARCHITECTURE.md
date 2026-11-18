@@ -87,6 +87,11 @@ Work 层（具体执行）
 Life 层是 Agent **持续存在**的地方。
 Agent 完成任务后回到 Life 层，仍然保留身份、资产和历史。
 
+> **Life Tools V1（ADR-0066）**：Life 可以**只读**查看自己参与过的 Task
+> 记录/内容，并读写自己的私有空间 / 短期 / 长期记忆；
+> 仍然不能写 Task Workspace、修改项目文件或执行 shell。
+> 详细动作见 [`adr/0066-life-tools-read-only-task-and-private-memory.md`](adr/0066-life-tools-read-only-task-and-private-memory.md)。
+
 ### 2.2 Work 层
 
 只保留具体工作需要的：

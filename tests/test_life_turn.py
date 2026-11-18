@@ -14,6 +14,7 @@ import json
 from types import SimpleNamespace
 
 from work.life_policy import LifePolicy
+from work.life_tools import LifeTools
 from work.life_turn import LifeMessage, LifeStimulus, LifeTurnRuntime
 
 
@@ -30,6 +31,24 @@ class _FakeAgent:
         self.calls.append(kwargs)
         return SimpleNamespace(
             content=self.content,
+            total_tokens=42,
+            model="fake-model",
+            provider="fake-provider",
+        )
+
+
+class _SequenceAgent(_FakeAgent):
+    def __init__(self, contents) -> None:
+        super().__init__(str(contents[0]))
+        self.contents = [str(item) for item in contents]
+        self.index = 0
+
+    def generate(self, **kwargs):
+        content = self.contents[min(self.index, len(self.contents) - 1)]
+        self.index += 1
+        self.calls.append(kwargs)
+        return SimpleNamespace(
+            content=content,
             total_tokens=42,
             model="fake-model",
             provider="fake-provider",
@@ -54,13 +73,16 @@ class _FakeAlarmService:
 
 
 def _runtime(
-    content: str,
+    content,
     *,
     sent=None,
     alarms=None,
     known=("agent_e", "agent_a", "agent_b"),
+    tools=None,
 ):
-    agent = _FakeAgent(content)
+    agent = (
+        _SequenceAgent(content) if isinstance(content, (list, tuple))
+        else _FakeAgent(content))
     sent = sent if sent is not None else []
     alarms = alarms if alarms is not None else _FakeAlarmService()
 
@@ -75,6 +97,7 @@ def _runtime(
         agent_exists_fn=lambda aid: aid in known,
         agent_unavailable_reason_fn=lambda _aid: "",
         system_prompt_fn=lambda _aid: "你是小伊。",
+        tools=tools,
     )
     return runtime, agent, sent, alarms
 
@@ -249,3 +272,163 @@ def test_policy_defaults_are_disabled():
     assert policy.wake_on_message is False
     assert policy.allows("message_send")
     assert not policy.allows("workspace_write")
+
+
+def test_default_policy_includes_new_life_actions():
+    policy = LifePolicy()
+    for action in (
+        "task_list", "task_inspect", "task_content_list",
+        "task_content_read", "private_list", "private_read",
+        "private_write", "private_delete", "short_term_memory_read",
+        "short_term_memory_add", "short_term_memory_update",
+        "long_term_memory_search", "long_term_memory_read",
+        "long_term_memory_consolidate",
+    ):
+        assert policy.allows(action)
+
+
+def test_prompt_injects_private_memory_and_recent_tasks():
+    tools = LifeTools(
+        short_term_render=lambda _aid: "revision = 3\n- [stm-1] 上次任务",
+        long_term_render=lambda _aid: "- [ltm-1] 长期模式",
+        recent_tasks=lambda _aid, _limit: [{
+            "task_id": "task_1",
+            "status": "COMPLETED",
+            "iteration": 1,
+            "updated_at": "2026-11-18T00:00:00Z",
+            "description": "写 hello world",
+            "last_error": "",
+        }],
+        task_inspect=lambda _aid, _tid: {"ok": True},
+        private_read=lambda _aid, _path, _start, _max: {"ok": True},
+        short_term_add=lambda *_args: {"ok": True},
+        long_term_consolidate=lambda *_args: {"ok": True},
+    )
+    runtime, _agent, _sent, _ = _runtime(
+        json.dumps({"reply": "好", "actions": []}), tools=tools)
+
+    prompt = runtime._prompt(_stimulus(_message()), LifePolicy(enabled=True))
+
+    assert "你的私有短期记忆" in prompt
+    assert "stm-1" in prompt
+    assert "你的私有长期记忆" in prompt
+    assert "ltm-1" in prompt
+    assert "我的最近任务" in prompt
+    assert "task_1" in prompt
+    assert "写 hello world" in prompt
+    assert "task_inspect" in prompt
+    assert "private_read" in prompt
+    assert "short_term_memory_add" in prompt
+    assert "long_term_memory_consolidate" in prompt
+
+
+def test_task_read_action_triggers_second_model_call():
+    calls = []
+
+    def recent_tasks(agent_id, limit):
+        calls.append((agent_id, limit))
+        return [{
+            "task_id": "task_1",
+            "status": "COMPLETED",
+            "iteration": 1,
+            "updated_at": "2026-11-18T00:00:00Z",
+            "description": "写 hello world",
+            "last_error": "",
+        }]
+
+    tools = LifeTools(recent_tasks=recent_tasks)
+    content = [
+        json.dumps({"reply": "", "actions": [{"type": "task_list"}]}),
+        json.dumps({"reply": "上次任务是 task_1，已完成。", "actions": []}),
+    ]
+    runtime, agent, sent, _ = _runtime(content, tools=tools)
+
+    result = runtime.run(_stimulus(_message()), LifePolicy(enabled=True))
+
+    assert calls == [("agent_e", 5), ("agent_e", 5)]
+    assert len(agent.calls) == 2
+    assert "只读动作结果" in agent.calls[1]["messages"]
+    assert "task_1" in agent.calls[1]["messages"]
+    assert result.outcome == "replied"
+    assert result.reply == "上次任务是 task_1，已完成。"
+    assert result.reads and result.reads[0]["ok"] is True
+    assert sent[0]["text"] == "上次任务是 task_1，已完成。"
+
+
+def test_task_read_action_denied_is_visible_to_model():
+    tools = LifeTools(
+        task_inspect=lambda _aid, _tid: {
+            "ok": False, "code": "not_participant",
+            "message": "这个任务不存在，或你不在参与方中",
+        })
+    content = [
+        json.dumps({"reply": "", "actions": [
+            {"type": "task_inspect", "task_id": "task_x"}]}),
+        json.dumps({"reply": "我看不到这个任务。", "actions": []}),
+    ]
+    runtime, agent, _sent, _ = _runtime(content, tools=tools)
+
+    result = runtime.run(_stimulus(_message()), LifePolicy(enabled=True))
+
+    assert result.reads[0]["ok"] is False
+    assert "not_participant" in agent.calls[1]["messages"]
+    assert result.reply == "我看不到这个任务。"
+
+
+def test_private_write_action_uses_tools():
+    writes = []
+
+    def private_write(agent_id, path, content):
+        writes.append((agent_id, path, content))
+        return {"ok": True, "path": path, "chars": len(content)}
+
+    tools = LifeTools(private_write=private_write)
+    content = json.dumps({
+        "reply": "",
+        "actions": [{
+            "type": "private_write",
+            "path": "notes/todo.md",
+            "content": "remember this",
+        }],
+    })
+    runtime, _agent, _sent, _ = _runtime(content, tools=tools)
+
+    result = runtime.run(_stimulus(_message()), LifePolicy(enabled=True))
+
+    assert writes == [("agent_e", "notes/todo.md", "remember this")]
+    assert result.actions[0]["ok"] is True
+
+
+def test_read_action_respects_policy_allowlist():
+    tools = LifeTools(
+        recent_tasks=lambda _aid, _limit: [{"task_id": "task_1"}])
+    content = [
+        json.dumps({"reply": "", "actions": [{"type": "task_list"}]}),
+        json.dumps({"reply": "没有权限。", "actions": []}),
+    ]
+    policy = LifePolicy(enabled=True, allowed_actions=("message_send",))
+    runtime, agent, _sent, _ = _runtime(content, tools=tools)
+
+    result = runtime.run(_stimulus(_message()), policy)
+
+    assert result.reads[0]["ok"] is False
+    assert result.reads[0]["error"] == "not_allowed"
+    assert "not_allowed" in agent.calls[1]["messages"]
+
+
+def test_read_action_with_bad_params_does_not_crash():
+    tools = LifeTools(
+        recent_tasks=lambda _aid, _limit: [{"task_id": "task_1"}])
+    content = [
+        json.dumps({"reply": "", "actions": [
+            {"type": "task_list", "limit": "not-a-number"}]}),
+        json.dumps({"reply": "参数不对。", "actions": []}),
+    ]
+    runtime, agent, _sent, _ = _runtime(content, tools=tools)
+
+    result = runtime.run(_stimulus(_message()), LifePolicy(enabled=True))
+
+    assert result.reads[0]["ok"] is False
+    assert "ValueError" in result.reads[0]["error"]
+    assert result.reply == "参数不对。"
+    assert len(agent.calls) == 2
