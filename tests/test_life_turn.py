@@ -26,6 +26,7 @@ class _FakeAgent:
         self.content = content
         self.calls = []
         self.last_usage = {"cost_ai": 0.25, "total_tokens": 42}
+        self.finish_reason = None
 
     def generate(self, **kwargs):
         self.calls.append(kwargs)
@@ -34,6 +35,7 @@ class _FakeAgent:
             total_tokens=42,
             model="fake-model",
             provider="fake-provider",
+            finish_reason=self.finish_reason,
         )
 
 
@@ -52,6 +54,7 @@ class _SequenceAgent(_FakeAgent):
             total_tokens=42,
             model="fake-model",
             provider="fake-provider",
+            finish_reason=getattr(self, "finish_reason", None),
         )
 
 
@@ -432,3 +435,34 @@ def test_read_action_with_bad_params_does_not_crash():
     assert "ValueError" in result.reads[0]["error"]
     assert result.reply == "参数不对。"
     assert len(agent.calls) == 2
+
+
+def test_truncated_json_reply_is_extracted():
+    content = (
+        '{"reply":"小欧回复：max_turns=24 耗尽。\\n'
+        '第二轮：playwright 断言失败'
+    )
+    runtime, agent, sent, _ = _runtime(content)
+    agent.finish_reason = "length"
+
+    result = runtime.run(_stimulus(_message()), LifePolicy(enabled=True))
+
+    assert result.outcome == "replied"
+    assert "max_turns=24" in result.reply
+    assert "输出上限" in result.reply
+    assert not result.reply.startswith('{"reply"')
+    assert "output_truncated" in result.errors
+    assert "max_turns=24" in sent[0]["text"]
+
+
+def test_truncated_without_reply_gives_clear_error():
+    runtime, agent, sent, _ = _runtime('{"actions":[')
+    agent.finish_reason = "length"
+
+    result = runtime.run(_stimulus(_message()), LifePolicy(enabled=True))
+
+    assert result.outcome == "replied"
+    assert "Life 回答被截断" in result.reply
+    assert result.reply != '{"actions":['
+    assert "output_truncated" in result.errors
+    assert "Life 回答被截断" in sent[0]["text"]

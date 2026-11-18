@@ -264,12 +264,14 @@ class LifeTurnRuntime:
                 outcome="failed",
                 summary="life_turn_failed",
                 errors=[error or "Life Turn 调用失败"])
-        content, tokens, cost, model, provider = first
+        (content, tokens, cost, model, provider,
+         finish_reason) = first
         parsed = _parse_json_object(content)
         if parsed is None:
             return self._finish_plain_text(
                 content, stimulus, policy,
-                tokens=tokens, cost=cost, model=model, provider=provider)
+                tokens=tokens, cost=cost, model=model,
+                provider=provider, finish_reason=finish_reason)
 
         actions, errors = self._normalize_actions(parsed.get("actions"))
         read_actions, side_actions = self._partition_actions(actions)
@@ -296,14 +298,15 @@ class LifeTurnRuntime:
                 reads=reads,
                 errors=errors + [error2 or "只读结果后的模型调用失败"],
                 tokens=tokens, cost_ai=cost, model=model, provider=provider)
-        content2, tokens2, cost2, model2, provider2 = second
+        content2, tokens2, cost2, model2, provider2, finish_reason2 = second
         parsed2 = _parse_json_object(content2)
         if parsed2 is None:
             return self._finish_plain_text(
                 content2, stimulus, policy,
                 tokens=tokens + tokens2, cost=cost + cost2,
                 model=model2, provider=provider2,
-                reads=reads, errors=errors)
+                reads=reads, errors=errors,
+                finish_reason=finish_reason2)
         final_actions, final_errors = self._normalize_actions(
             parsed2.get("actions"))
         return self._finish_parsed(
@@ -311,7 +314,7 @@ class LifeTurnRuntime:
             tokens=tokens + tokens2, cost=cost + cost2,
             model=model2, provider=provider2,
             reads=reads, errors=errors + final_errors,
-            raw_output=content2)
+            raw_output=content2, finish_reason=finish_reason2)
 
     # ------------------------------------------------------------
     # 模型调用 / 结果整理
@@ -323,7 +326,8 @@ class LifeTurnRuntime:
         system: str,
         policy: LifePolicy,
         stimulus: LifeStimulus,
-    ) -> tuple[Optional[tuple[str, int, float, str, str]], Optional[str]]:
+    ) -> tuple[
+        Optional[tuple[str, int, float, str, str, str]], Optional[str]]:
         try:
             response = agent.generate(
                 messages=prompt,
@@ -350,9 +354,13 @@ class LifeTurnRuntime:
         cost = float(usage.get("cost_ai") or 0.0)
         model = str(getattr(response, "model", "") or "")
         provider = str(getattr(response, "provider", "") or "")
+        finish_reason = str(
+            getattr(response, "finish_reason", "") or "").lower()
         if not content:
             return None, "Life Turn 没有产出"
-        return (content, tokens, cost, model, provider), None
+        return (
+            content, tokens, cost, model, provider, finish_reason
+        ), None
 
     @staticmethod
     def _normalize_actions(raw: Any) -> tuple[List[Any], List[str]]:
@@ -394,12 +402,27 @@ class LifeTurnRuntime:
         provider: str,
         reads: Optional[List[Dict[str, Any]]] = None,
         errors: Optional[List[str]] = None,
+        finish_reason: str = "",
     ) -> LifeTurnResult:
         result = LifeTurnResult(
             raw_output=content, tokens=tokens, cost_ai=cost,
             model=model, provider=provider, reads=list(reads or []),
             errors=list(errors or []))
-        result.reply = _clip(content, policy.reply_max_chars)
+        text = content
+        if finish_reason == "length":
+            result.errors.append("output_truncated")
+            partial = self._extract_partial_reply(content)
+            if partial:
+                text = (
+                    partial
+                    + "\n\n（注：本次 Life 回答达到输出上限，可能不完整。）")
+            else:
+                text = (
+                    "Life 回答被截断（finish_reason=length，"
+                    f"max_tokens={policy.max_tokens_per_turn}）。"
+                    "请提高该 Agent 的 Life 输出上限后重试。")
+            self._clip_partial_actions(result, content)
+        result.reply = _clip(text, policy.reply_max_chars)
         result.summary = result.reply[:200]
         if result.reply and self._send_reply(stimulus, result, policy):
             result.outcome = "replied"
@@ -408,6 +431,30 @@ class LifeTurnRuntime:
         else:
             result.outcome = "no_op"
         return result
+
+    @staticmethod
+    def _extract_partial_reply(content: str) -> str:
+        """从被截断的 JSON 里尽量提取 `reply` 字段。"""
+        match = re.search(
+            r'"reply"\s*:\s*"((?:\\.|[^"\\])*)(?:"|$)', str(content or ""),
+            re.DOTALL)
+        if not match:
+            return ""
+        raw = match.group(1)
+        try:
+            return str(json.loads('"' + raw + '"')).strip()
+        except (TypeError, ValueError):
+            return raw.replace("\\n", "\n").replace('\\"', '"').strip()
+
+    @staticmethod
+    def _clip_partial_actions(
+        result: LifeTurnResult, content: str,
+    ) -> None:
+        """截断时不要把半截 JSON 当动作执行；只留事实。"""
+        if not content:
+            return
+        if '"actions"' in content:
+            result.errors.append("truncated_actions_ignored")
 
     def _finish_parsed(
         self,
@@ -423,12 +470,18 @@ class LifeTurnRuntime:
         reads: Optional[List[Dict[str, Any]]] = None,
         errors: Optional[List[str]] = None,
         raw_output: str = "",
+        finish_reason: str = "",
     ) -> LifeTurnResult:
         result = LifeTurnResult(
             tokens=tokens, cost_ai=cost, model=model, provider=provider,
             reads=list(reads or []), errors=list(errors or []))
         result.parsed = True
         result.reply = _clip(parsed.get("reply") or "", policy.reply_max_chars)
+        if finish_reason == "length":
+            result.errors.append("output_truncated")
+            if result.reply:
+                result.reply += (
+                    "\n\n（注：本次 Life 回答达到输出上限，可能不完整。）")
         result.raw_output = raw_output or json.dumps(
             parsed, ensure_ascii=False)
         executed = self._execute_actions(
