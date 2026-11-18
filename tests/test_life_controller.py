@@ -138,12 +138,16 @@ def test_life_tools_are_wired_and_fail_closed():
         assert tools.task_inspect is not None
         assert tools.task_files is not None
         assert tools.task_read is not None
+        assert tools.web_search is not None
+        assert tools.web_fetch is not None
         assert tools.private_write is not None
         assert tools.short_term_add is not None
         assert tools.long_term_consolidate is not None
 
         assert tools.recent_tasks("agent_b", 5) == []
         assert tools.task_inspect("agent_b", "task_missing")["ok"] is False
+        assert tools.web_search(
+            "agent_b", "x", 5, False, "")["ok"] is False
         assert tools.private_list("agent_b")["ok"] is False
         assert tools.short_term_read("agent_b")["ok"] is False
         assert tools.long_term_search("agent_b", "x")["ok"] is False

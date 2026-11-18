@@ -210,8 +210,26 @@ class LifeWakeService:
         messages: List[LifeMessage] = []
         for message_id in message_ids:
             row = self.message_lookup_fn(message_id)
-            if row is not None:
-                messages.append(self._row_to_message(row))
+            if row is None:
+                continue
+            message = self._row_to_message(row)
+            if not message.text:
+                continue
+            if message.message_type not in LIFE_MESSAGE_TYPES:
+                continue
+            if message.from_agent == agent_id:
+                continue
+            if message.from_agent in SYSTEM_SENDERS:
+                continue
+            messages.append(message)
+        if not messages:
+            # 空 text / 非 TEXT 的历史 inbox 不唤醒 Life；
+            # 直接消费掉，避免每秒重复扫描同一个空块。
+            try:
+                bridge.consume_text(text)
+            except Exception:                                 # noqa: BLE001
+                pass
+            return None
         conversation = ""
         if len(messages) == 1:
             conversation = messages[0].conversation_id

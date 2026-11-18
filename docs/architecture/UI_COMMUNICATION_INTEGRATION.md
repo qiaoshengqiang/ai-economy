@@ -301,6 +301,9 @@ Front ↔ Worker:
   conversation_id = "conv_handoff_<job_id>"
   TASK_OFFER 在 Task 创建前发出；ACCEPT 携带 task_id
   task_id 可选
+  handoff_offer / handoff_accept / handoff_reject 是 handoff 通知，
+  不是 TaskCore 的报价消息；TaskService 的类型处理器会跳过它们。
+  Task 仍由 Worker 侧创建。
 
 Worker ↔ Worker:
   conversation_id = "conv_<task_id>_<agent_a>_<agent_b>"

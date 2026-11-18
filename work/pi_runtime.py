@@ -643,6 +643,8 @@ Task Workspace 放本次任务的交付物和验收产物。
 {search_section}
 {self._communication_section()}
 ========== 结束方式 ==========
+任务必须至少产出一个真实交付文件（新建或修改均可）。
+RESULT.md 只是任务元数据，不算交付文件。
 任务结束时，在 `{result_path}` 写总结：
 - 交付内容
 - 验证结果
@@ -692,6 +694,8 @@ Task Workspace 放本次任务的交付物和验收产物。
 写完结束本轮，AIEOS 会暂停任务，等待人类回答后从当前
 阶段继续。把问题留给真正的分歧点，能自主推进的工作直接推进。
 任务完成后，把总结写入 `{result_path}`。
+任务必须至少产出一个真实交付文件（新建或修改均可）；
+RESULT.md 只是任务元数据，不算交付文件。
 """
 
     def _bounded_text(self, relative_path: str, limit: int = 6000) -> str:
@@ -1202,22 +1206,17 @@ Task Workspace 放本次任务的交付物和验收产物。
             lines.append(f"Human mentioned path hint: {hint}")
         lines.extend([
             "",
-            "Decide where this task should run, using this policy in order:",
-            "1. If the task explicitly names an existing file/project/subdirectory",
-            "   and asks to change it, use modify or mixed with that exact target.",
-            "2. Otherwise, for any new deliverable (page, game, demo, script,",
-            "   document, SVG, etc.), use create with a new descriptive",
-            "   kebab-case subdirectory under the workspace root.",
-            "   Do not use '.' as target_path for a new deliverable, and do not",
-            "   put a new deliverable directly in the workspace root, unless the",
-            "   task explicitly asks to put it in the workspace root.",
-            "3. If the task explicitly says it is reply-only / must not create",
-            "   files, do not create a subdirectory; return unclear with a reason",
-            "   that says it is a reply-only task.",
-            "4. Only use unclear when the evidence is genuinely ambiguous after",
-            "   inspecting the workspace. Do not guess between create and modify.",
-            "If the task text contains multiple turns / follow-up requirements,",
-            "the latest explicit requirement wins.",
+            "A Work task must produce at least one real deliverable file",
+            "(new file or modified existing file).",
+            "",
+            "Decide the target:",
+            "- If the task clearly names an existing file/project/subdirectory",
+            "  to modify, use modify or mixed with that target.",
+            "- Otherwise, use create with a new descriptive kebab-case",
+            "  subdirectory under the workspace root.",
+            "- Do not put a new deliverable directly in the workspace root",
+            "  unless the task explicitly asks for it.",
+            "- Use unclear only when you truly cannot decide.",
             "",
             "Output ONLY a JSON object, no Markdown:",
             '{"mode":"create|modify|mixed|unclear",'

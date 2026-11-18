@@ -50,6 +50,8 @@ task_list
 task_inspect
 task_content_list
 task_content_read
+web_search
+web_fetch
 private_list
 private_read
 short_term_memory_read
@@ -61,6 +63,8 @@ long_term_memory_read
   manifest 摘要 / 最近 5 轮 / checkpoint；
 - `task_content_*` 只读任务交付目录，路径必须在 workdir 内，拒绝绝对路径、
   `..`、点文件/点目录；
+- `web_search` / `web_fetch` 只访问公开网页；私有 / 保留 IP 由
+  `WebSearchClient` 拒绝；
 - `private_read` 只读自己的私有空间；
 - 不返回 `.aieos` 元数据给 `task_content_*`；元数据只经 `task_inspect`。
 

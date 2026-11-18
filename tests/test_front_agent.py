@@ -345,6 +345,9 @@ def test_front_prompt_is_human_facing_and_does_not_invent_constraints():
     assert "reply：只给人类看的回复" in prompt
     assert "reply 支持 Markdown" in prompt
     assert "不要输出原始 HTML" in prompt
+    assert "非生产任务（问答、查资料、解释、建议、简单确认）优先 direct_reply" in prompt
+    assert "优先 message_send 给空闲 Agent" in prompt
+    assert "只有需要真实文件交付、代码修改或运行验证时才 handoff" in prompt
     assert "preferred_agent 是路由元数据" in prompt
     assert "新交付物默认放在当前项目目录下的" in prompt
     assert "不要因为任务简单就自行加上" in prompt

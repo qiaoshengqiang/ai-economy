@@ -20,6 +20,22 @@ from work.comm_bridge import run_coro
 
 logger = logging.getLogger(__name__)
 
+#: handoff 消息的 payload.kind。它们不是 TaskCore 的 TASK_OFFER/ACCEPT/REJECT；
+#: Task 由 Worker 侧创建，Front 在 offer 时没有 task_id。
+HANDOFF_MESSAGE_KINDS = frozenset({
+    "handoff_offer",
+    "handoff_accept",
+    "handoff_reject",
+})
+
+
+def is_handoff_message(message: Any) -> bool:
+    """这条消息是不是 Front → Worker 的 handoff 通知，而不是 TaskCore 协议？"""
+    payload = getattr(message, "payload", None) or {}
+    if not isinstance(payload, dict):
+        return False
+    return str(payload.get("kind") or "") in HANDOFF_MESSAGE_KINDS
+
 
 class HandoffRuntime:
     """一次 Front → Worker handoff 的消息运行时。"""

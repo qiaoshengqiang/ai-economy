@@ -33,6 +33,9 @@ LIFE_ACTIONS: Tuple[str, ...] = (
     "task_inspect",
     "task_content_list",
     "task_content_read",
+    # 外部信息（只读）
+    "web_search",
+    "web_fetch",
     # 私有空间
     "private_list",
     "private_read",

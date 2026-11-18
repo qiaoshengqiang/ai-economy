@@ -817,9 +817,14 @@ def test_recon_prompt_prefers_new_subdirectory(tmp_path):
 
     prompt = runner._recon_prompt()
 
+    assert "must produce at least one real deliverable file" in prompt
     assert "new descriptive" in prompt
-    assert "Do not use '.' as target_path for a new deliverable" in prompt
-    assert "reply-only" in prompt
+    assert "Do not put a new deliverable directly in the workspace root" in prompt
+    assert "Use unclear only when you truly cannot decide" in prompt
+
+    work_prompt = runner._autonomous_system_prompt()
+    assert "真实交付文件（新建或修改均可）" in work_prompt
+    assert "RESULT.md 只是任务元数据" in work_prompt
 
     message = runner._unclear_workspace_message(
         WorkspacePlan(

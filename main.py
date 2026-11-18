@@ -121,6 +121,7 @@ from communication import (                                     # noqa: E402
     ReceiveStatus,
     Transport,
 )
+from work.handoff import is_handoff_message                     # noqa: E402
 
 logger = get_logger(__name__)
 
@@ -421,17 +422,25 @@ def _wire_task_handlers(
             return result.to_reply(message)
         return handler
 
+    def adapt_task(method):
+        """TaskCore 生命周期处理器；handoff 通知不是 TaskCore 协议。"""
+        def handler(message):
+            if is_handoff_message(message):
+                return None
+            return adapt(method)(message)
+        return handler
+
     communication.register_type_handler(
-        MessageType.TASK_OFFER, adapt(task_service.handle_offer)
+        MessageType.TASK_OFFER, adapt_task(task_service.handle_offer)
     )
     communication.register_type_handler(
-        MessageType.COUNTER_OFFER, adapt(task_service.handle_counter_offer)
+        MessageType.COUNTER_OFFER, adapt_task(task_service.handle_counter_offer)
     )
     communication.register_type_handler(
-        MessageType.ACCEPT, adapt(task_service.handle_accept)
+        MessageType.ACCEPT, adapt_task(task_service.handle_accept)
     )
     communication.register_type_handler(
-        MessageType.REJECT, adapt(task_service.handle_reject)
+        MessageType.REJECT, adapt_task(task_service.handle_reject)
     )
 
     # ---- Step 4D：执行生命周期 ----

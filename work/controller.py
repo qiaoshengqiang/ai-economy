@@ -4930,6 +4930,32 @@ class AIEOSController:
                 directory.workdir, path,
                 start_line=start_line, max_lines=max_lines)
 
+        def web_search(
+            agent_id: str, query: str, count: int,
+            need_content: bool, ori_question: str,
+        ) -> Dict[str, Any]:
+            try:
+                result = self.web_search(
+                    agent_id, query, count=count,
+                    need_content=need_content,
+                    ori_question=ori_question)
+                return {"ok": True, **result}
+            except Exception as exc:                          # noqa: BLE001
+                return {
+                    "ok": False,
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+
+        def web_fetch(agent_id: str, url: str) -> Dict[str, Any]:
+            try:
+                result = self.web_fetch(agent_id, url)
+                return {"ok": True, **result}
+            except Exception as exc:                          # noqa: BLE001
+                return {
+                    "ok": False,
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+
         def private_list(agent_id: str) -> Dict[str, Any]:
             workspace = _agent_workspace(agent_id)
             if workspace is None:
@@ -5096,6 +5122,8 @@ class AIEOSController:
             task_inspect=task_inspect,
             task_files=task_files,
             task_read=task_read,
+            web_search=web_search,
+            web_fetch=web_fetch,
             private_list=private_list,
             private_read=private_read,
             private_write=private_write,

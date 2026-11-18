@@ -30,6 +30,12 @@ from work.comm_bridge import run_coro
 logger = logging.getLogger(__name__)
 
 
+#: Pi Inbox 只承载 Agent 可读的普通文本消息。
+#: Task 生命周期 / 协商 / ERROR 是协议事实，不应作为“用户消息”
+#: 进入 Pi 的 prompt，更不能以空 text 唤醒 Life。
+PI_INBOX_MESSAGE_TYPES = frozenset({"TEXT"})
+
+
 class PiInboxBridge:
     """把发给 Pi Worker 的消息落成文件，供 Pi 在 turn 边界读取。"""
 
@@ -115,10 +121,16 @@ class PiInboxBridge:
 
     def capture(self, message: Any) -> None:
         """CommunicationManager handler：把消息写入 Pi 可读的文件。"""
+        message_type = str(
+            getattr(message, "message_type", "") or "").upper()
+        if message_type not in PI_INBOX_MESSAGE_TYPES:
+            return None
         payload = getattr(message, "payload", None) or {}
         if not isinstance(payload, dict):
             payload = {}
         text = str(payload.get("text") or "").strip()
+        if not text:
+            return None
         from_agent = str(getattr(message, "from_agent", "") or "")
         record = {
             "message_id": str(getattr(message, "message_id", "") or ""),

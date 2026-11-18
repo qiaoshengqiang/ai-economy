@@ -96,6 +96,40 @@ def test_pi_inbox_peek_then_consume_keeps_new_messages(tmp_path):
     assert "第二条" not in bridge.archive_md.read_text(encoding="utf-8")
 
 
+def test_pi_inbox_ignores_non_text_and_empty_messages(tmp_path):
+    communication, _recorder = _setup()
+    bridge = PiInboxBridge(
+        communication, agent_id="agent_b", aieos_dir=tmp_path)
+
+    # Task 生命周期 / ERROR 不是 Agent 可读消息。
+    bridge.capture(SimpleNamespace(
+        message_id="msg_error", from_agent="agent_a", to_agent="agent_b",
+        message_type="ERROR", conversation_id="conv_1", created_at="now",
+        payload={"errors": ["缺少 price"]},
+    ))
+    bridge.capture(SimpleNamespace(
+        message_id="msg_offer", from_agent="agent_a", to_agent="agent_b",
+        message_type="TASK_OFFER", conversation_id="conv_1",
+        created_at="now", payload={"kind": "handoff_offer"},
+    ))
+    # TEXT 但内容为空也不应该写。
+    bridge.capture(SimpleNamespace(
+        message_id="msg_empty", from_agent="agent_a", to_agent="agent_b",
+        message_type="TEXT", conversation_id="conv_1", created_at="now",
+        payload={"text": "   "},
+    ))
+
+    assert not bridge.inbox_md.exists()
+    assert bridge.peek_for_prompt() == ""
+
+    bridge.capture(SimpleNamespace(
+        message_id="msg_ok", from_agent="agent_a", to_agent="agent_b",
+        message_type="TEXT", conversation_id="conv_1", created_at="now",
+        payload={"text": "真正的消息"},
+    ))
+    assert "真正的消息" in bridge.peek_for_prompt()
+
+
 def test_pi_outbox_sends_agent_message(tmp_path):
     communication, recorder = _setup()
     bridge = PiOutboxBridge(

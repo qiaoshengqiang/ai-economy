@@ -234,6 +234,12 @@ class LifeTools:
     task_read: Optional[
         Callable[[str, str, str, int, int], Dict[str, Any]]] = None
 
+    # ---- 外部信息（只读）----
+    web_search: Optional[
+        Callable[[str, str, int, bool, str], Dict[str, Any]]] = None
+    web_fetch: Optional[
+        Callable[[str, str], Dict[str, Any]]] = None
+
     # ---- 私有空间 ----
     private_list: Optional[Callable[[str], Dict[str, Any]]] = None
     private_read: Optional[

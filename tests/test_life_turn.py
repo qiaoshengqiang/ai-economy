@@ -281,7 +281,8 @@ def test_default_policy_includes_new_life_actions():
     policy = LifePolicy()
     for action in (
         "task_list", "task_inspect", "task_content_list",
-        "task_content_read", "private_list", "private_read",
+        "task_content_read", "web_search", "web_fetch",
+        "private_list", "private_read",
         "private_write", "private_delete", "short_term_memory_read",
         "short_term_memory_add", "short_term_memory_update",
         "long_term_memory_search", "long_term_memory_read",
@@ -400,6 +401,42 @@ def test_private_write_action_uses_tools():
 
     assert writes == [("agent_e", "notes/todo.md", "remember this")]
     assert result.actions[0]["ok"] is True
+
+
+def test_web_search_action_triggers_second_model_call():
+    calls = []
+
+    def web_search(agent_id, query, count, need_content, ori_question):
+        calls.append((agent_id, query, count, need_content, ori_question))
+        return {
+            "ok": True,
+            "results": [{
+                "title": "浙江高考物理赋分",
+                "url": "https://example.com/zj",
+            }],
+        }
+
+    tools = LifeTools(web_search=web_search)
+    content = [
+        json.dumps({"reply": "", "actions": [{
+            "type": "web_search",
+            "query": "2026 浙江高考物理赋分",
+            "count": 3,
+        }]}),
+        json.dumps({"reply": "查到了浙江高考物理赋分规则。", "actions": []}),
+    ]
+    runtime, agent, sent, _ = _runtime(content, tools=tools)
+
+    result = runtime.run(_stimulus(_message()), LifePolicy(enabled=True))
+
+    assert calls == [(
+        "agent_e", "2026 浙江高考物理赋分", 3, False, "")]
+    assert len(agent.calls) == 2
+    assert "只读动作结果" in agent.calls[1]["messages"]
+    assert "浙江高考物理赋分" in agent.calls[1]["messages"]
+    assert result.reply == "查到了浙江高考物理赋分规则。"
+    assert result.reads[0]["ok"] is True
+    assert sent[0]["text"] == "查到了浙江高考物理赋分规则。"
 
 
 def test_read_action_respects_policy_allowlist():

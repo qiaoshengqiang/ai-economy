@@ -122,6 +122,32 @@ def _pi_text(message_id: str = "msg_1", text: str = "你好小伊") -> str:
     )
 
 
+def _pi_empty_error_row(message_id: str = "msg_error") -> dict:
+    return {
+        "message_id": message_id,
+        "from_agent": "agent_a",
+        "message_type": "ERROR",
+        "conversation_id": "conv_1",
+        "trace_id": "trc_1",
+        "created_at": "2026-11-16T10:00:00+00:00",
+        "payload": json.dumps({"errors": ["缺少 price"]}),
+    }
+
+
+def test_pi_empty_or_non_text_inbox_is_ignored_and_consumed(db):
+    bridge = _Bridge(
+        "### msg_error · 小艾（Agent ID: agent_a） · ERROR\n\n")
+    service, turn, _availability, _ = _service(
+        db, bridge=bridge, rows={"agent_e": [_pi_empty_error_row()]})
+
+    started = service.scan_once()
+
+    assert started == 0
+    assert turn.calls == []
+    assert bridge.consumed is True
+    assert bridge.text == ""
+
+
 def test_pi_message_wakes_idle_agent_and_consumes_after_success(db):
     bridge = _Bridge(_pi_text())
     rows = {"agent_e": [_row("msg_1")]}

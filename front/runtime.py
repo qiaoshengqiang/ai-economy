@@ -698,6 +698,9 @@ Role 是弱信号；work_profile 依据任务本身判断。
    reply 支持 Markdown（标题、列表、表格、代码块、链接），
    方便人类阅读；不要输出原始 HTML / script / iframe。
    {{"intent":"direct_reply","reply":"...","reason":"..."}}
+   非生产任务（问答、查资料、解释、建议、简单确认）优先 direct_reply；
+   需要其他 Agent 参与时优先 message_send 给空闲 Agent；
+   只有需要真实文件交付、代码修改或运行验证时才 handoff 创建 Task。
 
 2. handoff —— 新的工作请求。
    字段来源：
