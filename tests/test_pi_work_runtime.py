@@ -21,6 +21,7 @@ from work.pi_rpc import PiRunResult
 from work.project_lock import ProjectLockManager
 from work.task_directory import TaskDirectoryManager
 from work.task_snapshot import TaskSnapshotStore
+from work.workspace_plan import WorkspacePlan
 
 
 class _FakeBrain:
@@ -790,6 +791,42 @@ def test_rounds_record_upstream_error(tmp_path):
     assert rounds[0]["segments"][0]["error"] == (
         "terminated: Body Timeout Error")
     assert rounds[0]["segments"][0]["finish_reason"] == "error"
+
+
+def test_recon_prompt_prefers_new_subdirectory(tmp_path):
+    task = Task.create(
+        task_id="T-PI-RECON-POLICY", creator="agent_c",
+        description="写一个 hello world",
+        workspace_id="WS-RECON-POLICY", participants=["agent_c"],
+        mode=TaskMode.SOLO)
+    task.claim_producer("agent_c")
+    directory = TaskDirectoryManager(
+        tmp_path / "tasks").for_task(task.task_id)
+    runtime = SimpleNamespace(
+        tasks=SimpleNamespace(),
+        economy=SimpleNamespace(agent=lambda _aid: SimpleNamespace(
+            has_brain=True, brain=_FakeBrain(),
+            workspace=_FakeWorkspace(tmp_path / "agent_c"))),
+        communication=None,
+    )
+    runner = PiWorkRuntime(
+        runtime, task,
+        task_directory=directory,
+        use_llm_proxy=False,
+    )
+
+    prompt = runner._recon_prompt()
+
+    assert "new descriptive" in prompt
+    assert "Do not use '.' as target_path for a new deliverable" in prompt
+    assert "reply-only" in prompt
+
+    message = runner._unclear_workspace_message(
+        WorkspacePlan(
+            mode="unclear", target_path=".",
+            reason="任务没有说明要新建还是修改"))
+    assert "需要你确认目标" in message
+    assert "任务没有说明要新建还是修改" in message
 
 
 def test_last_assistant_error_surfaces_upstream_message():

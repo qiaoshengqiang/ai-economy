@@ -1202,17 +1202,29 @@ Task Workspace 放本次任务的交付物和验收产物。
             lines.append(f"Human mentioned path hint: {hint}")
         lines.extend([
             "",
-            "Decide whether this task should:",
-            "- create a new project/subdirectory under the workspace root;",
-            "- modify an existing project/subdirectory;",
-            "- or is unclear / ambiguous.",
+            "Decide where this task should run, using this policy in order:",
+            "1. If the task explicitly names an existing file/project/subdirectory",
+            "   and asks to change it, use modify or mixed with that exact target.",
+            "2. Otherwise, for any new deliverable (page, game, demo, script,",
+            "   document, SVG, etc.), use create with a new descriptive",
+            "   kebab-case subdirectory under the workspace root.",
+            "   Do not use '.' as target_path for a new deliverable, and do not",
+            "   put a new deliverable directly in the workspace root, unless the",
+            "   task explicitly asks to put it in the workspace root.",
+            "3. If the task explicitly says it is reply-only / must not create",
+            "   files, do not create a subdirectory; return unclear with a reason",
+            "   that says it is a reply-only task.",
+            "4. Only use unclear when the evidence is genuinely ambiguous after",
+            "   inspecting the workspace. Do not guess between create and modify.",
+            "If the task text contains multiple turns / follow-up requirements,",
+            "the latest explicit requirement wins.",
             "",
             "Output ONLY a JSON object, no Markdown:",
             '{"mode":"create|modify|mixed|unclear",'
             '"target_path":"relative/path/from/root",'
             '"reason":"one sentence","confidence":0.0}',
             "",
-            "target_path must be relative to workspace root; use '.' for root.",
+            "target_path must be relative to workspace root.",
             "For mode=create, the target should not exist or be empty.",
         ])
         return "\n".join(lines)
@@ -1346,12 +1358,20 @@ Task Workspace 放本次任务的交付物和验收产物。
             "workspace_plan": plan.to_dict(),
         }
 
+    @staticmethod
+    def _unclear_workspace_message(plan: WorkspacePlan) -> str:
+        reason = str(plan.reason or "").strip()
+        message = (
+            "Workspace recon 需要你确认目标：这是新建项目"
+            "（建议使用新的子目录），还是修改已有项目？")
+        if reason:
+            message += f"\nRecon 的判断：{reason}"
+        return message
+
     def _prepare_project_target(self, plan: WorkspacePlan) -> str:
         """上锁之后再次检查并创建目标目录；返回错误文案或空串。"""
         if plan.mode == "unclear":
-            return (
-                "Workspace recon 无法判断这是新建还是修改；"
-                "请补充目标路径或确认要修改哪个项目。")
+            return self._unclear_workspace_message(plan)
         target = self.workdir
         if target.exists():
             if not target.is_dir():
@@ -1412,9 +1432,7 @@ Task Workspace 放本次任务的交付物和验收产物。
                     return result
                 assert plan is not None
                 if plan.mode == "unclear":
-                    result.error = (
-                        "Workspace recon 无法判断这是新建还是修改；"
-                        "请补充目标路径或确认要修改哪个项目。")
+                    result.error = self._unclear_workspace_message(plan)
                     result.status = task.status
                     return result
                 self._apply_workspace_plan(plan)

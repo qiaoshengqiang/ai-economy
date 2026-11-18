@@ -609,6 +609,11 @@ Task 能力的事实边界（由系统强制，不靠你猜）：
 - Worker 会看到 human_text / task_text / front_notes 三部分：
   task_text 是你的执行说明，front_notes 是建议（非硬要求）。
   task_text 写清目标对象、目录和期望结果，Worker 才能独立执行。
+- 新交付物默认放在当前项目目录下的**独立子目录**（例如 hello-world/、
+  pelican-cycling/）；只有 Human 明确要求放在项目根目录时才例外。
+  只有 Human 明确指向已有文件 / 目录 / 项目并要求修改时，才修改已有内容。
+  不要因为任务简单就自行加上“不需要创建文件 / 直接在回复里给出”的约束；
+  只有 Human 明确这样说时才这样写。
 - 用户说「先停一下 / 暂停 / 中断」→ interrupt；
   说「停止 / 取消 / 不做了」→ cancel。
   interrupt 后 Task 保持 IN_PROGRESS，可以 follow_up 继续；
