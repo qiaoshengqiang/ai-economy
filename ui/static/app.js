@@ -732,7 +732,21 @@
         item.appendChild(meta);
       }
       const text = document.createElement("div");
-      text.textContent = message.text || "";
+      const markdown = message.role === "front"
+        && window.AIEOSMarkdown
+        && typeof window.AIEOSMarkdown.render === "function";
+      if (markdown) {
+        item.classList.add("md");
+        try {
+          text.innerHTML = window.AIEOSMarkdown.render(
+            message.text || "");
+        } catch (error) {
+          item.classList.remove("md");
+          text.textContent = message.text || "";
+        }
+      } else {
+        text.textContent = message.text || "";
+      }
       const actions = document.createElement("div");
       actions.className = "msg-actions";
       const copy = document.createElement("button");

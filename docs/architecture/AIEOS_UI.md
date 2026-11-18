@@ -180,6 +180,10 @@ LLM → 动作（private_* / draft_*）→ 真实结果回喂
 - 解析器只把显式 `intent` / `decision` 的 JSON 当作最终决定；
   Markdown 代码块里的文件内容 / 示例 JSON（例如 `QUESTION.json`）
   不会被误判成 `clarify` 或其他决定。
+- Front 的 `reply` 支持 Markdown 安全子集；UI 用
+  `ui/static/markdown.js` 渲染标题、列表、表格、代码块、链接。
+  原始 HTML 一律 escape，不执行；链接只允许 `http(s)` / `mailto`，
+  并在新标签打开（`rel="noopener noreferrer"`）。
 - 用户可能使用语音输入；Front prompt 会提示转写文本可能有错字、漏字、
   断句或同音词错误。语义不顺时先确认，不确定就 `clarify`。
 

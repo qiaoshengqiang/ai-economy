@@ -1054,6 +1054,23 @@ def test_task_detail_js_does_not_reuse_reply_as_thinking():
     assert "decisionReasoning.trim() !== content.trim()" in js
 
 
+def test_front_messages_use_safe_markdown_renderer():
+    from pathlib import Path
+
+    static = Path(__file__).resolve().parent.parent / "ui" / "static"
+    app = (static / "app.js").read_text(encoding="utf-8")
+    markdown = (static / "markdown.js").read_text(encoding="utf-8")
+    index = (static / "index.html").read_text(encoding="utf-8")
+
+    assert "/static/markdown.js" in index
+    assert "AIEOSMarkdown" in app
+    assert 'message.role === "front"' in app
+    assert "escapeHtml" in markdown
+    assert "ALLOWED_LINK" in markdown
+    assert "target=\"_blank\"" in markdown
+    assert "rel=\"noopener noreferrer\"" in markdown
+
+
 def test_task_detail_js_shows_only_task_text():
     from pathlib import Path
 

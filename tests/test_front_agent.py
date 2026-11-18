@@ -343,6 +343,8 @@ def test_front_prompt_is_human_facing_and_does_not_invent_constraints():
     assert "task_text：你给 Worker 的任务说明" in prompt
     assert "brief.files 携带你准备好的文件" in prompt
     assert "reply：只给人类看的回复" in prompt
+    assert "reply 支持 Markdown" in prompt
+    assert "不要输出原始 HTML" in prompt
     assert "preferred_agent 是路由元数据" in prompt
     assert "新交付物默认放在当前项目目录下的" in prompt
     assert "不要因为任务简单就自行加上" in prompt

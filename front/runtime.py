@@ -695,6 +695,8 @@ Role 是弱信号；work_profile 依据任务本身判断。
 ========== 意图 ==========
 1. direct_reply —— 直接回答。
    用户问事实、总结、解释、建议时，回答文本放在 reply 字段。
+   reply 支持 Markdown（标题、列表、表格、代码块、链接），
+   方便人类阅读；不要输出原始 HTML / script / iframe。
    {{"intent":"direct_reply","reply":"...","reason":"..."}}
 
 2. handoff —— 新的工作请求。
