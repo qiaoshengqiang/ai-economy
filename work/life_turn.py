@@ -54,6 +54,7 @@ from core.identity import format_agent_identity, utc_now_iso
 from llm.session import alarm_scope, life_scope
 from work.life_policy import LifePolicy
 from work.life_tools import LifeTools, clip_text
+from work.pi_comm import CONVERSATIONAL_MESSAGE_TYPES
 
 #: Life Turn 一次最多执行几个动作。防止模型一次输出一长串。
 MAX_LIFE_ACTIONS = 3
@@ -86,7 +87,7 @@ TOOL_WRITE_ACTIONS = frozenset({
 })
 
 #: 只允许普通文本消息。
-LIFE_MESSAGE_TYPES = frozenset({"TEXT"})
+LIFE_MESSAGE_TYPES = CONVERSATIONAL_MESSAGE_TYPES
 
 _MESSAGE_ID_RE = re.compile(r"^###\s+(msg_[A-Za-z0-9]+)\s+·", re.MULTILINE)
 

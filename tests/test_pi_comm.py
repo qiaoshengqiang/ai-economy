@@ -96,7 +96,7 @@ def test_pi_inbox_peek_then_consume_keeps_new_messages(tmp_path):
     assert "第二条" not in bridge.archive_md.read_text(encoding="utf-8")
 
 
-def test_pi_inbox_ignores_non_text_and_empty_messages(tmp_path):
+def test_pi_inbox_ignores_lifecycle_and_empty_messages(tmp_path):
     communication, _recorder = _setup()
     bridge = PiInboxBridge(
         communication, agent_id="agent_b", aieos_dir=tmp_path)
@@ -121,6 +121,15 @@ def test_pi_inbox_ignores_non_text_and_empty_messages(tmp_path):
 
     assert not bridge.inbox_md.exists()
     assert bridge.peek_for_prompt() == ""
+
+    # 对话类消息（REQUEST / QUESTION 等）仍然是可读消息。
+    bridge.capture(SimpleNamespace(
+        message_id="msg_request", from_agent="agent_a",
+        to_agent="agent_b", message_type="REQUEST",
+        conversation_id="conv_1", created_at="now",
+        payload={"text": "请查一下浙江高考物理赋分"},
+    ))
+    assert "请查一下浙江高考物理赋分" in bridge.peek_for_prompt()
 
     bridge.capture(SimpleNamespace(
         message_id="msg_ok", from_agent="agent_a", to_agent="agent_b",

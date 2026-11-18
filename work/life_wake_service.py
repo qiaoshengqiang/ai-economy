@@ -32,14 +32,11 @@ from core.alarm import WakeupEvent, WakeupResult
 from core.identity import utc_now_iso
 from work.life_policy import LifePolicy
 from work.life_turn import (
-    LifeMessage, LifeStimulus, LifeTurnResult, LifeTurnRuntime,
-    extract_message_ids,
+    LIFE_MESSAGE_TYPES, LifeMessage, LifeStimulus, LifeTurnResult,
+    LifeTurnRuntime, extract_message_ids,
 )
 
 logger = logging.getLogger(__name__)
-
-#: 只把普通文本当成 Life stimulus。
-LIFE_MESSAGE_TYPES = frozenset({"TEXT"})
 
 #: 系统发送者不触发 Life Turn。
 SYSTEM_SENDERS = frozenset({"system", "human_gateway"})

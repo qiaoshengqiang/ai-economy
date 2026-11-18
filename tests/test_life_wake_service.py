@@ -62,13 +62,14 @@ def _row(
     text: str = "你好",
     conversation: str = "conv_1",
     payload=None,
+    message_type: str = "TEXT",
 ):
     body = {"text": text, "kind": "agent_message"}
     body.update(payload or {})
     return {
         "message_id": message_id,
         "from_agent": from_agent,
-        "message_type": "TEXT",
+        "message_type": message_type,
         "conversation_id": conversation,
         "trace_id": "trc_1",
         "created_at": "2026-11-16T10:00:00+00:00",
@@ -146,6 +147,26 @@ def test_pi_empty_or_non_text_inbox_is_ignored_and_consumed(db):
     assert turn.calls == []
     assert bridge.consumed is True
     assert bridge.text == ""
+
+
+def test_pi_request_message_wakes_idle_agent(db):
+    bridge = _Bridge(
+        "### msg_req · 小艾（Agent ID: agent_a） · REQUEST\n"
+        "请查一下浙江高考物理赋分\n\n")
+    service, turn, _availability, _ = _service(
+        db,
+        bridge=bridge,
+        rows={"agent_e": [_row(
+            "msg_req", text="请查一下浙江高考物理赋分",
+            message_type="REQUEST")]},
+    )
+
+    started = service.scan_once()
+
+    assert started == 1
+    assert len(turn.calls) == 1
+    assert turn.calls[0][0].messages[0].message_type == "REQUEST"
+    assert bridge.consumed is True
 
 
 def test_pi_message_wakes_idle_agent_and_consumes_after_success(db):

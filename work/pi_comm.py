@@ -30,10 +30,15 @@ from work.comm_bridge import run_coro
 logger = logging.getLogger(__name__)
 
 
-#: Pi Inbox 只承载 Agent 可读的普通文本消息。
+#: Agent 之间可读的“对话类”消息。Task 生命周期 / 协商 / ERROR 不在其中。
+CONVERSATIONAL_MESSAGE_TYPES = frozenset({
+    "TEXT", "INFO", "NOTE", "QUESTION", "REQUEST",
+})
+
+#: Pi Inbox 只承载 Agent 可读的对话类消息。
 #: Task 生命周期 / 协商 / ERROR 是协议事实，不应作为“用户消息”
 #: 进入 Pi 的 prompt，更不能以空 text 唤醒 Life。
-PI_INBOX_MESSAGE_TYPES = frozenset({"TEXT"})
+PI_INBOX_MESSAGE_TYPES = CONVERSATIONAL_MESSAGE_TYPES
 
 
 class PiInboxBridge:
